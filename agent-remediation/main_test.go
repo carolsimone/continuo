@@ -238,7 +238,7 @@ func TestMain_SweepAtStartup(t *testing.T) {
 // that each does its work.
 func TestMain_RunnerLoopsStart(t *testing.T) {
 	repo := &spyRepo{}
-	cfg := config.Config{VerificationPollInterval: time.Hour}
+	cfg := config.Config{ReleaseCheckPollInterval: time.Hour}
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	accept := startRunner(ctx, cfg, runner.Collaborators{}, workflow.Set{}, runnerWiring{
@@ -293,12 +293,12 @@ func TestMain_LoopHealthFailsWhenTheLoopStopsBeating(t *testing.T) {
 	assert.NoError(t, h.healthy(time.Minute))
 }
 
-// TestMain_RunnerGetsTheConfiguredVerificationTimeout: both the gate's budget
-// and the verifying try's deadline come from VERIFICATION_TIMEOUT. A zero in
-// either would time out every verification that is running.
-func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
+// TestMain_RunnerGetsTheConfiguredReleaseCheckTimeout: both the gate's budget
+// and the verifying try's deadline come from RELEASE_CHECK_TIMEOUT. A zero in
+// either would time out every release check that is running.
+func TestMain_RunnerGetsTheConfiguredReleaseCheckTimeout(t *testing.T) {
 	cfg := config.Config{
-		VerificationTimeout: 37 * time.Minute,
+		ReleaseCheckTimeout: 37 * time.Minute,
 		Maintenance:         true,
 		SQLDialect:          "trino",
 		ProjectRepoPaths:    map[string]string{"svc": "path"},
@@ -307,8 +307,8 @@ func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
 	counted := rametrics.NewRemediationMetrics(pkgmetrics.New(config.ComponentName))
 	deps := newRunnerDeps(cfg, collab, workflow.Set{}, runnerWiring{owner: "host:7", logger: discardLogger(), metrics: counted})
 
-	assert.Equal(t, 37*time.Minute, deps.VerificationTimeout)
-	assert.Equal(t, 37*time.Minute, deps.Collab.VerificationTimeout)
+	assert.Equal(t, 37*time.Minute, deps.ReleaseCheckTimeout)
+	assert.Equal(t, 37*time.Minute, deps.Collab.ReleaseCheckTimeout)
 	assert.Equal(t, "trino", deps.Collab.SQLDialect)
 	assert.Equal(t, map[string]string{"svc": "path"}, deps.Collab.ProjectRepoPaths)
 	assert.True(t, deps.Maintenance)
@@ -442,7 +442,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 	cfg := config.Config{
 		ProjectRepoPaths:    map[string]string{"svc": "cfg-path"},
 		SQLDialect:          "trino",
-		VerificationTimeout: 37 * time.Minute,
+		ReleaseCheckTimeout: 37 * time.Minute,
 	}
 	logger := discardLogger()
 	// Each adapter is a value of the ports it answers, standing in for the
@@ -470,7 +470,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 		images:   struct{ ports.ImagePackagesSource }{},
 		release: struct {
 			ports.ReleaseReader
-			ports.VerificationPipeline
+			ports.ReleaseChecks
 		}{},
 		proposals: struct{ repository.AttemptLister }{},
 		tries:     struct{ repository.TryLister }{},
@@ -483,7 +483,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 	assert.Same(t, logger, collab.Logger)
 	assert.Equal(t, cfg.ProjectRepoPaths, collab.ProjectRepoPaths)
 	assert.Equal(t, "trino", collab.SQLDialect)
-	assert.Equal(t, 37*time.Minute, collab.VerificationTimeout)
+	assert.Equal(t, 37*time.Minute, collab.ReleaseCheckTimeout)
 }
 
 // The liveness budgets cover what each loop does between two beats: a worker
@@ -491,7 +491,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 // poll interval of any length keeps the probe healthy between passes.
 func TestMain_LoopBudgetsCoverTheLongestSilence(t *testing.T) {
 	for _, interval := range []time.Duration{15 * time.Second, 5 * time.Minute, time.Hour} {
-		worker, poller := loopBudgets(config.Config{VerificationPollInterval: interval})
+		worker, poller := loopBudgets(config.Config{ReleaseCheckPollInterval: interval})
 		assert.GreaterOrEqual(t, worker, runner.DefaultStepTimeout+runner.ParkDuration, "worker, interval %s", interval)
 		assert.GreaterOrEqual(t, poller, interval+runner.DefaultStepTimeout, "poller, interval %s", interval)
 	}
@@ -500,7 +500,7 @@ func TestMain_LoopBudgetsCoverTheLongestSilence(t *testing.T) {
 // A poller registered for a one hour poll interval is not reported wedged
 // after the five minutes a fixed budget would have allowed.
 func TestMain_APollerWithALongIntervalStaysHealthyBetweenPasses(t *testing.T) {
-	_, budget := loopBudgets(config.Config{VerificationPollInterval: time.Hour})
+	_, budget := loopBudgets(config.Config{ReleaseCheckPollInterval: time.Hour})
 	h := &loopHealth{}
 	h.last.Store(time.Now().Add(-time.Hour).UnixNano())
 	assert.NoError(t, h.healthy(budget))

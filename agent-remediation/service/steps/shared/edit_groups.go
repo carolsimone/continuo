@@ -13,14 +13,14 @@ import (
 
 // ErrUnmappedEdit marks an edit whose path lies outside every project this
 // install configures a repository path for. Nothing downstream can run such an
-// edit: a verification run is submitted for one project, and the overlay it
+// edit: a release check is submitted for one project, and the overlay it
 // lays down is relative to that project's directory.
 var ErrUnmappedEdit = errors.New("edit belongs to no configured project")
 
 // ErrMixedManifestKinds marks a project whose edits would have to be verified
 // as two different manifest kinds at once: a packaged python contract plus at
 // least one edit to something that is not a python node's contract. A
-// verification run parses one kind, so whichever were chosen would verify only
+// release check parses one kind, so whichever were chosen would verify only
 // half the change and silently ignore the rest.
 var ErrMixedManifestKinds = errors.New("mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind")
 
@@ -29,7 +29,7 @@ var ErrMixedManifestKinds = errors.New("mixes a python contract with dbt edits i
 // one packaged contract, so the second edit would silently replace the first.
 var ErrDuplicateEditPath = errors.New("two edits change the same file")
 
-// The finding codes of the three refusals of a try no verification run could
+// The finding codes of the three refusals of a try no release check could
 // judge.
 const (
 	CodeEditOutsideProjects = "edit_outside_projects"
@@ -54,7 +54,7 @@ func RefusalFinding(err error) (remediation.Finding, bool) {
 	return remediation.Finding{Code: code, Message: err.Error()}, true
 }
 
-// ProjectEdits is the part of a try one verification run judges: the edits that
+// ProjectEdits is the part of a try one release check judges: the edits that
 // land in one project, with the packaged contract that verifies them when the
 // project is a python one. Prefix is the project's repository path, which a
 // dbt run's overlay paths are relative to.
@@ -77,7 +77,7 @@ func EditsOf(drafts []step.ClusterDraft) []remediation.Edit {
 // contractsByProject maps a project to the packaged contract of the cluster
 // whose first edit is in it. The project is derived from the cluster's own
 // edit paths, exactly as the edits are grouped, so a contract and the edits it
-// packages always end up on the same verification run. A later cluster of the
+// packages always end up on the same release check. A later cluster of the
 // same project replaces an earlier one's contract.
 func contractsByProject(projectRepoPaths map[string]string, drafts []step.ClusterDraft) map[string][]byte {
 	contracts := map[string][]byte{}
@@ -162,7 +162,7 @@ func isPythonNodeEdit(t remediation.Trigger, e remediation.Edit) bool {
 // Group splits a try's edits into one ProjectEdits per edited project, sorted
 // by project name. It refuses, with ErrUnmappedEdit, ErrDuplicateEditPath or
 // ErrMixedManifestKinds, wrapped with the path or project as the cross-cluster
-// checks report them, a try no verification run could judge.
+// checks report them, a try no release check could judge.
 func Group(projectRepoPaths map[string]string, t remediation.Trigger, drafts []step.ClusterDraft) ([]ProjectEdits, error) {
 	edits := EditsOf(drafts)
 	if e, ok := FirstUnmapped(projectRepoPaths, edits); ok {

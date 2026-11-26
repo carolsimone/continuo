@@ -58,7 +58,7 @@ func requireClean(t *testing.T, text, what string) {
 // address, each replaced by its fixed marker.
 func TestRunner_HandOverMessagesAreCleaned(t *testing.T) {
 	h := newHarness(t)
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "connect failed, password=" + rawCredential})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "connect failed, password=" + rawCredential})
 	id := h.accept(trigger("compile",
 		compileNode("svc-a"),
 		unfixable(compileNode("svc-c"), model.HandoverReasonClassifierInfra, dirtyDetail)))
@@ -127,7 +127,7 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 		id := h.accept(trigger("compile", compileNode("svc-a"), dirty()))
 		require.NoError(t, h.runner.Drive(ctx, id))
 		h.requireHandOverTextClean() // the row that is in flight, then the verifying one
-		h.pipeline.answer(proposal.PhasePassed, nil)
+		h.checks.answer(proposal.PhasePassed, nil)
 
 		require.NoError(t, h.poll(id))
 
@@ -161,7 +161,7 @@ func TestRunner_AReopenedAttemptRowHoldsCleanMessages(t *testing.T) {
 		unfixable(compileNode("svc-c"), model.HandoverReasonClassifierInfra, dirtyDetail)))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	gate := h.flowRows(id, 1)["verification_run"][0]
+	gate := h.flowRows(id, 1)["release_check"][0]
 	gate.Failures = 5
 	gate.LastError = "rebuilt run ids differ"
 	h.saveStep(gate)

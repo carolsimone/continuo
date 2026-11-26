@@ -14,7 +14,7 @@ const operationRun = "run"
 const predictionRefused = "refused"
 
 // NoticeDTO is the JSON shape of one release.Notice, as it is stored in the
-// release_pipeline_runs.notices JSONB column and returned in the notices field
+// release_checks.notices JSONB column and returned in the notices field
 // of GET /releases/{id}. Every list is always an array, never null. A rebuild
 // carries no reason and no relation, so a notice read back has neither.
 type NoticeDTO struct {
@@ -47,7 +47,7 @@ type SeedLoadDTO struct {
 	Reason     string `json:"reason"`
 }
 
-// RebuildDTO is the JSON shape of one view the run rebuilds.
+// RebuildDTO is the JSON shape of one view the promote-seed run rebuilds.
 type RebuildDTO struct {
 	NodeID       string `json:"node_id"`
 	Materialized string `json:"materialized"`

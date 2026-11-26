@@ -57,17 +57,18 @@ function sourceLabel(resolved: boolean): string {
   return resolved ? 'resolved' : 'unresolved';
 }
 
-// verificationPhaseLabel is the wording for one run's recorded phase. The
-// default branch covers both 'running' and '' (a run the reconciler has not
-// observed yet) — an unread run is already underway from the operator's
-// point of view, so both read as the same in-progress wording.
-function verificationPhaseLabel(phase: string): string {
+// releaseCheckPhaseLabel is the wording for one release check's recorded
+// phase. The default branch covers both 'running' and '' (a release check the
+// reconciler has not read yet) — an unread release check is already underway
+// from the operator's point of view, so both read as the same in-progress
+// wording.
+function releaseCheckPhaseLabel(phase: string): string {
   switch (phase) {
-    case 'queued':  return 'Queued for verification';
-    case 'running': return 'Verifying fix…';
+    case 'queued':  return 'Queued for its release check';
+    case 'running': return 'Checking the fix…';
     case 'passed':  return 'passed';
     case 'failed':  return 'failed';
-    default:        return 'Verifying fix…';
+    default:        return 'Checking the fix…';
   }
 }
 
@@ -87,30 +88,30 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-// VerificationRuns lists one attempt's verification runs — one per edited
+// ReleaseChecks lists one attempt's release checks — one per edited
 // project — as compact labelled lines, "<project> · <kind> · <phase> · since
-// <activated_at>", each linking to that run's page. A legacy attempt with
-// only the singular verification_run_id shows the one link; an attempt
-// judged without a run renders nothing.
-function VerificationRuns({ proposal }: { proposal: ProposalDTO }) {
-  const runs = proposal.verifications && proposal.verifications.length > 0
-    ? proposal.verifications.map((v) => ({
-        key: v.run_id || v.project,
-        runId: v.run_id,
-        text: `${v.project} · ${v.kind} · ${verificationPhaseLabel(v.phase)}${v.activated_at ? ` · since ${v.activated_at}` : ''}`,
+// <activated_at>", each linking to that release check's page. A legacy
+// attempt with only the singular release_check_id shows the one link; an
+// attempt judged without a release check renders nothing.
+function ReleaseChecks({ proposal }: { proposal: ProposalDTO }) {
+  const checks = proposal.release_checks && proposal.release_checks.length > 0
+    ? proposal.release_checks.map((c) => ({
+        key: c.check_id || c.project,
+        checkId: c.check_id,
+        text: `${c.project} · ${c.kind} · ${releaseCheckPhaseLabel(c.phase)}${c.activated_at ? ` · since ${c.activated_at}` : ''}`,
       }))
-    : proposal.verification_run_id
-      ? [{ key: proposal.verification_run_id, runId: proposal.verification_run_id, text: `verification run ${proposal.verification_run_id}` }]
+    : proposal.release_check_id
+      ? [{ key: proposal.release_check_id, checkId: proposal.release_check_id, text: `release check ${proposal.release_check_id}` }]
       : [];
-  if (runs.length === 0) return null;
+  if (checks.length === 0) return null;
   return (
-    <div className="remediation-verif__runs">
-      <span className="remediation-verif__label">verification</span>
-      {runs.map((run) => (
-        <div className="remediation-verif__run" key={run.key}>
-          <span>{run.text}</span>
-          <Link to={`/verifications/${run.runId}`} className="btn btn--secondary">
-            open run →
+    <div className="remediation-subrow__lines">
+      <span className="remediation-subrow__label">release check</span>
+      {checks.map((check) => (
+        <div className="remediation-subrow__line" key={check.key}>
+          <span>{check.text}</span>
+          <Link to={`/release-checks/${check.checkId}`} className="btn btn--secondary">
+            open release check →
           </Link>
         </div>
       ))}
@@ -118,10 +119,10 @@ function VerificationRuns({ proposal }: { proposal: ProposalDTO }) {
   );
 }
 
-// hasVerificationRuns mirrors VerificationRuns' empty case so the row that
+// hasReleaseChecks mirrors ReleaseChecks' empty case so the row that
 // hosts it is only rendered when there is something to show.
-function hasVerificationRuns(p: ProposalDTO): boolean {
-  return (p.verifications?.length ?? 0) > 0 || Boolean(p.verification_run_id);
+function hasReleaseChecks(p: ProposalDTO): boolean {
+  return (p.release_checks?.length ?? 0) > 0 || Boolean(p.release_check_id);
 }
 
 // prStateBadge renders a pull request's state as a chip: merged green,
@@ -211,12 +212,12 @@ function ProposalDetailCard({
             )}
 
         {/* Why the release rejected this fix. It is the whole reason a fix
-            put through a verification run reached 'failed', so a card that
+            put through a release check reached 'failed', so a card that
             omitted it would leave the operator with the word alone. */}
         {proposal.verify_error && (
           <div className="info-strip info-strip--error detail-card__row">
             <span className="info-strip__icon">⚠</span>
-            Verification failed: {proposal.verify_error}
+            Release check failed: {proposal.verify_error}
           </div>
         )}
 
@@ -269,7 +270,7 @@ function ProposalDetailCard({
 
 // AttemptRows renders one group's remediation attempts, newest first, inside
 // the group's contained block: each a compact row (attempt · confidence ·
-// source · status pill), its verification runs as a labelled sub-row
+// source · status pill), its release checks as a labelled sub-row
 // beneath, and — for the actionable attempt (auto) or a manually selected
 // one — its full detail card with diffs and Create PR. The column labels
 // are a muted sub-label of the block, not a peer of the group table's
@@ -304,7 +305,7 @@ function AttemptRows({
           const autoExpanded = isActionable(p);
           const isSelected = !autoExpanded && selectedId === p.id;
           const showCard = autoExpanded || isSelected;
-          const showRuns = hasVerificationRuns(p);
+          const showRuns = hasReleaseChecks(p);
           const toggle = () => onToggleAttempt(p);
           const compactRowClass = [
             autoExpanded ? 'nodes-row--static' : '',
@@ -334,8 +335,8 @@ function AttemptRows({
               </tr>
 
               {showRuns && (
-                <tr className={`remediation-verif nodes-row--static${showCard ? ' nodes-row--no-border' : ''}`}>
-                  <td colSpan={4}><VerificationRuns proposal={p} /></td>
+                <tr className={`remediation-subrow nodes-row--static${showCard ? ' nodes-row--no-border' : ''}`}>
+                  <td colSpan={4}><ReleaseChecks proposal={p} /></td>
                 </tr>
               )}
 

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_HappyPath_FullDAGExecution tests the complete pipeline
+// TestE2E_HappyPath_FullDAGExecution tests a whole run of the 6-node DAG through every component
 func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")

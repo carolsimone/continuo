@@ -5,10 +5,10 @@ import "time"
 // The result labels of RemediationMetrics.Try: how a cluster ended in the try
 // that worked it.
 const (
-	// TryPassed: the try's verification runs passed and the fix was handed
+	// TryPassed: the try's release checks passed and the fix was handed
 	// over for review.
 	TryPassed = "passed"
-	// TryGateFailed: a verification run did not pass the fix, or never answered.
+	// TryGateFailed: a release check did not pass the fix, or never answered.
 	TryGateFailed = "gate_failed"
 	// TryChecksFailed: a cross-cluster check refused the try's drafts, or the
 	// gate refused them at submit.

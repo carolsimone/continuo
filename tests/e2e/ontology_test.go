@@ -334,10 +334,10 @@ func TestE2E_Ontology(t *testing.T) {
 	})
 	require.Equal(t, http.StatusConflict, status, "a dbt project released as kind ontology: %v", body)
 	assert.Equal(t, ontologyKindChangeText, body["error"])
-	var runs int
+	var checks int
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT count(*) FROM release_pipeline_runs WHERE run_id = $1`, kindChangeID).Scan(&runs))
-	assert.Zero(t, runs, "a refused release creates no run")
+		`SELECT count(*) FROM release_checks WHERE check_id = $1`, kindChangeID).Scan(&checks))
+	assert.Zero(t, checks, "a refused release creates no release check")
 	t.Logf("✅ service-1 released as kind ontology answers 409: %v", body["error"])
 }
 

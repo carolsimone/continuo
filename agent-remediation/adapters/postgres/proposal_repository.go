@@ -48,7 +48,7 @@ func NewProposalRepository(q Queryer, projectRepoPaths map[string]string) *Propo
 
 // CountAttempts returns the number of TERMINAL proposal attempts recorded for
 // one remediation round of one release. In-flight rows — 'generating' (the
-// model call has not resolved) and 'verifying' (a verification run is still
+// model call has not resolved) and 'verifying' (a release check is still
 // validating a proposed fix) — are excluded so an attempt that has not yet
 // concluded neither inflates the attempt cap nor shifts the attempt number on
 // a redelivery.
@@ -170,7 +170,7 @@ func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, reas
 // belongs to no remediation: status 'generating' or 'verifying' with a NULL
 // remediation_id. A row that was generating takes reason as its rationale, as
 // FailGenerating writes it; a row that was verifying takes reason as its
-// verify_error and keeps its rationale, edits and verifications, as
+// verify_error and keeps its rationale, edits and release checks, as
 // MarkVerifyFailed writes it. The SET expressions read the row as it was, so
 // each of them sees the status the row had. Every node_outcomes entry still
 // 'generating' or 'verifying' becomes {"status": "failed", "reason": reason}
@@ -223,16 +223,16 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, remediation_round, node_id, error_signature, attempt,
-			 status, verification_run_id,
+			 status, release_check_id,
 			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path, file_edits,
-			 resolved_node_ids, node_outcomes, verifications, projects, remediation_id, approvers)
+			 resolved_node_ids, node_outcomes, release_checks, projects, remediation_id, approvers)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		ON CONFLICT (release_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
-			verification_run_id    = EXCLUDED.verification_run_id,
+			release_check_id    = EXCLUDED.release_check_id,
 			confidence             = EXCLUDED.confidence,
 			rationale              = EXCLUDED.rationale,
 			proposed_sql_uri       = EXCLUDED.proposed_sql_uri,
@@ -248,7 +248,7 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			file_edits             = EXCLUDED.file_edits,
 			resolved_node_ids      = EXCLUDED.resolved_node_ids,
 			node_outcomes          = EXCLUDED.node_outcomes,
-			verifications          = EXCLUDED.verifications,
+			release_checks         = EXCLUDED.release_checks,
 			projects               = EXCLUDED.projects,
 			remediation_id         = COALESCE(EXCLUDED.remediation_id, proposal.remediation_id),
 			approvers              = CASE WHEN jsonb_array_length(EXCLUDED.approvers) = 0
@@ -265,9 +265,9 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	if err != nil {
 		return fmt.Errorf("marshal proposal node outcomes: %w", err)
 	}
-	verifications, err := marshalVerifications(p.Verifications)
+	releaseChecks, err := marshalReleaseChecks(p.ReleaseChecks)
 	if err != nil {
-		return fmt.Errorf("marshal proposal verifications: %w", err)
+		return fmt.Errorf("marshal proposal release checks: %w", err)
 	}
 	approvers, err := marshalApprovers(p.Approvers)
 	if err != nil {
@@ -275,12 +275,12 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
-		p.Status, p.VerificationRunID,
+		p.Status, p.ReleaseCheckID,
 		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
 		p.Repo, p.CommitSHA, p.FilePath, edits,
-		resolved, outcomes, verifications, textArray(p.Projects), remediationIDArg(p.RemediationID), approvers,
+		resolved, outcomes, releaseChecks, textArray(p.Projects), remediationIDArg(p.RemediationID), approvers,
 	); err != nil {
 		return fmt.Errorf("insert proposal: %w", err)
 	}
@@ -300,7 +300,7 @@ type proposalRow struct {
 	ErrorSignature      string         `db:"error_signature"`
 	Attempt             int            `db:"attempt"`
 	Status              string         `db:"status"`
-	VerificationRunID   string         `db:"verification_run_id"`
+	ReleaseCheckID      string         `db:"release_check_id"`
 	VerifyError         string         `db:"verify_error"`
 	Confidence          string         `db:"confidence"`
 	Rationale           string         `db:"rationale"`
@@ -315,7 +315,7 @@ type proposalRow struct {
 	FileEdits           []byte         `db:"file_edits"`
 	ResolvedNodeIDs     []byte         `db:"resolved_node_ids"`
 	NodeOutcomes        []byte         `db:"node_outcomes"`
-	Verifications       []byte         `db:"verifications"`
+	ReleaseChecks       []byte         `db:"release_checks"`
 	Approvers           []byte         `db:"approvers"`
 	Projects            pq.StringArray `db:"projects"`
 	Model               string         `db:"model"`
@@ -428,49 +428,49 @@ func unmarshalNodeOutcomes(raw []byte) map[string]proposal.NodeOutcome {
 	return outcomes
 }
 
-// verificationRow is the persistence DTO for one element of the
-// verifications JSONB column. The json tags live here so the domain
-// proposal.Verification carries no serialization annotations.
-type verificationRow struct {
+// releaseCheckRow is the persistence DTO for one element of the
+// release_checks JSONB column. The json tags live here so the domain
+// proposal.ReleaseCheck carries no serialization annotations.
+type releaseCheckRow struct {
 	Project     string     `json:"project"`
 	Kind        string     `json:"kind"`
-	RunID       string     `json:"run_id"`
+	CheckID     string     `json:"check_id"`
 	Phase       string     `json:"phase"`
 	ActivatedAt *time.Time `json:"activated_at"`
 	Error       string     `json:"error"`
 }
 
-// marshalVerifications encodes the domain verifications as the verifications
+// marshalReleaseChecks encodes the domain release checks as the release_checks
 // column value. A nil or empty slice encodes as an empty JSON array, so the
 // column is never written as SQL NULL.
-func marshalVerifications(v []proposal.Verification) ([]byte, error) {
-	rows := make([]verificationRow, 0, len(v))
+func marshalReleaseChecks(v []proposal.ReleaseCheck) ([]byte, error) {
+	rows := make([]releaseCheckRow, 0, len(v))
 	for _, e := range v {
-		rows = append(rows, verificationRow{
-			Project: e.Project, Kind: e.Kind, RunID: e.RunID,
+		rows = append(rows, releaseCheckRow{
+			Project: e.Project, Kind: e.Kind, CheckID: e.CheckID,
 			Phase: string(e.Phase), ActivatedAt: e.ActivatedAt, Error: e.Error,
 		})
 	}
 	return json.Marshal(rows)
 }
 
-// unmarshalVerifications decodes the verifications JSONB column. A malformed
+// unmarshalReleaseChecks decodes the release_checks JSONB column. A malformed
 // or empty blob decodes as nil rather than an empty non-nil slice, so a row
-// that never posted a verification run reads back as unset.
-func unmarshalVerifications(raw []byte) []proposal.Verification {
-	var rows []verificationRow
+// that never posted a release check reads back as unset.
+func unmarshalReleaseChecks(raw []byte) []proposal.ReleaseCheck {
+	var rows []releaseCheckRow
 	_ = json.Unmarshal(raw, &rows)
 	if len(rows) == 0 {
 		return nil
 	}
-	verifications := make([]proposal.Verification, 0, len(rows))
+	releaseChecks := make([]proposal.ReleaseCheck, 0, len(rows))
 	for _, r := range rows {
-		verifications = append(verifications, proposal.Verification{
-			Project: r.Project, Kind: r.Kind, RunID: r.RunID,
+		releaseChecks = append(releaseChecks, proposal.ReleaseCheck{
+			Project: r.Project, Kind: r.Kind, CheckID: r.CheckID,
 			Phase: proposal.Phase(r.Phase), ActivatedAt: r.ActivatedAt, Error: r.Error,
 		})
 	}
-	return verifications
+	return releaseChecks
 }
 
 // approverRow is the persistence DTO for one element of the approvers JSONB
@@ -546,9 +546,9 @@ func (row proposalRow) toView() proposal.View {
 		Attempt:             row.Attempt,
 		Status:              proposal.Status(row.Status),
 		NodeOutcomes:        unmarshalNodeOutcomes(row.NodeOutcomes),
-		Verifications:       unmarshalVerifications(row.Verifications),
+		ReleaseChecks:       unmarshalReleaseChecks(row.ReleaseChecks),
 		Approvers:           unmarshalApprovers(row.Approvers),
-		VerificationRunID:   row.VerificationRunID,
+		ReleaseCheckID:      row.ReleaseCheckID,
 		Projects:            []string(row.Projects),
 		VerifyError:         row.VerifyError,
 		Confidence:          proposal.Confidence(row.Confidence),
@@ -574,12 +574,12 @@ func (row proposalRow) toView() proposal.View {
 }
 
 const proposalColumns = `id, source, release_id, remediation_round, node_id, error_signature, attempt,
-		       status, verification_run_id, verify_error,
+		       status, release_check_id, verify_error,
 		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, file_edits, model, created_at,
 		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at,
-		       resolved_node_ids, node_outcomes, verifications, projects, remediation_id, approvers`
+		       resolved_node_ids, node_outcomes, release_checks, projects, remediation_id, approvers`
 
 // claimRow is the persistence DTO for the BeginPR RETURNING projection.
 type claimRow struct {
@@ -845,7 +845,7 @@ const beginPRClaimCAS = `
 // error rather than collapsing into the CAS's "already claimed". Claiming
 // requires status='proposed' as well as source_resolved: a python contract fix
 // is written as 'verifying' with source_resolved=true the moment its
-// verification run is submitted, and a failed verification changes nothing
+// release check is submitted, and a failed release check changes nothing
 // but the status — so without the status guard a caller could open a pull
 // request for a fix still being judged, or for one already judged wrong.
 //
@@ -1088,9 +1088,9 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id, project st
 
 // rewriteVerifyingOutcomes is the node_outcomes assignment that carries an
 // attempt's per-node outcomes along with the attempt itself: every node still
-// waiting on verification takes the status the attempt just reached, while
+// waiting on its release check takes the status the attempt just reached, while
 // a node the attempt had already settled — skipped, or failed while being
-// fixed — keeps the entry it was recorded with, since no verification run
+// fixed — keeps the entry it was recorded with, since no release check
 // judged it.
 //
 // The COALESCE is what keeps the column (NOT NULL) writable: aggregating over a
@@ -1103,10 +1103,10 @@ const rewriteVerifyingOutcomes = `
 		FROM jsonb_each(node_outcomes) AS e(k, v)
 	), '{}'::jsonb)`
 
-// MarkFixVerified finalizes a proposal the runner verified: every verification
-// run passed, so status 'verifying' becomes 'proposed', every node that was
-// waiting on those runs is carried to 'proposed' with it, and the verifications
-// the Verified carries are written as the final per-run summary. It refuses a
+// MarkFixVerified finalizes a proposal the runner verified: every release
+// check passed, so status 'verifying' becomes 'proposed', every node that was
+// waiting on those checks is carried to 'proposed' with it, and the release checks
+// the Verified carries are written as the final summary of each release check. It refuses a
 // zero Verified, which holds no proof that its drafts were checked and
 // verified. The WHERE status='verifying' guard is the same compare-and-set
 // contract as every other state transition in this file: a row already
@@ -1116,13 +1116,13 @@ func (r *ProposalRepository) MarkFixVerified(ctx context.Context, v remediation.
 	if v.IsZero() {
 		return false, errors.New("mark fix verified: the verified proposal is the zero value")
 	}
-	verifications, err := marshalVerifications(v.Verifications())
+	releaseChecks, err := marshalReleaseChecks(v.ReleaseChecks())
 	if err != nil {
-		return false, fmt.Errorf("marshal proposal verifications: %w", err)
+		return false, fmt.Errorf("marshal proposal release checks: %w", err)
 	}
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$3, verifications=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
-		v.ProposalID(), proposal.StatusVerifying, proposal.StatusProposed, verifications)
+		`UPDATE proposal SET status=$3, release_checks=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		v.ProposalID(), proposal.StatusVerifying, proposal.StatusProposed, releaseChecks)
 	if err != nil {
 		return false, fmt.Errorf("mark fix verified: %w", err)
 	}
@@ -1133,18 +1133,18 @@ func (r *ProposalRepository) MarkFixVerified(ctx context.Context, v remediation.
 	return n > 0, nil
 }
 
-// MarkVerifyFailed finalizes a proposal a verification run rejected,
+// MarkVerifyFailed finalizes a proposal a release check rejected,
 // transitioning status 'verifying' -> 'failed', carrying every node that was
 // waiting on those runs to 'failed' with it, recording verifyErr so the next
-// attempt can use it as evidence, and writing verifications as the final
-// per-run summary. The CAS guard and hit semantics mirror MarkFixVerified.
-func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (bool, error) {
-	v, err := marshalVerifications(verifications)
+// attempt can use it as evidence, and writing release checks as the final
+// summary of each release check. The CAS guard and hit semantics mirror MarkFixVerified.
+func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string, releaseChecks []proposal.ReleaseCheck) (bool, error) {
+	v, err := marshalReleaseChecks(releaseChecks)
 	if err != nil {
-		return false, fmt.Errorf("marshal proposal verifications: %w", err)
+		return false, fmt.Errorf("marshal proposal release checks: %w", err)
 	}
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$3, verify_error=$4, verifications=$5, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		`UPDATE proposal SET status=$3, verify_error=$4, release_checks=$5, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
 		id, proposal.StatusVerifying, proposal.StatusFailed, verifyErr, v)
 	if err != nil {
 		return false, fmt.Errorf("mark verify failed: %w", err)
@@ -1216,23 +1216,23 @@ const reopenGeneratingOutcomes = `
 		FROM jsonb_each(node_outcomes) AS e(k, v)
 	), node_outcomes)`
 
-// UpdateVerificationPhase rewrites one element of the verifications array,
-// matched by run_id, with the phase and activation time given. Elements for
+// UpdateReleaseCheckPhase rewrites one element of the release_checks array,
+// matched by check_id, with the phase and activation time given. Elements for
 // other runs are copied through unchanged, in their stored order.
-func (r *ProposalRepository) UpdateVerificationPhase(ctx context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error {
+func (r *ProposalRepository) UpdateReleaseCheckPhase(ctx context.Context, id, checkID string, phase proposal.Phase, activatedAt *time.Time) error {
 	var at sql.NullString
 	if activatedAt != nil {
 		at = sql.NullString{String: activatedAt.UTC().Format(time.RFC3339Nano), Valid: true}
 	}
 	_, err := r.q.ExecContext(ctx, `
-		UPDATE proposal SET verifications = COALESCE((
-			SELECT jsonb_agg(CASE WHEN v->>'run_id' = $2
+		UPDATE proposal SET release_checks = COALESCE((
+			SELECT jsonb_agg(CASE WHEN v->>'check_id' = $2
 			         THEN v || jsonb_build_object('phase', $3::text, 'activated_at', $4::text)
 			         ELSE v END ORDER BY ord)
-			  FROM jsonb_array_elements(verifications) WITH ORDINALITY AS x(v, ord)), '[]'::jsonb)
-		 WHERE id = $1`, id, runID, string(phase), at)
+			  FROM jsonb_array_elements(release_checks) WITH ORDINALITY AS x(v, ord)), '[]'::jsonb)
+		 WHERE id = $1`, id, checkID, string(phase), at)
 	if err != nil {
-		return fmt.Errorf("update verification phase: %w", err)
+		return fmt.Errorf("update release check phase: %w", err)
 	}
 	return nil
 }

@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 )
 
@@ -57,7 +57,7 @@ func compileRejection(perNode []NodeResult) (reason pkg_model.RejectReason, deta
 // failed path: Fail with a reason derived from the per-node failed_container
 // attribution (compile_failed, parse_rehearsal_failed, or
 // artifact_upload_failed — see compileRejection). A candidate emits
-// release.rejected:v1; a run of either kind emits pipeline.run.finished:v1.
+// release.rejected:v1; a check of either kind emits release_check.finished:v1.
 //
 // unknown release: drops the message (ack).
 func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInput) error {
@@ -67,7 +67,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
+	r, err := u.ReleaseCheckRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
@@ -133,16 +133,16 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 			return err
 		}
-		if err := u.RunRepo().Save(ctx, r); err != nil {
+		if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
-		if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		if err := enqueueCheckFinished(ctx, u, r, now); err != nil {
 			return err
 		}
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		d.Telemetry.ReleaseCompileCompleted(ctx, in.ReleaseID, false, r.StageDuration(pipeline.StatusCompiling))
+		d.Telemetry.ReleaseCompileCompleted(ctx, in.ReleaseID, false, r.StageDuration(releasecheck.StatusCompiling))
 		recordTerminalTelemetry(ctx, d, r, 0)
 		return nil
 	}
@@ -154,7 +154,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	if err := r.TransitionFromCompiling(now); err != nil {
 		return fmt.Errorf("transition from compiling: %w", err)
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -167,9 +167,9 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	}
 	set := assembleFor(ctx, u, d.Logger, r, pointers, d.Bucket)
 
-	// The image tags are the run's own assembled map (set at activation), not
+	// The image tags are the check's own assembled map (set at activation), not
 	// set.ImageTags: they are the image tags assembled at activation, and no
-	// promotion can have moved a pointer while this run held the queue's single
+	// promotion can have moved a pointer while this check held the queue's single
 	// active slot.
 	if err := emitReleaseRequested(ctx, u, in.ReleaseID, set.ManifestKeys, r.ImageTags()); err != nil {
 		return err
@@ -177,7 +177,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseCompileCompleted(ctx, in.ReleaseID, true, r.StageDuration(pipeline.StatusCompiling))
+	d.Telemetry.ReleaseCompileCompleted(ctx, in.ReleaseID, true, r.StageDuration(releasecheck.StatusCompiling))
 	d.Telemetry.ReleaseParseRequested(ctx, in.ReleaseID)
 	return nil
 }

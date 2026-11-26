@@ -115,7 +115,7 @@ func TestRunner_AnUnknownPlaceholderIsAFinding(t *testing.T) {
 			assert.Equal(t, remediation.ClusterHandedOver, c.Status, "the round fails like on any other finding")
 			want := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: message, Code: model.HandoverReasonPreflightRoundsSpent}
 			assert.Equal(t, &want, c.Outcome)
-			assert.Empty(t, h.pipeline.runs(), "no draft that holds a placeholder is verified")
+			assert.Empty(t, h.checks.requests(), "no draft that holds a placeholder is verified")
 		})
 	}
 }
@@ -322,13 +322,13 @@ func TestRunner_AValueSeenOnlyInALogIsNotWrittenIntoAFile(t *testing.T) {
 		assert.NotContains(t, fmt.Sprint(s.Findings), "hunter2", "step %s finds no value from the log", s.Step)
 	}
 	assert.Equal(t, remediation.ClusterHandedOver, h.cluster(id, 1, 1).Status)
-	assert.Empty(t, h.pipeline.runs())
+	assert.Empty(t, h.checks.requests())
 }
 
 // TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale checks that the
 // rationale, which the pull request shows, gets back only values of the code:
 // a log's password keeps its placeholder and reaches no stored row, artifact,
-// verification run or pull request.
+// release check or pull request.
 func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 	h := newHarness(t)
 	withOwnedSource(h)
@@ -339,7 +339,7 @@ func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 	id := h.accept(trigger("compile", node))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, "kept ops@acme.com; the log said [redacted:secret:1]", h.preflightDraft(id, 1).Rationale,
@@ -360,7 +360,7 @@ func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 	h.artifacts.mu.Lock()
 	assert.NotContains(t, fmt.Sprint(h.artifacts.objects), "hunter2", "no stored artifact")
 	h.artifacts.mu.Unlock()
-	assert.NotContains(t, fmt.Sprint(h.pipeline.runs()), "hunter2", "no verification run")
+	assert.NotContains(t, fmt.Sprint(h.checks.requests()), "hunter2", "no release check")
 	assert.NotContains(t, fmt.Sprint(h.proposals()), "hunter2", "no proposal row")
 	for _, e := range h.store.OutboxEntries() {
 		assert.NotContains(t, string(e.Payload), "hunter2", "no outbox entry on %s", e.StreamName)
@@ -369,7 +369,7 @@ func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 
 // TestRunner_AValueSeenOnlyInALogNeverNamesAFile checks that a contract fix
 // whose path holds the placeholder of a log's password is refused, and that the
-// password reaches no stored row, verification run, pull request or outbox
+// password reaches no stored row, release check, pull request or outbox
 // entry.
 func TestRunner_AValueSeenOnlyInALogNeverNamesAFile(t *testing.T) {
 	h := newHarness(t, withContractType(1, &refusingPackager{}))
@@ -403,7 +403,7 @@ func TestRunner_AValueSeenOnlyInALogNeverNamesAFile(t *testing.T) {
 		assert.NotContains(t, string(s.Output), "hunter2", "step %s", s.Step)
 		assert.NotContains(t, fmt.Sprint(s.Findings), "hunter2", "step %s", s.Step)
 	}
-	assert.NotContains(t, fmt.Sprint(h.pipeline.runs()), "hunter2", "no verification run")
+	assert.NotContains(t, fmt.Sprint(h.checks.requests()), "hunter2", "no release check")
 	assert.NotContains(t, fmt.Sprint(h.proposals()), "hunter2", "no proposal row")
 	for _, e := range h.store.OutboxEntries() {
 		assert.NotContains(t, string(e.Payload), "hunter2", "no outbox entry on %s", e.StreamName)

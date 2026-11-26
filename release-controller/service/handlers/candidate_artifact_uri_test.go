@@ -6,7 +6,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
-// The URI a validation Job fetches is derived from the run id, the node and
+// The URI a validation Job fetches is derived from the check id, the node and
 // its type — the key topology-controller writes the object under
 // (topologyartifact.CandidateObjectKey, pinned to topology-controller's rule
 // by the shared candidate_object_keys fixture). A seed and an unknown-external node have

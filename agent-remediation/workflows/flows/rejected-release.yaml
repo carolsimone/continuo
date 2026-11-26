@@ -1,7 +1,7 @@
 # The flow a rejected release runs: every fixable failure of the release is
 # grouped into clusters, each cluster is fixed by the first type below that
 # matches it, and the try's edits are checked together and verified by one
-# verification run per edited project before a pull request is proposed.
+# release check per edited project before a pull request is proposed.
 kind: flow
 version: 1
 name: rejected-release
@@ -19,7 +19,7 @@ types:
   - cross-project-upstream
 context: [previous_tries]
 across_clusters: [edits_map_to_a_project, no_path_edited_twice, one_manifest_kind]
-gate: [verification_run]
+gate: [release_check]
 tries: 3
 # The model may be shown source code and the text that failures and tools
 # report (logs), and no rows of data. A type that gathers evidence of another

@@ -42,9 +42,9 @@ func (*PreviousTries) Meta() step.Meta {
 		Name: "previous_tries",
 		Kind: step.KindContext,
 		Description: "Lists the earlier tries at the cluster's failing nodes in this release, in this round and the rounds before it, oldest first: " +
-			"each try's diffs, what its pre-flight and cross-cluster checks found and why its verification failed. " +
-			"Attempts recorded with no remediation are listed with their verification error and diffs, " +
-			"except one the startup sweep failed, which no verification judged.",
+			"each try's diffs, what its pre-flight and cross-cluster checks found and why its release check failed. " +
+			"Attempts recorded with no remediation are listed with their verify error and diffs, " +
+			"except one the startup sweep failed, which no release check judged.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyPreviousTries},
 	}
@@ -99,7 +99,7 @@ func (s *PreviousTries) runnerTries(ctx context.Context, f remediation.Failure) 
 // attemptsWithNoRemediation reads the attempts at the failure's members that
 // belong to no remediation from their proposal rows, each as a record of one
 // cluster holding the nodes the attempt addressed, its diffs and its
-// verification error.
+// verify error.
 func (s *PreviousTries) attemptsWithNoRemediation(ctx context.Context, f remediation.Failure) ([]remediation.TryRecord, error) {
 	if s.attempts == nil {
 		return nil, nil

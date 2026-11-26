@@ -13,7 +13,7 @@ describe('releasePillClass', () => {
     expect(releasePillClass('superseded')).toBe('pill--cancelled');
   });
 
-  it('maps passed (a verification run that judged its candidate good) to succeeded, not the pending fallback', () => {
+  it('maps passed (a release check that judged its candidate good) to succeeded, not the pending fallback', () => {
     expect(releasePillClass('passed')).not.toBe('pill--pending');
     expect(releasePillClass('passed')).toBe('pill--succeeded');
   });
@@ -90,7 +90,7 @@ describe('upcomingStages', () => {
       { stage: 'validating', condition: 'unless nothing changed' },
     ]);
   });
-  it('is empty once the run has left the pipeline (candidate or verification)', () => {
+  it('is empty once the release check has ended (a candidate release\'s or a fix\'s)', () => {
     expect(upcomingStages(t('received', 'validating', 'rejected'), { manifestKind: 'dbt' })).toEqual([]);
     expect(upcomingStages(t('received', 'validating', 'passed'), { manifestKind: 'dbt' })).toEqual([]);
     expect(upcomingStages(t('received', 'superseded'), { manifestKind: 'dbt' })).toEqual([]);

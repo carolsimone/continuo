@@ -22,7 +22,7 @@
 //     "Original model source" (prompt.AssembleSourceFix) → the corrected real
 //     model source; neither → the Step-1 candidate-SQL fix (compiled SQL).
 //     Every source answer uses physical schema.table names, because a
-//     verification run lays it over the real dbt project and compiles it.
+//     release check lays it over the real dbt project and compiles it.
 //
 //  2. propose_python_fix mode: when the request body contains a tool named
 //     "propose_python_fix", the server returns a NON-STREAMING response whose
@@ -234,7 +234,7 @@ const parseFixMarker = "SQL parse error:"
 // relation that exists.
 //
 // It names a physical schema.table rather than a {{ ref(...) }} macro for the
-// same reason step2SourceFix does: the fix is verified by a verification run
+// same reason step2SourceFix does: the fix is verified by a release check
 // that lays this exact text over service-2's dbt project and compiles it, and
 // a ref() to a model of another project would abort that compile.
 const parseFixContent = `{{ config(materialized='table') }}
@@ -257,7 +257,7 @@ const step2Marker = "Original model source"
 // and keeps the surviving read as a physical schema.table name.
 //
 // Physical names rather than {{ ref(...) }} macros because every proposed fix
-// is verified by a verification run that lays this exact text over the
+// is verified by a release check that lays this exact text over the
 // project's dbt files and compiles it. A {{ ref('table_b') }} does not
 // resolve inside service-2 (table_b belongs to service-1's project), so the
 // overlay compile would abort and no fix could ever verify.
@@ -294,7 +294,7 @@ SELECT 1 AS id, 0 AS amount_eur
 const ybreakMarker = "ybreak_up"
 
 // ybreakConsumerFix is a consumer-side edit that still reads the column the
-// upstream dropped. A verification that rebuilds ybreak_up from the candidate
+// upstream dropped. A release check that rebuilds ybreak_up from the candidate
 // fails it; one that clones ybreak_up from production would pass it.
 const ybreakConsumerFix = `{{ config(materialized='table') }}
 SELECT amount_eur AS amount FROM e2e_schema.ybreak_up
@@ -370,7 +370,7 @@ const earlierTriesHeading = "## Earlier tries at this failure"
 // answer comes back. A comment inside a fixture naming one of the relations
 // below would otherwise flip the answer, and would do so on the FIRST attempt —
 // handing back the fix that is supposed to arrive only on a retry, and making a
-// test that drives the retry loop pass its first verification run instead.
+// test that drives the retry loop pass its first release check instead.
 func promptAroundContract(userContent, contract string) string {
 	if contract == "" {
 		return userContent
@@ -401,10 +401,10 @@ func isRetryShownTheRejectedRead(userContent, contract string) bool {
 //
 //   - the loop fixture (loopBrokenRead) on a FIRST attempt gets
 //     stillBrokenRead — a relation that does not exist either, so the
-//     verification run checking it is rejected and its error becomes the
+//     release check checking it is rejected and its error becomes the
 //     next attempt's evidence;
 //   - the loop fixture on a retry gets bindingRead, so the second
-//     verification run validates. A retry is recognised by
+//     release check validates. A retry is recognised by
 //     isRetryShownTheRejectedRead: the prompt's earlier-tries section exists
 //     AND the prompt names the relation the earlier try declared, which
 //     reaches it only through that try's recorded gate error or the diff it

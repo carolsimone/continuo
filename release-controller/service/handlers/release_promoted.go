@@ -9,8 +9,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
@@ -45,7 +45,7 @@ func enqueueReleasePromoted(ctx context.Context, u uow.UnitOfWork, p events.Rele
 // topology whose content_hash differs from, or is absent in, the production
 // topology the promotion replaces (every node when there is no production yet).
 // The list is never nil, so the event always carries a JSON array.
-func changedSincePromotion(ctx context.Context, d *Deps, r *pipeline.Run, cp *release.CurrentProd) ([]string, error) {
+func changedSincePromotion(ctx context.Context, d *Deps, r *releasecheck.Check, cp *release.CurrentProd) ([]string, error) {
 	candidate, err := d.Topologies.Load(ctx, r.CandidateTopologyRef())
 	if err != nil {
 		return nil, fmt.Errorf("load candidate topology %s: %w", r.ID(), err)

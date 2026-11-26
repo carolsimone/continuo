@@ -24,7 +24,7 @@ const (
 )
 
 // remediationModelAndGateDirs are the packages of agent-remediation's service
-// layer that may name ports.LLMProvider or ports.VerificationPipeline: the
+// layer that may name ports.LLMProvider or ports.ReleaseChecks: the
 // runner and its steps, the ports themselves, the model's cache and prompt log,
 // and the conformance suite, which supplies scripted stand-ins for both.
 var remediationModelAndGateDirs = []string{
@@ -134,9 +134,9 @@ func remediationQualifiedUses(f *ast.File, pkgPath string, names ...string) (use
 }
 
 // remediationModelAndGateUsesIn returns the uses of ports.LLMProvider and
-// ports.VerificationPipeline in f.
+// ports.ReleaseChecks in f.
 func remediationModelAndGateUsesIn(f *ast.File) ([]string, []token.Pos) {
-	return remediationQualifiedUses(f, remediationPorts, "LLMProvider", "VerificationPipeline")
+	return remediationQualifiedUses(f, remediationPorts, "LLMProvider", "ReleaseChecks")
 }
 
 // remediationCheckedConstructorUsesIn returns the uses of remediation.NewChecked
@@ -146,7 +146,7 @@ func remediationCheckedConstructorUsesIn(f *ast.File) ([]string, []token.Pos) {
 }
 
 // remediationModelAndGateAllowed reports whether the file at rel may name the
-// model and the verification gate.
+// model and the gate.
 func remediationModelAndGateAllowed(rel string) bool {
 	for _, dir := range remediationModelAndGateDirs {
 		if underRemediationDir(rel, dir) {
@@ -175,7 +175,7 @@ func TestRemediationStepsAreImportedOnlyByTheRegistry(t *testing.T) {
 
 // TestOnlyTheRunnerReachesTheModelAndTheGate fails when a non-test file of
 // agent-remediation's service layer outside remediationModelAndGateDirs names
-// ports.LLMProvider or ports.VerificationPipeline. The runner hands a step the
+// ports.LLMProvider or ports.ReleaseChecks. The runner hands a step the
 // model and the gate through the step contract, so a step or a handler never
 // holds them on its own. Adapters implement the ports and are not scanned.
 func TestOnlyTheRunnerReachesTheModelAndTheGate(t *testing.T) {
@@ -185,7 +185,7 @@ func TestOnlyTheRunnerReachesTheModelAndTheGate(t *testing.T) {
 		}
 		uses, positions := remediationModelAndGateUsesIn(f)
 		for i, use := range uses {
-			t.Errorf("%s:%d: names %s — only the runner, the steps and the packages in remediationModelAndGateDirs reach the model and the verification gate",
+			t.Errorf("%s:%d: names %s — only the runner, the steps and the packages in remediationModelAndGateDirs reach the model and the gate",
 				rel, fset.Position(positions[i]).Line, use)
 		}
 	})
@@ -263,22 +263,22 @@ func TestRemediationModelAndGateGuardFlagsViolations(t *testing.T) {
 	aliased := parseRemediationGuardSource(t, `package x
 import rp "github.com/carolsimone/continuo/agent-remediation/service/ports"
 var _ rp.LLMProvider
-var _ rp.VerificationPipeline
+var _ rp.ReleaseChecks
 var _ rp.Clock
 `)
 	if got, want := func() []string { u, _ := remediationModelAndGateUsesIn(aliased); return u }(),
-		[]string{"rp.LLMProvider", "rp.VerificationPipeline"}; !reflect.DeepEqual(got, want) {
+		[]string{"rp.LLMProvider", "rp.ReleaseChecks"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("flagged %v under an import alias, want %v", got, want)
 	}
 
 	plain := parseRemediationGuardSource(t, `package x
 import "github.com/carolsimone/continuo/agent-remediation/service/ports"
 var _ ports.LLMProvider
-var _ ports.VerificationPipeline
+var _ ports.ReleaseChecks
 var _ ports.Clock
 `)
 	if got, want := func() []string { u, _ := remediationModelAndGateUsesIn(plain); return u }(),
-		[]string{"ports.LLMProvider", "ports.VerificationPipeline"}; !reflect.DeepEqual(got, want) {
+		[]string{"ports.LLMProvider", "ports.ReleaseChecks"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("flagged %v, want %v", got, want)
 	}
 
@@ -290,17 +290,17 @@ func f(ports struct{ LLMProvider int }) int { return ports.LLMProvider }
 	}
 
 	for rel, allowed := range map[string]bool{
-		"agent-remediation/service/runner/runner.go":               true,
-		"agent-remediation/service/runner/step/step.go":            true,
-		"agent-remediation/service/steps/gate/verification_run.go": true,
-		"agent-remediation/service/ports/llm_provider.go":          true,
-		"agent-remediation/service/llmcache/caching_provider.go":   true,
-		"agent-remediation/service/promptlog/promptlog.go":         true,
-		"agent-remediation/service/conformance/world.go":           true,
-		"agent-remediation/service/overlay/overlay.go":             false,
-		"agent-remediation/service/proposals/proposals.go":         false,
-		"agent-remediation/service/runnerx/x.go":                   false,
-		"agent-remediation/service/newpkg/x.go":                    false,
+		"agent-remediation/service/runner/runner.go":             true,
+		"agent-remediation/service/runner/step/step.go":          true,
+		"agent-remediation/service/steps/gate/release_check.go":  true,
+		"agent-remediation/service/ports/llm_provider.go":        true,
+		"agent-remediation/service/llmcache/caching_provider.go": true,
+		"agent-remediation/service/promptlog/promptlog.go":       true,
+		"agent-remediation/service/conformance/world.go":         true,
+		"agent-remediation/service/overlay/overlay.go":           false,
+		"agent-remediation/service/proposals/proposals.go":       false,
+		"agent-remediation/service/runnerx/x.go":                 false,
+		"agent-remediation/service/newpkg/x.go":                  false,
 	} {
 		if got := remediationModelAndGateAllowed(rel); got != allowed {
 			t.Errorf("%s: allowed = %v, want %v", rel, got, allowed)

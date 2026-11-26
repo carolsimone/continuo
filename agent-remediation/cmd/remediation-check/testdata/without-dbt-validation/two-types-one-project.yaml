@@ -2,7 +2,7 @@
 # rejected-release flow that lists no dbt-validation. Two clusters of two types
 # fix the sales project: orders is a dbt-parse fix of its own, and
 # daily_orders and weekly_orders share one fix at base_orders. One
-# verification run checks both edits, and one attempt carries them.
+# release check checks both edits, and one attempt carries them.
 kind: fixture
 version: 1
 flow: rejected-release

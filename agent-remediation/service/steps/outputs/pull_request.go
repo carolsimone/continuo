@@ -48,7 +48,7 @@ func (*PullRequest) Meta() step.Meta {
 	}
 }
 
-// Pass finalizes the proposal v names with the verifications v carries, stores
+// Pass finalizes the proposal v names with the release checks v carries, stores
 // on its row the approvers in.Approvers names (the owners of the nodes the fix
 // covers), and enqueues its remediation.proposed:v1 event in the same
 // transaction, stored under the remediation's tenant, so the row and the
@@ -76,26 +76,26 @@ func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.Output
 	return p.enqueue(ctx, u, in.Remediation.TenantID, proposedEvent(row), row.SourceResolved)
 }
 
-// proposedEvent is the attempt as it was recorded. The verification decided
+// proposedEvent is the attempt as it was recorded. The release check decided
 // only whether the attempt may be shown, not what it says.
 func proposedEvent(v proposal.View) proposal.Proposal {
 	return proposal.Proposal{
-		Source:            v.Source,
-		ReleaseID:         v.ReleaseID,
-		RemediationRound:  v.RemediationRound,
-		NodeID:            v.NodeID,
-		ResolvedNodeIDs:   append([]string(nil), v.ResolvedNodeIDs...),
-		ErrorSignature:    v.ErrorSignature,
-		Attempt:           v.Attempt,
-		Status:            proposal.StatusProposed,
-		Verifications:     append([]proposal.Verification(nil), v.Verifications...),
-		VerificationRunID: v.VerificationRunID,
-		Confidence:        v.Confidence,
-		Rationale:         v.Rationale,
-		ProposedSQLURI:    v.ProposedSQLURI,
-		DiffURI:           v.DiffURI,
-		Edits:             append([]proposal.FileEdit(nil), v.Edits...),
-		Model:             v.Model,
+		Source:           v.Source,
+		ReleaseID:        v.ReleaseID,
+		RemediationRound: v.RemediationRound,
+		NodeID:           v.NodeID,
+		ResolvedNodeIDs:  append([]string(nil), v.ResolvedNodeIDs...),
+		ErrorSignature:   v.ErrorSignature,
+		Attempt:          v.Attempt,
+		Status:           proposal.StatusProposed,
+		ReleaseChecks:    append([]proposal.ReleaseCheck(nil), v.ReleaseChecks...),
+		ReleaseCheckID:   v.ReleaseCheckID,
+		Confidence:       v.Confidence,
+		Rationale:        v.Rationale,
+		ProposedSQLURI:   v.ProposedSQLURI,
+		DiffURI:          v.DiffURI,
+		Edits:            append([]proposal.FileEdit(nil), v.Edits...),
+		Model:            v.Model,
 	}
 }
 

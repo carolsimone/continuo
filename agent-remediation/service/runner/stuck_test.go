@@ -98,7 +98,7 @@ func TestRunner_ADraftingTryPastItsDeadlineEndsBeforeItsNextStep(t *testing.T) {
 	assert.Equal(t, remediation.StepDone, rows["failing_node_source"][0].Status, "the step that was running commits")
 	assert.NotContains(t, rows, "dbt_log", "no step starts after the deadline")
 	assert.Zero(t, h.llm.calls(), "no model call after the deadline")
-	assert.Empty(t, h.pipeline.runs())
+	assert.Empty(t, h.checks.requests())
 }
 
 // A checking try past its deadline is ended before its next cross-cluster
@@ -120,7 +120,7 @@ func TestRunner_ACheckingTryPastItsDeadlineDoesNotSubmitTheGate(t *testing.T) {
 
 	h.requireEndedAsStuck(id, "try 1 was still checking at its deadline", remediation.TryChecking)
 	assert.Empty(t, h.flowRows(id, 1), "no cross-cluster check and no gate ran")
-	assert.Empty(t, h.pipeline.runs(), "the gate was not submitted")
+	assert.Empty(t, h.checks.requests(), "the gate was not submitted")
 	assert.Equal(t, 1, h.llm.calls())
 }
 
@@ -135,7 +135,7 @@ func TestRunner_ATryAtItsDeadlineIsDrivenOn(t *testing.T) {
 
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	assert.Len(t, h.pipeline.runs(), 1)
+	assert.Len(t, h.checks.requests(), 1)
 }
 
 // The other stuck rules hold before every step too: a step failed five times
@@ -196,12 +196,12 @@ func TestRunner_PollGateEndsAStuckRemediationBeforeItReadsTheGate(t *testing.T) 
 	}{
 		"the gate row failed five times": {
 			stick: func(h *harness, id uuid.UUID) {
-				gate := h.flowRows(id, 1)["verification_run"][0]
+				gate := h.flowRows(id, 1)["release_check"][0]
 				gate.Failures = 5
 				gate.LastError = "rebuilt run ids differ"
 				h.saveStep(gate)
 			},
-			want: `step "verification_run" failed 5 times, the last time with: rebuilt run ids differ`,
+			want: `step "release_check" failed 5 times, the last time with: rebuilt run ids differ`,
 		},
 		"the remediation failed five times": {
 			stick: func(h *harness, id uuid.UUID) { h.countRemediationFailures(id, 5) },
@@ -213,16 +213,16 @@ func TestRunner_PollGateEndsAStuckRemediationBeforeItReadsTheGate(t *testing.T) 
 			id := h.accept(trigger("compile", compileNode("svc-a")))
 			require.NoError(t, h.runner.Drive(ctx, id))
 			require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-			h.pipeline.answer(proposal.PhasePassed, nil)
+			h.checks.answer(proposal.PhasePassed, nil)
 			tc.stick(h, id)
 
 			require.NoError(t, h.poll(id))
 
 			h.requireEndedAsStuck(id, tc.want, remediation.TryVerifying)
-			assert.Zero(t, h.pipeline.statusReads(), "the gate is not read")
+			assert.Zero(t, h.checks.statusReads(), "the gate is not read")
 			assert.Empty(t, h.proposedEvents())
-			assert.Equal(t, []proposal.Verification{{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}},
-				h.attempt(1).Proposal.Verifications, "the attempt row keeps the runs it recorded")
+			assert.Equal(t, []proposal.ReleaseCheck{{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseQueued}},
+				h.attempt(1).Proposal.ReleaseChecks, "the attempt row keeps the runs it recorded")
 		})
 	}
 }

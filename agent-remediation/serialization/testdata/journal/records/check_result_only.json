@@ -10,7 +10,7 @@
       }
     ],
     "Waiting": true,
-    "RunIDs": [
+    "CheckIDs": [
       "run-1"
     ]
   }

@@ -21,7 +21,7 @@ func CheckReleaseSchemaInitialized(ctx context.Context, schema ports.ReleaseSche
 		return fmt.Errorf("read the release database schema: %w", err)
 	}
 	if !initialized {
-		return fmt.Errorf("%w: release_pipeline_runs, current_prod or service_prod is absent; release-controller "+
+		return fmt.Errorf("%w: release_checks, current_prod or service_prod is absent; release-controller "+
 			"starts once the release database migration (the chart's db-init-migrate Job) has built the schema",
 			ErrReleaseSchemaNotReady)
 	}

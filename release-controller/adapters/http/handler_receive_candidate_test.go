@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/liveness"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -244,7 +244,7 @@ func TestHandleReceiveCandidate_ConflictingResubmitIs409(t *testing.T) {
 func TestHandleReceiveCandidate_IdenticalResubmitOfAnAdvancedCandidateIs202(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	r := pipeline.NewCandidate("rel-1", "core", "img:1", false, false, "org/r", "sha", release.ManifestKindDbt, now)
+	r := releasecheck.NewCandidate("rel-1", "core", "img:1", false, false, "org/r", "sha", release.ManifestKindDbt, now)
 	r.SetAssembledImageTags(map[string]string{"core": "img:1", "billing": "img:9"})
 	require.NoError(t, r.TransitionToParsing(now))
 	releases.releases["rel-1"] = r

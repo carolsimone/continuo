@@ -1,6 +1,6 @@
 -- continuo_release: release-controller's database.
 --
--- Each release and verification run with its legs and results, the
+-- Each release check, a candidate release's or a fix's, with its legs and results, the
 -- production pointer of each project and of the install, the promotion
 -- sequence, the messages it consumed and its outbox.
 --
@@ -72,10 +72,10 @@ CREATE TABLE promotion_sequence (
     CONSTRAINT promotion_sequence_id_check CHECK ((id = 1))
 );
 
--- release_pipeline_runs
+-- release_checks
 
-CREATE TABLE release_pipeline_runs (
-    run_id text NOT NULL,
+CREATE TABLE release_checks (
+    check_id text NOT NULL,
     status text NOT NULL,
     image_tags jsonb NOT NULL,
     validation_node_ids text[],
@@ -98,7 +98,7 @@ CREATE TABLE release_pipeline_runs (
     rejection_payload jsonb,
     source_overlay_uri text DEFAULT '' NOT NULL,
     verifies_release_id text DEFAULT '' NOT NULL,
-    run_kind text NOT NULL,
+    check_kind text NOT NULL,
     attempt integer DEFAULT 0 NOT NULL,
     candidate_topology_uri text,
     candidate_topology_sha256 text,
@@ -111,21 +111,21 @@ CREATE TABLE release_pipeline_runs (
     parse_ms bigint,
     contracts_ms bigint,
     contracts_by_family jsonb,
-    CONSTRAINT releases_pkey PRIMARY KEY (run_id),
-    CONSTRAINT release_pipeline_runs_kind_status_check CHECK ((((run_kind = 'candidate') AND (status <> ALL (ARRAY['passed', 'failed']))) OR ((run_kind = 'verification') AND (status <> ALL (ARRAY['promoted', 'rejected', 'superseded']))))),
-    CONSTRAINT release_pipeline_runs_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'ontology'))),
-    CONSTRAINT release_pipeline_runs_rebaseline_needs_bootstrap CHECK (((NOT rebaseline) OR bootstrap)),
-    CONSTRAINT release_pipeline_runs_run_kind_check CHECK ((run_kind IN ('candidate', 'verification'))),
-    CONSTRAINT release_pipeline_runs_status_check CHECK ((status IN ('received', 'compiling', 'parsing', 'seed_building', 'validating', 'promoted', 'rejected', 'superseded', 'passed', 'failed')))
+    CONSTRAINT release_checks_pkey PRIMARY KEY (check_id),
+    CONSTRAINT release_checks_kind_status_check CHECK ((((check_kind = 'candidate') AND (status <> ALL (ARRAY['passed', 'failed']))) OR ((check_kind = 'fix') AND (status <> ALL (ARRAY['promoted', 'rejected', 'superseded']))))),
+    CONSTRAINT release_checks_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'ontology'))),
+    CONSTRAINT release_checks_rebaseline_needs_bootstrap CHECK (((NOT rebaseline) OR bootstrap)),
+    CONSTRAINT release_checks_check_kind_check CHECK ((check_kind IN ('candidate', 'fix'))),
+    CONSTRAINT release_checks_status_check CHECK ((status IN ('received', 'compiling', 'parsing', 'seed_building', 'validating', 'promoted', 'rejected', 'superseded', 'passed', 'failed')))
 );
 
-CREATE INDEX idx_release_pipeline_runs_active ON release_pipeline_runs (created_at) WHERE status IN ('received', 'compiling', 'parsing', 'seed_building', 'validating');
+CREATE INDEX idx_release_checks_active ON release_checks (created_at) WHERE status IN ('received', 'compiling', 'parsing', 'seed_building', 'validating');
 
-CREATE INDEX idx_release_pipeline_runs_kind_created ON release_pipeline_runs (run_kind, created_at DESC, run_id DESC);
+CREATE INDEX idx_release_checks_kind_created ON release_checks (check_kind, created_at DESC, check_id DESC);
 
-CREATE INDEX idx_release_pipeline_runs_kind_status_created ON release_pipeline_runs (run_kind, status, created_at DESC, run_id DESC);
+CREATE INDEX idx_release_checks_kind_status_created ON release_checks (check_kind, status, created_at DESC, check_id DESC);
 
-CREATE INDEX idx_release_pipeline_runs_verifies ON release_pipeline_runs (verifies_release_id) WHERE run_kind = 'verification';
+CREATE INDEX idx_release_checks_verifies ON release_checks (verifies_release_id) WHERE check_kind = 'fix';
 
 -- service_prod
 

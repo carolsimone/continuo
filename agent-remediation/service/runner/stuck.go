@@ -194,8 +194,8 @@ func deliveryCount(rem remediation.Remediation, why stuck) int64 {
 
 // failAttemptRow fails the proposal row of the current try's attempt with
 // reason, cleaned (proposal.CleanedReason), by what the row is: an attempt still generating is failed, and an
-// attempt whose runs are still being judged is failed as a verification that
-// did not pass, with the runs it recorded. A try with no row of its own leaves
+// attempt whose release checks are still being judged is failed as a release
+// check that did not pass, with the checks it recorded. A try with no row of its own leaves
 // the release's in-flight row failed, if it has one. Any other row already
 // says how its attempt ended.
 func failAttemptRow(ctx context.Context, repo repository.ProposalRepository, snap remediation.Snapshot, reason string) error {
@@ -214,7 +214,7 @@ func failAttemptRow(ctx context.Context, repo repository.ProposalRepository, sna
 			}
 			switch v.Status {
 			case proposal.StatusVerifying:
-				if _, err := repo.MarkVerifyFailed(ctx, v.ID, reason, v.Verifications); err != nil {
+				if _, err := repo.MarkVerifyFailed(ctx, v.ID, reason, v.ReleaseChecks); err != nil {
 					return fmt.Errorf("fail the verifying attempt row: %w", err)
 				}
 				return nil

@@ -10,7 +10,7 @@
 # the runtime continuo actually targets rejects node kinds the current runtime
 # accepts (a stale pin predating the python-node rename rejects
 # `kind: python-node`), silently killing otherwise-valid repairs before they
-# reach verification.
+# reach their release check.
 #
 # The runtime version continuo targets is the X.Y.Z of the
 # continuo-python-runtime-postgres image docker-compose.yml pins for validation

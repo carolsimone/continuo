@@ -1,7 +1,7 @@
 // Package step defines the contract between the runner and the steps it runs.
 // A step is a small unit of work at one stage of a remediation: it gathers
 // evidence, builds a model request, checks a draft, checks every cluster's
-// draft together, judges a try at the verification gate, works out who must
+// draft together, judges a try at the gate, works out who must
 // approve the result, or hands the result over. Each step describes itself
 // with a Meta, and the runner reaches it only through the interface of its
 // Kind. This package imports no adapter.
@@ -47,7 +47,7 @@ type Meta struct {
 	// Stages lists the stages the step may be placed at.
 	Stages []workflow.Stage
 	// MayStandAsGateRun reports whether the step may stand in the flow's gate
-	// as the check that runs the verification.
+	// as the check that runs the release check.
 	MayStandAsGateRun bool
 }
 
@@ -151,11 +151,11 @@ type ClusterDraft struct {
 }
 
 // LongCheck is a check that starts work and answers later, such as the gate
-// that submits verification runs and polls them. Submit starts the work and
-// returns a verdict whose result is waiting and whose Verifications are the
-// runs it started, so the runner can record them with the proposal. A Submit
+// that submits release checks and polls them. Submit starts the work and
+// returns a verdict whose result is waiting and whose ReleaseChecks are the
+// checks it started, so the runner can record them with the proposal. A Submit
 // that refuses the try returns a verdict whose result is not waiting and holds
-// the findings, with no run started. Poll reads the answer of a waiting result.
+// the findings, with no check started. Poll reads the answer of a waiting result.
 type LongCheck interface {
 	Meta() Meta
 	Submit(ctx context.Context, in GateInput) (GateVerdict, error)
@@ -165,7 +165,7 @@ type LongCheck interface {
 // GateInput is what a gate reads: the try's checked drafts and the proposal
 // they belong to. SubmittedAt is the StartedAt of the gate step's row, which
 // the runner takes before Submit runs, so it is no later than the submit; it is
-// zero for the Submit itself. A poll counts how long runs have been unreadable
+// zero for the Submit itself. A poll counts how long checks have been unreadable
 // from it, so a poll refuses an input without it.
 type GateInput struct {
 	Remediation remediation.Remediation
@@ -176,17 +176,17 @@ type GateInput struct {
 	SubmittedAt time.Time
 }
 
-// GateVerdict is the answer of a submit or a poll. Verifications are the runs
-// that judged the drafts, as far as this call read them: a submit lists every
-// run it started as queued, and a poll lists the runs whose status it read, so
-// a run it could not read keeps the values already recorded. VerifyError is why
-// the runs could not be judged, and Phases are the runs seen queued or running
-// in this call, for the proposal row.
+// GateVerdict is the answer of a submit or a poll. ReleaseChecks are the
+// release checks that judged the drafts, as far as this call read them: a submit
+// lists every check it started as queued, and a poll lists the checks whose
+// status it read, so a check it could not read keeps the values already
+// recorded. VerifyError is why the checks could not be judged, and Phases are
+// the checks seen queued or running in this call, for the proposal row.
 type GateVerdict struct {
 	Result        remediation.CheckResult
-	Verifications []proposal.Verification
+	ReleaseChecks []proposal.ReleaseCheck
 	VerifyError   string
-	Phases        []proposal.Verification
+	Phases        []proposal.ReleaseCheck
 }
 
 // Approver works out who must approve what a remediation did with each of its

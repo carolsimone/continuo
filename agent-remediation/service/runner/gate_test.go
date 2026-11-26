@@ -19,11 +19,11 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// The runs that verify the edits of attempt 1 and attempt 2 to svc-a and svc-b.
+// The checks that verify the edits of attempt 1 and attempt 2 to svc-a and svc-b.
 const (
-	svcARun1 = "verify-rel-1-svc-a-a1"
-	svcARun2 = "verify-rel-1-svc-a-a2"
-	svcBRun1 = "verify-rel-1-svc-b-a1"
+	svcACheck1 = "verify-rel-1-svc-a-a1"
+	svcACheck2 = "verify-rel-1-svc-a-a2"
+	svcBCheck1 = "verify-rel-1-svc-b-a1"
 )
 
 func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
@@ -47,7 +47,7 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 		assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 		assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 		assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no cross-cluster check or gate runs, and the hand-over is recorded")
-		assert.Empty(t, h.pipeline.runs())
+		assert.Empty(t, h.checks.requests())
 	})
 
 	t.Run("a node that was attempted fails the attempt", func(t *testing.T) {
@@ -71,7 +71,7 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 		}, p.NodeOutcomes)
 		assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 		assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-		assert.Empty(t, h.pipeline.runs())
+		assert.Empty(t, h.checks.requests())
 	})
 }
 
@@ -126,7 +126,7 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 	assert.Len(t, h.store.Tries(id), 1, "the only try is spent")
 	assert.Equal(t, proposal.StatusEscalated, h.attempt(2).Proposal.Status, "the tries being spent, the failing set is handed over")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Empty(t, h.pipeline.runs())
+	assert.Empty(t, h.checks.requests())
 
 	rows := h.flowRows(id, 1)
 	require.Len(t, rows["edits_map_to_a_project"], 1)
@@ -140,7 +140,7 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 	require.Len(t, dup.Findings, 1)
 	assert.Equal(t, "path_edited_twice", dup.Findings[0].Code)
 	assert.Empty(t, rows["one_manifest_kind"], "the checks stop at the first finding")
-	assert.Empty(t, rows["verification_run"])
+	assert.Empty(t, rows["release_check"])
 }
 
 // A cross-cluster finding fails the try like a failed gate does: the attempt
@@ -174,7 +174,7 @@ func TestRunner_ACrossClusterFindingStartsTheNextTry(t *testing.T) {
 	assert.Equal(t, remediation.TryVerifying, second.Status)
 	assert.Equal(t, 2, second.Attempt)
 	assert.Equal(t, proposal.StatusVerifying, h.attempt(2).Proposal.Status)
-	assert.Len(t, h.pipeline.runs(), 1, "the second try's one edited project is verified")
+	assert.Len(t, h.checks.requests(), 1, "the second try's one edited project is verified")
 
 	require.Equal(t, 4, h.llm.calls(), "each try asks the model once per cluster")
 	for _, req := range h.llm.requests[:2] {
@@ -210,11 +210,11 @@ func TestRunner_TheVerifyingRowCarriesTheTry(t *testing.T) {
 		"svc-a": {Status: proposal.StatusVerifying},
 		"svc-b": {Status: proposal.StatusVerifying},
 	}, p.NodeOutcomes)
-	assert.Equal(t, []proposal.Verification{
-		{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued},
-		{Project: "svc-b", Kind: "dbt", RunID: svcBRun1, Phase: proposal.PhaseQueued},
-	}, p.Verifications)
-	assert.Equal(t, svcARun1, p.VerificationRunID)
+	assert.Equal(t, []proposal.ReleaseCheck{
+		{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseQueued},
+		{Project: "svc-b", Kind: "dbt", CheckID: svcBCheck1, Phase: proposal.PhaseQueued},
+	}, p.ReleaseChecks)
+	assert.Equal(t, svcACheck1, p.ReleaseCheckID)
 	assert.Equal(t, []proposal.FileEdit{
 		{
 			Path:          "services/svc-a/models/orders.sql",
@@ -244,7 +244,7 @@ func TestRunner_TheVerifyingRowCarriesTheTry(t *testing.T) {
 
 	tr := h.try(id, 1)
 	assert.Equal(t, remediation.TryVerifying, tr.Status)
-	assert.Equal(t, t0.Add(verificationTimeout+time.Hour), tr.DeadlineAt)
+	assert.Equal(t, t0.Add(releaseCheckTimeout+time.Hour), tr.DeadlineAt)
 
 	rows := h.flowRows(id, 1)
 	for _, name := range []string{"edits_map_to_a_project", "no_path_edited_twice", "one_manifest_kind"} {
@@ -253,32 +253,32 @@ func TestRunner_TheVerifyingRowCarriesTheTry(t *testing.T) {
 		assert.Equal(t, remediation.StepDone, rows[name][0].Status, name)
 		assert.Empty(t, rows[name][0].Findings, name)
 	}
-	require.Len(t, rows["verification_run"], 1)
-	gate := rows["verification_run"][0]
+	require.Len(t, rows["release_check"], 1)
+	gate := rows["release_check"][0]
 	assert.Equal(t, "check", gate.Kind)
 	assert.Equal(t, remediation.StepWaiting, gate.Status)
-	assert.Equal(t, []string{svcARun1, svcBRun1}, gate.WaitingOn)
+	assert.Equal(t, []string{svcACheck1, svcBCheck1}, gate.WaitingOn)
 	assert.Equal(t, t0, gate.StartedAt)
 	assert.Nil(t, gate.FinishedAt)
 	assert.Equal(t, flowRevision, gate.FileRevision)
 
-	runs := h.pipeline.runs()
-	require.Len(t, runs, 2)
-	assert.Equal(t, svcARun1, runs[0].RunID)
-	assert.Equal(t, "tag-svc-a", runs[0].ImageTag)
-	assert.Equal(t, 1, runs[0].Attempt)
-	assert.NotEmpty(t, runs[0].SourceOverlayURI)
-	assert.Equal(t, svcBRun1, runs[1].RunID)
+	checks := h.checks.requests()
+	require.Len(t, checks, 2)
+	assert.Equal(t, svcACheck1, checks[0].CheckID)
+	assert.Equal(t, "tag-svc-a", checks[0].ImageTag)
+	assert.Equal(t, 1, checks[0].Attempt)
+	assert.NotEmpty(t, checks[0].SourceOverlayURI)
+	assert.Equal(t, svcBCheck1, checks[1].CheckID)
 
 	require.NoError(t, h.runner.Drive(ctx, id), "a verifying try waits for the poller")
-	assert.Len(t, h.pipeline.runs(), 2)
+	assert.Len(t, h.checks.requests(), 2)
 }
 
 func TestRunner_GatePassEmitsOneProposedEvent(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 	require.NoError(t, h.poll(id), "a poll of a remediation that ended does nothing")
@@ -299,15 +299,15 @@ func TestRunner_GatePassEmitsOneProposedEvent(t *testing.T) {
 	assert.Equal(t, proposal.StatusProposed, p.Status)
 	assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": {Status: proposal.StatusProposed}}, p.NodeOutcomes)
 	act := t0
-	assert.Equal(t, []proposal.Verification{
-		{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhasePassed, ActivatedAt: &act},
-	}, p.Verifications)
+	assert.Equal(t, []proposal.ReleaseCheck{
+		{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhasePassed, ActivatedAt: &act},
+	}, p.ReleaseChecks)
 	assert.Equal(t, remediation.TryPassed, h.try(id, 1).Status)
 	assert.Len(t, h.store.Tries(id), 1)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 
 	rows := h.flowRows(id, 1)
-	gate := rows["verification_run"][0]
+	gate := rows["release_check"][0]
 	assert.Equal(t, remediation.StepDone, gate.Status)
 	assert.NotNil(t, gate.FinishedAt)
 	assert.Empty(t, gate.Findings)
@@ -320,7 +320,7 @@ func TestRunner_GateFailStartsTheNextTry(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "column x does not exist"})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "column x does not exist"})
 
 	require.NoError(t, h.poll(id))
 
@@ -329,13 +329,13 @@ func TestRunner_GateFailStartsTheNextTry(t *testing.T) {
 	assert.Equal(t, "svc-a: column x does not exist", first.VerifyError)
 	assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": {Status: proposal.StatusFailed}}, first.Proposal.NodeOutcomes)
 	act := t0
-	assert.Equal(t, []proposal.Verification{{
-		Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseFailed, ActivatedAt: &act,
+	assert.Equal(t, []proposal.ReleaseCheck{{
+		Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseFailed, ActivatedAt: &act,
 		Error: "svc-a: column x does not exist",
-	}}, first.Proposal.Verifications)
-	gate := h.flowRows(id, 1)["verification_run"][0]
+	}}, first.Proposal.ReleaseChecks)
+	gate := h.flowRows(id, 1)["release_check"][0]
 	assert.Equal(t, remediation.StepDone, gate.Status)
-	assert.Equal(t, []remediation.Finding{{Code: "verification_failed", Message: "svc-a: column x does not exist"}}, gate.Findings)
+	assert.Equal(t, []remediation.Finding{{Code: "release_check_failed", Message: "svc-a: column x does not exist"}}, gate.Findings)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Empty(t, h.proposedEvents())
 
@@ -350,9 +350,9 @@ func TestRunner_GateFailStartsTheNextTry(t *testing.T) {
 
 	require.NoError(t, h.drive(id), "the worker drives the next try to the gate")
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 2).Status)
-	runs := h.pipeline.runs()
-	require.Len(t, runs, 2)
-	assert.Equal(t, svcARun2, runs[1].RunID)
+	checks := h.checks.requests()
+	require.Len(t, checks, 2)
+	assert.Equal(t, svcACheck2, checks[1].CheckID)
 	assert.Equal(t, 2, h.llm.calls(), "each try asks the model again")
 }
 
@@ -367,7 +367,7 @@ func TestRunner_EachTryIsShownTheEarlierTriesAtItsFailure(t *testing.T) {
 	assert.Contains(t, first, "### Attempt 1 (round 1)\nNothing was recorded for this try.")
 	assert.NotContains(t, first, "### Try ", "the try being made is not one of its earlier tries")
 
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "column x does not exist"})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "column x does not exist"})
 	require.NoError(t, h.poll(id))
 	require.NoError(t, h.drive(id))
 
@@ -376,13 +376,13 @@ func TestRunner_EachTryIsShownTheEarlierTriesAtItsFailure(t *testing.T) {
 	assert.Contains(t, second, "### Attempt 1 (round 1)")
 	assert.Contains(t, second, "### Try 1 (round 1)\nChanged ")
 	assert.Contains(t, second, "+select 2", "the second try sees the diff the first applied")
-	assert.Contains(t, second, "Why the gate failed: svc-a: column x does not exist", "and why its verification failed")
+	assert.Contains(t, second, "Why the gate failed: svc-a: column x does not exist", "and why its release check failed")
 	assert.Less(t, strings.Index(second, "### Attempt 1"), strings.Index(second, "### Try 1"), "oldest first")
 }
 
 func TestRunner_TriesSpentHandsOver(t *testing.T) {
 	h := newHarness(t)
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	for try := 1; try <= 3; try++ {
@@ -424,7 +424,7 @@ func TestRunner_ProposalRowMovedUnderTheRunnerEndsQuietly(t *testing.T) {
 			moved, err := h.store.ProposalRepository().MarkVerifyFailed(ctx, h.attempt(1).ID, "failed by hand", nil)
 			require.NoError(t, err)
 			require.True(t, moved)
-			h.pipeline.answer(phase, map[string]string{"svc-a": "broken"})
+			h.checks.answer(phase, map[string]string{"svc-a": "broken"})
 
 			require.NoError(t, h.poll(id))
 
@@ -444,27 +444,27 @@ func TestRunner_TheGateIsPolledFromWhenItsStepStarted(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.status = func(string) (ports.VerificationStatus, error) {
-		return ports.VerificationStatus{}, errors.New("release-controller unreachable")
+	h.checks.status = func(string) (ports.ReleaseCheckStatus, error) {
+		return ports.ReleaseCheckStatus{}, errors.New("release-controller unreachable")
 	}
 	// The try opened at t0 and its gate step started ten minutes later.
 	submitted := t0.Add(10 * time.Minute)
-	gate := h.flowRows(id, 1)["verification_run"][0]
+	gate := h.flowRows(id, 1)["release_check"][0]
 	gate.StartedAt = submitted
 	h.saveStep(gate)
 
-	h.clock.set(submitted.Add(verificationTimeout - time.Second))
+	h.clock.set(submitted.Add(releaseCheckTimeout - time.Second))
 	require.NoError(t, h.poll(id))
 	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status, "the budget counts from the gate step, not the try")
 
-	h.clock.set(submitted.Add(verificationTimeout))
+	h.clock.set(submitted.Add(releaseCheckTimeout))
 	require.NoError(t, h.poll(id))
 	first := h.attempt(1)
 	assert.Equal(t, proposal.StatusFailed, first.Proposal.Status)
-	assert.Equal(t, "verification timed out", first.VerifyError)
-	assert.Equal(t, []proposal.Verification{
-		{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued},
-	}, first.Proposal.Verifications, "a run that was never read keeps what was recorded for it")
+	assert.Equal(t, "release check timed out", first.VerifyError)
+	assert.Equal(t, []proposal.ReleaseCheck{
+		{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseQueued},
+	}, first.Proposal.ReleaseChecks, "a check that was never read keeps what was recorded for it")
 	assert.Equal(t, remediation.TryDrafting, h.try(id, 2).Status)
 }
 
@@ -474,15 +474,15 @@ func TestRunner_APollWithNoNewPhaseWritesNothing(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	require.NoError(t, h.poll(id))
-	assert.Zero(t, h.phaseWrites.Load(), "the run is still queued, as recorded")
+	assert.Zero(t, h.phaseWrites.Load(), "the check is still queued, as recorded")
 
-	h.pipeline.answer(proposal.PhaseRunning, nil)
+	h.checks.answer(proposal.PhaseRunning, nil)
 	require.NoError(t, h.poll(id))
 	assert.EqualValues(t, 1, h.phaseWrites.Load())
 	act := t0
-	assert.Equal(t, []proposal.Verification{
-		{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseRunning, ActivatedAt: &act},
-	}, h.attempt(1).Proposal.Verifications)
+	assert.Equal(t, []proposal.ReleaseCheck{
+		{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseRunning, ActivatedAt: &act},
+	}, h.attempt(1).Proposal.ReleaseChecks)
 
 	require.NoError(t, h.poll(id))
 	assert.EqualValues(t, 1, h.phaseWrites.Load(), "a phase that did not change is not written again")
@@ -494,9 +494,9 @@ func TestRunner_ACommitFailureAfterThePassEmitsOneProposedEvent(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	var armed atomic.Bool
-	h.pipeline.onStatus = func(context.Context) {
+	h.checks.onStatus = func(context.Context) {
 		if armed.CompareAndSwap(false, true) {
 			h.store.FailNextCommit()
 		}
@@ -505,8 +505,8 @@ func TestRunner_ACommitFailureAfterThePassEmitsOneProposedEvent(t *testing.T) {
 	require.Error(t, h.poll(id), "the pass's commit fails")
 	assert.Empty(t, h.proposedEvents())
 	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
-	gate := h.flowRows(id, 1)["verification_run"][0]
-	assert.Equal(t, remediation.StepWaiting, gate.Status, "the gate still waits on its runs")
+	gate := h.flowRows(id, 1)["release_check"][0]
+	assert.Equal(t, remediation.StepWaiting, gate.Status, "the gate still waits on its checks")
 	assert.Equal(t, 1, gate.Failures)
 
 	require.NoError(t, h.poll(id))
@@ -519,7 +519,7 @@ func TestRunner_ACommitFailureAfterThePassEmitsOneProposedEvent(t *testing.T) {
 
 func TestRunner_ACommitFailureAfterTheHandOverWritesOneEscalatedRow(t *testing.T) {
 	h := newHarness(t, withTries(1))
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	armed := false
@@ -551,7 +551,7 @@ func TestRunner_ACommitFailureAfterTheHandOverWritesOneEscalatedRow(t *testing.T
 
 func TestRunner_ASubmitErrorLeavesTheTryCheckingAndRunsAgain(t *testing.T) {
 	h := newHarness(t)
-	h.pipeline.submitErr = errors.New("release-controller unavailable")
+	h.checks.submitErr = errors.New("release-controller unavailable")
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	err := h.runner.Drive(ctx, id)
@@ -560,7 +560,7 @@ func TestRunner_ASubmitErrorLeavesTheTryCheckingAndRunsAgain(t *testing.T) {
 	tr := h.try(id, 1)
 	assert.Equal(t, remediation.TryChecking, tr.Status)
 	assert.Equal(t, t0.Add(10*time.Minute), tr.DeadlineAt)
-	gate := h.flowRows(id, 1)["verification_run"]
+	gate := h.flowRows(id, 1)["release_check"]
 	require.Len(t, gate, 1)
 	assert.Equal(t, remediation.StepFailed, gate[0].Status)
 	assert.Equal(t, 1, gate[0].Failures)
@@ -572,25 +572,25 @@ func TestRunner_ASubmitErrorLeavesTheTryCheckingAndRunsAgain(t *testing.T) {
 
 	tr = h.try(id, 1)
 	assert.Equal(t, remediation.TryVerifying, tr.Status)
-	assert.Equal(t, later.Add(verificationTimeout+time.Hour), tr.DeadlineAt)
+	assert.Equal(t, later.Add(releaseCheckTimeout+time.Hour), tr.DeadlineAt)
 	rows := h.flowRows(id, 1)
 	for _, name := range []string{"edits_map_to_a_project", "no_path_edited_twice", "one_manifest_kind"} {
 		assert.Equal(t, t0, rows[name][0].StartedAt, "%s ran once", name)
 	}
-	assert.Equal(t, remediation.StepWaiting, rows["verification_run"][0].Status)
-	assert.Equal(t, later, rows["verification_run"][0].StartedAt)
-	assert.Equal(t, 1, rows["verification_run"][0].Failures)
+	assert.Equal(t, remediation.StepWaiting, rows["release_check"][0].Status)
+	assert.Equal(t, later, rows["release_check"][0].StartedAt)
+	assert.Equal(t, 1, rows["release_check"][0].Failures)
 	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
 }
 
 // The commit that leaves the try verifying can fail after the gate submitted
-// its runs. The next drive submits them again under the same ids, so each
-// edited project still has one verification run, and the gate waits on the
-// runs it submitted.
+// its checks. The next drive submits them again under the same ids, so each
+// edited project still has one release check, and the gate waits on the
+// checks it submitted.
 func TestRunner_AFailedVerifyingCommitResubmitsTheSameRuns(t *testing.T) {
 	h := newHarness(t)
 	var armed atomic.Bool
-	h.pipeline.onSubmit = func() {
+	h.checks.onSubmit = func() {
 		if armed.CompareAndSwap(false, true) {
 			h.store.FailNextCommit()
 		}
@@ -598,36 +598,36 @@ func TestRunner_AFailedVerifyingCommitResubmitsTheSameRuns(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a"), compileNode("svc-b")))
 
 	require.Error(t, h.runner.Drive(ctx, id), "the commit after the submit fails")
-	submitted := h.pipeline.runs()
-	require.Len(t, submitted, 2, "the gate submitted a run per project")
+	submitted := h.checks.requests()
+	require.Len(t, submitted, 2, "the gate submitted a check per project")
 	assert.Equal(t, remediation.TryChecking, h.try(id, 1).Status)
-	assert.Equal(t, proposal.StatusGenerating, h.attempt(1).Proposal.Status, "the attempt row records no run")
-	gate := h.flowRows(id, 1)["verification_run"]
+	assert.Equal(t, proposal.StatusGenerating, h.attempt(1).Proposal.Status, "the attempt row records no check")
+	gate := h.flowRows(id, 1)["release_check"]
 	require.Len(t, gate, 1)
 	assert.Equal(t, remediation.StepFailed, gate[0].Status)
 	assert.Equal(t, 1, gate[0].Failures)
 
 	require.NoError(t, h.drive(id))
 
-	runs := h.pipeline.runs()
-	require.Len(t, runs, 4)
-	assert.Equal(t, submitted, runs[2:], "the second submit names the same runs over the same artifacts")
-	assert.Equal(t, []string{svcARun1, svcBRun1}, []string{runs[2].RunID, runs[3].RunID})
+	checks := h.checks.requests()
+	require.Len(t, checks, 4)
+	assert.Equal(t, submitted, checks[2:], "the second submit names the same checks over the same artifacts")
+	assert.Equal(t, []string{svcACheck1, svcBCheck1}, []string{checks[2].CheckID, checks[3].CheckID})
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	gate = h.flowRows(id, 1)["verification_run"]
+	gate = h.flowRows(id, 1)["release_check"]
 	require.Len(t, gate, 1)
 	assert.Equal(t, remediation.StepWaiting, gate[0].Status)
-	assert.Equal(t, []string{svcARun1, svcBRun1}, gate[0].WaitingOn)
-	assert.Equal(t, []proposal.Verification{
-		{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued},
-		{Project: "svc-b", Kind: "dbt", RunID: svcBRun1, Phase: proposal.PhaseQueued},
-	}, h.attempt(1).Proposal.Verifications, "one run per project")
+	assert.Equal(t, []string{svcACheck1, svcBCheck1}, gate[0].WaitingOn)
+	assert.Equal(t, []proposal.ReleaseCheck{
+		{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseQueued},
+		{Project: "svc-b", Kind: "dbt", CheckID: svcBCheck1, Phase: proposal.PhaseQueued},
+	}, h.attempt(1).Proposal.ReleaseChecks, "one check per project")
 
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
 	assert.Len(t, h.proposedEvents(), 1)
-	assert.Len(t, h.pipeline.runs(), 4, "the poll submits nothing")
+	assert.Len(t, h.checks.requests(), 4, "the poll submits nothing")
 }
 
 // lowUpstreamConfidenceOnALaterTry makes the upstream fix of
@@ -644,8 +644,8 @@ func (h *harness) lowUpstreamConfidenceOnALaterTry() {
 	}
 }
 
-// A gate that refuses the try's drafts without starting a run fails the try
-// like a gate whose run failed: the attempt is failed with the refusal, the try
+// A gate that refuses the try's drafts without starting a check fails the try
+// like a gate whose check failed: the attempt is failed with the refusal, the try
 // fails, and the remediation, still running, opens its next try, whose requests
 // show the refusal as the reason the gate failed. With no cross-cluster check
 // in the flow, the gate is the one to find two edits of one file.
@@ -665,19 +665,19 @@ func TestRunner_AGateThatRefusesTheDraftsStartsTheNextTry(t *testing.T) {
 		"svc-a": {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits},
 		"core":  {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits},
 	}, p.NodeOutcomes)
-	assert.Empty(t, p.Verifications)
+	assert.Empty(t, p.ReleaseChecks)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "the refused try does not end the remediation")
 	assert.Equal(t, 2, h.remediation(id).CurrentTry)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 2).Status)
 	assert.Equal(t, proposal.StatusVerifying, h.attempt(2).Proposal.Status)
-	assert.Len(t, h.pipeline.runs(), 1, "only the second try started a run")
+	assert.Len(t, h.checks.requests(), 1, "only the second try started a check")
 	assert.Empty(t, h.proposedEvents())
 
 	rows := h.flowRows(id, 1)
 	require.Len(t, rows, 1, "the gate is the only flow-level step of the first try")
-	require.Len(t, rows["verification_run"], 1)
-	gate := rows["verification_run"][0]
+	require.Len(t, rows["release_check"], 1)
+	gate := rows["release_check"][0]
 	assert.Equal(t, remediation.StepDone, gate.Status)
 	assert.NotNil(t, gate.FinishedAt)
 	assert.Empty(t, gate.WaitingOn)
@@ -703,7 +703,7 @@ func TestRunner_AGateRefusalWithNoTryLeftHandsOver(t *testing.T) {
 	assert.Len(t, h.store.Tries(id), 1, "the only try is spent")
 	assert.Equal(t, proposal.StatusEscalated, h.attempt(2).Proposal.Status, "the tries being spent, the failing set is handed over")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Empty(t, h.pipeline.runs())
+	assert.Empty(t, h.checks.requests())
 }
 
 // A refusal of the try's drafts, by a cross-cluster check or by the gate,

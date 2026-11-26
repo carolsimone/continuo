@@ -59,8 +59,8 @@ func TestCreateSeedBuildJob_EmptyImageTagErrors(t *testing.T) {
 	require.Error(t, c.CreateSeedBuildJob(context.Background(), p))
 }
 
-// seedOverlayParams returns seed-build params for a verification run
-// verifying a proposed fix to a team's seed CSV.
+// seedOverlayParams returns seed-build params for the release check
+// of a fix to a team's seed CSV.
 func seedOverlayParams() ValidationJobParams {
 	return ValidationJobParams{
 		JobName: "seedbuild-fx-verify", ReleaseID: "verify-rel-1-core-a1", NodeID: "seed.core.fx",

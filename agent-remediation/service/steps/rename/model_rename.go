@@ -122,7 +122,7 @@ func (s *ModelRename) Gather(ctx context.Context, in step.ContextInput) (step.Co
 // builtElsewhere reports whether a node of the live topology, of any project,
 // already builds schema.name, so a new name never trades one clash for
 // another. A failed read is logged and read as no such node: the
-// verification run still refuses a name that clashes.
+// release check still refuses a name that clashes.
 func (s *ModelRename) builtElsewhere(ctx context.Context, schema, name string) bool {
 	if s.nodes == nil || schema == "" {
 		return false

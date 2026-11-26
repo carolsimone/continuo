@@ -90,9 +90,9 @@ type ValidationJobSpec struct {
 	// parse-export leg for this release.
 	ParseProdS3URI      string
 	ParseCandidateS3URI string
-	// SourceOverlayURI locates the source-overlay tarball a verification
-	// run's compile Job lays over the project before compiling. Populated
-	// only for mode=compile dispatches of a verification run.
+	// SourceOverlayURI locates the source-overlay tarball a fix's
+	// release check's compile Job lays over the project before compiling.
+	// Populated only for mode=compile dispatches of a fix's release check.
 	SourceOverlayURI string
 	// SeedPreflight is the report-mode check a seed-build pod runs against the
 	// seed's production table before dbt; nil when the dispatch asks for none.

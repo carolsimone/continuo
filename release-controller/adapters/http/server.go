@@ -49,10 +49,10 @@ func (s *Server) ServeAPI(deps *handlers.Deps) {
 	s.mux.HandleFunc("POST /releases/{id}/retry-remediation", s.handleRetryRemediation)
 	s.mux.HandleFunc("GET /releases", s.handleListReleases)
 	s.mux.HandleFunc("GET /current-prod", s.handleGetCurrentProd)
-	s.mux.HandleFunc("POST /verification-runs", s.handleReceiveVerification)
-	s.mux.HandleFunc("GET /verification-runs/{id}", s.handleGetVerificationRun)
-	s.mux.HandleFunc("GET /verification-runs", s.handleListVerificationRuns)
-	s.mux.HandleFunc("GET /pipeline", s.handleGetPipeline)
+	s.mux.HandleFunc("POST /release-checks", s.handleReceiveFix)
+	s.mux.HandleFunc("GET /release-checks/{id}", s.handleGetReleaseCheck)
+	s.mux.HandleFunc("GET /release-checks", s.handleListReleaseChecks)
+	s.mux.HandleFunc("GET /release-queue", s.handleGetReleaseQueue)
 }
 
 // Routes returns the handler tree: the health routes, plus the API routes once

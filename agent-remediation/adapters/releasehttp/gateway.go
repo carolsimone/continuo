@@ -1,4 +1,4 @@
-// Package releasehttp implements ports.VerificationPipeline and
+// Package releasehttp implements ports.ReleaseChecks and
 // ports.ReleaseReader over release-controller's public HTTP API.
 package releasehttp
 
@@ -21,7 +21,7 @@ import (
 // component apply to third-party responses.
 const maxReleaseBodyBytes = 1 << 20 // 1 MiB
 
-// Gateway implements ports.VerificationPipeline and ports.ReleaseReader
+// Gateway implements ports.ReleaseChecks and ports.ReleaseReader
 // against a release-controller HTTP endpoint.
 type Gateway struct {
 	baseURL  string
@@ -30,13 +30,13 @@ type Gateway struct {
 }
 
 var (
-	_ ports.VerificationPipeline = (*Gateway)(nil)
-	_ ports.ReleaseReader        = (*Gateway)(nil)
+	_ ports.ReleaseChecks = (*Gateway)(nil)
+	_ ports.ReleaseReader = (*Gateway)(nil)
 )
 
 // NewGateway builds a Gateway. baseURL is release-controller's HTTP root
 // (e.g. http://release-controller:8088); evidence resolves a validation
-// node's run_results_uri to the sentinel JSON a failed run's NodeErrors is
+// node's run_results_uri to the sentinel JSON a failed check's NodeErrors is
 // built from.
 func NewGateway(baseURL string, evidence ports.EvidenceReader, hc *http.Client) *Gateway {
 	if hc == nil {
@@ -45,9 +45,9 @@ func NewGateway(baseURL string, evidence ports.EvidenceReader, hc *http.Client) 
 	return &Gateway{baseURL: strings.TrimRight(baseURL, "/"), hc: hc, evidence: evidence}
 }
 
-// verificationBody is the POST /verification-runs wire shape.
-type verificationBody struct {
-	RunID             string `json:"run_id"`
+// releaseCheckBody is the POST /release-checks wire shape.
+type releaseCheckBody struct {
+	CheckID           string `json:"check_id"`
 	Project           string `json:"project"`
 	ImageTag          string `json:"image_tag"`
 	Kind              string `json:"kind"`
@@ -56,40 +56,40 @@ type verificationBody struct {
 	SourceOverlayURI  string `json:"source_overlay_uri,omitempty"`
 }
 
-// Submit posts a verification run. 202 — including release-controller's
+// Submit posts a release check. 202 — including release-controller's
 // idempotent already-known case — is success; any other status is an error
 // carrying the response body.
-func (g *Gateway) Submit(ctx context.Context, r ports.VerificationRequest) error {
+func (g *Gateway) Submit(ctx context.Context, r ports.ReleaseCheckRequest) error {
 	if r.Kind == "" {
-		return fmt.Errorf("submit verification run %s: kind is required", r.RunID)
+		return fmt.Errorf("submit release check %s: kind is required", r.CheckID)
 	}
-	raw, err := json.Marshal(verificationBody{
-		RunID: r.RunID, Project: r.Project, ImageTag: r.ImageTag, Kind: r.Kind,
+	raw, err := json.Marshal(releaseCheckBody{
+		CheckID: r.CheckID, Project: r.Project, ImageTag: r.ImageTag, Kind: r.Kind,
 		VerifiesReleaseID: r.VerifiesReleaseID, Attempt: r.Attempt, SourceOverlayURI: r.SourceOverlayURI,
 	})
 	if err != nil {
-		return fmt.Errorf("marshal verification run %s: %w", r.RunID, err)
+		return fmt.Errorf("marshal release check %s: %w", r.CheckID, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+"/verification-runs", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+"/release-checks", bytes.NewReader(raw))
 	if err != nil {
-		return fmt.Errorf("build verification run request %s: %w", r.RunID, err)
+		return fmt.Errorf("build release check request %s: %w", r.CheckID, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := g.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("submit verification run %s: %w", r.RunID, err)
+		return fmt.Errorf("submit release check %s: %w", r.CheckID, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusAccepted {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("submit verification run %s: status %d: %s", r.RunID, resp.StatusCode, errBody)
+		return fmt.Errorf("submit release check %s: status %d: %s", r.CheckID, resp.StatusCode, errBody)
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxReleaseBodyBytes))
 	return nil
 }
 
-// runNodeResult mirrors a per_node_results entry, narrowed to what Status reads.
-type runNodeResult struct {
+// checkNodeResult mirrors a per_node_results entry, narrowed to what Status reads.
+type checkNodeResult struct {
 	Stage         string `json:"stage"`
 	NodeID        string `json:"node_id"`
 	Status        string `json:"status"`
@@ -101,17 +101,17 @@ type runNodeResult struct {
 	Detail string `json:"detail"`
 }
 
-// runResponse mirrors GET /verification-runs/{id}, narrowed to what Status reads.
-type runResponse struct {
-	Status         string          `json:"status"`
-	ActivatedAt    string          `json:"activated_at"`
-	FailReason     string          `json:"fail_reason"`
-	FailDetail     string          `json:"fail_detail"`
-	FailingNodes   []string        `json:"failing_nodes"`
-	PerNodeResults []runNodeResult `json:"per_node_results"`
+// checkResponse mirrors GET /release-checks/{id}, narrowed to what Status reads.
+type checkResponse struct {
+	Status         string            `json:"status"`
+	ActivatedAt    string            `json:"activated_at"`
+	FailReason     string            `json:"fail_reason"`
+	FailDetail     string            `json:"fail_detail"`
+	FailingNodes   []string          `json:"failing_nodes"`
+	PerNodeResults []checkNodeResult `json:"per_node_results"`
 }
 
-// phaseOf maps a run status onto the phase the proposal records.
+// phaseOf maps a check status onto the phase the proposal records.
 func phaseOf(status string) proposal.Phase {
 	switch status {
 	case "received":
@@ -125,46 +125,46 @@ func phaseOf(status string) proposal.Phase {
 	}
 }
 
-// Status reads a verification run and reports its phase, when it started,
-// and — for a failed run — the error text of each node the failure names and
-// the run's own reason and detail.
-func (g *Gateway) Status(ctx context.Context, runID string) (ports.VerificationStatus, error) {
-	var run runResponse
-	if err := g.getJSON(ctx, "/verification-runs/"+runID, &run); err != nil {
-		return ports.VerificationStatus{}, err
+// Status reads a release check and reports its phase, when it started,
+// and — for a failed check — the error text of each node the failure names and
+// the check's own reason and detail.
+func (g *Gateway) Status(ctx context.Context, checkID string) (ports.ReleaseCheckStatus, error) {
+	var check checkResponse
+	if err := g.getJSON(ctx, "/release-checks/"+checkID, &check); err != nil {
+		return ports.ReleaseCheckStatus{}, err
 	}
-	st := ports.VerificationStatus{Phase: phaseOf(run.Status)}
-	if run.ActivatedAt != "" {
-		at, err := time.Parse(time.RFC3339, run.ActivatedAt)
+	st := ports.ReleaseCheckStatus{Phase: phaseOf(check.Status)}
+	if check.ActivatedAt != "" {
+		at, err := time.Parse(time.RFC3339, check.ActivatedAt)
 		if err != nil {
-			return ports.VerificationStatus{}, fmt.Errorf("verification run %s: activated_at %q: %w", runID, run.ActivatedAt, err)
+			return ports.ReleaseCheckStatus{}, fmt.Errorf("release check %s: activated_at %q: %w", checkID, check.ActivatedAt, err)
 		}
 		st.ActivatedAt = at
 	}
 	if st.Phase == proposal.PhaseFailed {
-		st.NodeErrors = g.nodeErrors(ctx, run)
-		st.RunError = failFallback(run)
+		st.NodeErrors = g.nodeErrors(ctx, check)
+		st.CheckError = failFallback(check)
 	}
 	return st, nil
 }
 
-// failFallback is the run's own "reason — detail" text: the error of a node
-// the failure names without a text of its own, and the run error of a failure
+// failFallback is the check's own "reason — detail" text: the error of a node
+// the failure names without a text of its own, and the check error of a failure
 // that names no node.
-func failFallback(run runResponse) string {
+func failFallback(check checkResponse) string {
 	switch {
-	case run.FailDetail == "":
-		return run.FailReason
-	case run.FailReason == "":
-		return run.FailDetail
+	case check.FailDetail == "":
+		return check.FailReason
+	case check.FailReason == "":
+		return check.FailDetail
 	}
-	return run.FailReason + " — " + run.FailDetail
+	return check.FailReason + " — " + check.FailDetail
 }
 
-// nodeErrors builds the failing-node -> error-text map for a failed run, so a
+// nodeErrors builds the failing-node -> error-text map for a failed check, so a
 // rejected attempt records why each node it addressed failed and the next
 // attempt is shown it. Every node release-controller names in failing_nodes
-// starts out with the run-level fail reason and detail: a rejection that
+// starts out with the check-level fail reason and detail: a rejection that
 // release-controller decides itself (duplicate_table) names its nodes there
 // and records no failing per-node result at all. Each per-node result that did
 // not pass then sets its node's text from its own stage:
@@ -173,21 +173,21 @@ func failFallback(run runResponse) string {
 //   - parse: the parser rejected the node before any Job ran, so there is no
 //     run_results_uri; the error is the entry's inline detail.
 //   - compile and seed_build carry their error only in a raw dbt log, which is
-//     not a per-node text, so the node keeps the run-level reason and detail.
+//     not a per-node text, so the node keeps the check-level reason and detail.
 //
-// Either source falls back to the run-level reason and detail when it yields
+// Either source falls back to the check-level reason and detail when it yields
 // no text (an empty or missing URI, an unreadable body, an empty detail).
-func (g *Gateway) nodeErrors(ctx context.Context, run runResponse) map[string]string {
-	fallback := failFallback(run)
+func (g *Gateway) nodeErrors(ctx context.Context, check checkResponse) map[string]string {
+	fallback := failFallback(check)
 	out := make(map[string]string)
 	if fallback != "" {
-		for _, id := range run.FailingNodes {
+		for _, id := range check.FailingNodes {
 			if id != "" {
 				out[id] = fallback
 			}
 		}
 	}
-	for _, n := range run.PerNodeResults {
+	for _, n := range check.PerNodeResults {
 		if n.Status == "ok" {
 			continue
 		}
@@ -228,7 +228,7 @@ type sentinelResult struct {
 // decodes to a record with no status and is skipped rather than accepted.
 //
 // ok is false for a body holding no such object, which is a genuine miss the
-// caller answers by falling back to the run-level fail text.
+// caller answers by falling back to the check-level fail text.
 func parseSentinelResult(raw []byte) (sentinelResult, bool) {
 	for start := bytes.IndexByte(raw, '{'); start >= 0; {
 		var sr sentinelResult
@@ -247,7 +247,7 @@ func parseSentinelResult(raw []byte) (sentinelResult, bool) {
 // fetchMessage resolves a validation node's run_results_uri to its sentinel
 // JSON's message. Any failure to fetch or parse degrades to "" rather than an
 // error, since a missing/unreadable structured result is not itself the
-// caller's fault — nodeErrors falls back to the run-level fail detail.
+// caller's fault — nodeErrors falls back to the check-level fail detail.
 func (g *Gateway) fetchMessage(ctx context.Context, uri string) string {
 	if uri == "" {
 		return ""

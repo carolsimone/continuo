@@ -94,7 +94,7 @@ func TestExpectation_OnlyTheHandOverMayRunWhenEveryNodeIsHandedOver(t *testing.T
 			want: "ran 1 steps besides the output hand_over",
 		},
 		"the gate": {
-			rows: []remediation.StepRun{handOver, journalRow(id, remediation.FlowCluster, "verification_run", remediation.KindCheck)},
+			rows: []remediation.StepRun{handOver, journalRow(id, remediation.FlowCluster, "release_check", remediation.KindCheck)},
 			want: "ran 1 steps besides the output hand_over",
 		},
 		"an output of another name": {

@@ -39,7 +39,7 @@
     ],
     "Gate": [
       {
-        "Code": "verification_failed",
+        "Code": "release_check_failed",
         "Message": "column x does not exist",
         "File": "models/orders_daily.sql",
         "Line": 3

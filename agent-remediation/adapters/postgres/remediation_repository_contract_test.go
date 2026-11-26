@@ -424,7 +424,7 @@ func TestRemediationRepository_ClaimNextSkipsAVerifyingTryAndListVerifyingReturn
 		}
 		require.NoError(t, env.remediations.SaveCluster(ctx, cluster))
 		require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-			RemediationID: verifying.ID, Try: 1, Cluster: 0, Step: "verification_run", Kind: "check", Round: 1,
+			RemediationID: verifying.ID, Try: 1, Cluster: 0, Step: "release_check", Kind: "check", Round: 1,
 			Status: remediation.StepWaiting, WaitingOn: []string{"run-1"}, StartedAt: contractBase,
 		}))
 		drafting := mustCreate(t, env, newRemediation("rel-drafting", 1, contractBase.Add(time.Second)))
@@ -759,7 +759,7 @@ func TestRemediationRepository_ListFailingSteps(t *testing.T) {
 		failed := mk("rel-failed", contractBase.Add(time.Minute))
 		step(failed, 1, "draft", remediation.StepFailed, 5)
 		waiting := mk("rel-waiting", contractBase)
-		step(waiting, 1, "verification_run", remediation.StepWaiting, 7)
+		step(waiting, 1, "release_check", remediation.StepWaiting, 7)
 		few := mk("rel-few", contractBase)
 		step(few, 1, "draft", remediation.StepFailed, 4)
 		done := mk("rel-done-step", contractBase)
@@ -1017,7 +1017,7 @@ func TestProposalRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 			Source: "validation", ReleaseID: "rel-fix", RemediationID: r.ID.String(), NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, Status: proposal.StatusVerifying,
 			NodeOutcomes:  map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}},
-			Verifications: []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "run-1"}},
+			ReleaseChecks: []proposal.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1"}},
 			CreatedAt:     contractBase,
 		}))
 		ids := env.proposalIDs(t)
@@ -1033,7 +1033,7 @@ func TestProposalRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 
 		checked, err := remediation.NewChecked(remediation.Draft{}, nil)
 		require.NoError(t, err)
-		final := []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhasePassed}}
+		final := []proposal.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1", Phase: proposal.PhasePassed}}
 		verified, err := remediation.NewVerified(id, []remediation.Checked{checked}, nil, final)
 		require.NoError(t, err)
 
@@ -1044,7 +1044,7 @@ func TestProposalRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, proposal.StatusProposed, view.Status)
 		require.Equal(t, proposal.StatusProposed, view.NodeOutcomes["model.a"].Status)
-		require.Equal(t, final, view.Verifications)
+		require.Equal(t, final, view.ReleaseChecks)
 
 		hit, err = env.proposals.MarkFixVerified(ctx, verified)
 		require.NoError(t, err)
@@ -1229,7 +1229,7 @@ func TestRemediationRepository_LockByReleaseReadsAndLocksTheRemediationOfTheKey(
 			Members: []string{"model.a"}, Status: remediation.ClusterChecked, Round: 1,
 		}))
 		require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-			RemediationID: r.ID, Try: 1, Cluster: 0, Step: "verification_run", Kind: "check", Round: 1,
+			RemediationID: r.ID, Try: 1, Cluster: 0, Step: "release_check", Kind: "check", Round: 1,
 			Status: remediation.StepFailed, Failures: 5, LastError: "down", StartedAt: contractBase,
 		}))
 
@@ -1351,7 +1351,7 @@ func TestRemediationRepository_ListContextOfEarlierTriesReadsTheContextRowsOfThe
 		row(r, 1, 1, "python-contract", "prompt", remediation.StepDone)
 		cluster(r, 1, 2, "model.b")
 		row(r, 1, 2, "contract_file", "context", remediation.StepDone)
-		row(r, 1, 0, "verification_run", "check", remediation.StepDone)
+		row(r, 1, 0, "release_check", "check", remediation.StepDone)
 		cluster(r, 2, 1, "model.a")
 		cluster(r, 2, 2, "model.b", "model.c")
 		row(r, 2, 2, "contract_file", "context", remediation.StepDone)

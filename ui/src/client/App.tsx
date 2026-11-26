@@ -6,7 +6,7 @@ import NodeDetailPage from './NodeDetailPage';
 import ReleaseDetailPage from './ReleaseDetailPage';
 import RouteErrorBoundary from './RouteErrorBoundary';
 import RunRedirect from './RunRedirect';
-import VerificationDetailPage from './VerificationDetailPage';
+import ReleaseCheckDetailPage from './ReleaseCheckDetailPage';
 import ChatContainer from './chat/ChatContainer';
 import { useAuth } from './auth/useAuth';
 import { AuthContext } from './auth/AuthContext';
@@ -52,7 +52,7 @@ export default function App() {
                 <Route path="/node/:fqn" element={<NodeDetailPage />} />
                 <Route path="/run/:id" element={<RunRedirect />} />
                 <Route path="/releases/:id" element={<ReleaseDetailPage />} />
-                <Route path="/verifications/:id" element={<VerificationDetailPage />} />
+                <Route path="/release-checks/:id" element={<ReleaseCheckDetailPage />} />
               </Routes>
             </RouteErrorBoundary>
           </div>

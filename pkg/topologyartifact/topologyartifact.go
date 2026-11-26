@@ -2,7 +2,7 @@
 // one immutable, gzipped JSON document that carries a release's whole topology,
 // stored at tenants/<tenant>/topologies/<release>/topology.json.gz.
 //
-// topology-controller writes it for every candidate and verification run;
+// topology-controller writes it for every candidate and release check;
 // release-controller writes it for the topologies it announces itself. A
 // writer stores Encode's bytes as they are, with Content-Type application/gzip
 // and no Content-Encoding, so no client or proxy decompresses them on the way.

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,7 +39,7 @@ func putCompilingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps, re
 
 	r, err := store.GetRelease(releaseID)
 	require.NoError(t, err)
-	require.Equal(t, pipeline.StatusCompiling, r.Status(),
+	require.Equal(t, releasecheck.StatusCompiling, r.Status(),
 		"putCompilingRelease: release must be in compiling after AdvanceQueue")
 }
 
@@ -78,7 +78,7 @@ func TestHandleCompileResult_OKEmitsReleaseRequested(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, pipeline.StatusParsing, r.Status())
+	assert.Equal(t, releasecheck.StatusParsing, r.Status())
 
 	e := lastOutbox(t, fakes)
 	assert.Equal(t, streams.ReleaseRequestedV1, e.StreamName)
@@ -115,7 +115,7 @@ func TestHandleCompileResult_FailedRejects(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "compile_failed", r.FailReason())
 	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
@@ -123,7 +123,7 @@ func TestHandleCompileResult_FailedRejects(t *testing.T) {
 	p := decodeJSON(t, e.Payload)
 	_, hasErrorClass := p["error_class"]
 	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
-	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, fakes, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, fakes, streams.ReleaseCheckFinishedV1)))
 }
 
 // TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
@@ -147,7 +147,7 @@ func TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
 			require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
 
 			r := mustGetRelease(t, fakes, releaseID)
-			assert.Equal(t, pipeline.StatusRejected, r.Status())
+			assert.Equal(t, releasecheck.StatusRejected, r.Status())
 			assert.Equal(t, "parse_rehearsal_failed", r.FailReason())
 
 			e := findEntry(t, fakes, streams.ReleaseRejectedV1)
@@ -199,7 +199,7 @@ func TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFaile
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "artifact_upload_failed", r.FailReason())
 
 	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
@@ -233,7 +233,7 @@ func TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged(t
 			require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
 
 			r := mustGetRelease(t, fakes, releaseID)
-			assert.Equal(t, pipeline.StatusRejected, r.Status())
+			assert.Equal(t, releasecheck.StatusRejected, r.Status())
 			assert.Equal(t, "compile_failed", r.FailReason())
 
 			e := findEntry(t, fakes, streams.ReleaseRejectedV1)
@@ -270,7 +270,7 @@ func TestHandleCompileResult_MixedPerNode_PinsFirstMatchDeterminism(t *testing.T
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "parse_rehearsal_failed", r.FailReason())
 
 	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
@@ -309,7 +309,7 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "compile_failed", r.FailReason())
 
 	// The aggregate must record a per-node compile-stage result.
@@ -357,50 +357,50 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	assert.Equal(t, "failed", perNode[0].Status)
 	assert.Equal(t, "s3://c.log", perNode[0].DBTLogURI)
 
-	// A candidate's terminal decision also emits pipeline.run.finished:v1.
-	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, fakes, streams.PipelineRunFinishedV1)))
+	// A candidate's terminal decision also emits release_check.finished:v1.
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, fakes, streams.ReleaseCheckFinishedV1)))
 }
 
-// putCompilingVerification mirrors putCompilingRelease but seeds a
-// verification run instead of a candidate.
-func putCompilingVerification(t *testing.T, store *fakeStore, deps *handlers.Deps, releaseID string) {
+// putCompilingFix mirrors putCompilingRelease but seeds a
+// fix's release check instead of a candidate.
+func putCompilingFix(t *testing.T, store *fakeStore, deps *handlers.Deps, releaseID string) {
 	t.Helper()
-	store.SeedRelease(pipeline.NewVerification(releaseID, "svc-a", "sha-compile", "rel-1", 1, "", release.ManifestKindDbt, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix(releaseID, "svc-a", "sha-compile", "rel-1", 1, "", release.ManifestKindDbt, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(ctx(t), deps))
 
 	r, err := store.GetRelease(releaseID)
 	require.NoError(t, err)
-	require.Equal(t, pipeline.StatusCompiling, r.Status(),
-		"putCompilingVerification: release must be in compiling after AdvanceQueue")
+	require.Equal(t, releasecheck.StatusCompiling, r.Status(),
+		"putCompilingFix: release must be in compiling after AdvanceQueue")
 }
 
-// TestHandleCompileResult_Verification_Failed_NoReleaseRejected_FinishedEmitted
-// verifies a verification run's compile failure ends the run at Failed,
-// emits no release.rejected:v1 at all (a verification failure is never a
-// release rejection — Global Constraint), and emits pipeline.run.finished:v1
+// TestHandleCompileResult_Fix_Failed_NoReleaseRejected_FinishedEmitted
+// verifies a fix's compile failure ends the check at Failed,
+// emits no release.rejected:v1 at all (a fix's release check failure is never a
+// release rejection — Global Constraint), and emits release_check.finished:v1
 // with outcome "failed".
-func TestHandleCompileResult_Verification_Failed_NoReleaseRejected_FinishedEmitted(t *testing.T) {
+func TestHandleCompileResult_Fix_Failed_NoReleaseRejected_FinishedEmitted(t *testing.T) {
 	d, fakes := newTestDeps(t)
 	releaseID := "rel-verify-compile-fail"
-	putCompilingVerification(t, fakes, d, releaseID)
+	putCompilingFix(t, fakes, d, releaseID)
 
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
 		ReleaseID: releaseID, Status: "failed", ErrorDetail: "ref not found",
 	}))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, pipeline.StatusFailed, r.Status())
+	assert.Equal(t, releasecheck.StatusFailed, r.Status())
 	assert.Equal(t, "compile_failed", r.FailReason())
-	assert.Nil(t, r.RejectionPayload(), "a verification stores no rejection payload")
+	assert.Nil(t, r.RejectionPayload(), "a fix's release check stores no rejection payload")
 
 	for _, e := range fakes.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
-			"a verification run's compile failure must not be reported as a release rejection")
+			"a fix's compile failure must not be reported as a release rejection")
 	}
-	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, fakes, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, fakes, streams.ReleaseCheckFinishedV1)))
 }
 
-// The compile-ok path requests the manifest load with the image tags the run
+// The compile-ok path requests the manifest load with the image tags the check
 // assembled at activation; topology-controller joins exactly these onto the
 // candidate topology it writes.
 func TestHandleCompileResult_OKReleaseRequestedCarriesAssembledImageTags(t *testing.T) {

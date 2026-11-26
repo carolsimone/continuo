@@ -13,8 +13,8 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/streams"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,10 +47,10 @@ func TestIntegration_OntologyRelease_PromotesWithNoNodes(t *testing.T) {
 
 	require.Equal(t, http.StatusAccepted, postRelease(srv, ontologyRequest("it-ont-1", "company-ontology")).Code)
 
-	r, err := deps.NewUoW().RunRepo().Get(ctx, "it-ont-1")
+	r, err := deps.NewUoW().ReleaseCheckRepo().Get(ctx, "it-ont-1")
 	require.NoError(t, err)
 	require.NotNil(t, r)
-	assert.Equal(t, pipeline.StatusParsing, r.Status(), "an ontology release has no compile leg")
+	assert.Equal(t, releasecheck.StatusParsing, r.Status(), "an ontology release has no compile leg")
 	assert.Equal(t, release.ManifestKindOntology, r.ManifestKind())
 
 	entries, err := deps.NewUoW().OutboxRepo().GetPendingBatch(ctx, 10)
@@ -75,9 +75,9 @@ func TestIntegration_OntologyRelease_PromotesWithNoNodes(t *testing.T) {
 		ReleaseID: "it-ont-1", Status: "ok", TopologyRef: ref,
 	}))
 
-	r, err = deps.NewUoW().RunRepo().Get(ctx, "it-ont-1")
+	r, err = deps.NewUoW().ReleaseCheckRepo().Get(ctx, "it-ont-1")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "nothing to validate: the ontology release promotes")
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status(), "nothing to validate: the ontology release promotes")
 	var kind, key string
 	require.NoError(t, db.QueryRow(`SELECT manifest_kind, manifest_s3_key FROM service_prod WHERE project_name = 'company-ontology'`).Scan(&kind, &key))
 	assert.Equal(t, "ontology", kind)
@@ -107,7 +107,7 @@ func TestIntegration_ConcurrentOntologySubmissionsOfTwoProjectsHaveOneWinner(t *
 	deps.OntologyEnabled = true
 
 	for round := 0; round < 20; round++ {
-		_, err := db.Exec("DELETE FROM release_pipeline_runs")
+		_, err := db.Exec("DELETE FROM release_checks")
 		require.NoError(t, err)
 
 		projects := []string{"ontology-a", "ontology-b"}
@@ -138,8 +138,8 @@ func TestIntegration_ConcurrentOntologySubmissionsOfTwoProjectsHaveOneWinner(t *
 		}
 		require.Equal(t, 1, winners, "round %d: errs %v", round, errs)
 
-		var runs int
-		require.NoError(t, db.QueryRow(`SELECT count(*) FROM release_pipeline_runs`).Scan(&runs))
-		assert.Equal(t, 1, runs, "round %d: the loser stores nothing", round)
+		var checks int
+		require.NoError(t, db.QueryRow(`SELECT count(*) FROM release_checks`).Scan(&checks))
+		assert.Equal(t, 1, checks, "round %d: the loser stores nothing", round)
 	}
 }

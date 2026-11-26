@@ -97,8 +97,8 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 			NodeOutcomes: map[string]proposal.NodeOutcome{
 				"s.a": {Status: proposal.StatusProposed, Reason: "fixed"},
 			},
-			Verifications: []proposal.Verification{
-				{Project: "service-1", Kind: "dbt", RunID: "verify-x", Phase: proposal.PhasePassed},
+			ReleaseChecks: []proposal.ReleaseCheck{
+				{Project: "service-1", Kind: "dbt", CheckID: "verify-x", Phase: proposal.PhasePassed},
 			},
 			Confidence:     proposal.Confidence("high"),
 			Rationale:      "reason",
@@ -166,11 +166,11 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 	require.Contains(t, p.NodeOutcomes, "s.a")
 	assert.Equal(t, "proposed", p.NodeOutcomes["s.a"].Status)
 	assert.Equal(t, "fixed", p.NodeOutcomes["s.a"].Reason)
-	require.Len(t, p.Verifications, 1)
-	assert.Equal(t, "service-1", p.Verifications[0].Project)
-	assert.Equal(t, "dbt", p.Verifications[0].Kind)
-	assert.Equal(t, "verify-x", p.Verifications[0].RunId)
-	assert.Equal(t, "passed", p.Verifications[0].Phase)
+	require.Len(t, p.ReleaseChecks, 1)
+	assert.Equal(t, "service-1", p.ReleaseChecks[0].Project)
+	assert.Equal(t, "dbt", p.ReleaseChecks[0].Kind)
+	assert.Equal(t, "verify-x", p.ReleaseChecks[0].CheckId)
+	assert.Equal(t, "passed", p.ReleaseChecks[0].Phase)
 }
 
 func TestProposalsServer_ListProposals_InternalError(t *testing.T) {

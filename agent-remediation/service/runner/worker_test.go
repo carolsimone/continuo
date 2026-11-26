@@ -79,7 +79,7 @@ func TestWorker_DrivesAnAcceptedRemediationToTheGate(t *testing.T) {
 	w.Wake()
 
 	h.waitForTry(id, remediation.TryVerifying)
-	assert.Len(t, h.pipeline.runs(), 1)
+	assert.Len(t, h.checks.requests(), 1)
 	// The worker lets go of the lease once the drive ends, so the poller can
 	// claim the remediation.
 	require.Eventually(t, func() bool { return h.remediation(id).LeaseOwner == "" }, 5*time.Second, 10*time.Millisecond)
@@ -101,7 +101,7 @@ func TestWorker_TwoWorkersNeverDriveOneRemediation(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	assert.Equal(t, 1, h.llm.calls(), "one model call: one worker wrote each step")
-	assert.Len(t, h.pipeline.runs(), 1, "one verification run")
+	assert.Len(t, h.checks.requests(), 1, "one release check")
 	assert.Len(t, h.proposals(), 1, "one attempt row")
 	assert.Len(t, h.store.Tries(id), 1)
 	rows := h.stepRows(id, 1, 1)
@@ -287,7 +287,7 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsTakenOver(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	require.Len(t, h.proposals(), 1, "one row for the attempt")

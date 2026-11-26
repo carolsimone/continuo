@@ -13,7 +13,7 @@ import (
 )
 
 // assertCandidateTopologyArtifact checks the topology artifact topology-controller
-// wrote for a release: release_pipeline_runs references it by URI, checksum and
+// wrote for a release: release_checks references it by URI, checksum and
 // node count; the object at the deterministic key in MinIO hashes to the recorded
 // checksum and decodes to the release's own document; and nodeID carries
 // imageTag, the tag the release was submitted with, which topology-controller
@@ -24,7 +24,7 @@ func assertCandidateTopologyArtifact(t *testing.T, ctx context.Context, clients 
 	var count int
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
 		`SELECT candidate_topology_uri, candidate_topology_sha256, candidate_node_count
-		   FROM release_pipeline_runs WHERE run_id = $1`, releaseID).Scan(&uri, &sha, &count),
+		   FROM release_checks WHERE check_id = $1`, releaseID).Scan(&uri, &sha, &count),
 		"read the topology reference of release %s", releaseID)
 
 	key := topologyartifact.Key(events.DefaultTenantID, releaseID)
@@ -61,18 +61,18 @@ func assertCandidateTopologyArtifact(t *testing.T, ctx context.Context, clients 
 // catalog's live pointer holds the release under that same seq.
 func assertCurrentProdByReference(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
 	t.Helper()
-	var cpRelease, cpURI, cpSHA, runURI, runSHA string
+	var cpRelease, cpURI, cpSHA, checkURI, checkSHA string
 	var cpSeq int64
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
 		`SELECT release_id, topology_uri, topology_sha256, promotion_seq FROM current_prod WHERE id = 1`).
 		Scan(&cpRelease, &cpURI, &cpSHA, &cpSeq), "read current_prod")
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT candidate_topology_uri, candidate_topology_sha256 FROM release_pipeline_runs WHERE run_id = $1`,
-		releaseID).Scan(&runURI, &runSHA), "read the topology reference of release %s", releaseID)
+		`SELECT candidate_topology_uri, candidate_topology_sha256 FROM release_checks WHERE check_id = $1`,
+		releaseID).Scan(&checkURI, &checkSHA), "read the topology reference of release %s", releaseID)
 
 	require.Equal(t, releaseID, cpRelease)
-	require.Equal(t, runURI, cpURI, "current_prod must point at the release's own artifact")
-	require.Equal(t, runSHA, cpSHA)
+	require.Equal(t, checkURI, cpURI, "current_prod must point at the release's own artifact")
+	require.Equal(t, checkSHA, cpSHA)
 	require.Positive(t, cpSeq, "a promotion takes a promotion seq")
 	require.Equal(t, livePointer{releaseID: releaseID, promotionSeq: cpSeq}, readLivePointer(ctx, clients),
 		"catalog's live pointer must carry the seq the promotion took")

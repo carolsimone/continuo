@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { ReleaseListItem, ReleasesListResponse, CurrentProd, PipelineResponse } from './types';
+import { ReleaseListItem, ReleasesListResponse, CurrentProd, ReleaseQueueResponse } from './types';
 import { releasePillClass, reasonLabel } from './release-helpers';
 
 const STATUS_FILTERS = ['', 'promoted', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
@@ -11,7 +11,7 @@ export default function ReleasesPanel() {
   const [nextCursor, setNextCursor] = useState('');
   const [status, setStatus] = useState('');
   const [currentProd, setCurrentProd] = useState<CurrentProd | null>(null);
-  const [pipeline, setPipeline] = useState<PipelineResponse | null>(null);
+  const [releaseQueue, setReleaseQueue] = useState<ReleaseQueueResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = (cursor: string, replace: boolean) => {
@@ -33,7 +33,7 @@ export default function ReleasesPanel() {
   useEffect(() => {
     const f = () => {
       fetch('/api/releases/current-prod').then(r => r.json()).then(setCurrentProd).catch(() => {});
-      fetch('/api/pipeline').then(r => r.json()).then(setPipeline).catch(() => {});
+      fetch('/api/release-queue').then(r => r.json()).then(setReleaseQueue).catch(() => {});
     };
     f();
     const id = setInterval(f, 5000);
@@ -59,19 +59,19 @@ export default function ReleasesPanel() {
         </div>
       )}
 
-      {pipeline?.active ? (
+      {releaseQueue?.active ? (
         <div className="info-strip info-strip--warning">
           <span className="info-strip__icon">⚠</span>
-          {pipeline.active.run_kind === 'verification' ? (
+          {releaseQueue.active.check_kind === 'fix' ? (
             <>
-              In flight · verification run{' '}
-              <Link to={`/verifications/${pipeline.active.run_id}`}><strong>{pipeline.active.run_id}</strong></Link>
-              {' '}for <Link to={`/releases/${pipeline.active.verifies_release_id}`}>{pipeline.active.verifies_release_id}</Link>
-              {' '}(attempt {pipeline.active.attempt}, project {pipeline.active.project}) · {pipeline.active.status}
+              In flight · a fix's release check{' '}
+              <Link to={`/release-checks/${releaseQueue.active.check_id}`}><strong>{releaseQueue.active.check_id}</strong></Link>
+              {' '}for <Link to={`/releases/${releaseQueue.active.verifies_release_id}`}>{releaseQueue.active.verifies_release_id}</Link>
+              {' '}(attempt {releaseQueue.active.attempt}, project {releaseQueue.active.project}) · {releaseQueue.active.status}
             </>
           ) : (
             <>
-              In flight · <Link to={`/releases/${pipeline.active.run_id}`}><strong>{pipeline.active.run_id}</strong></Link> · {pipeline.active.status}
+              In flight · <Link to={`/releases/${releaseQueue.active.check_id}`}><strong>{releaseQueue.active.check_id}</strong></Link> · {releaseQueue.active.status}
             </>
           )}
         </div>

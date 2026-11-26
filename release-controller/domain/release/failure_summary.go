@@ -16,7 +16,7 @@ const (
 	maxNamedUpstream = 3
 )
 
-// FailedNode is a node that did not pass a pipeline stage, with the project
+// FailedNode is a node that did not pass a leg, with the project
 // the candidate topology declares for it ("" when it names none). Skipped marks
 // a node that never ran because something upstream of it failed: a consequence
 // of a failure, not a failure of its own.

@@ -50,7 +50,7 @@ const e2eBaselineReleaseID = "e2e-baseline"
 const probeUniqueID = "e2e_schema.rel_probe"
 
 // TestE2E_ReleasePromote_ValidatesAndSwapsTopology drives the blue/green
-// release pipeline end-to-end through the production cutover path:
+// release check end-to-end through the production cutover path:
 //
 //	POST /releases → release.requested:v1 → topology-controller candidate parse
 //	→ topology artifact in S3 + release.parsed:v1 → release-controller derives the changed-node
@@ -122,7 +122,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe excluded)", len(prodNodes))
 
 	// 2. Reset the queue and seed current_prod and every service_prod pointer
-	//    so candidate and verification assembly reconstruct the full topology.
+	//    so candidate and fix assembly reconstruct the full topology.
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
@@ -818,7 +818,7 @@ func parseManifestNodes(t *testing.T, ctx context.Context, project string, manif
 func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 	_, err := clients.releaseDB.ExecContext(ctx,
-		`DELETE FROM release_pipeline_runs WHERE status IN ('received','compiling','parsing','seed_building','validating')`)
+		`DELETE FROM release_checks WHERE status IN ('received','compiling','parsing','seed_building','validating')`)
 	require.NoError(t, err, "reset releases queue")
 	_, err = clients.releaseDB.ExecContext(ctx,
 		`DELETE FROM release_controller_outbox WHERE status = 'pending'`)
@@ -886,7 +886,7 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 
 // seedServiceProd seeds the baseline manifest key and image tag for every
 // project. Assembly replaces the changed project's pointer with its candidate;
-// a verification editing another project still needs that baseline pointer to
+// a fix's release check editing another project still needs that baseline pointer to
 // cover every project live in current_prod at activation.
 func seedServiceProd(t *testing.T, ctx context.Context, clients *testClients, allProjects map[string]projectInfo) {
 	t.Helper()

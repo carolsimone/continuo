@@ -1,6 +1,6 @@
 # Two clusters edit one file: svc-a is fixed at base, the core ancestor it
 # reads, and core's own compile failure is fixed in that same file. No
-# verification run could judge both edits, so the try fails before the gate,
+# release check could judge both edits, so the try fails before the gate,
 # and so does every next try, which makes the same two edits, until the flow's
 # tries are spent. The answers below are one try's: the scenario gives every
 # try them again. Built from the runner's cross-cluster test

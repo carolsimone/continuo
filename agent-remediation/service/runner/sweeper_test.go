@@ -71,7 +71,7 @@ func TestSweeper_FiveFailuresIsASystemFailure(t *testing.T) {
 func TestSweeper_CountsAStepThatWaitsOnItsRuns(t *testing.T) {
 	h := newHarness(t)
 	id := h.drafting()
-	h.stepFailing(id, "verification_run", remediation.StepWaiting, 5)
+	h.stepFailing(id, "release_check", remediation.StepWaiting, 5)
 
 	require.NoError(t, h.sweeper().Sweep(ctx))
 
@@ -169,7 +169,7 @@ func TestSweeper_EndsAVerifyingTryWhoseGateKeepsFailing(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	gate := h.flowRows(id, 1)["verification_run"][0]
+	gate := h.flowRows(id, 1)["release_check"][0]
 	gate.Failures = 5
 	gate.LastError = "rebuilt run ids differ"
 	h.saveStep(gate)
@@ -177,7 +177,7 @@ func TestSweeper_EndsAVerifyingTryWhoseGateKeepsFailing(t *testing.T) {
 	require.NoError(t, h.sweeper().Sweep(ctx))
 
 	assert.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
-	assert.Contains(t, h.remediation(id).Failure, "verification_run")
+	assert.Contains(t, h.remediation(id).Failure, "release_check")
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status, "the try is left for a redrive to resume")
 
 	// The attempt row does not stay verifying: it is failed with the runs it
@@ -185,7 +185,7 @@ func TestSweeper_EndsAVerifyingTryWhoseGateKeepsFailing(t *testing.T) {
 	// release counts it.
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusFailed, p.Status)
-	assert.Equal(t, []proposal.Verification{{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}}, p.Verifications)
+	assert.Equal(t, []proposal.ReleaseCheck{{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseQueued}}, p.ReleaseChecks)
 	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["svc-a"].Status)
 	assert.Equal(t, deadLetteredReason(h.remediation(id)), h.attempt(1).VerifyError, "the row carries the reason")
 }

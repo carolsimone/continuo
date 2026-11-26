@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +24,7 @@ func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusReceived, r.Status())
+	assert.Equal(t, releasecheck.StatusReceived, r.Status())
 	assert.Equal(t, "service-1", r.ChangedProject())
 	assert.Equal(t, map[string]string{"service-1": "sha-abc"}, r.ImageTags())
 }
@@ -42,7 +42,7 @@ func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusReceived, r.Status())
+	assert.Equal(t, releasecheck.StatusReceived, r.Status())
 }
 
 func TestReceiveCandidate_RejectsEmptyReleaseID(t *testing.T) {
@@ -147,14 +147,14 @@ func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 	assert.Nil(t, r, "an invalid kind must not persist a release")
 }
 
-func TestReceiveCandidate_ConflictsWithAVerification(t *testing.T) {
+func TestReceiveCandidate_ConflictsWithAFix(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	store.SeedRelease(pipeline.NewVerification("run-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now))
+	store.SeedRelease(releasecheck.NewFix("check-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now))
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Project: "core", ReleaseID: "run-9", ImageTag: "img", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "core", ReleaseID: "check-9", ImageTag: "img", Repo: "acme/demo", CommitSHA: "deadbeef",
 	})
-	assert.ErrorIs(t, err, handlers.ErrRunKindConflict)
+	assert.ErrorIs(t, err, handlers.ErrCheckKindConflict)
 }
 
 func TestReceiveCandidate_ValidationErrorsWrapErrInvalidCandidate(t *testing.T) {
@@ -207,7 +207,7 @@ func TestReceiveCandidate_ConflictingResubmitWrapsErrReleaseIDConflict(t *testin
 func TestReceiveCandidate_IdenticalResubmitOfAnAdvancedCandidateIsANoOp(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	r := pipeline.NewCandidate("rel-1", "core", "img:1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	r := releasecheck.NewCandidate("rel-1", "core", "img:1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
 	r.SetAssembledImageTags(map[string]string{"core": "img:1", "billing": "img:9"})
 	require.NoError(t, r.TransitionToParsing(now))
 	store.SeedRelease(r)
@@ -215,7 +215,7 @@ func TestReceiveCandidate_IdenticalResubmitOfAnAdvancedCandidateIsANoOp(t *testi
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()))
 	got, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusParsing, got.Status())
+	assert.Equal(t, releasecheck.StatusParsing, got.Status())
 }
 
 // "dbt" spelled out names the same kind as an absent kind, so it is not a
@@ -229,13 +229,13 @@ func TestReceiveCandidate_ExplicitDbtKindMatchesAnAbsentKind(t *testing.T) {
 }
 
 // Two first submissions of one id race: this one's Load finds no row, then a
-// concurrent submission commits its run before this one's Create. The insert
-// is refused, and the submission is judged against the winner's run instead of
+// concurrent submission commits its check before this one's Create. The insert
+// is refused, and the submission is judged against the winner's check instead of
 // overwriting it.
 func TestReceiveCandidate_LosingARaceToADifferentCandidateIsAConflict(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	store.RaceRelease(pipeline.NewCandidate("rel-1", "core", "img:winner", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now))
+	store.RaceRelease(releasecheck.NewCandidate("rel-1", "core", "img:winner", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now))
 
 	in := conflictBase()
 	in.ImageTag = "img:loser"
@@ -250,7 +250,7 @@ func TestReceiveCandidate_LosingARaceToADifferentCandidateIsAConflict(t *testing
 func TestReceiveCandidate_LosingARaceToTheSameCandidateIsANoOp(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	winner := pipeline.NewCandidate("rel-1", "core", "img:1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	winner := releasecheck.NewCandidate("rel-1", "core", "img:1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
 	store.RaceRelease(winner)
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()))
@@ -259,11 +259,11 @@ func TestReceiveCandidate_LosingARaceToTheSameCandidateIsANoOp(t *testing.T) {
 	assert.Same(t, winner, r)
 }
 
-func TestReceiveCandidate_LosingARaceToAVerificationIsAKindConflict(t *testing.T) {
+func TestReceiveCandidate_LosingARaceToAFixIsAKindConflict(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	store.RaceRelease(pipeline.NewVerification("rel-1", "core", "img:1", "rel-0", 1, "", release.ManifestKindDbt, now))
-	assert.ErrorIs(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()), handlers.ErrRunKindConflict)
+	store.RaceRelease(releasecheck.NewFix("rel-1", "core", "img:1", "rel-0", 1, "", release.ManifestKindDbt, now))
+	assert.ErrorIs(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()), handlers.ErrCheckKindConflict)
 }
 
 func TestReceiveCandidate_RefusesRebaselineWithoutBootstrap(t *testing.T) {

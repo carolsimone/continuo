@@ -7,8 +7,8 @@ import (
 	"slices"
 
 	"github.com/carolsimone/continuo/pkg/maintenance"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
 
@@ -44,7 +44,7 @@ var ErrOntologyProjectConflict = errors.New("ontology project conflict")
 // ErrReleaseIDConflict marks a submission whose release id already names a
 // candidate with a different project, image tag, manifest kind, bootstrap
 // flag, rebaseline flag or source change. Callers answer it as a conflict, as they do
-// ErrRunKindConflict.
+// ErrCheckKindConflict.
 var ErrReleaseIDConflict = errors.New("release id already names a different candidate")
 
 // ReceiveCandidateInput carries the fields required to register a new release
@@ -74,9 +74,9 @@ type ReceiveCandidateInput struct {
 	// company ontology, accepted only while the install's ontology switch is
 	// on). Anything else is rejected (HTTP 400).
 	Kind string
-	// Shadow, SourceOverlayURI, and VerifiesReleaseID are fix-verification
-	// concepts and are refused here (HTTP 400): a fix-verification run is
-	// submitted to POST /verification-runs instead. The three fields stay on
+	// Shadow, SourceOverlayURI, and VerifiesReleaseID are concepts of a fix's
+	// release check and are refused here (HTTP 400): a fix's release check is
+	// submitted to POST /release-checks instead. The three fields stay on
 	// this struct so a stale caller still posting them is answered with a
 	// clear error rather than having the values silently ignored.
 	Shadow            bool
@@ -107,7 +107,7 @@ func (i ReceiveCandidateInput) validate() error {
 		return err
 	}
 	if i.Shadow || i.SourceOverlayURI != "" || i.VerifiesReleaseID != "" {
-		return errors.New("shadow, source_overlay_uri and verifies_release_id are not accepted here; a fix-verification run is posted to POST /verification-runs")
+		return errors.New("shadow, source_overlay_uri and verifies_release_id are not accepted here; a fix's release check is posted to POST /release-checks")
 	}
 	return nil
 }
@@ -120,14 +120,14 @@ func (i ReceiveCandidateInput) manifestKind() (release.ManifestKind, error) {
 	return release.ParseManifestKind(i.Kind)
 }
 
-// resubmitOutcome decides a submission whose release id already names a run:
-// nil when it is the same candidate, ErrRunKindConflict when the id names a
-// verification run, ErrReleaseIDConflict when it names a different candidate.
-func resubmitOutcome(existing *pipeline.Run, in ReceiveCandidateInput, kind release.ManifestKind) error {
-	if existing.Kind() != pipeline.KindCandidate {
-		return fmt.Errorf("%w: %s is a %s", ErrRunKindConflict, in.ReleaseID, existing.Kind())
+// resubmitOutcome decides a submission whose release id already names a check:
+// nil when it is the same candidate, ErrCheckKindConflict when the id names a
+// fix's release check, ErrReleaseIDConflict when it names a different candidate.
+func resubmitOutcome(existing *releasecheck.Check, in ReceiveCandidateInput, kind release.ManifestKind) error {
+	if existing.Kind() != releasecheck.KindCandidate {
+		return fmt.Errorf("%w: %s is a %s", ErrCheckKindConflict, in.ReleaseID, existing.Kind())
 	}
-	submitted := pipeline.CandidateSubmission{
+	submitted := releasecheck.CandidateSubmission{
 		Project: in.Project, ImageTag: in.ImageTag, Kind: kind,
 		Bootstrap: in.Bootstrap, Rebaseline: in.Rebaseline, Repo: in.Repo, CommitSHA: in.CommitSHA,
 	}
@@ -141,14 +141,14 @@ func resubmitOutcome(existing *pipeline.Run, in ReceiveCandidateInput, kind rele
 // ReceiveCandidate persists a new Release row in StatusReceived, idempotent on
 // the release_id PK: submitting a release id again with the same facts is a
 // no-op, whatever status the stored candidate has reached. A bad submission
-// returns an error wrapping ErrInvalidCandidate; a run-id kind clash wraps
-// ErrRunKindConflict; a release id that names a candidate with different facts
+// returns an error wrapping ErrInvalidCandidate; a check-id kind clash wraps
+// ErrCheckKindConflict; a release id that names a candidate with different facts
 // wraps ErrReleaseIDConflict; any other error is a storage failure. The caller
 // (HTTP handler) is responsible for returning 202 Accepted to CI. It refuses
 // with maintenance.ErrActive while maintenance mode is on.
 //
 // A release of kind ontology is refused with ErrOntologyDisabled while the
-// install's ontology switch is off. When the submission would create a run,
+// install's ontology switch is off. When the submission would create a check,
 // the ontology project's rules apply (ErrOntologyProjectConflict): an install
 // has one ontology project, and a project never changes between the kind
 // ontology and a node kind. A release id the install already stored is
@@ -178,23 +178,23 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		// other and with promotions, so two submissions for two projects
 		// cannot both pass the one-ontology-project check, and a promotion
 		// cannot change service_prod between the check and the insert. It is
-		// taken before the run row is loaded, as every holder of both locks
+		// taken before the check row is loaded, as every holder of both locks
 		// takes them.
 		if err := u.LockReleaseQueue(ctx); err != nil {
 			return fmt.Errorf("lock release queue: %w", err)
 		}
 	}
 
-	existing, err := u.RunRepo().Load(ctx, in.ReleaseID)
+	existing, err := u.ReleaseCheckRepo().Load(ctx, in.ReleaseID)
 	if err != nil {
-		return fmt.Errorf("load run: %w", err)
+		return fmt.Errorf("load check: %w", err)
 	}
 	if existing == nil {
 		if err := refuseOntologyConflict(ctx, u, in.Project, kind); err != nil {
 			return err
 		}
-		r := pipeline.NewCandidate(in.ReleaseID, in.Project, in.ImageTag, in.Bootstrap, in.Rebaseline, in.Repo, in.CommitSHA, kind, d.Clock.Now())
-		inserted, err := u.RunRepo().Create(ctx, r)
+		r := releasecheck.NewCandidate(in.ReleaseID, in.Project, in.ImageTag, in.Bootstrap, in.Rebaseline, in.Repo, in.CommitSHA, kind, d.Clock.Now())
+		inserted, err := u.ReleaseCheckRepo().Create(ctx, r)
 		if err != nil {
 			return fmt.Errorf("create release: %w", err)
 		}
@@ -205,10 +205,10 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 			d.Telemetry.ReleaseReceived(ctx, in.ReleaseID)
 			return nil
 		}
-		// A concurrent submission of this id committed its run after the Load
-		// above found none, so this submission is a resubmit of that run.
-		if existing, err = u.RunRepo().Load(ctx, in.ReleaseID); err != nil {
-			return fmt.Errorf("load run: %w", err)
+		// A concurrent submission of this id committed its check after the Load
+		// above found none, so this submission is a resubmit of that check.
+		if existing, err = u.ReleaseCheckRepo().Load(ctx, in.ReleaseID); err != nil {
+			return fmt.Errorf("load check: %w", err)
 		}
 		if existing == nil {
 			return fmt.Errorf("release %s was neither inserted nor found", in.ReleaseID)
@@ -223,7 +223,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 // kindChangeRefusalText is the refusal for a release of a project whose
 // service_prod row holds the kind stored, when the release's kind is on the
 // other side of the line between the ontology and the node kinds. Intake
-// answers it as a conflict and activation ends the run with it as its detail.
+// answers it as a conflict and activation ends the check with it as its detail.
 func kindChangeRefusalText(project string, stored release.ManifestKind) string {
 	return fmt.Sprintf("project %q is released as kind %q: a project cannot change between kind %q and a node kind",
 		project, stored, release.ManifestKindOntology)
@@ -233,7 +233,7 @@ func kindChangeRefusalText(project string, stored release.ManifestKind) string {
 // of kind for project breaks the rules of the ontology project: the project is
 // released with a kind on the other side of the line between the ontology and
 // the node kinds, or another project already is the install's ontology, in
-// service_prod or in a candidate run that has not ended.
+// service_prod or in a candidate check that has not ended.
 func refuseOntologyConflict(ctx context.Context, u uow.UnitOfWork, project string, kind release.ManifestKind) error {
 	stored, err := u.ServiceProdRepo().Get(ctx, project)
 	if err != nil {
@@ -253,9 +253,9 @@ func refuseOntologyConflict(ctx context.Context, u uow.UnitOfWork, project strin
 	if err != nil {
 		return fmt.Errorf("list the projects released as kind %q: %w", release.ManifestKindOntology, err)
 	}
-	queued, err := u.RunRepo().ActiveCandidateProjectsWithKind(ctx, release.ManifestKindOntology)
+	queued, err := u.ReleaseCheckRepo().ActiveCandidateProjectsWithKind(ctx, release.ManifestKindOntology)
 	if err != nil {
-		return fmt.Errorf("list the candidate runs of kind %q: %w", release.ManifestKindOntology, err)
+		return fmt.Errorf("list the candidate checks of kind %q: %w", release.ManifestKindOntology, err)
 	}
 	others := slices.DeleteFunc(slices.Concat(released, queued), func(name string) bool { return name == project })
 	if len(others) == 0 {

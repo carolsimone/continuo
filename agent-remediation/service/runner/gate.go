@@ -19,7 +19,7 @@ import (
 )
 
 // gateStep returns the flow's gate: one long check, which starts the
-// verification of a try and answers later. The name of the gate's first step
+// release checks of a try and answers later. The name of the gate's first step
 // is returned with any error, for the failure to be counted on its row.
 func (r *Runner) gateStep(flow workflow.Flow) (workflow.StepName, step.LongCheck, error) {
 	if len(flow.Gate) == 0 {
@@ -48,10 +48,10 @@ func gateInput(run tryRun, drafts []step.ClusterDraft, proposalID string, submit
 }
 
 // submitGate submits the try's drafts to the flow's gate and commits its
-// answer with the gate's row. A gate that started its runs leaves the try
-// verifying: the attempt's proposal row records the runs, the edits and the
-// composed rationale, and the gate's row waits on the runs. A gate that
-// refused the drafts without starting a run fails the attempt with its findings
+// answer with the gate's row. A gate that started its release checks leaves
+// the try verifying: the attempt's proposal row records the checks, the edits
+// and the composed rationale, and the gate's row waits on the checks. A gate
+// that refused the drafts without starting a check fails the attempt with its findings
 // and fails the try, in one transaction with the gate's row, as a cross-cluster
 // finding does (failTryOnFindings): the next try opens in the drive's next
 // step, or the failing set is handed over once the tries are spent.
@@ -82,7 +82,7 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 	}
 	if !verdict.Result.Waiting {
 		if _, refused := firstFinding([]remediation.CheckResult{verdict.Result}); !refused {
-			return r.recordFailure(ctx, row, fmt.Errorf("step %s neither started a verification run nor refused the try", name))
+			return r.recordFailure(ctx, row, fmt.Errorf("step %s neither started a release check nor refused the try", name))
 		}
 		row.Findings = verdict.Result.Findings
 		r.finish(&row)
@@ -92,9 +92,9 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 		})
 	}
 	row.Status = remediation.StepWaiting
-	row.WaitingOn = verdict.Result.RunIDs
-	p := verifyingAttempt(run, checked, verdict.Verifications)
-	deadline := r.clock.Now().Add(r.d.VerificationTimeout + tryVerifyingSlack)
+	row.WaitingOn = verdict.Result.CheckIDs
+	p := verifyingAttempt(run, checked, verdict.ReleaseChecks)
+	deadline := r.clock.Now().Add(r.d.ReleaseCheckTimeout + tryVerifyingSlack)
 	if err := r.commitFlowStep(ctx, run, row, func(u uow.UnitOfWork) error {
 		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
 			return err
@@ -103,8 +103,8 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 	}); err != nil {
 		return err
 	}
-	r.logger.Info("the try's drafts are submitted for verification", "remediation", run.snap.Remediation.ID,
-		"release", run.trigger.ReleaseID, "try", run.snap.Try.Try, "attempt", run.snap.Try.Attempt, "runs", row.WaitingOn)
+	r.logger.Info("the try's drafts are submitted to their release checks", "remediation", run.snap.Remediation.ID,
+		"release", run.trigger.ReleaseID, "try", run.snap.Try.Try, "attempt", run.snap.Try.Attempt, "checks", row.WaitingOn)
 	return nil
 }
 
@@ -112,14 +112,14 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 // acts on it. The caller has claimed the remediation, which snap names; it is
 // read again, since a snapshot listed without the lease may be torn. PollGate
 // holds the lease, then polls the gate once with the drafts it was submitted,
-// rebuilt from the journal, counting unreadable runs from the start of the
+// rebuilt from the journal, counting unreadable checks from the start of the
 // gate step's run. Before it polls, the stuck rules are applied as before
 // every step of a drive: a verifying try has no deadline that ends it, but a
 // gate row that failed five times in a row, or a remediation that did, ends
 // the remediation as a system failure, with the attempt's row failed and the
 // gate not read.
 //
-// While the gate waits, each run whose phase changed is written to the
+// While the gate waits, each release check whose phase changed is written to the
 // attempt's proposal row, and nothing else. A passed gate runs the flow's pass
 // output, hands over the nodes the fix leaves to a human, passes the try and
 // ends the remediation, in one transaction. A failed gate fails the attempt
@@ -172,7 +172,7 @@ func (r *Runner) pollGate(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return r.countFailure(ctx, row, err)
 	}
-	waiting := remediation.CheckResult{Check: string(name), Waiting: true, RunIDs: row.WaitingOn}
+	waiting := remediation.CheckResult{Check: string(name), Waiting: true, CheckIDs: row.WaitingOn}
 	verdict, err := gate.Poll(ctx, gateInput(run, draftsOf(checked), attempt.ID, row.StartedAt), waiting)
 	if err != nil {
 		return r.countFailure(ctx, row, fmt.Errorf("step %s: %w", name, err))
@@ -220,14 +220,14 @@ func attemptRow(ctx context.Context, repo repository.ProposalRepository, run try
 	return proposal.View{}, fmt.Errorf("release %s has no proposal row for attempt %d", run.trigger.ReleaseID, run.snap.Try.Attempt)
 }
 
-// writePhases records what a poll that read the gate's runs found: each run's
+// writePhases records what a poll that read the gate's release checks found: each check's
 // phase that differs from what the attempt's proposal row records, and the gate
 // row's failures and the remediation's own, which a poll that got through
 // resets to zero so that only consecutive failed polls add up. It writes in one
 // transaction, and writes nothing when no phase differs and neither the row
 // nor the remediation has failures.
-func (r *Runner) writePhases(ctx context.Context, run tryRun, row remediation.StepRun, attempt proposal.View, phases []proposal.Verification) error {
-	changed := changedPhases(attempt.Verifications, phases)
+func (r *Runner) writePhases(ctx context.Context, run tryRun, row remediation.StepRun, attempt proposal.View, phases []proposal.ReleaseCheck) error {
+	changed := changedPhases(attempt.ReleaseChecks, phases)
 	reset := row.Failures > 0
 	if len(changed) == 0 && !reset && !failuresToClear(run) {
 		return nil
@@ -244,8 +244,8 @@ func (r *Runner) writePhases(ctx context.Context, run tryRun, row remediation.St
 			}
 		}
 		for _, p := range changed {
-			if err := u.ProposalRepo().UpdateVerificationPhase(ctx, attempt.ID, p.RunID, p.Phase, p.ActivatedAt); err != nil {
-				return fmt.Errorf("record the phase of run %s: %w", p.RunID, err)
+			if err := u.ProposalRepo().UpdateReleaseCheckPhase(ctx, attempt.ID, p.CheckID, p.Phase, p.ActivatedAt); err != nil {
+				return fmt.Errorf("record the phase of release check %s: %w", p.CheckID, err)
 			}
 		}
 		return nil
@@ -256,16 +256,16 @@ func (r *Runner) writePhases(ctx context.Context, run tryRun, row remediation.St
 	return nil
 }
 
-// changedPhases is the runs read whose phase or activation time is not the one
+// changedPhases is the checks read whose phase or activation time is not the one
 // stored for them.
-func changedPhases(stored, read []proposal.Verification) []proposal.Verification {
-	byRun := make(map[string]proposal.Verification, len(stored))
+func changedPhases(stored, read []proposal.ReleaseCheck) []proposal.ReleaseCheck {
+	byCheck := make(map[string]proposal.ReleaseCheck, len(stored))
 	for _, v := range stored {
-		byRun[v.RunID] = v
+		byCheck[v.CheckID] = v
 	}
-	var out []proposal.Verification
+	var out []proposal.ReleaseCheck
 	for _, v := range read {
-		s, ok := byRun[v.RunID]
+		s, ok := byCheck[v.CheckID]
 		if ok && s.Phase == v.Phase && sameTime(s.ActivatedAt, v.ActivatedAt) {
 			continue
 		}
@@ -282,32 +282,32 @@ func sameTime(a, b *time.Time) bool {
 	return a.Equal(*b)
 }
 
-// cleanedError is the run with its error cleaned (proposal.CleanedReason): the error
-// is what a verification run's nodes printed, and the row shows it.
-func cleanedError(v proposal.Verification) proposal.Verification {
+// cleanedError is the check with its error cleaned (proposal.CleanedReason): the error
+// is what a release check's nodes printed, and the row shows it.
+func cleanedError(v proposal.ReleaseCheck) proposal.ReleaseCheck {
 	v.Error = proposal.CleanedReason(v.Error)
 	return v
 }
 
-// mergeVerifications is the stored runs with each run read in this poll in
-// place of its stored entry, so a run the poll could not read keeps what was
-// recorded for it. A run read that is not stored is added after them. The error of
-// each run is cleaned as the row records it.
-func mergeVerifications(stored, read []proposal.Verification) []proposal.Verification {
-	byRun := make(map[string]proposal.Verification, len(read))
+// mergeReleaseChecks is the stored checks with each check read in this poll in
+// place of its stored entry, so a check the poll could not read keeps what was
+// recorded for it. A check read that is not stored is added after them. The error of
+// each check is cleaned as the row records it.
+func mergeReleaseChecks(stored, read []proposal.ReleaseCheck) []proposal.ReleaseCheck {
+	byCheck := make(map[string]proposal.ReleaseCheck, len(read))
 	for _, v := range read {
-		byRun[v.RunID] = v
+		byCheck[v.CheckID] = v
 	}
-	out := make([]proposal.Verification, 0, len(stored))
+	out := make([]proposal.ReleaseCheck, 0, len(stored))
 	for _, v := range stored {
-		if got, ok := byRun[v.RunID]; ok {
+		if got, ok := byCheck[v.CheckID]; ok {
 			v = got
-			delete(byRun, v.RunID)
+			delete(byCheck, v.CheckID)
 		}
 		out = append(out, cleanedError(v))
 	}
 	for _, v := range read {
-		if _, ok := byRun[v.RunID]; ok {
+		if _, ok := byCheck[v.CheckID]; ok {
 			out = append(out, cleanedError(v))
 		}
 	}
@@ -338,7 +338,7 @@ func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepR
 	if err != nil {
 		return r.countFailure(ctx, row, err)
 	}
-	v, err := verified(attempt.ID, checked, verdict.Result, mergeVerifications(attempt.Verifications, verdict.Verifications))
+	v, err := verified(attempt.ID, checked, verdict.Result, mergeReleaseChecks(attempt.ReleaseChecks, verdict.ReleaseChecks))
 	if err != nil {
 		return r.countFailure(ctx, row, err)
 	}
@@ -402,14 +402,14 @@ func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepR
 			"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "attempt", run.snap.Try.Attempt)
 		return nil
 	}
-	r.logger.Info("every verification run passed; the fix is handed over for review",
+	r.logger.Info("every release check passed; the fix is handed over for review",
 		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "attempt", run.snap.Try.Attempt, "output", outName)
 	return nil
 }
 
 // verified is the try's checked drafts that have an edit, verified by the
-// gate's result and the runs that judged them.
-func verified(proposalID string, checked []checkedCluster, gate remediation.CheckResult, vs []proposal.Verification) (remediation.Verified, error) {
+// gate's result and the release checks that judged them.
+func verified(proposalID string, checked []checkedCluster, gate remediation.CheckResult, vs []proposal.ReleaseCheck) (remediation.Verified, error) {
 	drafts := make([]remediation.Checked, 0, len(checked))
 	for _, cc := range checked {
 		if len(cc.draft.Draft.Edits) == 0 {
@@ -433,7 +433,7 @@ func (r *Runner) failGate(ctx context.Context, run tryRun, row remediation.StepR
 	if err != nil {
 		return false, r.countFailure(ctx, row, err)
 	}
-	final := mergeVerifications(attempt.Verifications, verdict.Verifications)
+	final := mergeReleaseChecks(attempt.ReleaseChecks, verdict.ReleaseChecks)
 	err = r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		if err := r.clearFailures(ctx, u, run); err != nil {
 			return err
@@ -472,7 +472,7 @@ func (r *Runner) failGate(ctx context.Context, run tryRun, row remediation.StepR
 			"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "attempt", run.snap.Try.Attempt)
 		return false, nil
 	}
-	r.logger.Info("a verification run did not pass the fix; the next try starts",
+	r.logger.Info("a release check did not pass the fix; the next try starts",
 		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "attempt", run.snap.Try.Attempt,
 		"verify_error", verdict.VerifyError)
 	return true, nil

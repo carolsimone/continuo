@@ -18,8 +18,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -39,22 +39,22 @@ var _ ports.Clock = (*fakeClock)(nil)
 // --- spyTelemetry ---
 
 // spyTelemetry embeds NoOpTelemetry and records ReleasePromoted and
-// VerificationFinished calls so tests can assert that ReleasePromoted is not
-// called on a route that must not promote (e.g. a verification run stopping at
-// Passed), and that a verification's terminal decision calls
-// VerificationFinished.
+// FixFinished calls so tests can assert that ReleasePromoted is not
+// called on a route that must not promote (e.g. a fix's release check stopping at
+// Passed), and that a fix's terminal decision calls
+// FixFinished.
 type spyTelemetry struct {
 	ports.NoOpTelemetry
-	releasePromotedCalls      int
-	verificationFinishedCalls int
+	releasePromotedCalls int
+	fixFinishedCalls     int
 }
 
 func (s *spyTelemetry) ReleasePromoted(_ context.Context, _ string, _ int) {
 	s.releasePromotedCalls++
 }
 
-func (s *spyTelemetry) VerificationFinished(context.Context, string, string, int) {
-	s.verificationFinishedCalls++
+func (s *spyTelemetry) FixFinished(context.Context, string, string, int) {
+	s.fixFinishedCalls++
 }
 
 var _ ports.Telemetry = (*spyTelemetry)(nil)
@@ -69,7 +69,7 @@ type stageCall struct {
 }
 
 // stageSpy embeds NoOpTelemetry and records every stage completion, so tests
-// can assert each reports the run's own stage duration.
+// can assert each reports the check's own stage duration.
 type stageSpy struct {
 	ports.NoOpTelemetry
 	calls []stageCall
@@ -101,17 +101,17 @@ var _ ports.Telemetry = (*stageSpy)(nil)
 // state after multiple handler calls — each of which obtains its own UoW.
 type fakeStore struct {
 	mu            sync.Mutex
-	releases      map[string]*pipeline.Run
+	releases      map[string]*releasecheck.Check
 	order         []string // insertion order, oldest first; drives NextQueued FIFO
 	cp            *release.CurrentProd
 	cpUpsertCalls int
 	lastSeq       int64
 	serviceProd   map[string]*release.ServiceProd
 	entries       []*pkgoutbox.Entry
-	// racing holds runs another submission commits between a transaction's
+	// racing holds checks another submission commits between a transaction's
 	// Load and its Create: invisible to Load, they land in releases the
 	// moment a Create for their id runs, as a concurrent winner's insert does.
-	racing map[string]*pipeline.Run
+	racing map[string]*releasecheck.Check
 	// topologies backs Deps.Topologies: the artifacts topology-controller would
 	// have written.
 	topologies *fakeTopologies
@@ -119,7 +119,7 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		releases:    map[string]*pipeline.Run{},
+		releases:    map[string]*releasecheck.Check{},
 		serviceProd: map[string]*release.ServiceProd{},
 		topologies:  newFakeTopologies(),
 	}
@@ -127,7 +127,7 @@ func newFakeStore() *fakeStore {
 
 // GetRelease returns the stored release by ID, or an error if not found.
 // Convenience accessor for test assertions.
-func (s *fakeStore) GetRelease(id string) (*pipeline.Run, error) {
+func (s *fakeStore) GetRelease(id string) (*releasecheck.Check, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.releases[id]
@@ -138,8 +138,8 @@ func (s *fakeStore) GetRelease(id string) (*pipeline.Run, error) {
 }
 
 // SeedRelease installs a release directly, simulating a row already persisted
-// by an earlier stage of the pipeline.
-func (s *fakeStore) SeedRelease(r *pipeline.Run) {
+// by an earlier leg.
+func (s *fakeStore) SeedRelease(r *releasecheck.Check) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.releases[r.ID()]; !exists {
@@ -187,7 +187,7 @@ func (s *fakeStore) GetServiceProd(projectName string) *release.ServiceProd {
 // CurrentProdUpsertCalls returns how many times CurrentProdRepo.Upsert has
 // been called against this store, across every UoW instance backed by it.
 // Used by tests to assert that a route which must never promote (e.g. a
-// verification run) never touches current_prod, rather than only inferring
+// fix's release check) never touches current_prod, rather than only inferring
 // it from the stored value.
 func (s *fakeStore) CurrentProdUpsertCalls() int {
 	s.mu.Lock()
@@ -204,19 +204,19 @@ func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 	return out
 }
 
-// RaceRelease makes r the run a concurrent submission commits after this
+// RaceRelease makes r the check a concurrent submission commits after this
 // submission's Load has found no row but before its Create.
-func (s *fakeStore) RaceRelease(r *pipeline.Run) {
+func (s *fakeStore) RaceRelease(r *releasecheck.Check) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.racing == nil {
-		s.racing = map[string]*pipeline.Run{}
+		s.racing = map[string]*releasecheck.Check{}
 	}
 	s.racing[r.ID()] = r
 }
 
 // storeTopology stores topo as releaseID's artifact and returns its reference,
-// for tests that seed a run directly rather than through a handler.
+// for tests that seed a check directly rather than through a handler.
 func (s *fakeStore) storeTopology(releaseID string, topo release.Topology) release.TopologyRef {
 	ref, err := s.topologies.Write(context.Background(), releaseID, topo)
 	if err != nil {
@@ -225,19 +225,19 @@ func (s *fakeStore) storeTopology(releaseID string, topo release.Topology) relea
 	return ref
 }
 
-// --- fakeRunRepo ---
+// --- fakeReleaseCheckRepo ---
 
-type fakeRunRepo struct {
+type fakeReleaseCheckRepo struct {
 	store              *fakeStore
 	lastCutoff         time.Time
 	lastKeepReleaseIDs []string
 	deletedCount       int
 }
 
-// Get mirrors the Postgres RunRepository contract: a missing run yields
+// Get mirrors the Postgres ReleaseCheckRepository contract: a missing check yields
 // (nil, nil), not an error. Handlers must nil-check the result, so the fake must
 // reproduce that contract or it would mask nil-deref bugs.
-func (f *fakeRunRepo) Get(_ context.Context, id string) (*pipeline.Run, error) {
+func (f *fakeReleaseCheckRepo) Get(_ context.Context, id string) (*releasecheck.Check, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	return f.store.releases[id], nil
@@ -245,13 +245,13 @@ func (f *fakeRunRepo) Get(_ context.Context, id string) (*pipeline.Run, error) {
 
 // Load mirrors Get: the in-memory fake has no row-level locking to simulate,
 // so it returns the same result as Get.
-func (f *fakeRunRepo) Load(_ context.Context, id string) (*pipeline.Run, error) {
+func (f *fakeReleaseCheckRepo) Load(_ context.Context, id string) (*releasecheck.Check, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	return f.store.releases[id], nil
 }
 
-func (f *fakeRunRepo) Save(_ context.Context, r *pipeline.Run) error {
+func (f *fakeReleaseCheckRepo) Save(_ context.Context, r *releasecheck.Check) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	if _, exists := f.store.releases[r.ID()]; !exists {
@@ -262,8 +262,8 @@ func (f *fakeRunRepo) Save(_ context.Context, r *pipeline.Run) error {
 }
 
 // Create mirrors the Postgres insert-only contract: it writes r only when no
-// run has its id, and reports whether it did.
-func (f *fakeRunRepo) Create(_ context.Context, r *pipeline.Run) (bool, error) {
+// check has its id, and reports whether it did.
+func (f *fakeReleaseCheckRepo) Create(_ context.Context, r *releasecheck.Check) (bool, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	if w, ok := f.store.racing[r.ID()]; ok {
@@ -279,56 +279,56 @@ func (f *fakeRunRepo) Create(_ context.Context, r *pipeline.Run) (bool, error) {
 	return true, nil
 }
 
-// NextQueued returns the oldest run in StatusReceived, or nil.
-func (f *fakeRunRepo) NextQueued(_ context.Context) (*pipeline.Run, error) {
+// NextQueued returns the oldest check in StatusReceived, or nil.
+func (f *fakeReleaseCheckRepo) NextQueued(_ context.Context) (*releasecheck.Check, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	for _, id := range f.store.order {
-		if f.store.releases[id].Status() == pipeline.StatusReceived {
+		if f.store.releases[id].Status() == releasecheck.StatusReceived {
 			return f.store.releases[id], nil
 		}
 	}
 	return nil, nil
 }
 
-// NextQueuedOfKind returns the oldest run of the given kind in StatusReceived, or nil.
-func (f *fakeRunRepo) NextQueuedOfKind(_ context.Context, kind pipeline.Kind) (*pipeline.Run, error) {
+// NextQueuedOfKind returns the oldest check of the given kind in StatusReceived, or nil.
+func (f *fakeReleaseCheckRepo) NextQueuedOfKind(_ context.Context, kind releasecheck.Kind) (*releasecheck.Check, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	for _, id := range f.store.order {
 		r := f.store.releases[id]
-		if r.Status() == pipeline.StatusReceived && r.Kind() == kind {
+		if r.Status() == releasecheck.StatusReceived && r.Kind() == kind {
 			return r, nil
 		}
 	}
 	return nil, nil
 }
 
-// Active returns the single run in StatusCompiling, StatusParsing,
+// Active returns the single check in StatusCompiling, StatusParsing,
 // StatusSeedBuilding, or StatusValidating, or nil. Mirrors the Postgres query
-// that guards AdvanceQueue from launching a second concurrent run.
-func (f *fakeRunRepo) Active(_ context.Context) (*pipeline.Run, error) {
+// that guards AdvanceQueue from launching a second concurrent check.
+func (f *fakeReleaseCheckRepo) Active(_ context.Context) (*releasecheck.Check, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	for _, id := range f.store.order {
 		s := f.store.releases[id].Status()
-		if s == pipeline.StatusCompiling || s == pipeline.StatusParsing ||
-			s == pipeline.StatusSeedBuilding || s == pipeline.StatusValidating {
+		if s == releasecheck.StatusCompiling || s == releasecheck.StatusParsing ||
+			s == releasecheck.StatusSeedBuilding || s == releasecheck.StatusValidating {
 			return f.store.releases[id], nil
 		}
 	}
 	return nil, nil
 }
 
-// ActiveCandidateProjectsWithKind lists the projects of the candidate runs of
+// ActiveCandidateProjectsWithKind lists the projects of the candidate checks of
 // the given manifest kind that have not ended, sorted and without repeats.
-func (f *fakeRunRepo) ActiveCandidateProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+func (f *fakeReleaseCheckRepo) ActiveCandidateProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	seen := map[string]bool{}
 	names := []string{}
 	for _, r := range f.store.releases {
-		if r.Kind() != pipeline.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedProject()] {
+		if r.Kind() != releasecheck.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedProject()] {
 			continue
 		}
 		seen[r.ChangedProject()] = true
@@ -339,19 +339,19 @@ func (f *fakeRunRepo) ActiveCandidateProjectsWithKind(_ context.Context, kind re
 }
 
 // List returns an empty page; handler unit tests do not exercise the list path.
-func (f *fakeRunRepo) List(_ context.Context, _ repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
+func (f *fakeReleaseCheckRepo) List(_ context.Context, _ repository.ListFilter) ([]*releasecheck.Check, *repository.ListCursor, error) {
 	return nil, nil, nil
 }
 
 // DeleteFinishedBefore records the call parameters and returns the configured
 // deletedCount so handler tests can assert on retention behaviour.
-func (f *fakeRunRepo) DeleteFinishedBefore(_ context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
+func (f *fakeReleaseCheckRepo) DeleteFinishedBefore(_ context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	f.lastCutoff = cutoff
 	f.lastKeepReleaseIDs = keepReleaseIDs
 	return f.deletedCount, nil
 }
 
-var _ repository.RunRepository = (*fakeRunRepo)(nil)
+var _ repository.ReleaseCheckRepository = (*fakeReleaseCheckRepo)(nil)
 
 // --- fakeCurrentProdRepo ---
 
@@ -592,7 +592,7 @@ func (f *fakeTopologies) failLoad(uri string, err error) {
 var _ ports.TopologyArtifactStore = (*fakeTopologies)(nil)
 
 // putTopology writes topo as releaseID's artifact through d.Topologies — the
-// object topology-controller writes for a parsed run — and returns its
+// object topology-controller writes for a parsed check — and returns its
 // reference.
 func putTopology(t *testing.T, d *handlers.Deps, releaseID string, topo release.Topology) release.TopologyRef {
 	t.Helper()
@@ -603,7 +603,7 @@ func putTopology(t *testing.T, d *handlers.Deps, releaseID string, topo release.
 
 // topologyOf loads r's candidate topology through the artifact store, as
 // every handler does.
-func topologyOf(t *testing.T, d *handlers.Deps, r *pipeline.Run) release.Topology {
+func topologyOf(t *testing.T, d *handlers.Deps, r *releasecheck.Check) release.Topology {
 	t.Helper()
 	if r.CandidateTopologyRef().IsZero() {
 		return nil
@@ -638,7 +638,7 @@ func seedProd(t *testing.T, deps *handlers.Deps, store *fakeStore, releaseID str
 // handlers each obtain a fresh UoW from the factory while still seeing all
 // writes from prior calls.
 type fakeUoW struct {
-	releases *fakeRunRepo
+	releases *fakeReleaseCheckRepo
 	cp       *fakeCurrentProdRepo
 	sp       *fakeServiceProdRepo
 	seq      *fakePromotionSequenceRepo
@@ -648,7 +648,7 @@ type fakeUoW struct {
 
 func newFakeUoW(store *fakeStore) *fakeUoW {
 	return &fakeUoW{
-		releases: &fakeRunRepo{store: store},
+		releases: &fakeReleaseCheckRepo{store: store},
 		cp:       &fakeCurrentProdRepo{store: store},
 		sp:       &fakeServiceProdRepo{store: store},
 		seq:      &fakePromotionSequenceRepo{store: store},
@@ -656,9 +656,9 @@ func newFakeUoW(store *fakeStore) *fakeUoW {
 	}
 }
 
-func (f *fakeUoW) RunRepo() repository.RunRepository                 { return f.releases }
-func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository { return f.cp }
-func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository { return f.sp }
+func (f *fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository { return f.releases }
+func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository   { return f.cp }
+func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository   { return f.sp }
 func (f *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository {
 	return f.seq
 }
@@ -719,10 +719,10 @@ func lastEntryOn(s *fakeStore, stream string) *pkgoutbox.Entry {
 	return nil
 }
 
-// outcomeOf decodes the outcome field of a pipeline.run.finished:v1 entry.
+// outcomeOf decodes the outcome field of a release_check.finished:v1 entry.
 func outcomeOf(t *testing.T, e *pkgoutbox.Entry) string {
 	t.Helper()
-	require.NotNil(t, e, "expected a pipeline.run.finished:v1 entry")
+	require.NotNil(t, e, "expected a release_check.finished:v1 entry")
 	var p struct {
 		Outcome string `json:"outcome"`
 	}

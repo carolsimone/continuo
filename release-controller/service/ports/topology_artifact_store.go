@@ -25,7 +25,7 @@ var ErrTopologyArtifactCorrupt = errors.New("topology artifact corrupt")
 var ErrTopologyArtifactImmutable = errors.New("topology artifact already exists with different bytes")
 
 // TopologyArtifactStore reads and writes topology artifacts: the immutable,
-// checksummed object holding one run's whole candidate topology.
+// checksummed object holding one check's whole candidate topology.
 type TopologyArtifactStore interface {
 	// Load returns the topology ref names. ErrTopologyArtifactNotFound and
 	// ErrTopologyArtifactCorrupt are the only errors that describe the object;

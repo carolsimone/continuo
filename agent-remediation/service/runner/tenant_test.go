@@ -21,7 +21,7 @@ func TestRunner_RowsAndEventsCarryTheTriggersTenant(t *testing.T) {
 	trig.TenantID = "acme"
 	id := h.accept(trig)
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, "acme", h.remediation(id).TenantID)

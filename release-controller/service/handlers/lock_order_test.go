@@ -15,28 +15,28 @@ import (
 //
 // A release-controller transaction that BOTH takes the release-queue advisory
 // lock (UnitOfWork.LockReleaseQueue, pg_advisory_xact_lock) AND acquires a
-// run row FOR UPDATE (RunRepo().Load) must take the advisory lock FIRST. The
-// advisory lock and the run-row lock are the two locks every writer can hold
-// at once; taking them in a single global order (advisory → run-row) keeps the
+// check row FOR UPDATE (ReleaseCheckRepo().Load) must take the advisory lock FIRST. The
+// advisory lock and the check-row lock are the two locks every writer can hold
+// at once; taking them in a single global order (advisory → check-row) keeps the
 // cross-process wait-for graph acyclic, so two transactions can never deadlock
 // by each holding the lock the other waits on. A transaction that takes the
-// run row first and the advisory lock later reverses that order and is the one
+// check row first and the advisory lock later reverses that order and is the one
 // cycle that can close.
 //
 // The advisory lock is re-entrant within one transaction (pg_advisory_xact_lock
 // taken twice in the same tx simply succeeds), so a handler that acquires it
 // early and a callee (promoteToProduction) that acquires it again both hold the
-// same global order: the check below forbids only a run-row Load that happens
+// same global order: the check below forbids only a check-row Load that happens
 // before the FIRST advisory acquisition, not a later re-acquisition.
 
 type lockEventKind int
 
 const (
-	eventLoad lockEventKind = iota // u.RunRepo().Load(...) — a run row FOR UPDATE
+	eventLoad lockEventKind = iota // u.ReleaseCheckRepo().Load(...) — a check row FOR UPDATE
 	eventLock                      // u.LockReleaseQueue(...) — the release-queue advisory lock
 )
 
-// lockEvent is one ordered occurrence inside a function body: either a run-row
+// lockEvent is one ordered occurrence inside a function body: either a check-row
 // Load, a release-queue lock, or a call to another function in this package
 // whose own events are inlined in document order to recover the real
 // cross-function acquisition order.
@@ -109,12 +109,12 @@ func collectFuncEvents(t *testing.T) (events map[string][]lockEvent, sawLoad, sa
 						seq = append(seq, lockEvent{kind: eventLock})
 						sawLock = true
 					case "Load":
-						// Match only <uow>.RunRepo().Load(...): the receiver of
-						// .Load must itself be a .RunRepo() call. Get/Save/Active
-						// on RunRepo, and Load on any other repo, are not run-row
+						// Match only <uow>.ReleaseCheckRepo().Load(...): the receiver of
+						// .Load must itself be a .ReleaseCheckRepo() call. Get/Save/Active
+						// on ReleaseCheckRepo, and Load on any other repo, are not check-row
 						// FOR UPDATE and must not count.
 						if inner, ok := fun.X.(*ast.CallExpr); ok {
-							if innerSel, ok := inner.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "RunRepo" {
+							if innerSel, ok := inner.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "ReleaseCheckRepo" {
 								seq = append(seq, lockEvent{kind: eventLoad})
 								sawLoad = true
 							}
@@ -154,8 +154,8 @@ func flattenEvents(name string, events map[string][]lockEvent, inProgress map[st
 	return out
 }
 
-// TestLockReleaseQueueIsTakenBeforeAnyRunLoad fails if any function in the
-// handlers package acquires a run row FOR UPDATE (RunRepo().Load) before it
+// TestLockReleaseQueueIsTakenBeforeAnyCheckLoad fails if any function in the
+// handlers package acquires a check row FOR UPDATE (ReleaseCheckRepo().Load) before it
 // takes the release-queue advisory lock within the same transaction, inlining
 // package-local calls so a Load in a handler followed by a LockReleaseQueue in
 // a callee (e.g. promoteToProduction) is caught across the function boundary.
@@ -164,11 +164,11 @@ func flattenEvents(name string, events map[string][]lockEvent, inProgress map[st
 // passes once the advisory lock is taken first. A re-acquisition of the
 // advisory lock after the Load is fine: only a Load before the FIRST advisory
 // acquisition is a violation.
-func TestLockReleaseQueueIsTakenBeforeAnyRunLoad(t *testing.T) {
+func TestLockReleaseQueueIsTakenBeforeAnyCheckLoad(t *testing.T) {
 	events, sawLoad, sawLock := collectFuncEvents(t)
 
 	if !sawLoad {
-		t.Fatal("guard found no RunRepo().Load call anywhere in the handlers package; " +
+		t.Fatal("guard found no ReleaseCheckRepo().Load call anywhere in the handlers package; " +
 			"the FOR-UPDATE accessor was likely renamed — update this guard to match")
 	}
 	if !sawLock {
@@ -188,11 +188,11 @@ func TestLockReleaseQueueIsTakenBeforeAnyRunLoad(t *testing.T) {
 			}
 		}
 		// Only a transaction that takes BOTH locks is constrained. When it does,
-		// the first advisory acquisition must precede the first run-row Load.
+		// the first advisory acquisition must precede the first check-row Load.
 		if firstLock >= 0 && firstLoad >= 0 && firstLoad < firstLock {
-			t.Errorf("%s acquires a run row FOR UPDATE (RunRepo().Load) before it takes the "+
+			t.Errorf("%s acquires a check row FOR UPDATE (ReleaseCheckRepo().Load) before it takes the "+
 				"release-queue advisory lock (LockReleaseQueue); take LockReleaseQueue first so "+
-				"the global advisory→run-row lock order holds and the wait-for graph stays acyclic", name)
+				"the global advisory→check-row lock order holds and the wait-for graph stays acyclic", name)
 		}
 	}
 }

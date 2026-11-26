@@ -113,7 +113,7 @@ type StepRun struct {
 	InputDigest string
 	Output      []byte
 	Findings    []Finding
-	// WaitingOn lists the verification run ids a waiting step waits for.
+	// WaitingOn lists the release check ids a waiting step waits for.
 	WaitingOn     []string
 	Model         string
 	PromptVersion string

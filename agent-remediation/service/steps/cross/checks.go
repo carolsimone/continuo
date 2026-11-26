@@ -51,7 +51,7 @@ func (*EditsMapToAProject) Meta() step.Meta {
 	return step.Meta{
 		Name:        nameEditsMapToAProject,
 		Kind:        step.KindCheck,
-		Description: "Fails a try with an edit whose path no configured project owns, because a verification run is submitted for one project.",
+		Description: "Fails a try with an edit whose path no configured project owns, because a release check is submitted for one project.",
 		Stages:      crossStage,
 	}
 }
@@ -135,7 +135,7 @@ func (*OneManifestKind) Meta() step.Meta {
 		Name: nameOneManifestKind,
 		Kind: step.KindCheck,
 		Description: "Fails a try that, in one project, packages a python contract and also edits something that is not a python node's " +
-			"contract, because a verification run verifies one manifest kind.",
+			"contract, because a release check verifies one manifest kind.",
 		Stages: crossStage,
 	}
 }

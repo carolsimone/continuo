@@ -61,13 +61,13 @@ type Proposal struct {
 	// reaches a terminal outcome (pr_state 'merged' or 'rejected').
 	PrClosedAt string      `protobuf:"bytes,25,opt,name=pr_closed_at,json=prClosedAt,proto3" json:"pr_closed_at,omitempty"`
 	Edits      []*FileEdit `protobuf:"bytes,26,rep,name=edits,proto3" json:"edits,omitempty"`
-	// verification_run_id names the pipeline run that verified this attempt's
-	// fix — the first of `verifications`. Set while the attempt is 'verifying'
+	// release_check_id names the release check that verified this attempt's
+	// fix — the first of `release_checks`. Set while the attempt is 'verifying'
 	// and kept on the row it became. Empty on an attempt judged without one.
-	VerificationRunId string `protobuf:"bytes,27,opt,name=verification_run_id,json=verificationRunId,proto3" json:"verification_run_id,omitempty"`
-	// verify_error is why that release rejected the fix — the reason a python
+	ReleaseCheckId string `protobuf:"bytes,27,opt,name=release_check_id,json=releaseCheckId,proto3" json:"release_check_id,omitempty"`
+	// verify_error is why that release check rejected the fix — the reason a python
 	// contract attempt reached 'failed', and the evidence the next attempt is
-	// shown. Empty unless verification failed.
+	// shown. Empty unless the release check failed.
 	VerifyError string `protobuf:"bytes,28,opt,name=verify_error,json=verifyError,proto3" json:"verify_error,omitempty"`
 	// remediation_round is the release's remediation round this attempt belongs to.
 	RemediationRound int32 `protobuf:"varint,29,opt,name=remediation_round,json=remediationRound,proto3" json:"remediation_round,omitempty"`
@@ -78,9 +78,9 @@ type Proposal struct {
 	// cluster that was skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]*NodeOutcome `protobuf:"bytes,31,rep,name=node_outcomes,json=nodeOutcomes,proto3" json:"node_outcomes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// verifications is one fix-verification run per edited project; the first
-	// entry is the view mirrored onto verification_run_id.
-	Verifications []*Verification `protobuf:"bytes,32,rep,name=verifications,proto3" json:"verifications,omitempty"`
+	// release_checks holds one release check of the fix per edited project; the
+	// first entry is the view mirrored onto release_check_id.
+	ReleaseChecks []*ReleaseCheck `protobuf:"bytes,32,rep,name=release_checks,json=releaseChecks,proto3" json:"release_checks,omitempty"`
 	// pull_requests is one entry per (proposal, project) pull request; empty
 	// for a proposal that never entered the PR lifecycle. project = "" is the
 	// legacy whole-proposal group. The singular pr_* fields above mirror
@@ -314,9 +314,9 @@ func (x *Proposal) GetEdits() []*FileEdit {
 	return nil
 }
 
-func (x *Proposal) GetVerificationRunId() string {
+func (x *Proposal) GetReleaseCheckId() string {
 	if x != nil {
-		return x.VerificationRunId
+		return x.ReleaseCheckId
 	}
 	return ""
 }
@@ -349,9 +349,9 @@ func (x *Proposal) GetNodeOutcomes() map[string]*NodeOutcome {
 	return nil
 }
 
-func (x *Proposal) GetVerifications() []*Verification {
+func (x *Proposal) GetReleaseChecks() []*ReleaseCheck {
 	if x != nil {
-		return x.Verifications
+		return x.ReleaseChecks
 	}
 	return nil
 }
@@ -1245,15 +1245,16 @@ func (x *Approver) GetSource() string {
 	return ""
 }
 
-// Verification is one fix-verification run per edited project and the
+// ReleaseCheck is the release check of the fix for one edited project and the
 // durable summary of how it went. phase is queued | running | passed |
-// failed (empty before the first read); activated_at is RFC 3339 or empty;
-// error is the named per-node errors on a failed run.
-type Verification struct {
+// failed (empty before the first read); check_id is the release check's id;
+// activated_at is RFC 3339 or empty; error is the named per-node errors of a
+// failed check.
+type ReleaseCheck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	RunId         string                 `protobuf:"bytes,3,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	CheckId       string                 `protobuf:"bytes,3,opt,name=check_id,json=checkId,proto3" json:"check_id,omitempty"`
 	Phase         string                 `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
 	ActivatedAt   string                 `protobuf:"bytes,5,opt,name=activated_at,json=activatedAt,proto3" json:"activated_at,omitempty"`
 	Error         string                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
@@ -1261,20 +1262,20 @@ type Verification struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Verification) Reset() {
-	*x = Verification{}
+func (x *ReleaseCheck) Reset() {
+	*x = ReleaseCheck{}
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Verification) String() string {
+func (x *ReleaseCheck) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Verification) ProtoMessage() {}
+func (*ReleaseCheck) ProtoMessage() {}
 
-func (x *Verification) ProtoReflect() protoreflect.Message {
+func (x *ReleaseCheck) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1286,47 +1287,47 @@ func (x *Verification) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Verification.ProtoReflect.Descriptor instead.
-func (*Verification) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReleaseCheck.ProtoReflect.Descriptor instead.
+func (*ReleaseCheck) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *Verification) GetProject() string {
+func (x *ReleaseCheck) GetProject() string {
 	if x != nil {
 		return x.Project
 	}
 	return ""
 }
 
-func (x *Verification) GetKind() string {
+func (x *ReleaseCheck) GetKind() string {
 	if x != nil {
 		return x.Kind
 	}
 	return ""
 }
 
-func (x *Verification) GetRunId() string {
+func (x *ReleaseCheck) GetCheckId() string {
 	if x != nil {
-		return x.RunId
+		return x.CheckId
 	}
 	return ""
 }
 
-func (x *Verification) GetPhase() string {
+func (x *ReleaseCheck) GetPhase() string {
 	if x != nil {
 		return x.Phase
 	}
 	return ""
 }
 
-func (x *Verification) GetActivatedAt() string {
+func (x *ReleaseCheck) GetActivatedAt() string {
 	if x != nil {
 		return x.ActivatedAt
 	}
 	return ""
 }
 
-func (x *Verification) GetError() string {
+func (x *ReleaseCheck) GetError() string {
 	if x != nil {
 		return x.Error
 	}
@@ -1454,7 +1455,7 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x99\v\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x94\v\n" +
 	"\bProposal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
@@ -1490,13 +1491,13 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"prOpenedBy\x12 \n" +
 	"\fpr_closed_at\x18\x19 \x01(\tR\n" +
 	"prClosedAt\x12.\n" +
-	"\x05edits\x18\x1a \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12.\n" +
-	"\x13verification_run_id\x18\x1b \x01(\tR\x11verificationRunId\x12!\n" +
+	"\x05edits\x18\x1a \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12(\n" +
+	"\x10release_check_id\x18\x1b \x01(\tR\x0ereleaseCheckId\x12!\n" +
 	"\fverify_error\x18\x1c \x01(\tR\vverifyError\x12+\n" +
 	"\x11remediation_round\x18\x1d \x01(\x05R\x10remediationRound\x12*\n" +
 	"\x11resolved_node_ids\x18\x1e \x03(\tR\x0fresolvedNodeIds\x12O\n" +
-	"\rnode_outcomes\x18\x1f \x03(\v2*.remediation.v1.Proposal.NodeOutcomesEntryR\fnodeOutcomes\x12B\n" +
-	"\rverifications\x18  \x03(\v2\x1c.remediation.v1.VerificationR\rverifications\x12@\n" +
+	"\rnode_outcomes\x18\x1f \x03(\v2*.remediation.v1.Proposal.NodeOutcomesEntryR\fnodeOutcomes\x12C\n" +
+	"\x0erelease_checks\x18  \x03(\v2\x1c.remediation.v1.ReleaseCheckR\rreleaseChecks\x12@\n" +
 	"\rpull_requests\x18! \x03(\v2\x1b.remediation.v1.PullRequestR\fpullRequests\x12\x1f\n" +
 	"\vpr_projects\x18\" \x03(\tR\n" +
 	"prProjects\x12\x1a\n" +
@@ -1573,11 +1574,11 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\bApprover\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x16\n" +
-	"\x06source\x18\x03 \x01(\tR\x06source\"\xa2\x01\n" +
-	"\fVerification\x12\x18\n" +
+	"\x06source\x18\x03 \x01(\tR\x06source\"\xa6\x01\n" +
+	"\fReleaseCheck\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
-	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12\x14\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x19\n" +
+	"\bcheck_id\x18\x03 \x01(\tR\acheckId\x12\x14\n" +
 	"\x05phase\x18\x04 \x01(\tR\x05phase\x12!\n" +
 	"\factivated_at\x18\x05 \x01(\tR\vactivatedAt\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\"\x88\x02\n" +
@@ -1628,14 +1629,14 @@ var file_proto_remediation_v1_remediation_proto_goTypes = []any{
 	(*FileEdit)(nil),                  // 10: remediation.v1.FileEdit
 	(*NodeOutcome)(nil),               // 11: remediation.v1.NodeOutcome
 	(*Approver)(nil),                  // 12: remediation.v1.Approver
-	(*Verification)(nil),              // 13: remediation.v1.Verification
+	(*ReleaseCheck)(nil),              // 13: remediation.v1.ReleaseCheck
 	(*PullRequest)(nil),               // 14: remediation.v1.PullRequest
 	nil,                               // 15: remediation.v1.Proposal.NodeOutcomesEntry
 }
 var file_proto_remediation_v1_remediation_proto_depIdxs = []int32{
 	10, // 0: remediation.v1.Proposal.edits:type_name -> remediation.v1.FileEdit
 	15, // 1: remediation.v1.Proposal.node_outcomes:type_name -> remediation.v1.Proposal.NodeOutcomesEntry
-	13, // 2: remediation.v1.Proposal.verifications:type_name -> remediation.v1.Verification
+	13, // 2: remediation.v1.Proposal.release_checks:type_name -> remediation.v1.ReleaseCheck
 	14, // 3: remediation.v1.Proposal.pull_requests:type_name -> remediation.v1.PullRequest
 	12, // 4: remediation.v1.Proposal.approvers:type_name -> remediation.v1.Approver
 	0,  // 5: remediation.v1.ListProposalsResponse.proposals:type_name -> remediation.v1.Proposal

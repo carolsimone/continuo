@@ -2,7 +2,7 @@
 # second project so the two remediation scenarios never share a contract
 # directory: the packaging step packs a whole directory, so one still-broken
 # node beside the node under repair would sink the other scenario's
-# verification run.
+# release check.
 #
 # The node is repaired over two attempts: the canned model in
 # tests/e2e/stub-llm answers a first attempt with a read that still cannot

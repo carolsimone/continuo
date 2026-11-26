@@ -56,19 +56,19 @@ describe('release-client', () => {
     expect(out).toEqual({ status: 202, body: { error: 'invalid_response' } });
   });
 
-  it('reads a verification run, a release\'s verification runs, and the pipeline', async () => {
+  it('reads a release check, a release\'s release checks, and the release queue', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'verify-1', status: 'passed' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ runs: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_id: 'verify-1', status: 'passed' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ checks: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ active: null }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const client = createReleaseClient('http://rc:8088');
-    expect((await client.getVerificationRun('verify-1')).status).toBe('passed');
-    expect((await client.listVerificationRuns('rel-1')).runs).toEqual([]);
-    expect((await client.getPipeline()).active).toBeNull();
-    expect(fetchMock.mock.calls[0][0]).toBe('http://rc:8088/verification-runs/verify-1');
-    expect(fetchMock.mock.calls[1][0]).toBe('http://rc:8088/verification-runs?verifies=rel-1');
-    expect(fetchMock.mock.calls[2][0]).toBe('http://rc:8088/pipeline');
+    expect((await client.getReleaseCheck('verify-1')).status).toBe('passed');
+    expect((await client.listReleaseChecks('rel-1')).checks).toEqual([]);
+    expect((await client.getReleaseQueue()).active).toBeNull();
+    expect(fetchMock.mock.calls[0][0]).toBe('http://rc:8088/release-checks/verify-1');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://rc:8088/release-checks?verifies=rel-1');
+    expect(fetchMock.mock.calls[2][0]).toBe('http://rc:8088/release-queue');
   });
 
   it('submitRelease POSTs JSON to /releases and returns status and raw text, even on 4xx', async () => {

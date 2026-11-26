@@ -284,16 +284,16 @@ func copyBuiltinEditing(t *testing.T, file string, edit func(text string) string
 	return dir
 }
 
-// A gate is one step that runs the verification: a flow with two gate steps
+// A gate is one step that runs the release check: a flow with two gate steps
 // would validate each step and then fail every remediation at its gate.
 func TestFiles_AGateOfTwoStepsExitsOne(t *testing.T) {
 	for name, gate := range map[string]string{
-		"two steps":      "gate: [verification_run, one_manifest_kind]",
-		"one step twice": "gate: [verification_run, verification_run]",
+		"two steps":      "gate: [release_check, one_manifest_kind]",
+		"one step twice": "gate: [release_check, release_check]",
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := copyBuiltin(t, func(flow string) string {
-				return strings.Replace(flow, "gate: [verification_run]", gate, 1)
+				return strings.Replace(flow, "gate: [release_check]", gate, 1)
 			})
 
 			code, stdout, stderr := runFiles(t, "files", dir)
@@ -319,7 +319,7 @@ func TestFiles_AReplacementOfTheTriggerFlowThatCannotRunExitsOne(t *testing.T) {
 			want: `flow "rejected-release" has trigger "release.rejected"`,
 		},
 		"no gate": {
-			from: "gate: [verification_run]", to: "gate: []",
+			from: "gate: [release_check]", to: "gate: []",
 			want: `flow "rejected-release" has no gate`,
 		},
 	} {

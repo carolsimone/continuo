@@ -8,7 +8,7 @@ import (
 // TryRecord is one earlier try at a release's failing set, as a later try is
 // shown it: the remediation round and try it was, its proposal attempt, what
 // each of its clusters proposed and why it was refused, what the checks across
-// clusters found, and why the verification gate failed it. An attempt that
+// clusters found, and why the gate failed it. An attempt that
 // belongs to no remediation numbers no try, so it has Try 0 and orders before
 // every runner try of its round.
 type TryRecord struct {
@@ -19,7 +19,7 @@ type TryRecord struct {
 	Clusters []ClusterRecord
 	// CrossCluster is every finding of the try's cross-cluster checks.
 	CrossCluster []Finding
-	// Gate is every finding of the verification gate that failed the try.
+	// Gate is every finding of the gate that failed the try.
 	Gate []Finding
 }
 

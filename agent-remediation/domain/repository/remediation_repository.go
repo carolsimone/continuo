@@ -46,7 +46,7 @@ type TryLister interface {
 // in the commit that ends a remediation), and what resumes a
 // remediation a redriven trigger names (LockByRelease, HasLaterRound and the
 // Save methods). One bound to the database
-// serves the worker, the verification poller, the retention sweeper and the
+// serves the worker, the gate poller, the retention sweeper and the
 // previous_tries step, which call ClaimNext, Claim, ReleaseLease, the list
 // methods and DeleteFinishedOlderThan outside any transaction. Get is a read-only snapshot
 // that takes no lock and needs no transaction, so either implementation may

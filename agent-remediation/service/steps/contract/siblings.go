@@ -37,23 +37,23 @@ func (*FailingSiblings) Meta() step.Meta {
 		Name: "failing_siblings",
 		Kind: step.KindContext,
 		Description: "Declines a failing python node when another node declared in the same contract directory also failed validation in the release, " +
-			"because a fix is packaged from that whole directory and its verification run would be failed by the sibling. Provides no evidence.",
+			"because a fix is packaged from that whole directory and its release check would be failed by the sibling. Provides no evidence.",
 		Needs: []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeyContractFile},
 	}
 }
 
 // Gather is the check that a fix for this node is verifiable at all. The fix
-// is packaged from the whole contract directory, so its verification run
+// is packaged from the whole contract directory, so its release check
 // re-runs every node declared in it. Another node in that directory that also
 // failed the original release fails that run however correct the fix is, so
-// the cluster is declined up front rather than spending a full verification
-// run, and the single release-queue slot it takes, proving it.
+// the cluster is declined up front rather than spending a full release check,
+// and the single release-queue slot it takes, proving it.
 //
 // The release's failing nodes are read from the original release, and each
 // other id is resolved against a fresh checkout of the repository to see where
 // it is declared. A node no ODCS contract file declares, such as a dbt model or a
 // python node in another project, is not packaged by this fix and cannot fail
-// its verification run. The checkout is removed before returning.
+// its release check. The checkout is removed before returning.
 func (s *FailingSiblings) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	file, ok := remediation.Get[remediation.ContractFile](in.Evidence, remediation.KeyContractFile)
 	if !ok {
@@ -78,7 +78,7 @@ func (s *FailingSiblings) Gather(ctx context.Context, in step.ContextInput) (ste
 	}
 	return declined(s.logger, f, fmt.Sprintf(
 		"%s also failed validation in release %s and is declared in the same contract directory (%s) as %s. "+
-			"A fix is packaged from that whole directory, so any verification run of it would re-run both nodes "+
+			"A fix is packaged from that whole directory, so any release check of it would re-run both nodes "+
 			"and be failed by %s. Fix both nodes together.",
 		sibling, f.Trigger.ReleaseID, file.ContractDir, f.Target.NodeID, sibling)), nil
 }
@@ -86,7 +86,7 @@ func (s *FailingSiblings) Gather(ctx context.Context, in step.ContextInput) (ste
 // siblingFailure returns the id of another node of the original release's
 // failing set that is declared in contractDir, or "" when there is none. A
 // release read that fails is returned rather than guessed past, so the work is
-// tried again: this decides whether the verification run can mean anything at
+// tried again: this decides whether the release check can mean anything at
 // all.
 func (s *FailingSiblings) siblingFailure(ctx context.Context, f remediation.Failure, contractDir, root string) (string, error) {
 	releaseID, nodeID := f.Trigger.ReleaseID, f.Target.NodeID

@@ -60,8 +60,7 @@ expect_fail "script assert-state-recreate"       'python3 assert-state-recreate.
 expect_fail "contract group: Executor"           '  group: ExecutorTaskDispatch'
 expect_fail "constant const: Executor"           '  const: ExecutorRunCancelled'
 for g in task-dispatch run-cancelled validation-requested validation-result-teardown \
-         seed-build-requested compile-requested release-promoted release-rejected \
-         pipeline-run-finished; do
+         seed-build-requested compile-requested release-promoted release-rejected; do
   expect_fail "group executor-$g"                "group: executor-$g"
 done
 

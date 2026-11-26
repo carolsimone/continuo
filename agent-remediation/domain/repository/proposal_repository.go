@@ -26,10 +26,10 @@ var (
 	ErrNotSourceResolved = errors.New("proposal source not resolved")
 	// ErrNotProposed is returned by BeginPR when the attempt has not reached
 	// 'proposed'. A fix still being generated, still being verified by a
-	// verification run, or already failed by one is not a fix anyone may open
+	// release check, or already failed by one is not a fix anyone may open
 	// a pull request for, and status is the only thing that says so: a python
 	// contract fix carries source_resolved=true from the moment it is
-	// submitted for verification, and a failed verification changes nothing
+	// submitted for its release check, and a failed release check changes nothing
 	// but the status.
 	ErrNotProposed = errors.New("proposal is not in the proposed state")
 )
@@ -109,7 +109,7 @@ type ProposalRepository interface {
 	// within one release: a human's "try again" on a rejected release starts a
 	// fresh round, and its attempts are never charged to an earlier round's
 	// exhausted budget. In-flight rows — 'generating' (the model call has not
-	// resolved) and 'verifying' (a verification run is still validating a
+	// resolved) and 'verifying' (a release check is still validating a
 	// proposed fix) — are excluded so an attempt that has not yet concluded
 	// neither inflates the attempt cap nor shifts the attempt number on a
 	// redelivery.
@@ -152,7 +152,7 @@ type ProposalRepository interface {
 	//
 	// Each row moves to 'failed' with reason on it. A row that was generating
 	// takes reason as its rationale. A row that was verifying takes it as its
-	// verify error and keeps its rationale, edits and verifications. On both,
+	// verify error and keeps its rationale, edits and release checks. On both,
 	// every node_outcomes entry still 'generating' or 'verifying' is rewritten
 	// to 'failed' with reason, and any other entry is left as it is, so a
 	// reader of a node's own outcome agrees with the row.
@@ -189,7 +189,7 @@ type ProposalRepository interface {
 	// it to FailStuckOpeningPR if it later needs to release this exact claim.
 	// Claiming requires the parent's status='proposed' as well as
 	// source_resolved, so a fix still being generated or verified — or one a
-	// verification run already failed — can never be turned into a pull request.
+	// release check already failed — can never be turned into a pull request.
 	// Returns ErrNotSourceResolved if source_resolved=false, ErrNotProposed if
 	// the attempt has not reached 'proposed', ErrPRConflict if that project is
 	// already claimed, ErrNotFound if the id is unknown.
@@ -253,23 +253,23 @@ type ProposalRepository interface {
 	RecordPROutcome(ctx context.Context, id, project string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
 
 	// MarkFixVerified finalizes a proposal the runner verified, every
-	// verification run having passed, transitioning status 'verifying' ->
+	// release check having passed, transitioning status 'verifying' ->
 	// 'proposed'. It also rewrites every node_outcomes entry still at
 	// 'verifying' to 'proposed', so a per-node reader agrees with the row's own
-	// status. The proposal id and the final per-run summary come from v, and
+	// status. The proposal id and the final summary of each release check come from v, and
 	// the summary is written in the same statement. hit reports whether the CAS
 	// fired; false means the row was no longer 'verifying', already finalized
 	// by a concurrent or repeated pass. It refuses a zero Verified with an
 	// error and writes nothing.
 	MarkFixVerified(ctx context.Context, v remediation.Verified) (hit bool, err error)
 
-	// MarkVerifyFailed finalizes a proposal a verification run rejected,
+	// MarkVerifyFailed finalizes a proposal a release check rejected,
 	// transitioning status 'verifying' -> 'failed' and recording verifyErr so
 	// the next attempt can use it as evidence. It also rewrites every
-	// node_outcomes entry still at 'verifying' to 'failed'. verifications is
-	// the final per-run summary, written in the same statement. hit reports
+	// node_outcomes entry still at 'verifying' to 'failed'. releaseChecks is
+	// the final summary of each release check, written in the same statement. hit reports
 	// whether the CAS fired, with the same semantics as MarkFixVerified.
-	MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (hit bool, err error)
+	MarkVerifyFailed(ctx context.Context, id, verifyErr string, releaseChecks []proposal.ReleaseCheck) (hit bool, err error)
 
 	// ReopenTryAttempt moves the failed row of one attempt of the remediation
 	// remediationID back in flight, to status, which is generating or
@@ -278,7 +278,7 @@ type ProposalRepository interface {
 	// FailGenerating failed (status failed, the row's rationale as reason, no
 	// code) is generating again, every other outcome kept as it is; outcomes
 	// must be nil. A row reopened verifying loses its verify error, keeps its
-	// rationale, edits and verifications, and takes outcomes as its per-node
+	// rationale, edits and release checks, and takes outcomes as its per-node
 	// outcomes. It changes only the row of that attempt whose status is
 	// failed, and reports whether it changed one. Any other status, or
 	// outcomes given for a row reopened generating, is an error, with nothing
@@ -293,9 +293,9 @@ type ProposalRepository interface {
 	// ErrNotFound, writing nothing, when the release has no row for the attempt.
 	RecordApprovers(ctx context.Context, releaseID string, attempt int, approvers []proposal.Approver) error
 
-	// UpdateVerificationPhase records the phase (and, once known, the
-	// activation time) of one of the proposal's verification runs, leaving
+	// UpdateReleaseCheckPhase records the phase (and, once known, the
+	// activation time) of one of the proposal's release checks, leaving
 	// the others untouched. Called by the gate poller only when the phase it
 	// read differs from the stored one.
-	UpdateVerificationPhase(ctx context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error
+	UpdateReleaseCheckPhase(ctx context.Context, id, checkID string, phase proposal.Phase, activatedAt *time.Time) error
 }

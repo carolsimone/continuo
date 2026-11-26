@@ -9,7 +9,7 @@ import (
 // content_hash differs from the current prod topology — either because the node
 // is new (absent from prod) or because its hash changed. Removed nodes (present
 // in prod but absent from the candidate) are not returned: only candidate nodes
-// can seed a validation run. Output follows candidate order for determinism.
+// can seed a validation leg. Output follows candidate order for determinism.
 //
 // Bootstrap: an empty prod topology yields an empty hash map, so every
 // candidate node is treated as new and returned — i.e. validate-all.
@@ -17,7 +17,7 @@ import (
 // An unknown-external candidate node is never returned: it has no content and nothing
 // builds it, so there is nothing to validate. Every consumer of this list — the
 // validation build set, the changed ancestors of a failing node, the
-// verification build sets and the changed nodes of a promotion — therefore
+// fix build sets and the changed nodes of a promotion — therefore
 // leaves it out.
 func DerivedChangedNodeIDs(candidate, prod Topology) []string {
 	prodHash := make(map[string]string, len(prod))

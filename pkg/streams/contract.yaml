@@ -164,7 +164,7 @@ streams:
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1
-    description: Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
+    description: Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A release check's failure never rides this stream.
     producers: [release-controller]
     consumers:
       - component: remediation
@@ -174,14 +174,14 @@ streams:
         group: execution-controller-release-rejected
         const: ExecutionControllerReleaseRejected
 
-  - name: pipeline.run.finished:v1
-    const: PipelineRunFinishedV1
-    description: A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
+  - name: release_check.finished:v1
+    const: ReleaseCheckFinishedV1
+    description: A release check of either kind (a candidate release or a fix's release check) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
     producers: [release-controller]
     consumers:
       - component: execution-controller
-        group: execution-controller-pipeline-run-finished
-        const: ExecutionControllerPipelineRunFinished
+        group: execution-controller-release-check-finished
+        const: ExecutionControllerReleaseCheckFinished
 
   - name: remediation.retry_requested:v1
     const: RemediationRetryRequestedV1
@@ -297,9 +297,9 @@ vocabularies:
   - name: reject_reason
     const: RejectReason
     description: >-
-      Why release-controller ended a candidate or fix-verification run short of
-      promotion. Travels as `reason` on release.rejected:v1 and as the run's
-      stored fail reason. `healable` marks the reasons the remediation
+      Why release-controller ended a release check, a candidate release's or a
+      fix's, short of promotion. Travels as `reason` on release.rejected:v1 and
+      as the check's stored fail reason. `healable` marks the reasons the remediation
       classifier turns into a heal trigger; every other reason it drops, so a
       retry of one would spend a remediation round for nothing.
     values:
@@ -346,7 +346,7 @@ vocabularies:
       - value: nothing_to_validate
         const: NothingToValidate
         healable: false
-        description: a fix-verification run's candidate declares no node, so the fix it proposes is unproven.
+        description: the candidate of a fix's release check declares no node, so the fix it proposes is unproven.
       - value: seed_build_failed
         const: SeedBuildFailed
         healable: true
@@ -358,7 +358,7 @@ vocabularies:
       - value: upgrade_interrupted
         const: UpgradeInterrupted
         healable: false
-        description: the run was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
+        description: the release check was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
       - value: upstream_clone_failed
         const: UpstreamCloneFailed
         healable: false
@@ -393,7 +393,7 @@ vocabularies:
     values:
       - value: tries_spent
         const: TriesSpent
-        description: the tries are spent and the last try failed at the verification runs.
+        description: the tries are spent and the last try failed at the release checks.
       - value: preflight_rounds_spent
         const: PreflightRoundsSpent
         description: the model's drafts for the node's cluster were refused by pre-flight in every round its type allows.
@@ -405,7 +405,7 @@ vocabularies:
         description: no type of the flow matches the node's failure, so no model call was made for it.
       - value: classifier_infra
         const: ClassifierInfra
-        description: the classifier judged the failure an infrastructure error that a new release run clears, and marked the node unfixable.
+        description: the classifier judged the failure an infrastructure error that a new release check clears, and marked the node unfixable.
       - value: classifier_unhealable_parse
         const: ClassifierUnhealableParse
         description: the classifier judged the parse failure one no change to the release's source fixes, and marked the node unfixable.
@@ -414,7 +414,7 @@ vocabularies:
         description: the trigger names no repository, so no fix pull request can be opened.
       - value: unverifiable_edits
         const: UnverifiableEdits
-        description: the tries are spent and the last try's edits could not be checked by a release, because a cross-cluster check refused them or the gate refused them before starting a run.
+        description: the tries are spent and the last try's edits could not be checked by a release check, because a cross-cluster check refused them or the gate refused them before starting one.
 
   - name: approver_source
     const: ApproverSource
@@ -443,7 +443,7 @@ vocabularies:
 
   - name: remediation_source
     const: RemediationSource
-    description: The pipeline stage that produced the failure of a node a remediation works on.
+    description: The stage of the release check that produced the failure of a node a remediation works on.
     values:
       - value: validation
         const: Validation

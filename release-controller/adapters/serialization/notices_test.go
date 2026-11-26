@@ -31,7 +31,7 @@ func designNotice() release.Notice {
 }
 
 // The notice's JSON is the design's shape, on GET /releases/{id} and in the
-// release_pipeline_runs.notices column.
+// release_checks.notices column.
 func TestNoticesFromDomain_IsTheDesignsJSON(t *testing.T) {
 	raw, err := json.Marshal(serialization.NoticesFromDomain([]release.Notice{designNotice()}))
 	require.NoError(t, err)

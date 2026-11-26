@@ -12,26 +12,26 @@ type Telemetry interface {
 	ReleaseReceived(ctx context.Context, releaseID string)
 	ReleaseParseRequested(ctx context.Context, releaseID string)
 	// ReleaseCompileCompleted reports the end of the compile leg: ok is the
-	// leg's own result and took is the time the run spent compiling.
+	// leg's own result and took is the time the check spent compiling.
 	ReleaseCompileCompleted(ctx context.Context, releaseID string, ok bool, took time.Duration)
 	// ReleaseParseCompleted reports the end of the parse leg: ok is the leg's
-	// own result and took is the time the run spent parsing.
+	// own result and took is the time the check spent parsing.
 	ReleaseParseCompleted(ctx context.Context, releaseID string, ok bool, took time.Duration)
 	ReleaseValidationRequested(ctx context.Context, releaseID string, nodeCount int)
 	// ReleaseValidationCompleted reports the end of the validation leg: ok is
-	// the leg's own result and took is the time the run spent validating.
+	// the leg's own result and took is the time the check spent validating.
 	ReleaseValidationCompleted(ctx context.Context, releaseID string, ok bool, okCount, failCount int, took time.Duration)
 	ReleaseSeedBuildRequested(ctx context.Context, releaseID string, seedCount int)
 	// ReleaseSeedBuildCompleted reports the end of the seed-build leg: ok is
-	// the leg's own result and took is the time the run spent building seeds.
+	// the leg's own result and took is the time the check spent building seeds.
 	ReleaseSeedBuildCompleted(ctx context.Context, releaseID string, ok bool, took time.Duration)
 	ReleasePromoted(ctx context.Context, releaseID string, nodeCount int)
 	ReleaseRejected(ctx context.Context, releaseID, reason string, failingNodes []string)
-	// VerificationFinished records a verification run's terminal outcome
-	// (passed or failed). A verification never promotes or rejects a release,
-	// so its terminal decision gets its own call rather than reusing
+	// FixFinished records the terminal outcome of a fix's release check
+	// (passed or failed). A fix's release check never promotes or rejects a
+	// release, so its terminal decision gets its own call rather than reusing
 	// ReleasePromoted/ReleaseRejected.
-	VerificationFinished(ctx context.Context, runID, outcome string, nodeCount int)
+	FixFinished(ctx context.Context, checkID, outcome string, nodeCount int)
 }
 
 // NoOpTelemetry is the default for tests and bring-up.
@@ -48,4 +48,4 @@ func (NoOpTelemetry) ReleaseSeedBuildRequested(context.Context, string, int)    
 func (NoOpTelemetry) ReleaseSeedBuildCompleted(context.Context, string, bool, time.Duration) {}
 func (NoOpTelemetry) ReleasePromoted(context.Context, string, int)                           {}
 func (NoOpTelemetry) ReleaseRejected(context.Context, string, string, []string)              {}
-func (NoOpTelemetry) VerificationFinished(context.Context, string, string, int)              {}
+func (NoOpTelemetry) FixFinished(context.Context, string, string, int)                       {}

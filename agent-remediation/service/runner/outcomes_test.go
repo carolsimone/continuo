@@ -41,11 +41,11 @@ func (h *harness) clusterFor(id uuid.UUID, try int, target string) remediation.C
 	return remediation.Cluster{}
 }
 
-// failGate makes every verification run of the try fail on node and polls the
+// failGate makes every release check of the try fail on node and polls the
 // gate, which fails the try and opens the next one.
 func (h *harness) failGate(id uuid.UUID, node string) {
 	h.t.Helper()
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{node: "column x does not exist"})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{node: "column x does not exist"})
 	require.NoError(h.t, h.poll(id))
 }
 
@@ -92,9 +92,9 @@ func TestRunner_ClassifierInfra(t *testing.T) {
 		"svc-a": want,
 		"svc-b": {Status: proposal.StatusVerifying},
 	}, p.NodeOutcomes)
-	runs := h.pipeline.runs()
+	runs := h.checks.requests()
 	require.Len(t, runs, 1)
-	assert.Equal(t, svcBRun1, runs[0].RunID)
+	assert.Equal(t, svcBCheck1, runs[0].CheckID)
 }
 
 // An unhealable parse failure keeps the classifier's outcome in an attempt
@@ -237,7 +237,7 @@ func TestRunner_Declined(t *testing.T) {
 		p := h.attempt(1).Proposal
 		assert.Equal(t, proposal.StatusFailed, p.Status, "a node the model was asked about fails the attempt")
 		assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": noEditDeclined}, p.NodeOutcomes)
-		assert.Empty(t, h.pipeline.runs())
+		assert.Empty(t, h.checks.requests())
 	})
 }
 
@@ -683,5 +683,5 @@ func TestRunner_AllUnfixableWritesOneSkippedAttempt(t *testing.T) {
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 	assert.Zero(t, h.llm.calls())
-	assert.Empty(t, h.pipeline.runs())
+	assert.Empty(t, h.checks.requests())
 }

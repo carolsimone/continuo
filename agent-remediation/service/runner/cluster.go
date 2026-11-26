@@ -17,7 +17,7 @@ import (
 )
 
 // noEditReason is the outcome of the members of a cluster whose draft passed
-// pre-flight with no edit: nothing a verification run could run, and nothing
+// pre-flight with no edit: nothing a release check could run, and nothing
 // a pull request could carry. Such members are recorded declined.
 const noEditReason = "the fix could not be applied to version-controlled source, so there is nothing to verify"
 

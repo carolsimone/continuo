@@ -298,7 +298,7 @@ These answers can come back from the release routes:
 | 400 `kind "ontology" is accepted only when the install's ontology switch is on (contracts.ontology.enabled)` | The switch is off. |
 | 409 `project "<other>" is the install's ontology: an install has one ontology project` | Another project already has the kind `ontology`, in production or in a release that has not ended. A CI token reads `an install has one ontology project`, without the other project's name. |
 | 409 `project "<name>" is released as kind "<kind>": a project cannot change between kind "ontology" and a node kind` | The project's production release has another kind, or the ontology project is released as a node kind. |
-| 400 `a verification run cannot have kind "ontology"` | A verification run names the kind `ontology`. |
+| 400 `a fix's release check cannot have kind "ontology"` | A fix's release check names the kind `ontology`. |
 
 The kind-change 409 is given when a release is received. Two queued releases of one
 project, one `ontology` and one of a node kind, both pass that check. When the

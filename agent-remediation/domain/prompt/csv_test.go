@@ -31,7 +31,7 @@ func csvEvidence() CsvEvidence {
 
 // TestAssembleCsvContractFix_RendersEverySection pins that every evidence
 // section reaches the model, each in the fence its content type calls for.
-// The per-attempt evidence (the prior attempt's diff and the verification run's
+// The per-attempt evidence (the prior attempt's diff and the release check's
 // error) is what makes a second attempt better-informed than the first, so a
 // renderer that silently drops a section would degrade retries without any
 // visible failure.

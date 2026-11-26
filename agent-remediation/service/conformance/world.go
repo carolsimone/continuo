@@ -24,8 +24,8 @@ type Script struct {
 	// whose target is the named node.
 	MemberAnswers map[string][]ports.ProposeResult
 	// FailedAttempts is how many of the release's attempts have their
-	// verification runs fail, with the fixture's gate errors, before runs
-	// pass: a run of attempt n fails while n is at most FailedAttempts.
+	// release checks fail, with the fixture's gate errors, before they
+	// pass: a check of attempt n fails while n is at most FailedAttempts.
 	FailedAttempts int
 }
 
@@ -44,7 +44,7 @@ type World interface {
 	Repository() repository.RemediationRepository
 	// Collaborators are the ports the steps are built from, every one
 	// answering from the fixture. The contract locator and inspector and the
-	// verification timeout are left for the suite to set.
+	// release check timeout are left for the suite to set.
 	Collaborators() runner.Collaborators
 	// LLM is the scripted model behind the real response cache.
 	LLM() ports.LLMProvider
@@ -73,8 +73,8 @@ type World interface {
 	// ModelCalls is every call that reached the scripted model, past the
 	// response cache, in call order.
 	ModelCalls() []ModelCall
-	// Runs is every verification run submitted, in submit order.
-	Runs() []ports.VerificationRequest
+	// Checks is every release check submitted, in submit order.
+	Checks() []ports.ReleaseCheckRequest
 }
 
 // ModelCall is one call that reached the scripted model: the node its
@@ -85,7 +85,7 @@ type ModelCall struct {
 }
 
 // Attempt is one proposal row as the store holds it, with the error its
-// verification run reported.
+// release check reported.
 type Attempt struct {
 	Proposal    proposal.Proposal
 	VerifyError string

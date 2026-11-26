@@ -16,7 +16,7 @@
 // {"release_id","promotion_seq","topology_uri","topology_sha256"}, or the
 // node array for --print-current. Diagnostics go to stderr. Exit codes: 0 ok,
 // 1 error, 2 usage (bad flags, an unreadable topology, a release id that
-// already names a run or current_prod), 3 nothing has been promoted.
+// already names a check or current_prod), 3 nothing has been promoted.
 //
 // The command writes the artifact to S3 and the announcement to
 // release-controller's outbox; the running release-controller publishes it.

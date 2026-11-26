@@ -4,16 +4,16 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 )
 
-// candidateTopology loads r's candidate topology from its artifact. A run
+// candidateTopology loads r's candidate topology from its artifact. A check
 // without a reference — not parsed yet, or rejected before its topology was
 // recorded — has none. A load error is returned wrapped (errors.Is still
 // matches): the caller's transaction rolls back, and the binding dead-letters a
 // corrupt artifact while an unreachable store pauses the consumer.
-func candidateTopology(ctx context.Context, d *Deps, r *pipeline.Run) (release.Topology, error) {
+func candidateTopology(ctx context.Context, d *Deps, r *releasecheck.Check) (release.Topology, error) {
 	ref := r.CandidateTopologyRef()
 	if ref.IsZero() {
 		return nil, nil

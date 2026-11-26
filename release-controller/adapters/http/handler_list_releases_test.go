@@ -7,25 +7,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestResolvedAt_PassedIsResolved verifies that resolvedAt treats
 // StatusPassed as a terminal transition — the same as promoted, rejected,
-// and superseded — so a verification run's list item carries a non-empty
+// and superseded — so a fix's list item carries a non-empty
 // resolved_at once it reaches its terminal status.
 func TestResolvedAt_PassedIsResolved(t *testing.T) {
 	at := time.Unix(42, 0).UTC()
-	r := pipeline.Rehydrate(pipeline.RehydrateInput{
+	r := releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID:     "rVAL",
-		Status: pipeline.StatusPassed,
-		Transitions: []pipeline.Transition{
-			{To: pipeline.StatusReceived, At: time.Unix(1, 0).UTC()},
-			{To: pipeline.StatusValidating, At: time.Unix(2, 0).UTC()},
-			{To: pipeline.StatusPassed, At: at},
+		Status: releasecheck.StatusPassed,
+		Transitions: []releasecheck.Transition{
+			{To: releasecheck.StatusReceived, At: time.Unix(1, 0).UTC()},
+			{To: releasecheck.StatusValidating, At: time.Unix(2, 0).UTC()},
+			{To: releasecheck.StatusPassed, At: at},
 		},
 	})
 
@@ -38,9 +38,9 @@ func TestResolvedAt_PassedIsResolved(t *testing.T) {
 // release's source repo and commit SHA, so the UI can resolve the commit author
 // without a follow-up per-release detail fetch.
 func TestToReleaseListItem_CarriesProvenance(t *testing.T) {
-	r := pipeline.Rehydrate(pipeline.RehydrateInput{
+	r := releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID:        "rel-1",
-		Status:    pipeline.StatusPromoted,
+		Status:    releasecheck.StatusPromoted,
 		Repo:      "acme/dbt",
 		CommitSHA: "abc123",
 	})
@@ -51,15 +51,15 @@ func TestToReleaseListItem_CarriesProvenance(t *testing.T) {
 	assert.Equal(t, "abc123", item.CommitSHA)
 }
 
-// TestHandleListReleases_OmitsVerificationRuns verifies that GET /releases
-// scopes its listing to candidates: a verification run occupying the same
-// run collection must not appear in the release history, since it is read
-// through GET /verification-runs instead.
-func TestHandleListReleases_OmitsVerificationRuns(t *testing.T) {
+// TestHandleListReleases_OmitsReleaseChecks verifies that GET /releases
+// scopes its listing to candidates: a fix's release check occupying the same
+// check collection must not appear in the release history, since it is read
+// through GET /release-checks instead.
+func TestHandleListReleases_OmitsReleaseChecks(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	releases.releases["rel-1"] = pipeline.NewCandidate("rel-1", "finance", "tag", false, false, "owner/repo", "abc123", release.ManifestKindDbt, now)
-	releases.releases["verify-1"] = pipeline.NewVerification("verify-1", "finance", "tag", "rel-0", 1, "", release.ManifestKindDbt, now)
+	releases.releases["rel-1"] = releasecheck.NewCandidate("rel-1", "finance", "tag", false, false, "owner/repo", "abc123", release.ManifestKindDbt, now)
+	releases.releases["verify-1"] = releasecheck.NewFix("verify-1", "finance", "tag", "rel-0", 1, "", release.ManifestKindDbt, now)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/releases", nil)
@@ -90,12 +90,12 @@ func TestHandleListReleases_NoReleasesIsAnEmptyArray(t *testing.T) {
 	assert.JSONEq(t, `[]`, string(resp["releases"]))
 }
 
-// The release list reports a run's node count from its topology reference, so
+// The release list reports a check's node count from its topology reference, so
 // listing never reads an artifact.
 func TestToReleaseListItem_NodeCountComesFromTheTopologyRef(t *testing.T) {
-	r := pipeline.Rehydrate(pipeline.RehydrateInput{
+	r := releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID:     "rel-1",
-		Status: pipeline.StatusValidating,
+		Status: releasecheck.StatusValidating,
 		CandidateTopology: release.TopologyRef{
 			URI: "s3://continuo/tenants/default/topologies/rel-1/topology.json.gz", SHA256: "ab", NodeCount: 133,
 		},

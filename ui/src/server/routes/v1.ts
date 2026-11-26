@@ -293,14 +293,15 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       return res.status(202).json(acceptedBody(upstream.text, body.release_id));
     }
     auditSubmit(p, body, upstream.status);
-    // release-controller answers 409 when the release id already names a run
-    // of another kind or a candidate with a different project, image tag,
-    // kind, bootstrap or rebaseline flag, or source change. A person gets its message; a CI
-    // identity gets a generic one, because the id may belong to a release of a
-    // project its repository is not bound to, and the message names the run's
-    // kind. The two ontology conflicts reach a CI identity too, because one
-    // names only the project it is bound to and the other has the other
-    // project's name removed (see conflictMessage).
+    // release-controller answers 409 when the release id already names a
+    // release check of another kind (a fix's) or a candidate with a different
+    // project, image tag, kind, bootstrap or rebaseline flag, or source
+    // change. A person gets its message; a CI identity gets a generic one,
+    // because the id may belong to a release of a project its repository is
+    // not bound to, and the message names the release check's kind. The two
+    // ontology conflicts reach a CI identity too, because one names only the
+    // project it is bound to and the other has the other project's name
+    // removed (see conflictMessage).
     if (upstream.status === 409) {
       return fail(res, 409, 'release_kind_conflict', conflictMessage(p, upstream.text.trim()));
     }

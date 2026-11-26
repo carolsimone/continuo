@@ -7,7 +7,7 @@
 #
 # The fix a remediation attempt has to find is in this file and nowhere else:
 # the read must qualify the relation (public.right_name, which the test creates
-# in the warehouse so the fix's verification run can bind it).
+# in the warehouse so the fix's release check can bind it).
 apiVersion: v3.2.0
 kind: DataContract
 id: e2e_schema.py_unqualified_read

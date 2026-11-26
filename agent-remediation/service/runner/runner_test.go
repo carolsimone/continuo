@@ -471,7 +471,7 @@ func TestRunner_PassedPreflightWritesTheArtifacts(t *testing.T) {
 }
 
 // TestRunner_AnEditIsStoredWithItsFilesLineEndings pins that the stored fix,
-// which the verification run builds and the pull request writes, keeps the
+// which the release check builds and the pull request writes, keeps the
 // file's CRLF line endings and final newline: a model answers with LF, and a
 // diff of that answer against a CRLF file marks every line as changed.
 func TestRunner_AnEditIsStoredWithItsFilesLineEndings(t *testing.T) {

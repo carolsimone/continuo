@@ -1,6 +1,6 @@
 // Package scripted is the world a conformance scenario runs in: every port a
 // remediation step reads through, answering from one fixture, the scripted
-// model behind the real response cache, a verification pipeline that passes or
+// model behind the real response cache, release checks that pass or
 // fails as the scenario's script says, and a fixed clock, over a memory store.
 package scripted
 
@@ -37,12 +37,12 @@ var startTime = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 
 // World is one scenario's world over a memory store.
 type World struct {
-	store    *memory.Store
-	collab   runner.Collaborators
-	llm      *model
-	cached   ports.LLMProvider
-	pipeline *pipeline
-	clock    fixedClock
+	store  *memory.Store
+	collab runner.Collaborators
+	llm    *model
+	cached ports.LLMProvider
+	checks *releaseChecks
+	clock  fixedClock
 }
 
 var _ conformance.World = (*World)(nil)
@@ -56,7 +56,7 @@ func Worlds(newStore func() *memory.Store) conformance.NewWorld {
 }
 
 // NewWorld builds the world of fixture f over store, with the model and the
-// verification pipeline answering as script s says. The repository at the
+// release checks answering as script s says. The repository at the
 // trigger's commit holds f's repo files; paths that are not local to a
 // checkout are refused, all named, in path order.
 func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) (*World, error) {
@@ -75,13 +75,13 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 	objects := newObjectStore(f.Objects)
 	cat := catalog{c: f.Catalog}
 	llm := newModel(s.Answers, s.MemberAnswers)
-	pipe := newPipeline(s.FailedAttempts, f.GateErrors, clock)
+	pipe := newReleaseChecks(s.FailedAttempts, f.GateErrors, clock)
 	w := &World{
-		store:    store,
-		llm:      llm,
-		cached:   llmcache.New(llm, newResponseCache(), modelID, logger),
-		pipeline: pipe,
-		clock:    clock,
+		store:  store,
+		llm:    llm,
+		cached: llmcache.New(llm, newResponseCache(), modelID, logger),
+		checks: pipe,
+		clock:  clock,
 	}
 	w.collab = runner.Collaborators{
 		Source:           repo,
@@ -102,7 +102,7 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 		Releases:         release{r: f.Release},
 		PriorAttempts:    store.ProposalRepository(),
 		Tries:            store.RemediationRepository(),
-		Pipeline:         pipe,
+		ReleaseChecks:    pipe,
 		Clock:            clock,
 	}
 	return w, nil
@@ -117,7 +117,7 @@ func (w *World) Repository() repository.RemediationRepository {
 }
 
 // Collaborators are the ports the steps are built from. The contract locator
-// and inspector and the verification timeout are left for the caller.
+// and inspector and the release check timeout are left for the caller.
 func (w *World) Collaborators() runner.Collaborators { return w.collab }
 
 // LLM is the scripted model behind the real response cache.
@@ -162,8 +162,8 @@ func (w *World) Outbox() []outbox.Entry { return w.store.OutboxEntries() }
 // was about.
 func (w *World) ModelCalls() []conformance.ModelCall { return w.llm.recorded() }
 
-// Runs is every verification run submitted.
-func (w *World) Runs() []ports.VerificationRequest { return w.pipeline.runs() }
+// Runs is every release check submitted.
+func (w *World) Checks() []ports.ReleaseCheckRequest { return w.checks.requests() }
 
 // fixedClock always reads the same time.
 type fixedClock struct{ now time.Time }

@@ -264,7 +264,7 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	t.Logf("✅ acknowledged full refresh %s dropped the named objects and rebuilt %s", refreshRun, seedReloadViewKey)
 }
 
-// cleanupSeedReload waits for releaseID to end its pipeline and for its runs
+// cleanupSeedReload waits for releaseID to end its release check and for its runs
 // to end, drops the objects the test made in the warehouse and restores the
 // default topology. It runs on a context of its own, because the test's is
 // cancelled by the time a cleanup runs.
@@ -285,12 +285,12 @@ func cleanupSeedReload(t *testing.T, clients *testClients, releaseID string) {
 	restoreDefaultTopology(t, ctx, clients)
 }
 
-// releaseInFlight holds the statuses of a release whose pipeline has not ended.
+// releaseInFlight holds the statuses of a release whose release check has not ended.
 var releaseInFlight = map[string]bool{
 	"received": true, "compiling": true, "parsing": true, "seed_building": true, "validating": true,
 }
 
-// waitForReleaseToEnd waits until releaseID is no longer in its pipeline:
+// waitForReleaseToEnd waits until releaseID's release check has ended:
 // promoted, rejected, superseded, or never recorded. It returns without
 // failing when it still is after timeout.
 func waitForReleaseToEnd(t *testing.T, ctx context.Context, clients *testClients, releaseID string, timeout time.Duration) {

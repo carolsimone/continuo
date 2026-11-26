@@ -19,8 +19,8 @@ import (
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -35,26 +35,26 @@ func newTestServer(deps *handlers.Deps) *Server {
 	return s
 }
 
-// --- fakeReleaseRepo: in-memory RunRepository backing retry-remediation tests ---
+// --- fakeReleaseRepo: in-memory ReleaseCheckRepository backing retry-remediation tests ---
 
 type fakeReleaseRepo struct {
-	releases map[string]*pipeline.Run
+	releases map[string]*releasecheck.Check
 }
 
-func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*pipeline.Run, error) {
+func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*releasecheck.Check, error) {
 	return f.releases[id], nil
 }
 
-func (f *fakeReleaseRepo) Load(_ context.Context, id string) (*pipeline.Run, error) {
+func (f *fakeReleaseRepo) Load(_ context.Context, id string) (*releasecheck.Check, error) {
 	return f.releases[id], nil
 }
 
-func (f *fakeReleaseRepo) Save(_ context.Context, r *pipeline.Run) error {
+func (f *fakeReleaseRepo) Save(_ context.Context, r *releasecheck.Check) error {
 	f.releases[r.ID()] = r
 	return nil
 }
 
-func (f *fakeReleaseRepo) Create(_ context.Context, r *pipeline.Run) (bool, error) {
+func (f *fakeReleaseRepo) Create(_ context.Context, r *releasecheck.Check) (bool, error) {
 	if _, exists := f.releases[r.ID()]; exists {
 		return false, nil
 	}
@@ -62,32 +62,32 @@ func (f *fakeReleaseRepo) Create(_ context.Context, r *pipeline.Run) (bool, erro
 	return true, nil
 }
 
-func (f *fakeReleaseRepo) NextQueued(context.Context) (*pipeline.Run, error) {
+func (f *fakeReleaseRepo) NextQueued(context.Context) (*releasecheck.Check, error) {
 	return nil, nil
 }
 
-func (f *fakeReleaseRepo) NextQueuedOfKind(context.Context, pipeline.Kind) (*pipeline.Run, error) {
+func (f *fakeReleaseRepo) NextQueuedOfKind(context.Context, releasecheck.Kind) (*releasecheck.Check, error) {
 	return nil, nil
 }
 
-// Active returns the single run in a non-terminal, non-received status, or
+// Active returns the single check in a non-terminal, non-received status, or
 // nil. Mirrors the Postgres query that guards AdvanceQueue from launching a
-// second concurrent run.
-func (f *fakeReleaseRepo) Active(context.Context) (*pipeline.Run, error) {
+// second concurrent check.
+func (f *fakeReleaseRepo) Active(context.Context) (*releasecheck.Check, error) {
 	for _, r := range f.releases {
 		switch r.Status() {
-		case pipeline.StatusCompiling, pipeline.StatusParsing, pipeline.StatusSeedBuilding, pipeline.StatusValidating:
+		case releasecheck.StatusCompiling, releasecheck.StatusParsing, releasecheck.StatusSeedBuilding, releasecheck.StatusValidating:
 			return r, nil
 		}
 	}
 	return nil, nil
 }
 
-// List returns every stored run matching filter.Kind, filter.VerifiesReleaseID,
+// List returns every stored check matching filter.Kind, filter.VerifiesReleaseID,
 // and filter.Status (each optional), newest first. Pagination is not
 // simulated: HTTP handler tests exercise small, unpaginated fixtures.
-func (f *fakeReleaseRepo) List(_ context.Context, filter repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
-	var out []*pipeline.Run
+func (f *fakeReleaseRepo) List(_ context.Context, filter repository.ListFilter) ([]*releasecheck.Check, *repository.ListCursor, error) {
+	var out []*releasecheck.Check
 	for _, r := range f.releases {
 		if filter.Kind != nil && r.Kind() != *filter.Kind {
 			continue
@@ -104,13 +104,13 @@ func (f *fakeReleaseRepo) List(_ context.Context, filter repository.ListFilter) 
 	return out, nil, nil
 }
 
-// ActiveCandidateProjectsWithKind lists the projects of the candidate runs of
+// ActiveCandidateProjectsWithKind lists the projects of the candidate checks of
 // the given manifest kind that have not ended, sorted and without repeats.
 func (f *fakeReleaseRepo) ActiveCandidateProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
 	seen := map[string]bool{}
 	names := []string{}
 	for _, r := range f.releases {
-		if r.Kind() != pipeline.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedProject()] {
+		if r.Kind() != releasecheck.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedProject()] {
 			continue
 		}
 		seen[r.ChangedProject()] = true
@@ -124,7 +124,7 @@ func (f *fakeReleaseRepo) DeleteFinishedBefore(context.Context, time.Time, []str
 	return 0, nil
 }
 
-var _ repository.RunRepository = (*fakeReleaseRepo)(nil)
+var _ repository.ReleaseCheckRepository = (*fakeReleaseRepo)(nil)
 
 // --- fakeServiceProdRepo: in-memory ServiceProdRepository ---
 
@@ -202,7 +202,7 @@ type fakeUoW struct {
 	outbox      *fakeOutboxRepo
 }
 
-func (u *fakeUoW) RunRepo() repository.RunRepository                             { return u.releases }
+func (u *fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository           { return u.releases }
 func (u *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository             { return nil }
 func (u *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository             { return u.serviceProd }
 func (u *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository { return nil }
@@ -238,7 +238,7 @@ var _ ports.Clock = (fakeClock{})
 
 // newRetryRemediationDeps builds a handlers.Deps wired to fresh, empty fakes.
 func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
-	releases := &fakeReleaseRepo{releases: map[string]*pipeline.Run{}}
+	releases := &fakeReleaseRepo{releases: map[string]*releasecheck.Check{}}
 	u := &fakeUoW{releases: releases, serviceProd: newFakeServiceProdRepo(), outbox: &fakeOutboxRepo{}}
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return u },
@@ -254,9 +254,9 @@ func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
 
 // rejectedReleaseForRetry builds a release that reached StatusRejected with a
 // healable reason and a stored rejection payload, ready for RetryRemediation.
-func rejectedReleaseForRetry(t *testing.T, id string, now time.Time) *pipeline.Run {
+func rejectedReleaseForRetry(t *testing.T, id string, now time.Time) *releasecheck.Check {
 	t.Helper()
-	r := pipeline.NewCandidate(id, "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+	r := releasecheck.NewCandidate(id, "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToCompiling(now))
 	require.NoError(t, r.Fail("compile_failed", "", []string{"finance"}, now))
 	r.SetRejectionPayload([]byte(`{"release_id":"` + id + `","stage":"compile","reason":"compile_failed"}`))
@@ -369,13 +369,13 @@ func TestRetryRemediationHandler_RetryInProgress(t *testing.T) {
 // *fakeReleaseRepo so every other method keeps that fake's behavior.
 type erroringReleaseRepo struct{ *fakeReleaseRepo }
 
-func (erroringReleaseRepo) Load(context.Context, string) (*pipeline.Run, error) {
+func (erroringReleaseRepo) Load(context.Context, string) (*releasecheck.Check, error) {
 	return nil, errors.New("row-lock timeout")
 }
 
 func TestRetryRemediationHandler_GenericErrorIsInternal(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
-	repo := erroringReleaseRepo{&fakeReleaseRepo{releases: map[string]*pipeline.Run{}}}
+	repo := erroringReleaseRepo{&fakeReleaseRepo{releases: map[string]*releasecheck.Check{}}}
 	u := &fakeUoW{releases: repo.fakeReleaseRepo, serviceProd: newFakeServiceProdRepo(), outbox: &fakeOutboxRepo{}}
 	deps := &handlers.Deps{
 		NewUoW: func() uow.UnitOfWork {
@@ -403,4 +403,4 @@ type loadErrUoW struct {
 	releaseRepo erroringReleaseRepo
 }
 
-func (u *loadErrUoW) RunRepo() repository.RunRepository { return u.releaseRepo }
+func (u *loadErrUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository { return u.releaseRepo }

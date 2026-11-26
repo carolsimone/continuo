@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Lay a verification run's proposed source files over a Job's dbt project.
+"""Lay a release check's proposed source files over a Job's dbt project.
 
-Runs as the `overlay` initContainer (s3-sidecar image) of a verification run's
+Runs as the `overlay` initContainer (s3-sidecar image) of a release check's
 compile Job and seed-build Job. Downloads SOURCE_OVERLAY_URI — a gzip tarball
 whose member names are project-relative paths (e.g. models/orders.sql) — and
 extracts it into OVERLAY_DEST; each team-image container of the Job then
@@ -21,7 +21,7 @@ OVERLAY_DEST; the team containers remove each of them from their copy after
 laying the overlay over it. A tarball without the member writes no list and
 needs no OVERLAY_DELETE_LIST.
 
-Every failure exits nonzero and fails the Job. A verification run exists only
+Every failure exits nonzero and fails the Job. A release check exists only
 to judge a fix; building the committed source instead would judge the wrong
 thing, so there is deliberately no degraded path here.
 """

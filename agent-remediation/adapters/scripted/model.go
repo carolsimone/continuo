@@ -101,37 +101,37 @@ func (c *responseCache) Put(_ context.Context, key string, result ports.ProposeR
 	return nil
 }
 
-// pipeline is the verification pipeline. A run of one of the first failed
-// attempts fails with the fixture's gate errors and every other run passes,
+// releaseChecks answers the release checks. A check of one of the first failed
+// attempts fails with the fixture's gate errors and every other check passes,
 // both as soon as they are read.
-type pipeline struct {
+type releaseChecks struct {
 	mu        sync.Mutex
 	failed    int
 	errors    map[string]string
 	clock     ports.Clock
-	submitted []ports.VerificationRequest
+	submitted []ports.ReleaseCheckRequest
 }
 
-var _ ports.VerificationPipeline = (*pipeline)(nil)
+var _ ports.ReleaseChecks = (*releaseChecks)(nil)
 
-func newPipeline(failedAttempts int, gateErrors map[string]string, clock ports.Clock) *pipeline {
-	return &pipeline{failed: failedAttempts, errors: gateErrors, clock: clock}
+func newReleaseChecks(failedAttempts int, gateErrors map[string]string, clock ports.Clock) *releaseChecks {
+	return &releaseChecks{failed: failedAttempts, errors: gateErrors, clock: clock}
 }
 
-// Submit records the run.
-func (p *pipeline) Submit(_ context.Context, r ports.VerificationRequest) error {
+// Submit records the check.
+func (p *releaseChecks) Submit(_ context.Context, r ports.ReleaseCheckRequest) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.submitted = append(p.submitted, r)
 	return nil
 }
 
-// Status returns the run's verdict.
-func (p *pipeline) Status(_ context.Context, runID string) (ports.VerificationStatus, error) {
+// Status returns the check's verdict.
+func (p *releaseChecks) Status(_ context.Context, checkID string) (ports.ReleaseCheckStatus, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, r := range p.submitted {
-		if r.RunID != runID {
+		if r.CheckID != checkID {
 			continue
 		}
 		if r.Attempt <= p.failed {
@@ -139,15 +139,15 @@ func (p *pipeline) Status(_ context.Context, runID string) (ports.VerificationSt
 			for node, msg := range p.errors {
 				nodeErrors[node] = msg
 			}
-			return ports.VerificationStatus{Phase: proposal.PhaseFailed, ActivatedAt: p.clock.Now(), NodeErrors: nodeErrors}, nil
+			return ports.ReleaseCheckStatus{Phase: proposal.PhaseFailed, ActivatedAt: p.clock.Now(), NodeErrors: nodeErrors}, nil
 		}
-		return ports.VerificationStatus{Phase: proposal.PhasePassed, ActivatedAt: p.clock.Now()}, nil
+		return ports.ReleaseCheckStatus{Phase: proposal.PhasePassed, ActivatedAt: p.clock.Now()}, nil
 	}
-	return ports.VerificationStatus{}, fmt.Errorf("no verification run %s was submitted", runID)
+	return ports.ReleaseCheckStatus{}, fmt.Errorf("no release check %s was submitted", checkID)
 }
 
-func (p *pipeline) runs() []ports.VerificationRequest {
+func (p *releaseChecks) requests() []ports.ReleaseCheckRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]ports.VerificationRequest(nil), p.submitted...)
+	return append([]ports.ReleaseCheckRequest(nil), p.submitted...)
 }

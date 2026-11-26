@@ -20,7 +20,7 @@ var (
 	earlierTries    = []remediation.TryRecord{{
 		Round: 1, Try: 1, Attempt: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{nodeID}, Edits: []remediation.EditRecord{{Path: "svc/contracts/fx.yaml", Diff: "<-a>"}}}},
-		Gate:     []remediation.Finding{{Code: "verification_failed", Message: "<still bad>"}},
+		Gate:     []remediation.Finding{{Code: "release_check_failed", Message: "<still bad>"}},
 	}}
 )
 

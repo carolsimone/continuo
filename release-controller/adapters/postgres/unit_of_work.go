@@ -27,7 +27,7 @@ type UnitOfWork struct {
 }
 
 // NewUnitOfWork creates a new Postgres-backed UnitOfWork. deleter is used by
-// RunRepo to remove candidate-SQL objects from S3 when runs are pruned.
+// ReleaseCheckRepo to remove candidate-SQL objects from S3 when checks are pruned.
 func NewUnitOfWork(db *sqlx.DB, logger *slog.Logger, deleter ports.CandidateSQLDeleter) *UnitOfWork {
 	return &UnitOfWork{db: db, logger: logger, deleter: deleter}
 }
@@ -43,9 +43,9 @@ func (u *UnitOfWork) queryer() Queryer {
 	return u.db
 }
 
-// RunRepo returns the run repository bound to the current queryer.
-func (u *UnitOfWork) RunRepo() repository.RunRepository {
-	return NewRunRepository(u.queryer(), u.deleter)
+// ReleaseCheckRepo returns the check repository bound to the current queryer.
+func (u *UnitOfWork) ReleaseCheckRepo() repository.ReleaseCheckRepository {
+	return NewReleaseCheckRepository(u.queryer(), u.deleter)
 }
 
 // CurrentProdRepo returns the current-prod repository bound to the current queryer.

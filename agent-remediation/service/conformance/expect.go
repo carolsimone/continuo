@@ -89,9 +89,9 @@ func (e *expectation) members(a Attempt, nodeIDs []string, status proposal.Statu
 	}
 }
 
-// runsPerEditedProject expects one verification run per project attempt a
+// checksPerEditedProject expects one release check per project attempt a
 // edits, and no other run.
-func (e *expectation) runsPerEditedProject(a Attempt, projectRepoPaths map[string]string) {
+func (e *expectation) checksPerEditedProject(a Attempt, projectRepoPaths map[string]string) {
 	edited := map[string]bool{}
 	for _, ed := range a.Proposal.Edits {
 		project, _, ok := proposal.ProjectForPath(projectRepoPaths, ed.Path)
@@ -100,21 +100,21 @@ func (e *expectation) runsPerEditedProject(a Attempt, projectRepoPaths map[strin
 	}
 	e.that(len(edited) > 0, "attempt %d has no edit", a.Proposal.Attempt)
 	runs := map[string]int{}
-	for _, r := range e.sr.w.Runs() {
+	for _, r := range e.sr.w.Checks() {
 		runs[r.Project]++
 	}
 	for _, project := range sortedKeys(edited) {
-		e.that(runs[project] == 1, "project %s had %d verification runs, want 1", project, runs[project])
+		e.that(runs[project] == 1, "project %s had %d release checks, want 1", project, runs[project])
 	}
 	for _, project := range sortedKeys(runs) {
-		e.that(edited[project], "project %s had %d verification runs and no edit", project, runs[project])
+		e.that(edited[project], "project %s had %d release checks and no edit", project, runs[project])
 	}
 }
 
-// runs expects n verification runs.
-func (e *expectation) runs(n int) {
-	got := e.sr.w.Runs()
-	e.that(len(got) == n, "%d verification runs were submitted, want %d", len(got), n)
+// runs expects n release checks.
+func (e *expectation) checks(n int) {
+	got := e.sr.w.Checks()
+	e.that(len(got) == n, "%d release checks were submitted, want %d", len(got), n)
 }
 
 // proposedEvents expects n remediation.proposed events in the outbox.
@@ -283,11 +283,11 @@ func (e *expectation) distinctModelRequests() {
 }
 
 // proposed expects one attempt, proposed for every failing node, with one
-// verification run per project it edits and one remediation.proposed event.
+// release check per project it edits and one remediation.proposed event.
 func (e *expectation) proposed(f Fixture) {
 	if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
 		e.nodes(as[0], proposal.StatusProposed)
-		e.runsPerEditedProject(as[0], f.ProjectRepoPaths)
+		e.checksPerEditedProject(as[0], f.ProjectRepoPaths)
 	}
 	e.proposedEvents(1)
 	e.noHandedOver()
@@ -370,7 +370,7 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 
 // membersSkipped expects the cross-project cluster c to have fallen back with
 // every member skipped in attempt a and handed over with code, the cause of
-// the fall back, in the remediation's first and only try, and no verification
+// the fall back, in the remediation's first and only try, and no release check
 // run. The code is declined when a step declined the upstream fix and
 // preflight_rounds_spent when pre-flight refused every round of it.
 func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt, code model.HandoverReason) {
@@ -378,7 +378,7 @@ func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt, code mode
 	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
 	e.members(a, c.Members, proposal.StatusSkipped)
 	e.handedOverInFirstTry(a, codes(code, c.Members...))
-	e.runs(0)
+	e.checks(0)
 }
 
 // stepRows is the journal rows of one round of one cluster of one try, by
@@ -499,7 +499,7 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 }
 
 // singleHandedOver expects the single cluster c handed over with no
-// verification run, in the remediation's first and only try: when roundsSpent,
+// release check, in the remediation's first and only try: when roundsSpent,
 // by its last pre-flight round, which refused its draft, failed with that
 // round's first finding as its reason and the code preflight_rounds_spent;
 // otherwise by a context step that declined, skipped with the code declined
@@ -520,10 +520,10 @@ func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type,
 		e.nodes(as[0], want)
 		e.handedOverInFirstTry(as[0], codes(code, e.trigger.NodeIDs()...))
 	}
-	e.runs(0)
+	e.checks(0)
 }
 
-// verifyError expects attempt a failed by its verification, with every gate
+// verifyError expects attempt a failed by its release check, with every gate
 // error the fixture scripts in its verify error.
 func (e *expectation) verifyError(a Attempt, gateErrors map[string]string) {
 	e.that(a.VerifyError != "", "attempt %d carries no verify error", a.Proposal.Attempt)

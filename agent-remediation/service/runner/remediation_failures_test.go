@@ -162,7 +162,7 @@ func TestSweeper_EndsAVerifyingRemediationThatCannotBeLoaded(t *testing.T) {
 	row := h.attempt(1)
 	assert.Equal(t, proposal.StatusFailed, row.Proposal.Status)
 	assert.Equal(t, deadLetteredReason(rem), row.VerifyError, "the verifying attempt row is failed with the reason")
-	assert.Equal(t, []string{svcARun1}, []string{row.Proposal.Verifications[0].RunID}, "it keeps the run it recorded")
+	assert.Equal(t, []string{svcACheck1}, []string{row.Proposal.ReleaseChecks[0].CheckID}, "it keeps the run it recorded")
 }
 
 // sweepUnclaimed lets go of the runner's lease on the remediation and sweeps,
@@ -175,7 +175,7 @@ func (h *harness) sweepUnclaimed(id uuid.UUID) {
 
 // Only failures in a row end a remediation. A poll that loads the remediation
 // and gets through clears what the failed polls before it counted, even when
-// it reads no new phase, so failed loads spread over a long verification never
+// it reads no new phase, so failed loads spread over a long release check never
 // add up to five; five in a row still end it.
 func TestSweeper_OnlyFailedPollLoadsInARowEndAVerifyingRemediation(t *testing.T) {
 	h := newHarness(t)

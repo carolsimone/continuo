@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,13 +110,13 @@ func TestHandleValidationResult_Rejected_DetailSaysSoWhenOnlyTheAggregateFailed(
 	assert.Equal(t, "validation failed, but no per-node failure was recorded", r.FailDetail())
 }
 
-func TestHandleValidationResult_VerificationFails_DetailNamesTheFailingNodes(t *testing.T) {
+func TestHandleValidationResult_FixFails_DetailNamesTheFailingNodes(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, store := newDeps(now)
-	r := pipeline.NewVerification("verify-rel-1-core-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
+	r := releasecheck.NewFix("verify-rel-1-core-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToParsing(now))
 	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ProjectName: "core"}}), []string{"model.core.orders"}, now))
-	r.UpsertStageResult("validation", pipeline.NodeValidationResult{NodeID: "model.core.orders", Status: "failed"})
+	r.UpsertStageResult("validation", releasecheck.NodeValidationResult{NodeID: "model.core.orders", Status: "failed"})
 	store.SeedRelease(r)
 
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
@@ -126,7 +126,7 @@ func TestHandleValidationResult_VerificationFails_DetailNamesTheFailingNodes(t *
 	got, err := store.GetRelease(r.ID())
 	require.NoError(t, err)
 	assert.Equal(t, "1 of 1 nodes failed validation: model.core.orders (core)", got.FailDetail(),
-		"a failed verification explains itself on the verification page the same way")
+		"a failed fix's release check explains itself on the release check page the same way")
 }
 
 // --- seed build ---

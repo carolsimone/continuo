@@ -44,8 +44,8 @@ const (
 const ftableGUniqueID = "e2e_schema.ftable_g"
 
 // Budgets shared by both batched-remediation tests. Each drives two full
-// pipeline runs in kind — the rejected candidate release, then the
-// verification run that verifies the proposed fix — with one or two model
+// release checks in kind — the rejected candidate release, then the
+// release check that verifies the proposed fix — with one or two model
 // calls in between, so the ceilings are sized for a cold-ish stack rather
 // than for the ~3 minutes a warm one takes.
 const (
@@ -69,7 +69,7 @@ const (
 //	→ ONE heal.triggered:v1 carrying both nodes, each with no changed ancestor
 //	→ ONE proposal row for the release (attempt 1) holding TWO file edits,
 //	  each naming the node whose source it repairs
-//	→ ONE dbt verification run (both edits belong to service-2) that passes
+//	→ ONE dbt release check (both edits belong to service-2) that passes
 //	→ the runner's gate poller reads the verdict and the attempt moves
 //	  verifying → proposed
 //	→ ONE remediation.proposed:v1
@@ -182,7 +182,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	t.Logf("✅ one %s carries both independent failures", streams.HealTriggeredV1)
 
 	// 5. ONE proposal row for the whole release, reaching 'proposed' only after
-	//    its verification run has judged the fix. The representative node_id is
+	//    its release check has judged the fix. The representative node_id is
 	//    the lowest resolved id, so the row is addressed by ftable_e.
 	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
 	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID),
@@ -213,19 +213,19 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 		"services/service-2/models/ftable_k.sql": ftableKUniqueID,
 	}, targetsByPath, "each edit must name the node whose source it changes")
 
-	// 7. Both edits belong to service-2, so ONE verification run verified the
-	//    whole attempt — and it really ran: the pipeline names it while it is
+	// 7. Both edits belong to service-2, so ONE release check verified the
+	//    whole attempt — and it really ran: the release queue names it while it is
 	//    active, it reaches 'passed', and it is never readable as a release.
-	verifications := decodeVerifications(t, row.Verifications)
-	require.Len(t, verifications, 1,
-		"both files belong to service-2, so one verification run judged the attempt; got %+v", verifications)
-	require.Equal(t, "dbt", verifications[0].Kind, "a dbt model's fix is verified under a dbt manifest")
-	require.Equal(t, changedProject, verifications[0].Project, "verification project")
-	require.NotEmpty(t, verifications[0].RunID, "a verification must name the run that judged it")
-	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, batchVerifyBudget)
-	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", batchVerifyBudget)
-	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
-	t.Logf("✅ one verification run %s passed for both edits", verifications[0].RunID)
+	releaseChecks := decodeReleaseChecks(t, row.ReleaseChecks)
+	require.Len(t, releaseChecks, 1,
+		"both files belong to service-2, so one release check judged the attempt; got %+v", releaseChecks)
+	require.Equal(t, "dbt", releaseChecks[0].Kind, "a dbt model's fix is verified under a dbt manifest")
+	require.Equal(t, changedProject, releaseChecks[0].Project, "release check project")
+	require.NotEmpty(t, releaseChecks[0].CheckID, "a release check entry must name the check that judged it")
+	assertReleaseQueueNamedFix(t, ctx, clients, releaseChecks[0].CheckID, batchVerifyBudget)
+	waitForReleaseCheckStatus(t, ctx, clients, releaseChecks[0].CheckID, "passed", batchVerifyBudget)
+	assertNotListedAsRelease(t, ctx, clients, releaseChecks[0].CheckID)
+	t.Logf("✅ one release check %s passed for both edits", releaseChecks[0].CheckID)
 
 	// 8. ONE announcement, carrying the same batched view as the row.
 	proposed := waitForBatchProposedEvent(t, ctx, proposedTap, releaseID, batchEventBudget)
@@ -266,7 +266,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 //	  and both name ftable_u as their changed ancestor
 //	→ the runner groups them into ONE shared-upstream cluster targeting ftable_u
 //	→ ONE proposal with ONE edit — to ftable_u's source, a node that never failed
-//	→ ONE dbt verification run that passes for the repaired ancestor and its
+//	→ ONE dbt release check that passes for the repaired ancestor and its
 //	  descendants
 //	→ ONE pull request fixing two nodes by changing one file
 //
@@ -419,19 +419,19 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	require.Equal(t, ftableUUniqueID, edits[0].TargetNodeID,
 		"the edit must name the ancestor it repairs, which is not one of the failing nodes")
 
-	// 7. The single edit was verified by a real verification run.
-	verifications := decodeVerifications(t, row.Verifications)
-	require.Len(t, verifications, 1,
-		"one edited project, so one verification run; got %+v", verifications)
-	require.Equal(t, "dbt", verifications[0].Kind, "a dbt model's fix is verified under a dbt manifest")
-	require.Equal(t, changedProject, verifications[0].Project, "verification project")
-	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, batchVerifyBudget)
-	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", batchVerifyBudget)
-	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
-	t.Logf("✅ verification run %s passed for the upstream fix", verifications[0].RunID)
+	// 7. The single edit was verified by a real release check.
+	releaseChecks := decodeReleaseChecks(t, row.ReleaseChecks)
+	require.Len(t, releaseChecks, 1,
+		"one edited project, so one release check; got %+v", releaseChecks)
+	require.Equal(t, "dbt", releaseChecks[0].Kind, "a dbt model's fix is verified under a dbt manifest")
+	require.Equal(t, changedProject, releaseChecks[0].Project, "release check project")
+	assertReleaseQueueNamedFix(t, ctx, clients, releaseChecks[0].CheckID, batchVerifyBudget)
+	waitForReleaseCheckStatus(t, ctx, clients, releaseChecks[0].CheckID, "passed", batchVerifyBudget)
+	assertNotListedAsRelease(t, ctx, clients, releaseChecks[0].CheckID)
+	t.Logf("✅ release check %s passed for the upstream fix", releaseChecks[0].CheckID)
 
 	// 8. The proposed source really restores the column both descendants read —
-	//    the verification run could not have passed otherwise, but asserting it
+	//    the release check could not have passed otherwise, but asserting it
 	//    names what the fix was, not just that one existed.
 	contentKey := stripS3Prefix(edits[0].ContentURI)
 	require.NotEmpty(t, contentKey, "could not parse key from content_uri=%s", edits[0].ContentURI)
@@ -522,7 +522,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 //	→ validation fails on both nodes → release "rejected"
 //	→ ONE heal.triggered:v1 carrying both nodes
 //	→ ONE proposal row (attempt 1) holding TWO file edits, one per project
-//	→ TWO dbt verification runs (one per edited project) that both pass
+//	→ TWO dbt release checks (one per edited project) that both pass
 //	→ ONE remediation.proposed:v1
 //	→ POST /proposals/:id/pull-request opens TWO pull requests, distinct
 //	  branches and numbers, one per project
@@ -595,7 +595,7 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allProjects)
 
-	// The other project's verification needs the rejected project's baseline
+	// The other project's release check needs the rejected project's baseline
 	// pointer to cover every project live in current_prod at activation.
 	var baselineManifest string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
@@ -656,25 +656,25 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	require.ElementsMatch(t, []string{changedProject, otherProject}, proposalPB.GetPrProjects(),
 		"a proposal split across two projects must report both in pr_projects; got %v", proposalPB.GetPrProjects())
 
-	// 6. TWO verification runs, one per edited project.
-	verifications := decodeVerifications(t, row.Verifications)
-	require.Len(t, verifications, 2, "two edited projects must be verified by two independent verification runs; got %+v", verifications)
-	verificationsByProject := map[string]pyVerification{}
-	for _, v := range verifications {
+	// 6. TWO release checks, one per edited project.
+	releaseChecks := decodeReleaseChecks(t, row.ReleaseChecks)
+	require.Len(t, releaseChecks, 2, "two edited projects must be verified by two independent release checks; got %+v", releaseChecks)
+	checksByProject := map[string]pyReleaseCheck{}
+	for _, v := range releaseChecks {
 		require.Equal(t, "dbt", v.Kind, "a dbt model's fix is verified under a dbt manifest")
-		verificationsByProject[v.Project] = v
+		checksByProject[v.Project] = v
 	}
-	require.Contains(t, verificationsByProject, changedProject)
-	require.Contains(t, verificationsByProject, otherProject)
-	for svc, v := range verificationsByProject {
-		require.NotEmpty(t, v.RunID, "verification for %s must name the run that judged it", svc)
-		assertPipelineNamedVerification(t, ctx, clients, v.RunID, batchVerifyBudget)
-		waitForVerificationStatus(t, ctx, clients, v.RunID, "passed", batchVerifyBudget)
-		assertNotListedAsRelease(t, ctx, clients, v.RunID)
+	require.Contains(t, checksByProject, changedProject)
+	require.Contains(t, checksByProject, otherProject)
+	for svc, v := range checksByProject {
+		require.NotEmpty(t, v.CheckID, "the release check for %s must name the check that judged it", svc)
+		assertReleaseQueueNamedFix(t, ctx, clients, v.CheckID, batchVerifyBudget)
+		waitForReleaseCheckStatus(t, ctx, clients, v.CheckID, "passed", batchVerifyBudget)
+		assertNotListedAsRelease(t, ctx, clients, v.CheckID)
 	}
-	t.Logf("✅ two verification runs passed: %s=%s %s=%s",
-		changedProject, verificationsByProject[changedProject].RunID,
-		otherProject, verificationsByProject[otherProject].RunID)
+	t.Logf("✅ two release checks passed: %s=%s %s=%s",
+		changedProject, checksByProject[changedProject].CheckID,
+		otherProject, checksByProject[otherProject].CheckID)
 
 	// 7. pr_projects names both owning-project groups, and the route opens
 	//    two pull requests with distinct branches and numbers.
@@ -824,10 +824,10 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 	require.Equal(t, "services/service-2/models/ftable_e.sql", edits[0].Path, "the edit's path")
 	require.Equal(t, ftableEUniqueID, edits[0].TargetNodeID, "the edit's target node")
 
-	verifications := decodeVerifications(t, row.Verifications)
-	require.Len(t, verifications, 1, "one edited project, so one verification run; got %+v", verifications)
-	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, batchVerifyBudget)
-	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", batchVerifyBudget)
+	releaseChecks := decodeReleaseChecks(t, row.ReleaseChecks)
+	require.Len(t, releaseChecks, 1, "one edited project, so one release check; got %+v", releaseChecks)
+	assertReleaseQueueNamedFix(t, ctx, clients, releaseChecks[0].CheckID, batchVerifyBudget)
+	waitForReleaseCheckStatus(t, ctx, clients, releaseChecks[0].CheckID, "passed", batchVerifyBudget)
 
 	// 2. Open the pull request as usual.
 	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID, changedProject)
@@ -890,7 +890,7 @@ FROM e2e_schema.ftable_c c`
 
 // batchProposalRow is the batched view of a proposal row: the set the attempt
 // addressed, each node's outcome, every file it changed, and every
-// verification run that judged it. The single-node projection is proposalRow;
+// release check that judged it. The single-node projection is proposalRow;
 // a batched attempt cannot be read through that one, because its scalar
 // node_id and file_path columns hold only a representative.
 type batchProposalRow struct {
@@ -903,7 +903,7 @@ type batchProposalRow struct {
 	ResolvedNodeIDs []byte `db:"resolved_node_ids"`
 	NodeOutcomes    []byte `db:"node_outcomes"`
 	FileEdits       []byte `db:"file_edits"`
-	Verifications   []byte `db:"verifications"`
+	ReleaseChecks   []byte `db:"release_checks"`
 }
 
 // waitForBatchProposal polls the agent-remediation's proposal table until the
@@ -923,7 +923,7 @@ func waitForBatchProposal(
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row, `
 			SELECT id, node_id, status, attempt, repo, verify_error,
-			       resolved_node_ids, node_outcomes, file_edits, verifications
+			       resolved_node_ids, node_outcomes, file_edits, release_checks
 			  FROM proposal
 			 WHERE release_id = $1 AND attempt = $2`,
 			releaseID, attempt)
@@ -1250,8 +1250,8 @@ func seedModelTopologyNodes(t *testing.T, ctx context.Context, clients *testClie
 //	→ ONE heal.triggered:v1 with one node whose changed_ancestors names
 //	  xbreak_up@service-3 at depth 1
 //	→ CrossProjectCause targets xbreak_up; the stub keeps id AND amount_eur
-//	→ ONE edit to services/service-3/models/xbreak_up.sql, ONE verification
-//	  run for service-3 that passes (xbreak_down rebuilt as its descendant
+//	→ ONE edit to services/service-3/models/xbreak_up.sql, ONE release
+//	  check for service-3 that passes (xbreak_down rebuilt as its descendant
 //	  binds again), ONE pull request for service-3, nothing for service-2
 //	→ merge → RESOLVED_BY for xbreak_down, EDITED to xbreak_up
 func TestE2E_BatchedRemediation_CrossProjectBreakFixedAtProducer(t *testing.T) {
@@ -1348,15 +1348,15 @@ func TestE2E_BatchedRemediation_CrossProjectBreakFixedAtProducer(t *testing.T) {
 	require.Contains(t, body, "amount_eur", "the producer keeps the column the consumer reads; got %q", strings.TrimSpace(body))
 	require.Contains(t, body, "1 AS id", "and keeps its own change; got %q", strings.TrimSpace(body))
 
-	// 5. ONE verification run, for the producer's project, that passes.
-	verifications := decodeVerifications(t, row.Verifications)
-	require.Len(t, verifications, 1, "one edited project, one verification run; got %+v", verifications)
-	require.Equal(t, "dbt", verifications[0].Kind)
-	require.Equal(t, producerProject, verifications[0].Project, "verified as the producer's delta")
-	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, batchVerifyBudget)
-	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", batchVerifyBudget)
-	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
-	t.Logf("✅ verification %s passed with the consumer rebuilt against the repaired producer", verifications[0].RunID)
+	// 5. ONE release check, for the producer's project, that passes.
+	releaseChecks := decodeReleaseChecks(t, row.ReleaseChecks)
+	require.Len(t, releaseChecks, 1, "one edited project, one release check; got %+v", releaseChecks)
+	require.Equal(t, "dbt", releaseChecks[0].Kind)
+	require.Equal(t, producerProject, releaseChecks[0].Project, "verified as the producer's delta")
+	assertReleaseQueueNamedFix(t, ctx, clients, releaseChecks[0].CheckID, batchVerifyBudget)
+	waitForReleaseCheckStatus(t, ctx, clients, releaseChecks[0].CheckID, "passed", batchVerifyBudget)
+	assertNotListedAsRelease(t, ctx, clients, releaseChecks[0].CheckID)
+	t.Logf("✅ release check %s passed with the consumer rebuilt against the repaired producer", releaseChecks[0].CheckID)
 
 	// 6. ONE pull request, for the producer's project; merge it and confirm
 	//    provenance: RESOLVED_BY for the consumer, EDITED to the producer.

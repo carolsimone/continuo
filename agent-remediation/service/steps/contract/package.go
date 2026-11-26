@@ -39,7 +39,7 @@ func (*ContractPackages) Meta() step.Meta {
 		Kind: step.KindCheck,
 		Description: "Packs the contract directory of the patched checkout into an odcs-bundle.json with the tool the team's own release CI runs, " +
 			"recording the package list of the rejected release's image of the project that image_packages read, and fails a draft the tool refuses. " +
-			"Provides the bundle a verification run is submitted with.",
+			"Provides the bundle a release check is submitted with.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyDraft, remediation.KeyContractFile, remediation.KeyImagePackages},
 		Provides: []remediation.EvidenceKey{remediation.KeyPackagedContract},
 		Stages:   preflightOnly,

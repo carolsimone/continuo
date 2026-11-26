@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -22,11 +22,11 @@ const (
 	stageFailed = "failed"
 )
 
-// Telemetry exports the release series: how long each pipeline stage took and
-// how each candidate release ended. The stage series cover every run's stage
-// durations, a verification's included, and continuo_releases_total counts the
+// Telemetry exports the release series: how long each release check stage took and
+// how each candidate release ended. The stage series cover every check's stage
+// durations, a fix's included, and continuo_releases_total counts the
 // candidates' outcomes only, so the calls that only announce a request, the
-// receipt of a release and a verification's own outcome record nothing.
+// receipt of a release and a fix's own outcome record nothing.
 type Telemetry struct {
 	releases      *prometheus.CounterVec
 	stageDuration *prometheus.HistogramVec
@@ -45,7 +45,7 @@ func NewTelemetry(reg *pkgmetrics.Registry) *Telemetry {
 		}, []string{"outcome", "reject_reason"}),
 		stageDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "continuo_release_stage_duration_seconds",
-			Help:    "Seconds a run spent in a pipeline stage (compiling, parsing, seed_building or validating), by the stage's own outcome: ok or failed.",
+			Help:    "Seconds a check spent in a release check stage (compiling, parsing, seed_building or validating), by the stage's own outcome: ok or failed.",
 			Buckets: []float64{0.1, 0.5, 1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200},
 		}, []string{"stage", "outcome"}),
 	}
@@ -57,7 +57,7 @@ func NewTelemetry(reg *pkgmetrics.Registry) *Telemetry {
 	return t
 }
 
-func (t *Telemetry) observeStage(stage pipeline.Status, ok bool, took time.Duration) {
+func (t *Telemetry) observeStage(stage releasecheck.Status, ok bool, took time.Duration) {
 	outcome := stageFailed
 	if ok {
 		outcome = stageOK
@@ -65,29 +65,29 @@ func (t *Telemetry) observeStage(stage pipeline.Status, ok bool, took time.Durat
 	t.stageDuration.WithLabelValues(string(stage), outcome).Observe(took.Seconds())
 }
 
-// ReleaseCompileCompleted observes the time the run spent compiling.
+// ReleaseCompileCompleted observes the time the check spent compiling.
 func (t *Telemetry) ReleaseCompileCompleted(_ context.Context, _ string, ok bool, took time.Duration) {
-	t.observeStage(pipeline.StatusCompiling, ok, took)
+	t.observeStage(releasecheck.StatusCompiling, ok, took)
 }
 
-// ReleaseParseCompleted observes the time the run spent parsing.
+// ReleaseParseCompleted observes the time the check spent parsing.
 func (t *Telemetry) ReleaseParseCompleted(_ context.Context, _ string, ok bool, took time.Duration) {
-	t.observeStage(pipeline.StatusParsing, ok, took)
+	t.observeStage(releasecheck.StatusParsing, ok, took)
 }
 
-// ReleaseSeedBuildCompleted observes the time the run spent building seeds.
+// ReleaseSeedBuildCompleted observes the time the check spent building seeds.
 func (t *Telemetry) ReleaseSeedBuildCompleted(_ context.Context, _ string, ok bool, took time.Duration) {
-	t.observeStage(pipeline.StatusSeedBuilding, ok, took)
+	t.observeStage(releasecheck.StatusSeedBuilding, ok, took)
 }
 
-// ReleaseValidationCompleted observes the time the run spent validating. A
+// ReleaseValidationCompleted observes the time the check spent validating. A
 // release that validates no node, and so passes straight through the stage,
 // has no validation to time and observes nothing.
 func (t *Telemetry) ReleaseValidationCompleted(_ context.Context, _ string, ok bool, okCount, failCount int, took time.Duration) {
 	if ok && okCount+failCount == 0 {
 		return
 	}
-	t.observeStage(pipeline.StatusValidating, ok, took)
+	t.observeStage(releasecheck.StatusValidating, ok, took)
 }
 
 // ReleasePromoted counts one promoted release.
@@ -112,5 +112,5 @@ func (*Telemetry) ReleaseValidationRequested(context.Context, string, int) {}
 // ReleaseSeedBuildRequested records nothing.
 func (*Telemetry) ReleaseSeedBuildRequested(context.Context, string, int) {}
 
-// VerificationFinished records nothing.
-func (*Telemetry) VerificationFinished(context.Context, string, string, int) {}
+// FixFinished records nothing.
+func (*Telemetry) FixFinished(context.Context, string, string, int) {}

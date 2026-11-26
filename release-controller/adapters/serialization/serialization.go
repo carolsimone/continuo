@@ -1,5 +1,5 @@
 // Package serialization holds the wire- and persistence-facing DTOs for
-// release-controller's boundary types, keeping the domain packages (pipeline,
+// release-controller's boundary types, keeping the domain packages (releasecheck,
 // release) free of json struct tags. The Postgres repositories (JSONB columns),
 // the HTTP read handlers (response bodies) and the release.rejected:v1 encoder
 // map through these DTOs, so the on-disk and on-the-wire byte shapes are fixed
@@ -9,12 +9,12 @@ package serialization
 import (
 	"time"
 
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 )
 
-// NodeValidationResultDTO is the JSON shape of one pipeline.NodeValidationResult
-// as it is stored in the release_pipeline_runs.per_node_results JSONB column and
-// returned in the GET /releases and GET /verification-runs response bodies.
+// NodeValidationResultDTO is the JSON shape of one releasecheck.NodeValidationResult
+// as it is stored in the release_checks.per_node_results JSONB column and
+// returned in the GET /releases and GET /release-checks response bodies.
 type NodeValidationResultDTO struct {
 	Stage         string `json:"stage,omitempty"`
 	NodeID        string `json:"node_id"`
@@ -31,7 +31,7 @@ type NodeValidationResultDTO struct {
 // input maps to a nil slice so it serialises as JSON null, exactly as a marshal
 // of the domain slice did; a non-nil empty slice stays a non-nil empty slice so
 // it serialises as [].
-func NodeValidationResultsFromDomain(in []pipeline.NodeValidationResult) []NodeValidationResultDTO {
+func NodeValidationResultsFromDomain(in []releasecheck.NodeValidationResult) []NodeValidationResultDTO {
 	if in == nil {
 		return nil
 	}
@@ -54,13 +54,13 @@ func NodeValidationResultsFromDomain(in []pipeline.NodeValidationResult) []NodeV
 
 // NodeValidationResultsToDomain maps decoded DTOs back to domain results, with
 // the same nil/empty distinction as NodeValidationResultsFromDomain.
-func NodeValidationResultsToDomain(in []NodeValidationResultDTO) []pipeline.NodeValidationResult {
+func NodeValidationResultsToDomain(in []NodeValidationResultDTO) []releasecheck.NodeValidationResult {
 	if in == nil {
 		return nil
 	}
-	out := make([]pipeline.NodeValidationResult, len(in))
+	out := make([]releasecheck.NodeValidationResult, len(in))
 	for i, d := range in {
-		out[i] = pipeline.NodeValidationResult{
+		out[i] = releasecheck.NodeValidationResult{
 			Stage:         d.Stage,
 			NodeID:        d.NodeID,
 			Status:        d.Status,
@@ -75,10 +75,10 @@ func NodeValidationResultsToDomain(in []NodeValidationResultDTO) []pipeline.Node
 	return out
 }
 
-// TransitionDTO is the JSON shape of one pipeline.Transition as it is stored in
-// the release_pipeline_runs.transitions JSONB column and returned in the
-// transitions field of the GET /releases and GET /verification-runs responses.
-// To is a plain string: pipeline.Status marshals identically, and the DTO keeps
+// TransitionDTO is the JSON shape of one releasecheck.Transition as it is stored in
+// the release_checks.transitions JSONB column and returned in the
+// transitions field of the GET /releases and GET /release-checks responses.
+// To is a plain string: releasecheck.Status marshals identically, and the DTO keeps
 // the domain type out of the wire contract.
 type TransitionDTO struct {
 	To string    `json:"to"`
@@ -87,7 +87,7 @@ type TransitionDTO struct {
 
 // TransitionsFromDomain maps domain transitions to DTOs, preserving the nil vs
 // non-nil-empty distinction so the marshalled bytes are unchanged.
-func TransitionsFromDomain(in []pipeline.Transition) []TransitionDTO {
+func TransitionsFromDomain(in []releasecheck.Transition) []TransitionDTO {
 	if in == nil {
 		return nil
 	}
@@ -99,13 +99,13 @@ func TransitionsFromDomain(in []pipeline.Transition) []TransitionDTO {
 }
 
 // TransitionsToDomain maps decoded DTOs back to domain transitions.
-func TransitionsToDomain(in []TransitionDTO) []pipeline.Transition {
+func TransitionsToDomain(in []TransitionDTO) []releasecheck.Transition {
 	if in == nil {
 		return nil
 	}
-	out := make([]pipeline.Transition, len(in))
+	out := make([]releasecheck.Transition, len(in))
 	for i, d := range in {
-		out[i] = pipeline.Transition{To: pipeline.Status(d.To), At: d.At}
+		out[i] = releasecheck.Transition{To: releasecheck.Status(d.To), At: d.At}
 	}
 	return out
 }

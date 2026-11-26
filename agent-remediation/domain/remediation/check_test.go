@@ -21,7 +21,7 @@ func TestNewChecked_RefusesAFailedCheck(t *testing.T) {
 }
 
 func TestNewChecked_RefusesAWaitingCheck(t *testing.T) {
-	_, err := NewChecked(Draft{}, []CheckResult{{Check: "verification_run", Waiting: true}})
+	_, err := NewChecked(Draft{}, []CheckResult{{Check: "release_check", Waiting: true}})
 	require.Error(t, err)
 }
 
@@ -35,21 +35,21 @@ func TestNewChecked_KeepsTheDraft(t *testing.T) {
 }
 
 func TestNewVerified_RefusesAZeroChecked(t *testing.T) {
-	_, err := NewVerified("p1", []Checked{{}}, []CheckResult{{Check: "verification_run"}}, nil)
+	_, err := NewVerified("p1", []Checked{{}}, []CheckResult{{Check: "release_check"}}, nil)
 	require.Error(t, err)
 }
 
 func TestNewVerified_RefusesAWaitingGate(t *testing.T) {
 	c, err := NewChecked(Draft{}, nil)
 	require.NoError(t, err)
-	_, err = NewVerified("p1", []Checked{c}, []CheckResult{{Check: "verification_run", Waiting: true}}, nil)
+	_, err = NewVerified("p1", []Checked{c}, []CheckResult{{Check: "release_check", Waiting: true}}, nil)
 	require.Error(t, err)
 }
 
 func TestNewVerified_RefusesAFailedGate(t *testing.T) {
 	c, err := NewChecked(Draft{}, nil)
 	require.NoError(t, err)
-	_, err = NewVerified("p1", []Checked{c}, []CheckResult{{Check: "verification_run", Findings: []Finding{{Code: "run_failed"}}}}, nil)
+	_, err = NewVerified("p1", []Checked{c}, []CheckResult{{Check: "release_check", Findings: []Finding{{Code: "run_failed"}}}}, nil)
 	require.Error(t, err)
 }
 
@@ -65,11 +65,11 @@ func TestNewVerified_RefusesAnEmptyIDAndNoChecked(t *testing.T) {
 func TestNewVerified_KeepsWhatItWasGiven(t *testing.T) {
 	c, err := NewChecked(Draft{NamedTarget: "model.a"}, nil)
 	require.NoError(t, err)
-	vs := []proposal.Verification{{Project: "sales", RunID: "r1"}}
-	v, err := NewVerified("p1", []Checked{c}, []CheckResult{{Check: "verification_run"}}, vs)
+	vs := []proposal.ReleaseCheck{{Project: "sales", CheckID: "r1"}}
+	v, err := NewVerified("p1", []Checked{c}, []CheckResult{{Check: "release_check"}}, vs)
 	require.NoError(t, err)
 	assert.False(t, v.IsZero())
 	assert.Equal(t, "p1", v.ProposalID())
-	assert.Equal(t, vs, v.Verifications())
+	assert.Equal(t, vs, v.ReleaseChecks())
 	assert.True(t, Verified{}.IsZero())
 }

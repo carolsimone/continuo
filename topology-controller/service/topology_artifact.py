@@ -2,7 +2,8 @@
 node of its resolved topology, stored gzipped at
 tenants/<tenant>/topologies/<release>/topology.json.gz.
 
-topology-controller writes it for every candidate and verification release;
+topology-controller writes it for every candidate release and every fix's
+release check;
 release-controller's Go writer writes the same document for the topologies it
 announces itself. Readers verify the SHA-256 an event carries against the
 stored bytes. Both writers produce the same canonical JSON byte for byte —

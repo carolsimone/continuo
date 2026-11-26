@@ -24,7 +24,7 @@ trigger: heal.triggered
 types: [dbt-compile, dbt-parse]
 context: [failing_node_source]
 across_clusters: [edits_map_to_a_project]
-gate: [verification_run]
+gate: [release_check]
 tries: 3
 output:
   on_pass:    { action: pull_request, emits: remediation.proposed }
@@ -63,7 +63,7 @@ func TestLoad_ReadsAFlowAndATypeFromOneFolder(t *testing.T) {
 	assert.Equal(t, workflow.Pos{File: "flows/rejected-release.yaml", Line: 5}, flow.TypesPos)
 	assert.Equal(t, []workflow.StepRef{{Name: "failing_node_source", Pos: workflow.Pos{File: "flows/rejected-release.yaml", Line: 6}}}, flow.Context)
 	assert.Equal(t, workflow.StepName("edits_map_to_a_project"), flow.AcrossClusters[0].Name)
-	assert.Equal(t, workflow.StepName("verification_run"), flow.Gate[0].Name)
+	assert.Equal(t, workflow.StepName("release_check"), flow.Gate[0].Name)
 	assert.Equal(t, workflow.OutputPullRequest, flow.OnPass.Action)
 	assert.Equal(t, "remediation.proposed", flow.OnPass.Emits)
 	assert.Equal(t, 11, flow.OnPass.Pos.Line)

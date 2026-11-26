@@ -14,8 +14,8 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/stretchr/testify/assert"
@@ -114,7 +114,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, releasecheck.StatusValidating, r.Status())
 
 	validIDs := r.ValidationNodeIDs()
 	assert.Contains(t, validIDs, "a")
@@ -153,7 +153,7 @@ func TestHandleParsedManifest_OK_StoresCodeBundleURI(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, releasecheck.StatusValidating, r.Status())
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", r.CodeBundleURI())
 }
 
@@ -176,12 +176,12 @@ func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
 
 	r, err := store.GetRelease("rBoot")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", r.CodeBundleURI())
 }
 
 // The contract bundle reference and the continuo-contracts version of the parse
-// are stored on the run on every path that reads an ok result: the validating
+// are stored on the check on every path that reads an ok result: the validating
 // path and the bootstrap path, which promotes at once.
 func TestHandleParsedManifest_StoresTheContractBundleAndTheLibraryVersion(t *testing.T) {
 	bundle := release.ContractBundleRef{
@@ -200,7 +200,7 @@ func TestHandleParsedManifest_StoresTheContractBundleAndTheLibraryVersion(t *tes
 
 		r, err := store.GetRelease("rC")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusValidating, r.Status())
+		assert.Equal(t, releasecheck.StatusValidating, r.Status())
 		assert.Equal(t, ref, r.CandidateContractBundle())
 		assert.Equal(t, "0.2.0", r.ContinuoContracts())
 	})
@@ -215,7 +215,7 @@ func TestHandleParsedManifest_StoresTheContractBundleAndTheLibraryVersion(t *tes
 
 		r, err := store.GetRelease("rCB")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusPromoted, r.Status())
+		assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 		assert.Equal(t, ref, r.CandidateContractBundle())
 		assert.Equal(t, "0.2.0", r.ContinuoContracts())
 	})
@@ -246,7 +246,7 @@ func TestHandleParsedManifest_ARejectedParseStoresTheLibraryVersion(t *testing.T
 
 		r, err := store.GetRelease("rF")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusRejected, r.Status())
+		assert.Equal(t, releasecheck.StatusRejected, r.Status())
 		assert.Equal(t, "0.2.0", r.ContinuoContracts())
 		assert.Equal(t, release.ContractBundleRef{}, r.CandidateContractBundle())
 	})
@@ -259,13 +259,13 @@ func TestHandleParsedManifest_ARejectedParseStoresTheLibraryVersion(t *testing.T
 
 		r, err := store.GetRelease("rU")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusRejected, r.Status())
+		assert.Equal(t, releasecheck.StatusRejected, r.Status())
 		assert.Equal(t, "internal_error", r.FailReason())
 		assert.Equal(t, "0.2.0", r.ContinuoContracts())
 	})
 }
 
-// The parse timings the result reports are stored on the run beside the
+// The parse timings the result reports are stored on the check beside the
 // contract bundle and the library version, on every path that reads a result:
 // an ok parse that goes on to validation, a bootstrap that promotes at once, a
 // failed parse and an ok result whose topology cannot be read.
@@ -282,7 +282,7 @@ func TestHandleParsedManifest_RecordsTheParseTimings(t *testing.T) {
 
 		r, err := store.GetRelease("rT")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusValidating, r.Status())
+		assert.Equal(t, releasecheck.StatusValidating, r.Status())
 		assert.Equal(t, wantMs(4180), r.ParseTimings().ParseMs)
 		assert.Equal(t, wantMs(1260), r.ParseTimings().ContractsMs)
 		assert.Equal(t, map[pkg_model.ContractFamily]int{"dbt": 3, "python": 2}, r.ParseTimings().ContractsByFamily)
@@ -296,7 +296,7 @@ func TestHandleParsedManifest_RecordsTheParseTimings(t *testing.T) {
 
 		r, err := store.GetRelease("rTB")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusPromoted, r.Status())
+		assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 		assert.Equal(t, timings, r.ParseTimings())
 	})
 
@@ -309,7 +309,7 @@ func TestHandleParsedManifest_RecordsTheParseTimings(t *testing.T) {
 
 		r, err := store.GetRelease("rTF")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusRejected, r.Status())
+		assert.Equal(t, releasecheck.StatusRejected, r.Status())
 		assert.Equal(t, wantMs(310), r.ParseTimings().ParseMs)
 		assert.Equal(t, wantMs(45), r.ParseTimings().ContractsMs)
 		assert.Nil(t, r.ParseTimings().ContractsByFamily)
@@ -327,7 +327,7 @@ func TestHandleParsedManifest_RecordsTheParseTimings(t *testing.T) {
 		assert.Equal(t, timings, r.ParseTimings())
 	})
 
-	t.Run("a result that reports none leaves the run with none", func(t *testing.T) {
+	t.Run("a result that reports none leaves the check with none", func(t *testing.T) {
 		deps, store := seedToParsing(t, "rTN", map[string]string{"svc-a": "sha-a"})
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 			ReleaseID: "rTN", Status: "ok", TopologyRef: putTopology(t, deps, "rTN", topo),
@@ -376,7 +376,7 @@ func TestHandleParsedManifest_Failed_InvalidSQL_RejectsWithParseStage(t *testing
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "invalid_sql", r.FailReason())
 	assert.Equal(t, "1 node failed to parse: analytics.fx", r.FailDetail())
 	assert.Equal(t, []string{"analytics.fx"}, r.FailingNodes())
@@ -384,13 +384,13 @@ func TestHandleParsedManifest_Failed_InvalidSQL_RejectsWithParseStage(t *testing
 	// The parse leg has no log to point a reader at, so the parser's own
 	// diagnostic — line and column included — is persisted on the per-node
 	// result, which is what GET /releases/{id} exposes.
-	assert.Equal(t, pipeline.NodeValidationResult{
+	assert.Equal(t, releasecheck.NodeValidationResult{
 		Stage: "parse", NodeID: "analytics.fx", Status: "failed", FilePath: "models/fx.sql", NodeType: "dbt-model",
 		Detail: "Expecting ). Line 3, Col: 12.",
 	}, r.PerNodeResults()[0])
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ReleaseRejected + PipelineRunFinished
+	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ReleaseRejected + ReleaseCheckFinished
 	assert.Equal(t, streams.ReleaseRejectedV1, entries[2].StreamName)
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
@@ -463,7 +463,7 @@ func TestHandleParsedManifest_Failed_HealableKindWithoutNodesWarns(t *testing.T)
 
 		r, err := store.GetRelease(releaseID)
 		require.NoError(t, err)
-		require.Equal(t, pipeline.StatusRejected, r.Status(), "kind %s still rejects the release", kind)
+		require.Equal(t, releasecheck.StatusRejected, r.Status(), "kind %s still rejects the release", kind)
 
 		const warn = "release rejected without a remediation trigger"
 		if wantWarn {
@@ -529,23 +529,23 @@ func TestReleaseRejected_NeverCarriesErrorClass(t *testing.T) {
 	}
 }
 
-// seedToParsingVerification mirrors seedToParsing but seeds a verification
-// run, so a rejection emitted from the parsing leg can be asserted to carry
+// seedToParsingFix mirrors seedToParsing but seeds a fix's release
+// check, so a rejection emitted from the parsing leg can be asserted to carry
 // the wire flag true — the signal remediation uses to avoid re-triggering
-// itself on a failed fix-verification attempt.
-func seedToParsingVerification(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
+// itself on a failed fix's release check attempt.
+func seedToParsingFix(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
-	return seedToParsingVerificationWithOverlay(t, releaseID, imageTags, "")
+	return seedToParsingFixWithOverlay(t, releaseID, imageTags, "")
 }
 
-// seedToParsingVerificationWithOverlay is seedToParsingVerification for a
-// verification run that carries a source overlay: the S3 tarball of proposed
-// source files the run's dbt Jobs lay over the checked-in project before
-// running. An empty overlayURI registers the verification without one.
-func seedToParsingVerificationWithOverlay(t *testing.T, releaseID string, imageTags map[string]string, overlayURI string) (*handlers.Deps, *fakeStore) {
+// seedToParsingFixWithOverlay is seedToParsingFix for a
+// fix's release check that carries a source overlay: the S3 tarball of proposed
+// source files the check's dbt Jobs lay over the checked-in project before
+// running. An empty overlayURI registers the fix's release check without one.
+func seedToParsingFixWithOverlay(t *testing.T, releaseID string, imageTags map[string]string, overlayURI string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	if len(imageTags) != 1 {
-		t.Fatal("seedToParsingVerification: imageTags must have exactly one entry {project: tag}")
+		t.Fatal("seedToParsingFix: imageTags must have exactly one entry {project: tag}")
 	}
 	var project, tag string
 	for s, tg := range imageTags {
@@ -553,7 +553,7 @@ func seedToParsingVerificationWithOverlay(t *testing.T, releaseID string, imageT
 	}
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedRelease(pipeline.NewVerification(releaseID, project, tag, "", 1, overlayURI, release.ManifestKindDbt, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix(releaseID, project, tag, "", 1, overlayURI, release.ManifestKindDbt, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
 		ReleaseID: releaseID,
@@ -562,14 +562,14 @@ func seedToParsingVerificationWithOverlay(t *testing.T, releaseID string, imageT
 	return deps, store
 }
 
-// TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmitted
-// verifies that a verification run's parse failure ends the run at Failed and
-// emits no release.rejected:v1 at all (a verification failure is never a
+// TestHandleParsedManifest_Failed_Fix_NoReleaseRejected_FinishedEmitted
+// verifies that a fix's parse failure ends the check at Failed and
+// emits no release.rejected:v1 at all (a fix's release check failure is never a
 // release rejection — Global Constraint), so remediation cannot mistake it
 // for a rejected candidate and re-trigger itself; the failure travels on
-// pipeline.run.finished:v1 alone.
-func TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmitted(t *testing.T) {
-	deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"svc-a": "sha-a"})
+// release_check.finished:v1 alone.
+func TestHandleParsedManifest_Failed_Fix_NoReleaseRejected_FinishedEmitted(t *testing.T) {
+	deps, store := seedToParsingFix(t, "rVerify", map[string]string{"svc-a": "sha-a"})
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rVerify",
@@ -581,13 +581,13 @@ func TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmit
 
 	r, err := store.GetRelease("rVerify")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusFailed, r.Status())
+	assert.Equal(t, releasecheck.StatusFailed, r.Status())
 
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
-			"a verification run's parse failure must not be reported as a release rejection")
+			"a fix's parse failure must not be reported as a release rejection")
 	}
-	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
 // TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields asserts
@@ -619,7 +619,7 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	// B5: a new dbt-seed routes to seed_building, not validating.
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusSeedBuilding, r.Status())
+	assert.Equal(t, releasecheck.StatusSeedBuilding, r.Status())
 
 	// seed.build.requested:v1 must be emitted; validation.requested must not.
 	entries := outboxEntries(store)
@@ -730,7 +730,7 @@ func TestHandleParsedManifest_UnknownExternalUpstreamIsNotValidated(t *testing.T
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, releasecheck.StatusValidating, r.Status())
 	assert.Equal(t, []string{"a.m"}, r.ValidationNodeIDs())
 
 	nodes := decodeValidationRequestedNodes(t, store)
@@ -774,7 +774,7 @@ func TestHandleParsedManifest_ATableANodeStartsBuildingIsValidated(t *testing.T)
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, releasecheck.StatusValidating, r.Status())
 
 	nodes := decodeValidationRequestedNodes(t, store)
 	byID := indexNodesByUniqueID(t, nodes)
@@ -808,7 +808,7 @@ func TestHandleParsedManifest_UnknownExternalNodeAloneIsNothingToValidate(t *tes
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "nothing to validate -> promote directly")
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status(), "nothing to validate -> promote directly")
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName)
 		assert.NotEqual(t, streams.SeedBuildRequestedV1, e.StreamName)
@@ -844,7 +844,7 @@ func TestHandleParsedManifest_UnknownExternalNodeIsNotADuplicateOfABuiltTable(t 
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "a bootstrap release carrying an unknown-external node promotes")
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status(), "a bootstrap release carrying an unknown-external node promotes")
 }
 
 func byID(topo release.Topology) map[string]release.Node {
@@ -945,7 +945,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "nothing to validate -> promote directly")
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status(), "nothing to validate -> promote directly")
 
 	entries := outboxEntries(store)
 	for _, e := range entries {
@@ -962,20 +962,20 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	cp := store.GetCurrentProd()
 	assert.Equal(t, "rA", cp.ReleaseID(), "current prod advanced to this release")
 
-	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
-// A verification run exists only to find out whether a proposed fix survives
-// the real pipeline, and its terminal "passed" status is what a human is
+// A fix's release check exists only to find out whether a proposed fix survives
+// every leg, and its terminal "passed" status is what a human is
 // shown as proof before being asked to merge that fix. What that proof
 // requires depends on WHY the validation set is empty.
 //
 // A candidate whose nodes all match production has nothing to validate
 // because it IS production's code — the passed, promoted baseline — so the
-// fix is proven by identity with it. The verification takes the same trivial
+// fix is proven by identity with it. The fix's release check takes the same trivial
 // pass a candidate release does and ends "passed" without touching prod. This
 // is the shape of a fix that restores a compile-broken model to its promoted
-// content: the verification already proved the fix by compiling it, and
+// content: the fix's release check already proved the fix by compiling it, and
 // there is nothing left to measure.
 //
 // A candidate that declares no node at all measured nothing and can prove
@@ -985,7 +985,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 // The last subtest is the control: the same empty validation set on a
 // candidate release must still promote directly, since emitting an empty
 // validation request would block the release queue forever.
-func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
+func TestHandleParsedManifest_OK_NothingToValidate_Fix(t *testing.T) {
 	unchangedTopo := func() release.Topology {
 		return release.Topology{
 			{UniqueID: "a", ProjectName: "svc-a", ContentHash: "h_a"},
@@ -993,8 +993,8 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		}
 	}
 
-	t.Run("verification whose candidate matches production ends passed", func(t *testing.T) {
-		deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"svc-a": "sha-a"})
+	t.Run("a fix's release check whose candidate matches production ends passed", func(t *testing.T) {
+		deps, store := seedToParsingFix(t, "rVerify", map[string]string{"svc-a": "sha-a"})
 		seedProd(t, deps, store, "prev", unchangedTopo(), time.Unix(50, 0).UTC())
 
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1005,7 +1005,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		r, err := store.GetRelease("rVerify")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusPassed, r.Status(),
+		assert.Equal(t, releasecheck.StatusPassed, r.Status(),
 			"a candidate identical to production is production's passed code, so the fix it carries is proven")
 		assert.Empty(t, r.FailReason())
 		assert.Equal(t, 2, r.CandidateTopologyRef().NodeCount,
@@ -1014,17 +1014,17 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
-			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a fix's release check never promotes")
 			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
 		}
 
 		assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
-			"a passed verification run must not advance current prod")
-		assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+			"a fix's passed release check must not advance current prod")
+		assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 	})
 
-	t.Run("verification with an empty candidate topology fails instead of reported verified", func(t *testing.T) {
-		deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"svc-a": "sha-a"})
+	t.Run("a fix's release check with an empty candidate topology fails instead of reported verified", func(t *testing.T) {
+		deps, store := seedToParsingFix(t, "rVerify", map[string]string{"svc-a": "sha-a"})
 		seedProd(t, deps, store, "prev", unchangedTopo(), time.Unix(50, 0).UTC())
 
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1035,21 +1035,21 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		r, err := store.GetRelease("rVerify")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusFailed, r.Status(),
-			"a verification run that declares no node measured nothing and must not end in a status that means the fix is verified")
+		assert.Equal(t, releasecheck.StatusFailed, r.Status(),
+			"a fix's release check that declares no node measured nothing and must not end in a status that means the fix is verified")
 		assert.Equal(t, "nothing_to_validate", r.FailReason())
 		assert.NotEmpty(t, r.FailDetail(), "the rejection must explain itself to an operator")
 
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
-			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a fix's release check never promotes")
 			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
-				"a verification's failure is never a release rejection")
+				"a fix's failure is never a release rejection")
 		}
 
 		assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
-			"a failed verification run must not advance current prod")
-		assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+			"a fix's failed release check must not advance current prod")
+		assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 	})
 
 	t.Run("candidate release with the same empty validation set still promotes", func(t *testing.T) {
@@ -1064,7 +1064,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		r, err := store.GetRelease("rA")
 		require.NoError(t, err)
-		assert.Equal(t, pipeline.StatusPromoted, r.Status(),
+		assert.Equal(t, releasecheck.StatusPromoted, r.Status(),
 			"the empty-set trivial pass must be unchanged for a normal release")
 
 		assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1), "promotes directly")
@@ -1100,7 +1100,7 @@ func TestHandleParseOK_RejectsUnbuildableCrossProjectUpstream(t *testing.T) {
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusRejected, r.Status(), "release must be Rejected")
+	assert.Equal(t, releasecheck.StatusRejected, r.Status(), "release must be Rejected")
 	assert.Equal(t, "unbuildable_cross_project_upstream", r.FailReason())
 
 	entries := outboxEntries(store)
@@ -1119,7 +1119,7 @@ func TestHandleParseOK_RejectsUnbuildableCrossProjectUpstream(t *testing.T) {
 	assert.Equal(t, "rA", payload["release_id"])
 	_, hasErrorClass := payload["error_class"]
 	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
-	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
 // TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode proves the guard
@@ -1150,7 +1150,7 @@ func TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode(t *testing.T) 
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusRejected, r.Status(),
+	assert.Equal(t, releasecheck.StatusRejected, r.Status(),
 		"a downstream node with an unbuildable upstream must reject the whole release")
 	assert.Equal(t, "unbuildable_cross_project_upstream", r.FailReason())
 }
@@ -1189,7 +1189,7 @@ func TestHandleParseOK_CrossProjectUpstreamInCandidatePromotes(t *testing.T) {
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusValidating, r.Status(), "cross-project upstream present in candidate must transition to Validating")
+	assert.Equal(t, releasecheck.StatusValidating, r.Status(), "cross-project upstream present in candidate must transition to Validating")
 
 	// The full ancestor closure must include b_up (cross-project upstream of the changed a2).
 	validIDs := r.ValidationNodeIDs()
@@ -1215,7 +1215,7 @@ func TestHandleParseOK_CrossProjectUpstreamInCandidatePromotes(t *testing.T) {
 }
 
 // TestHandleParseOK_DerivesCandidateArtifactURIPerNode verifies each node's
-// candidate_artifact_uri on validation.requested:v1 is derived from the run id,
+// candidate_artifact_uri on validation.requested:v1 is derived from the check id,
 // the node and its type — the key topology-controller wrote the object under —
 // since the artifact carries no URIs. A dbt node's object is .sql, a python
 // node's .json.
@@ -1340,8 +1340,8 @@ func TestHandleParseOK_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 }
 
 // TestHandleParsedManifest_ImageTagsComeFromTheArtifact pins that the image
-// tags a run validates with are the ones its artifact carries: topology-controller
-// joins the run's assembled tags onto every node (release.requested:v1
+// tags a check validates with are the ones its artifact carries: topology-controller
+// joins the check's assembled tags onto every node (release.requested:v1
 // carries them), and release-controller uses them as they are.
 func TestHandleParsedManifest_ImageTagsComeFromTheArtifact(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -1386,7 +1386,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 
 	r, err := store.GetRelease("rBoot")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 	// The candidate topology is recorded — promoteToProduction reads it to seed
 	// current_prod and the release.promoted:v1 payload; an empty one would
 	// silently produce an empty prod snapshot.
@@ -1395,7 +1395,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	// current_prod seeded to this release.
 	assert.Equal(t, "rBoot", store.GetCurrentProd().ReleaseID())
 
-	// Exactly CompileRequested + ReleaseRequested + ReleasePromoted + PipelineRunFinished;
+	// Exactly CompileRequested + ReleaseRequested + ReleasePromoted + ReleaseCheckFinished;
 	// NO validation_requested, NO rejection.
 	entries := outboxEntries(store)
 	require.Len(t, entries, 4)
@@ -1583,7 +1583,7 @@ func TestHandleParsedManifest_NewSeedRoutesToSeedBuild(t *testing.T) {
 	// Release must be in seed_building state.
 	r, err := store.GetRelease("rel-seed-1")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusSeedBuilding, r.Status())
+	assert.Equal(t, releasecheck.StatusSeedBuilding, r.Status())
 
 	// seed.build.requested:v1 must be emitted with only the seed node.
 	entry := findEntry(t, store, streams.SeedBuildRequestedV1)
@@ -1603,13 +1603,13 @@ func TestHandleParsedManifest_NewSeedRoutesToSeedBuild(t *testing.T) {
 }
 
 // TestHandleParsedManifest_SeedBuildRequestedCarriesSourceOverlay verifies
-// that a verification run's seed-build request carries its source overlay. A
+// that a fix's seed-build request carries its source overlay. A
 // proposed fix to a seed edits the team's CSV, so the seed Job must load the
 // PROPOSED file; without the overlay on this leg the Job reloads the
-// checked-in CSV and the fix fails its own verification.
+// checked-in CSV and the fix fails its own release check.
 func TestHandleParsedManifest_SeedBuildRequestedCarriesSourceOverlay(t *testing.T) {
 	const overlay = "s3://continuo/core/verify-rel-seed-1/source-overlay.tar.gz"
-	deps, store := seedToParsingVerificationWithOverlay(t, "verify-rel-seed-1",
+	deps, store := seedToParsingFixWithOverlay(t, "verify-rel-seed-1",
 		map[string]string{"core": "sha-core"}, overlay)
 
 	topo := release.Topology{
@@ -1626,7 +1626,7 @@ func TestHandleParsedManifest_SeedBuildRequestedCarriesSourceOverlay(t *testing.
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, overlay, payload["source_overlay_uri"],
-		"the seed-build leg must carry the verification run's overlay, like the compile leg does")
+		"the seed-build leg must carry the fix's overlay, like the compile leg does")
 }
 
 // TestHandleParsedManifest_SeedBuildRequestedOmitsAbsentSourceOverlay verifies
@@ -1702,7 +1702,7 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "duplicate_table", r.FailReason())
 	assert.Contains(t, r.FailDetail(), "finance (models/orders.sql)")
 	assert.Contains(t, r.FailDetail(), "marketing (models/orders.sql)")
@@ -1723,16 +1723,16 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 		"top-level code_bundle_uri must come from the release aggregate, set at parse time")
 	assert.JSONEq(t, string(entry.Payload), string(r.RejectionPayload()),
 		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
-	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
-// TestHandleParsedManifest_DuplicateTable_Verification_NoReleaseRejected_FinishedEmitted
-// verifies that a verification run's duplicate_table failure ends the run at
-// Failed and emits no release.rejected:v1 at all (a verification failure is
+// TestHandleParsedManifest_DuplicateTable_Fix_NoReleaseRejected_FinishedEmitted
+// verifies that a fix's duplicate_table failure ends the check at
+// Failed and emits no release.rejected:v1 at all (a fix's release check failure is
 // never a release rejection — Global Constraint), so remediation cannot
 // mistake it for a rejected candidate and re-trigger itself.
-func TestHandleParsedManifest_DuplicateTable_Verification_NoReleaseRejected_FinishedEmitted(t *testing.T) {
-	deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"marketing": "sha-m"})
+func TestHandleParsedManifest_DuplicateTable_Fix_NoReleaseRejected_FinishedEmitted(t *testing.T) {
+	deps, store := seedToParsingFix(t, "rVerify", map[string]string{"marketing": "sha-m"})
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rVerify",
@@ -1742,13 +1742,13 @@ func TestHandleParsedManifest_DuplicateTable_Verification_NoReleaseRejected_Fini
 
 	r, err := store.GetRelease("rVerify")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusFailed, r.Status())
+	assert.Equal(t, releasecheck.StatusFailed, r.Status())
 
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
-			"a verification run's duplicate_table failure must not be reported as a release rejection")
+			"a fix's duplicate_table failure must not be reported as a release rejection")
 	}
-	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
 // The rejection payload carries the claimant a fix should target and the
@@ -1829,7 +1829,7 @@ func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
 
 	r, rErr := store.GetRelease("rBoot")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "duplicate_table", r.FailReason())
 	assert.Equal(t, "", store.GetCurrentProd().ReleaseID(), "nothing may be promoted")
 }
@@ -1859,7 +1859,7 @@ func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t 
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "duplicate_table", r.FailReason())
 	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(), "current_prod must not move")
 }
@@ -1884,7 +1884,7 @@ func TestHandleParsedManifest_DuplicateTableThreeWayEmitsNoPerNodeEntry(t *testi
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "duplicate_table", r.FailReason())
 	assert.Contains(t, r.FailDetail(), "finance (models/orders.sql)")
 	assert.Contains(t, r.FailDetail(), "marketing (models/orders.sql)")
@@ -1954,7 +1954,7 @@ func TestHandleParsedManifest_DuplicateTableIdentityCollisionRejectsWithNoPerNod
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "duplicate_table", r.FailReason())
 	assert.Contains(t, r.FailDetail(), "unique_id analytics.orders is declared by")
 	assert.Contains(t, r.FailDetail(), "finance (models/orders.sql)")
@@ -2025,7 +2025,7 @@ func TestHandleParsedManifest_DuplicateTableRelationAndIdentityBothNamedOnlyRela
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Contains(t, r.FailDetail(), "analytics.orders is produced by",
 		"relation collision named as a relation")
 	assert.Contains(t, r.FailDetail(), "unique_id analytics.customers is declared by",
@@ -2064,18 +2064,18 @@ func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 
 	r, rErr := store.GetRelease("rOK")
 	require.NoError(t, rErr)
-	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, releasecheck.StatusValidating, r.Status())
 
 	entry := findEntry(t, store, streams.ValidationRequestedV1)
 	assert.NotNil(t, entry, "a clean topology must still request validation")
 }
 
-// --- verification seed-set derivation ---
+// --- fix build-set derivation ---
 //
-// A verification run re-measures a node when it differs from current_prod AND
+// A fix's release check re-measures a node when it differs from current_prod AND
 // either the fix touched it (it differs from the rejected candidate too) or the
 // rejected release did not record it as failing. A fix spanning two projects
-// submits one run per edited project, and each run assembles the OTHER edited
+// submits one check per edited project, and each check assembles the OTHER edited
 // project's node unchanged — still carrying its not-yet-fixed failure at the
 // exact content_hash it had in the rejected candidate, and listed in that
 // release's failing_nodes — so it is left out and cloned from production. A
@@ -2088,33 +2088,33 @@ const (
 	verifyUID = "shared.u"      // an unchanged upstream present in production
 )
 
-// seedReleaseInParsing installs a run already advanced to Parsing so a
+// seedReleaseInParsing installs a check already advanced to Parsing so a
 // HandleParsedManifest call exercises handleParseOK directly. Rehydrate pins
 // exactly the fields the changed-set baseline reads (Kind, VerifiesReleaseID,
-// ChangedProject) without driving the receive/advance/compile pipeline.
-func seedReleaseInParsing(store *fakeStore, id, project string, verification bool, verifiesID string) {
-	kind := pipeline.KindCandidate
-	if verification {
-		kind = pipeline.KindVerification
+// ChangedProject) without driving the receive/advance/compile legs.
+func seedReleaseInParsing(store *fakeStore, id, project string, fix bool, verifiesID string) {
+	kind := releasecheck.KindCandidate
+	if fix {
+		kind = releasecheck.KindFix
 	}
-	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
+	store.SeedRelease(releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID:                id,
 		Kind:              kind,
-		Status:            pipeline.StatusParsing,
+		Status:            releasecheck.StatusParsing,
 		ImageTags:         map[string]string{project: "img-" + project},
 		ChangedProject:    project,
 		VerifiesReleaseID: verifiesID,
 		ManifestKind:      release.ManifestKindDbt,
 		RemediationRound:  1,
 		CreatedAt:         time.Unix(90, 0).UTC(),
-		Transitions:       []pipeline.Transition{{To: pipeline.StatusParsing, At: time.Unix(90, 0).UTC()}},
+		Transitions:       []releasecheck.Transition{{To: releasecheck.StatusParsing, At: time.Unix(90, 0).UTC()}},
 	}))
 }
 
-// seedRejectedOriginal installs the rejected release a verification run
-// verifies: its candidate topology and the nodes its validation recorded not ok
+// seedRejectedOriginal installs the rejected release a fix's release
+// check verifies: its candidate topology and the nodes its validation recorded not ok
 // (failing_nodes). A node the fix did not touch is re-measured by the
-// verification only when it is absent from failing — the rejected release
+// fix's release check only when it is absent from failing — the rejected release
 // already proved it.
 func seedRejectedOriginal(store *fakeStore, id, project string, candidate release.Topology, failing []string) {
 	// A rejected release that never recorded a topology holds no reference.
@@ -2122,9 +2122,9 @@ func seedRejectedOriginal(store *fakeStore, id, project string, candidate releas
 	if candidate != nil {
 		ref = store.storeTopology(id, candidate)
 	}
-	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
+	store.SeedRelease(releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID:                id,
-		Status:            pipeline.StatusRejected,
+		Status:            releasecheck.StatusRejected,
 		ImageTags:         map[string]string{project: "img-" + project},
 		ChangedProject:    project,
 		CandidateTopology: ref,
@@ -2132,7 +2132,7 @@ func seedRejectedOriginal(store *fakeStore, id, project string, candidate releas
 		ManifestKind:      release.ManifestKindDbt,
 		RemediationRound:  1,
 		CreatedAt:         time.Unix(80, 0).UTC(),
-		Transitions:       []pipeline.Transition{{To: pipeline.StatusRejected, At: time.Unix(85, 0).UTC()}},
+		Transitions:       []releasecheck.Transition{{To: releasecheck.StatusRejected, At: time.Unix(85, 0).UTC()}},
 	}))
 }
 
@@ -2153,7 +2153,7 @@ func verifyRejectedCandidate() release.Topology {
 	}
 }
 
-// verifyParsedTopo is the service-2 verification run's assembled+parsed
+// verifyParsedTopo is the service-2 fix's assembled+parsed
 // topology: the FIXED ftable_e (new hash) plus service-3's ftable_g still
 // assembled UNCHANGED (identical to the rejected candidate's hash).
 func verifyParsedTopo() release.Topology {
@@ -2164,12 +2164,12 @@ func verifyParsedTopo() release.Topology {
 	}
 }
 
-// TestHandleParsedManifest_OK_VerificationBaselinesOnVerifiedCandidate: a
-// verification run verifying a rejected release re-checks only the nodes
+// TestHandleParsedManifest_OK_FixBaselinesOnVerifiedCandidate: a
+// fix's release check verifying a rejected release re-checks only the nodes
 // its fix changed relative to both current_prod and the rejected candidate.
 // The fixed node is checked; the sibling's still-broken node,
 // byte-identical to the rejected candidate, is not.
-func TestHandleParsedManifest_OK_VerificationBaselinesOnVerifiedCandidate(t *testing.T) {
+func TestHandleParsedManifest_OK_FixBaselinesOnVerifiedCandidate(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
@@ -2195,7 +2195,7 @@ func TestHandleParsedManifest_OK_VerificationBaselinesOnVerifiedCandidate(t *tes
 }
 
 // TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly pins that the
-// seed-set exclusion is confined to the verification-with-verifies path: a
+// seed-set exclusion is confined to the fix-with-verifies path: a
 // candidate release with the identical topology still diffs against
 // current_prod alone, so both nodes absent from production read as changed.
 func TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly(t *testing.T) {
@@ -2219,11 +2219,11 @@ func TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly(t *testing.T) {
 		"absent from production, the sibling node is changed for a candidate release")
 }
 
-// TestHandleParsedManifest_OK_VerificationWithoutVerifiesDiffsAgainstProdOnly
-// pins that a verification run that names no verified release keeps today's
+// TestHandleParsedManifest_OK_FixWithoutVerifiesDiffsAgainstProdOnly
+// pins that a fix's release check that names no verified release keeps today's
 // behavior (diff against current_prod), so the seed-set derivation is
 // genuinely gated on VerifiesReleaseID.
-func TestHandleParsedManifest_OK_VerificationWithoutVerifiesDiffsAgainstProdOnly(t *testing.T) {
+func TestHandleParsedManifest_OK_FixWithoutVerifiesDiffsAgainstProdOnly(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
@@ -2241,20 +2241,20 @@ func TestHandleParsedManifest_OK_VerificationWithoutVerifiesDiffsAgainstProdOnly
 	validIDs := r.ValidationNodeIDs()
 	assert.Contains(t, validIDs, verifyEID)
 	assert.Contains(t, validIDs, verifyGID,
-		"a verification run naming no verified release still diffs against prod, so the sibling is changed")
+		"a fix's release check naming no verified release still diffs against prod, so the sibling is changed")
 }
 
-// TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedReleaseUnreadable
-// pins the graceful degradation: a verification run whose verified release
+// TestHandleParsedManifest_OK_FixFallsBackWhenVerifiedReleaseUnreadable
+// pins the graceful degradation: a fix's release check whose verified release
 // cannot be read diffs against production instead of failing, so the sibling
-// node is checked (a weaker but running verification), mirroring
+// node is checked (a weaker but running check), mirroring
 // assembleFor.
-func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedReleaseUnreadable(t *testing.T) {
+func TestHandleParsedManifest_OK_FixFallsBackWhenVerifiedReleaseUnreadable(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
 	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
-	// "missing" is never seeded, so RunRepo().Get returns (nil, nil).
+	// "missing" is never seeded, so ReleaseCheckRepo().Get returns (nil, nil).
 	seedReleaseInParsing(store, "verifymiss", "service-2", true, "missing")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -2271,11 +2271,11 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedReleaseUnreada
 		"an unreadable verified release falls back to a production diff, so the sibling is changed")
 }
 
-// TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedCandidateEmpty
+// TestHandleParsedManifest_OK_FixFallsBackWhenVerifiedCandidateEmpty
 // pins the second fallback: a verified release that never parsed far enough
 // to hold a candidate topology yields no rejected candidate to measure
-// against, so the verification run diffs against production alone.
-func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedCandidateEmpty(t *testing.T) {
+// against, so the fix's release check diffs against production alone.
+func TestHandleParsedManifest_OK_FixFallsBackWhenVerifiedCandidateEmpty(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
@@ -2297,15 +2297,15 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedCandidateEmpty
 		"an empty verified candidate falls back to a production diff, so the sibling is changed")
 }
 
-// TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileRejectionPasses
-// pins the compile-lane verification path within the parse leg. The verified
+// TestHandleParsedManifest_OK_FixRestoringProductionAfterCompileRejectionPasses
+// pins the compile-lane fix path within the parse leg. The verified
 // release was rejected at compile, so it never parsed and holds no candidate
-// topology; the verification run therefore diffs against production alone.
+// topology; the fix's release check therefore diffs against production alone.
 // The fix restores the broken model to exactly its promoted content, so that
-// diff is empty — and because the verification run's topology is
-// production's own code, the fix is proven (the verification already
-// compiled it), so the run ends passed rather than failed as unmeasured.
-func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileRejectionPasses(t *testing.T) {
+// diff is empty — and because the fix's topology is
+// production's own code, the fix is proven (the fix's release check already
+// compiled it), so the check ends passed rather than failed as unmeasured.
+func TestHandleParsedManifest_OK_FixRestoringProductionAfterCompileRejectionPasses(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
@@ -2324,33 +2324,33 @@ func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileReje
 
 	r, err := store.GetRelease("verifyfix")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPassed, r.Status(),
+	assert.Equal(t, releasecheck.StatusPassed, r.Status(),
 		"a fix that restores a compile-broken model to its promoted content is proven, not unmeasured")
 	assert.Empty(t, r.FailReason())
-	assert.Equal(t, 1, r.CandidateTopologyRef().NodeCount, "the parsed topology is persisted on the passed verification run")
+	assert.Equal(t, 1, r.CandidateTopologyRef().NodeCount, "the parsed topology is persisted on the fix's passed release check")
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
-		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a fix's release check never promotes")
 	}
 	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
-		"a passed verification run must not advance current prod")
-	assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+		"a fix's passed release check must not advance current prod")
+	assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
-// verifyHID is a node owned by neither the verification run's own project nor
+// verifyHID is a node owned by neither the fix's own project nor
 // the sibling failure: an unrelated node that another release promoted to
-// production AFTER the rejection this verification run verifies.
+// production AFTER the rejection this fix's release check verifies.
 const verifyHID = "svc4.ftable_h"
 
-// TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejectedCandidate
+// TestHandleParsedManifest_OK_FixBaselinePrefersNewerProdOverRejectedCandidate
 // covers current_prod advancing past a node between the rejection and this
-// verification run's parse (an unrelated project promoting in the
-// meantime). The verification run assembles that node at its live
+// fix's parse (an unrelated project promoting in the
+// meantime). The fix's release check assembles that node at its live
 // production hash, so it matches current_prod and is absent from the
 // current_prod diff — never a seed even though it still differs from the
 // rejected candidate's stale copy. Without that, a live, already-promoted
-// node would be dragged into a fix-only verification run.
-func TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejectedCandidate(t *testing.T) {
+// node would be dragged into a fix-only release check.
+func TestHandleParsedManifest_OK_FixBaselinePrefersNewerProdOverRejectedCandidate(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
@@ -2368,7 +2368,7 @@ func TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejecte
 		{UniqueID: verifyGID, ProjectName: "service-3", NodeType: "dbt-model", ContentHash: "g_broken"},
 		{UniqueID: verifyHID, ProjectName: "service-4", NodeType: "dbt-model", ContentHash: "h_old"},
 	}
-	// The verification run assembles H from current_prod (its NEW hash), same
+	// The fix's release check assembles H from current_prod (its NEW hash), same
 	// as any other unrelated, already-live node.
 	parsed := release.Topology{
 		{UniqueID: verifyUID, ProjectName: "shared", ContentHash: "h_u"},
@@ -2405,20 +2405,20 @@ func TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejecte
 // not cover.
 const verifySID = "svc3.ftable_s"
 
-// TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModification
+// TestHandleParsedManifest_OK_FixExcludesEstablishedSiblingModification
 // is the established-sibling case: a two-project fix where the sibling
 // project's failing node edits an EXISTING production node. current_prod
 // holds that node at its pre-rejection hash (s_old), the rejected candidate
-// holds the sibling's still-broken edit (s_broken), and this verification
-// run (for the OTHER project) assembles the sibling unchanged from the
+// holds the sibling's still-broken edit (s_broken), and this fix's release
+// check (for the OTHER project) assembles the sibling unchanged from the
 // rejected candidate (s_broken). The sibling differs from current_prod, so a
 // current_prod-only or current_prod-wins baseline would re-validate it and
-// re-fail the verification run on a node its fix was never about — sinking
+// re-fail the fix's release check on a node its fix was never about — sinking
 // the good fix. The sibling is in the rejected release's failing_nodes and the
-// fix did not touch it (it matches the rejected candidate), so VerificationBuildSets
+// fix did not touch it (it matches the rejected candidate), so FixBuildSets
 // leaves it out and clones it from production. The fix's own node, which the
 // fix touched, is still checked.
-func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModification(t *testing.T) {
+func TestHandleParsedManifest_OK_FixExcludesEstablishedSiblingModification(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
@@ -2435,9 +2435,9 @@ func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModificat
 		{UniqueID: verifyEID, ProjectName: "service-2", NodeType: "dbt-model", ContentHash: "e_broken"},
 		{UniqueID: verifySID, ProjectName: "service-3", NodeType: "dbt-model", ContentHash: "s_broken"},
 	}
-	// This verification run fixes service-2 (e_fixed) and assembles the
+	// This fix's release check fixes service-2 (e_fixed) and assembles the
 	// sibling UNCHANGED from the rejected candidate (s_broken), because
-	// service-3's fix ships on a separate verification run.
+	// service-3's fix ships on a separate release check.
 	parsed := release.Topology{
 		{UniqueID: verifyUID, ProjectName: "shared", ContentHash: "h_u"},
 		{UniqueID: verifyEID, ProjectName: "service-2", NodeType: "dbt-model", ContentHash: "e_fixed"},
@@ -2465,12 +2465,12 @@ func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModificat
 		"an unchanged upstream is neither changed nor pulled into the build set")
 }
 
-// TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidatedChange:
+// TestHandleParsedManifest_OK_FixRebuildsTheRejectedReleasesValidatedChange:
 // the rejected release changed verifyMID (validated ok) and that change broke
-// its consumer verifyDID in another project. A verification of a fix at
+// its consumer verifyDID in another project. A fix's release check of a fix at
 // verifyDID must rebuild verifyMID from the candidate — build_from_sql, not
 // clone_from_prod — or the consumer is measured against production's old shape.
-func TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidatedChange(t *testing.T) {
+func TestHandleParsedManifest_OK_FixRebuildsTheRejectedReleasesValidatedChange(t *testing.T) {
 	const (
 		verifyMID = "svc2.changed_ok"
 		verifyDID = "svc3.consumer"
@@ -2528,10 +2528,10 @@ func TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidate
 	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), ops[verifyDID])
 }
 
-// TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNodeAlone:
+// TestHandleParsedManifest_OK_FixLeavesTheRejectedReleasesSkippedNodeAlone:
 // a node the rejected release changed but SKIPPED (its own upstream failed) is
 // as unproven as a failed one. Untouched by the fix, it is not re-measured.
-func TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNodeAlone(t *testing.T) {
+func TestHandleParsedManifest_OK_FixLeavesTheRejectedReleasesSkippedNodeAlone(t *testing.T) {
 	const (
 		verifyXID = "svc3.broken_upstream"
 		verifyKID = "svc3.skipped_consumer"
@@ -2571,24 +2571,24 @@ func TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNod
 	require.NoError(t, err)
 	validIDs := r.ValidationNodeIDs()
 	assert.Contains(t, validIDs, verifyEID, "the fix's own edit -> rebuilt")
-	assert.NotContains(t, validIDs, verifyXID, "the sibling's still-broken node is left to its own verification")
+	assert.NotContains(t, validIDs, verifyXID, "the sibling's still-broken node is left to its own release check")
 	assert.NotContains(t, validIDs, verifyKID, "a node the rejected release skipped is unproven and untouched -> not re-measured")
 }
 
-// TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContextRebuild:
+// TestHandleParsedManifest_OK_FixDoesNotDragASiblingInThroughAContextRebuild:
 // the connected-sibling case. A shared ancestor A (verifyAncID) is changed by
 // the rejected release and validated ok, and its change broke TWO consumers in
-// two other projects: B (verifyFixID), which this run fixes, and C (verifySibID),
-// whose fix ships on a separate run and is still broken. Rebuilding A for
-// context must NOT expand this run's validation scope down A's OTHER edge to C:
+// two other projects: B (verifyFixID), which this check fixes, and C (verifySibID),
+// whose fix ships on a separate check and is still broken. Rebuilding A for
+// context must NOT expand this check's validation scope down A's OTHER edge to C:
 // only A's descendants that are also in the fix's own closure belong to this
-// run. Were A a scope seed, DescendantsClosure(A) would pull C back in as
-// build_from_sql and re-fail this run on C's unfixed fault.
-func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContextRebuild(t *testing.T) {
+// check. Were A a scope seed, DescendantsClosure(A) would pull C back in as
+// build_from_sql and re-fail this check on C's unfixed fault.
+func TestHandleParsedManifest_OK_FixDoesNotDragASiblingInThroughAContextRebuild(t *testing.T) {
 	const (
 		verifyAncID = "svc2.shared_ancestor"  // A: changed by the rejected release, validated ok
-		verifyFixID = "svc3.fixed_consumer"   // B: this run's fix, downstream of A
-		verifySibID = "svc4.sibling_consumer" // C: still-broken sibling, downstream of A, separate run
+		verifyFixID = "svc3.fixed_consumer"   // B: this check's fix, downstream of A
+		verifySibID = "svc4.sibling_consumer" // C: still-broken sibling, downstream of A, separate check
 	)
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
@@ -2606,7 +2606,7 @@ func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContex
 		{UniqueID: verifyFixID, ProjectName: "service-3", NodeType: "dbt-model", ContentHash: "b_old", UpstreamUniqueIDs: []string{verifyAncID}},
 		{UniqueID: verifySibID, ProjectName: "service-4", NodeType: "dbt-model", ContentHash: "c_broken", UpstreamUniqueIDs: []string{verifyAncID}},
 	}
-	// This service-3 verification fixes B, rebuilds A at its candidate shape for
+	// This service-3 fix's release check fixes B, rebuilds A at its candidate shape for
 	// context, and assembles C UNCHANGED (still broken) from the rejected candidate.
 	parsed := release.Topology{
 		{UniqueID: verifyUID, ProjectName: "shared", ContentHash: "h_u"},
@@ -2631,7 +2631,7 @@ func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContex
 	assert.Contains(t, validIDs, verifyFixID, "the fix's own edit -> scope, rebuilt")
 	assert.Contains(t, validIDs, verifyAncID, "the changed ancestor is rebuilt for context, as an ancestor of the fix")
 	assert.NotContains(t, validIDs, verifySibID,
-		"the still-broken sibling is downstream of the shared ancestor but not of the fix, so the context rebuild must not drag it into this run")
+		"the still-broken sibling is downstream of the shared ancestor but not of the fix, so the context rebuild must not drag it into this check")
 
 	entry := findEntry(t, store, streams.ValidationRequestedV1)
 	require.NotNil(t, entry)
@@ -2653,7 +2653,7 @@ func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContex
 }
 
 // An artifact that is gone can never be read: the release is rejected with
-// internal_error through the parse failure path and the run is not left parsing.
+// internal_error through the parse failure path and the check is not left parsing.
 func TestHandleParsedManifest_MissingArtifactRejectsAsInternalError(t *testing.T) {
 	deps, store := seedToParsing(t, "rMiss", map[string]string{"svc-a": "sha-a"})
 
@@ -2664,11 +2664,11 @@ func TestHandleParsedManifest_MissingArtifactRejectsAsInternalError(t *testing.T
 
 	r, err := store.GetRelease("rMiss")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, string(pkg_model.RejectReasonInternalError), r.FailReason())
 	assert.Contains(t, r.FailDetail(), "rMiss/topology.json.gz")
 	require.NotNil(t, findEntry(t, store, streams.ReleaseRejectedV1))
-	assert.Equal(t, "rejected", outcomeOf(t, lastEntryOn(store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "rejected", outcomeOf(t, lastEntryOn(store, streams.ReleaseCheckFinishedV1)))
 }
 
 func TestHandleParsedManifest_CorruptArtifactRejectsAsInternalError(t *testing.T) {
@@ -2682,7 +2682,7 @@ func TestHandleParsedManifest_CorruptArtifactRejectsAsInternalError(t *testing.T
 
 	r, err := store.GetRelease("rBad")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, string(pkg_model.RejectReasonInternalError), r.FailReason())
 }
 
@@ -2695,13 +2695,13 @@ func TestHandleParsedManifest_ResultNamingNoArtifactRejects(t *testing.T) {
 
 	r, err := store.GetRelease("rNone")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, string(pkg_model.RejectReasonInternalError), r.FailReason())
 }
 
 // An unreachable object store is not the release's fault: the handler returns
-// the error (the consumer pauses and redelivers) and the run stays parsing.
-func TestHandleParsedManifest_UnreachableArtifactStoreLeavesTheRunParsing(t *testing.T) {
+// the error (the consumer pauses and redelivers) and the check stays parsing.
+func TestHandleParsedManifest_UnreachableArtifactStoreLeavesTheCheckParsing(t *testing.T) {
 	deps, store := seedToParsing(t, "rDown", map[string]string{"svc-a": "sha-a"})
 	ref := putTopology(t, deps, "rDown", release.Topology{{UniqueID: "a", ProjectName: "svc-a", ImageTag: "sha-a"}})
 	store.topologies.failLoad(ref.URI, storeOutage{})
@@ -2716,7 +2716,7 @@ func TestHandleParsedManifest_UnreachableArtifactStoreLeavesTheRunParsing(t *tes
 
 	r, getErr := store.GetRelease("rDown")
 	require.NoError(t, getErr)
-	assert.Equal(t, pipeline.StatusParsing, r.Status())
+	assert.Equal(t, releasecheck.StatusParsing, r.Status())
 	assert.Len(t, store.OutboxEntries(), before, "nothing is emitted for a parse result that could not be read")
 }
 
@@ -2748,14 +2748,14 @@ func TestHandleParsedManifest_OK_RecordsTheTopologyRef(t *testing.T) {
 
 	r, err := store.GetRelease("rRef")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, releasecheck.StatusValidating, r.Status())
 	assert.Equal(t, ref, r.CandidateTopologyRef())
 }
 
-// A verification's baseline is the verified release's artifact. When that
-// artifact cannot be read the verification still runs, measured against
+// A fix's release check baseline is the verified release's artifact. When
+// that artifact cannot be read the fix's release check still runs, measured against
 // production alone, exactly as when the verified release is gone.
-func TestHandleParsedManifest_OK_VerificationFallsBackWhenTheVerifiedArtifactIsUnreadable(t *testing.T) {
+func TestHandleParsedManifest_OK_FixFallsBackWhenTheVerifiedArtifactIsUnreadable(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
@@ -2777,8 +2777,8 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenTheVerifiedArtifactIsU
 
 // An unreachable store while reading the verified release's artifact is not a
 // reason to measure a fix against the wrong baseline: the handler returns the
-// error and the run stays parsing until the store answers.
-func TestHandleParsedManifest_OK_VerificationWaitsForAnUnreachableArtifactStore(t *testing.T) {
+// error and the check stays parsing until the store answers.
+func TestHandleParsedManifest_OK_FixWaitsForAnUnreachableArtifactStore(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
@@ -2794,7 +2794,7 @@ func TestHandleParsedManifest_OK_VerificationWaitsForAnUnreachableArtifactStore(
 	require.Error(t, err)
 	r, getErr := store.GetRelease("verifydown")
 	require.NoError(t, getErr)
-	assert.Equal(t, pipeline.StatusParsing, r.Status())
+	assert.Equal(t, releasecheck.StatusParsing, r.Status())
 }
 
 // The diff against production reads the artifact current_prod points at: a
@@ -2881,7 +2881,7 @@ func TestHandleParsedManifest_StoresTheNoticesOfEachDroppingSeed(t *testing.T) {
 
 	r, err := store.GetRelease("rel-notice")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusSeedBuilding, r.Status())
+	assert.Equal(t, releasecheck.StatusSeedBuilding, r.Status())
 	require.Len(t, r.Notices(), 1)
 	n := r.Notices()[0]
 	assert.Equal(t, "analytics.seed_fx_rates_eur", n.NodeID)
@@ -2929,7 +2929,7 @@ func TestHandleParsedManifest_ABootstrapStoresNoticesToo(t *testing.T) {
 
 	r, err := store.GetRelease("rel-boot-notice")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 	require.Len(t, r.Notices(), 1)
 	assert.True(t, r.Notices()[0].Unvalidated, "a bootstrap skips validation, so its column change is unvalidated")
 }
@@ -2946,7 +2946,7 @@ func TestHandleParsedManifest_ABootstrapOnAnEmptyProductionHasNoNotice(t *testin
 
 	r, err := store.GetRelease("rel-boot-empty")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 	assert.Empty(t, r.Notices())
 }
 
@@ -2964,7 +2964,7 @@ func TestHandleParsedManifest_ARebaselineStoresNoNotices(t *testing.T) {
 
 	r, err := store.GetRelease("rel-rebase-notice")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 	assert.Empty(t, r.Notices())
 	// GET /releases/{id} renders the stored notices through this mapping.
 	body, err := json.Marshal(map[string]any{"notices": serialization.NoticesFromDomain(r.Notices())})

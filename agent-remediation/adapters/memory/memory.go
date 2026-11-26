@@ -70,7 +70,7 @@ func (s *Store) autocommit(fn func(*data) error) error {
 }
 
 // StoredProposal is a proposal row as stored: the proposal with the id the
-// store gave it and the verification error the row recorded.
+// store gave it and the verify error the row recorded.
 type StoredProposal struct {
 	ID          string
 	Proposal    proposal.Proposal

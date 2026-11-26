@@ -88,8 +88,8 @@ type ValidationDeployTask struct {
 	// absent value keeps the job_params JSON byte-identical.
 	ParseProdS3URI      string
 	ParseCandidateS3URI string
-	// SourceOverlayURI locates the source-overlay tarball a verification
-	// run's compile Job lays over the project before compiling; empty for
+	// SourceOverlayURI locates the source-overlay tarball a fix's
+	// release check's compile Job lays over the project before compiling; empty for
 	// every production release. Its DTO field is omitempty so an absent value
 	// keeps the job_params JSON byte-identical.
 	SourceOverlayURI string

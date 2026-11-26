@@ -192,7 +192,7 @@ func sampleCheckResult() remediation.CheckResult {
 		Check:    "dbt-compile",
 		Findings: []remediation.Finding{{Code: "compile_error", Message: "column x does not exist", File: "models/orders_daily.sql", Line: 4}},
 		Waiting:  true,
-		RunIDs:   []string{"run-1"},
+		CheckIDs: []string{"run-1"},
 	}
 }
 
@@ -264,7 +264,7 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 				Outcome: "failed (preflight_rounds_spent): the answer repeats the original",
 			}},
 			CrossCluster: []remediation.Finding{{Code: "path_edited_twice", Message: "edited twice", File: "models/orders_daily.sql", Line: 2}},
-			Gate:         []remediation.Finding{{Code: "verification_failed", Message: "column x does not exist", File: "models/orders_daily.sql", Line: 3}},
+			Gate:         []remediation.Finding{{Code: "release_check_failed", Message: "column x does not exist", File: "models/orders_daily.sql", Line: 3}},
 		}},
 		remediation.KeyPackagedContract: remediation.Bytes("packaged contract"),
 		remediation.KeyUpstreamTarget: remediation.UpstreamTarget{

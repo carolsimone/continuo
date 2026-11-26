@@ -16,12 +16,12 @@ type Finding struct {
 }
 
 // CheckResult is the outcome of one check. It is waiting while the check has
-// started verification runs and has not yet read their answer.
+// started release checks and has not yet read their answer.
 type CheckResult struct {
 	Check    string
 	Findings []Finding
 	Waiting  bool
-	RunIDs   []string
+	CheckIDs []string
 }
 
 // Passed reports whether the check is finished and found nothing.
@@ -61,18 +61,18 @@ func (c Checked) Draft() Draft { return c.draft }
 // IsZero reports whether c is the zero value, not made by NewChecked.
 func (c Checked) IsZero() bool { return !c.ok }
 
-// Verified is a proposal whose checked drafts passed the verification gate. Only
+// Verified is a proposal whose checked drafts passed the gate. Only
 // NewVerified makes a non-zero one.
 type Verified struct {
 	proposalID    string
-	verifications []proposal.Verification
+	releaseChecks []proposal.ReleaseCheck
 	checked       []Checked
 }
 
-// NewVerified wraps the checked drafts of one proposal with the verification
-// runs that judged them. It errors on an empty proposal id, no checked draft, a
+// NewVerified wraps the checked drafts of one proposal with the release
+// checks that judged them. It errors on an empty proposal id, no checked draft, a
 // zero Checked, or a gate result that did not pass.
-func NewVerified(proposalID string, checked []Checked, gate []CheckResult, verifications []proposal.Verification) (Verified, error) {
+func NewVerified(proposalID string, checked []Checked, gate []CheckResult, releaseChecks []proposal.ReleaseCheck) (Verified, error) {
 	if proposalID == "" {
 		return Verified{}, errors.New("verified proposal has no id")
 	}
@@ -89,7 +89,7 @@ func NewVerified(proposalID string, checked []Checked, gate []CheckResult, verif
 	}
 	return Verified{
 		proposalID:    proposalID,
-		verifications: append([]proposal.Verification(nil), verifications...),
+		releaseChecks: append([]proposal.ReleaseCheck(nil), releaseChecks...),
 		checked:       append([]Checked(nil), checked...),
 	}, nil
 }
@@ -97,9 +97,9 @@ func NewVerified(proposalID string, checked []Checked, gate []CheckResult, verif
 // ProposalID is the id of the proposal the verified drafts belong to.
 func (v Verified) ProposalID() string { return v.proposalID }
 
-// Verifications returns the verification runs that judged the drafts.
-func (v Verified) Verifications() []proposal.Verification {
-	return append([]proposal.Verification(nil), v.verifications...)
+// ReleaseChecks returns the release checks that judged the drafts.
+func (v Verified) ReleaseChecks() []proposal.ReleaseCheck {
+	return append([]proposal.ReleaseCheck(nil), v.releaseChecks...)
 }
 
 // IsZero reports whether v is the zero value, not made by NewVerified.

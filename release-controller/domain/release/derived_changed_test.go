@@ -29,7 +29,7 @@ func TestDerivedChangedNodeIDs_NewNodeIncluded(t *testing.T) {
 }
 
 // A node present in prod but absent from the candidate (removed) must not be
-// reported as a seed: only candidate nodes can seed a validation run.
+// reported as a seed: only candidate nodes can seed a validation leg.
 func TestDerivedChangedNodeIDs_RemovedNodeNotASeed(t *testing.T) {
 	prod := release.Topology{
 		{UniqueID: "a", ContentHash: "h1"},

@@ -45,7 +45,7 @@ import (
 //	  classifies the parse/compilation error as healable → heal.triggered:v1 (source="compile")
 //	→ agent-remediation proposeFromSource: reads model source from GitHub (stub-github),
 //	  asks stub-llm to fix it → proposal row (source="compile", file_path)
-//	→ a verification run lays the corrected file over the fixture project's dbt
+//	→ a release check lays the corrected file over the fixture project's dbt
 //	  project and compiles and validates it; when it reports passed the
 //	  proposal is finalized → remediation.proposed:v1.
 //
@@ -83,7 +83,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 
 	// 35 minutes: strictly greater than the 34 this test's stage budgets sum to
 	// (rejection 12 + rejected event 2 + trigger 4 + decision 0.5 + proposal 15
-	// + proposal row 0.5). The proposal budget covers the verification run that
+	// + proposal row 0.5). The proposal budget covers the release check that
 	// lays the corrected file over the fixture project and compiles it.
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
@@ -161,10 +161,10 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	require.Equal(t, "emit", decision.Decision, "a compile parse/syntax error must route to emit, not drop")
 
 	// 6. remediation.proposed:v1 must be emitted for the compile failure with
-	//    source=="compile". The agent posts a verification run that lays the
+	//    source=="compile". The agent posts a release check that lays the
 	//    corrected file over the fixture project's dbt project and compiles it;
 	//    the event follows only once that run reports passed, so this budget
-	//    covers a whole second pipeline run.
+	//    covers a whole second release check.
 	var proposed remediationProposedPayload
 	pollUntil(t, ctx, 15*time.Minute, 3*time.Second, func() (bool, error) {
 		msgs := proposedTap.Entries()

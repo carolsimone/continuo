@@ -66,7 +66,7 @@ func (v ParseFailureKind) Healable() bool {
 	return false
 }
 
-// RejectReason — Why release-controller ended a candidate or fix-verification run short of promotion. Travels as `reason` on release.rejected:v1 and as the run's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a remediation round for nothing.
+// RejectReason — Why release-controller ended a release check, a candidate release's or a fix's, short of promotion. Travels as `reason` on release.rejected:v1 and as the check's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a remediation round for nothing.
 // Values come from the vocabulary "reject_reason" in contract.yaml, in
 // declaration order.
 type RejectReason string
@@ -92,13 +92,13 @@ const (
 	RejectReasonDuplicateTable RejectReason = "duplicate_table"
 	// RejectReasonUnbuildableCrossProjectUpstream — a changed node reads an upstream that is absent from the candidate topology, so the candidate schema cannot build it.
 	RejectReasonUnbuildableCrossProjectUpstream RejectReason = "unbuildable_cross_project_upstream"
-	// RejectReasonNothingToValidate — a fix-verification run's candidate declares no node, so the fix it proposes is unproven.
+	// RejectReasonNothingToValidate — the candidate of a fix's release check declares no node, so the fix it proposes is unproven.
 	RejectReasonNothingToValidate RejectReason = "nothing_to_validate"
 	// RejectReasonSeedBuildFailed — building the release's candidate seeds failed.
 	RejectReasonSeedBuildFailed RejectReason = "seed_build_failed"
 	// RejectReasonValidationFailed — at least one node failed the candidate's dbt --empty validation run.
 	RejectReasonValidationFailed RejectReason = "validation_failed"
-	// RejectReasonUpgradeInterrupted — the run was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
+	// RejectReasonUpgradeInterrupted — the release check was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
 	RejectReasonUpgradeInterrupted RejectReason = "upgrade_interrupted"
 	// RejectReasonUpstreamCloneFailed — validation could not copy the production table of an unchanged upstream; a run of that node, not a code change, settles it.
 	RejectReasonUpstreamCloneFailed RejectReason = "upstream_clone_failed"
@@ -229,7 +229,7 @@ func (v ValidationOp) IsValid() bool {
 type HandoverReason string
 
 const (
-	// HandoverReasonTriesSpent — the tries are spent and the last try failed at the verification runs.
+	// HandoverReasonTriesSpent — the tries are spent and the last try failed at the release checks.
 	HandoverReasonTriesSpent HandoverReason = "tries_spent"
 	// HandoverReasonPreflightRoundsSpent — the model's drafts for the node's cluster were refused by pre-flight in every round its type allows.
 	HandoverReasonPreflightRoundsSpent HandoverReason = "preflight_rounds_spent"
@@ -237,13 +237,13 @@ const (
 	HandoverReasonDeclined HandoverReason = "declined"
 	// HandoverReasonNoType — no type of the flow matches the node's failure, so no model call was made for it.
 	HandoverReasonNoType HandoverReason = "no_type"
-	// HandoverReasonClassifierInfra — the classifier judged the failure an infrastructure error that a new release run clears, and marked the node unfixable.
+	// HandoverReasonClassifierInfra — the classifier judged the failure an infrastructure error that a new release check clears, and marked the node unfixable.
 	HandoverReasonClassifierInfra HandoverReason = "classifier_infra"
 	// HandoverReasonClassifierUnhealableParse — the classifier judged the parse failure one no change to the release's source fixes, and marked the node unfixable.
 	HandoverReasonClassifierUnhealableParse HandoverReason = "classifier_unhealable_parse"
 	// HandoverReasonNoRepository — the trigger names no repository, so no fix pull request can be opened.
 	HandoverReasonNoRepository HandoverReason = "no_repository"
-	// HandoverReasonUnverifiableEdits — the tries are spent and the last try's edits could not be checked by a release, because a cross-cluster check refused them or the gate refused them before starting a run.
+	// HandoverReasonUnverifiableEdits — the tries are spent and the last try's edits could not be checked by a release check, because a cross-cluster check refused them or the gate refused them before starting one.
 	HandoverReasonUnverifiableEdits HandoverReason = "unverifiable_edits"
 )
 
@@ -351,7 +351,7 @@ func (v ContractFamily) IsValid() bool {
 	return false
 }
 
-// RemediationSource — The pipeline stage that produced the failure of a node a remediation works on.
+// RemediationSource — The stage of the release check that produced the failure of a node a remediation works on.
 // Values come from the vocabulary "remediation_source" in contract.yaml, in
 // declaration order.
 type RemediationSource string

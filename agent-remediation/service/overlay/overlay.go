@@ -1,10 +1,10 @@
-// Package overlay builds the source-overlay tarball a dbt fix-verification
+// Package overlay builds the source-overlay tarball a dbt fix's release check
 // run lays over the team's project before it compiles: the proposed content
 // of every file the fix edits, keyed by its path within that project. It is
 // pure — it takes the files and returns the bytes, performing no I/O — so the
 // archive's shape is testable without object storage or a release.
 //
-// A fix that moves a file also lists the paths the run must not see: the
+// A fix that moves a file also lists the paths the release check must not see: the
 // archive then carries one more member, DeleteListName, holding those paths one
 // per line, which the overlay fetcher reads instead of unpacking and the Job's
 // staging step removes from the project once the files are laid over it.
@@ -35,7 +35,7 @@ type File struct {
 }
 
 // DeleteListName is the reserved member that lists, one project-relative path
-// per line, the files the run must not see once the overlay is laid over the
+// per line, the files the release check must not see once the overlay is laid over the
 // project. The overlay fetcher never unpacks it as a file.
 const DeleteListName = ".continuo/delete-paths"
 

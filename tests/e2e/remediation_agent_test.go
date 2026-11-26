@@ -33,9 +33,9 @@ import (
 //	→ calls stub-llm (propose_fix tool call → deterministic SQL fix)
 //	→ writes proposed SQL and diff to S3
 //	→ inserts proposal row (status=verifying, attempt=1) and posts one
-//	  verification run per edited project, which lays the proposed source over
-//	  the project's dbt project and runs the real compile + validation pipeline
-//	→ the verification run stops at "passed"
+//	  release check per edited project, which lays the proposed source over
+//	  the project's dbt project and runs the real compile and validation legs
+//	→ the release check stops at "passed"
 //	→ the runner's gate poller reads the verdict and the proposal moves to
 //	  status=proposed
 //	→ emits remediation.proposed:v1 via outbox publisher
@@ -48,9 +48,9 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	// 35 minutes: the rejected release and the verification run that verifies
-	// the fix each run a full compile + validation pipeline in kind, and the
-	// verification run only runs after the model has answered.
+	// 35 minutes: the rejected release and the release check that verifies
+	// the fix each run full compile and validation legs in kind, and the
+	// release check only runs after the model has answered.
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
 
@@ -128,9 +128,9 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	// 7. Poll remediation.proposed:v1. The agent-remediation consumes the trigger,
 	//    calls the stub-llm (which returns a deterministic propose_fix tool call),
 	//    writes artifacts to S3, persists the proposal row, and posts a
-	//    verification run that compiles and validates the proposed source. This
+	//    release check that compiles and validates the proposed source. This
 	//    event is published only once that run reports back passed, so the
-	//    budget covers a whole second pipeline run, not just the model call.
+	//    budget covers a whole second release check, not just the model call.
 	var proposed remediationProposedPayload
 	pollUntil(t, ctx, 20*time.Minute, 3*time.Second, func() (bool, error) {
 		msgs := proposedTap.Entries()
@@ -224,28 +224,28 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 	t.Logf("proposed SQL object fetched from %s: %q", proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 
-	// (c2) The proposal was verified by a real dbt verification run, not
-	//      accepted on the model's word: the row names one verification, for a
-	//      dbt-kind manifest, and that run reached "passed". It is also never
+	// (c2) The proposal was verified by a real dbt release check, not
+	//      accepted on the model's word: the row names one release check, for a
+	//      dbt-kind manifest, and that check reached "passed". It is also never
 	//      readable as a release. Both waits below return immediately here —
-	//      the event in (7) is emitted only after the verdict, so the run is
+	//      the event in (7) is emitted only after the verdict, so the check is
 	//      already terminal — reading it rather than waiting for it.
-	var verificationsJSON []byte
-	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &verificationsJSON,
-		`SELECT verifications FROM proposal WHERE release_id = $1 AND node_id = $2 AND attempt = 1`,
+	var releaseChecksJSON []byte
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &releaseChecksJSON,
+		`SELECT release_checks FROM proposal WHERE release_id = $1 AND node_id = $2 AND attempt = 1`,
 		releaseID, ftableEUniqueID))
-	verifications := decodeVerifications(t, verificationsJSON)
-	require.Len(t, verifications, 1,
-		"the fix edits one project, so exactly one verification run judged it")
-	require.Equal(t, "dbt", verifications[0].Kind,
+	releaseChecks := decodeReleaseChecks(t, releaseChecksJSON)
+	require.Len(t, releaseChecks, 1,
+		"the fix edits one project, so exactly one release check judged it")
+	require.Equal(t, "dbt", releaseChecks[0].Kind,
 		"a dbt model's fix must be verified under a dbt manifest, not a python contract")
-	require.NotEmpty(t, verifications[0].RunID,
-		"a verification must name the run that produced its verdict")
-	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, 2*time.Minute)
-	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", 2*time.Minute)
-	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
-	t.Logf("verification confirmed: project=%s kind=%s run=%s",
-		verifications[0].Project, verifications[0].Kind, verifications[0].RunID)
+	require.NotEmpty(t, releaseChecks[0].CheckID,
+		"a release check entry must name the check that produced its verdict")
+	assertReleaseQueueNamedFix(t, ctx, clients, releaseChecks[0].CheckID, 2*time.Minute)
+	waitForReleaseCheckStatus(t, ctx, clients, releaseChecks[0].CheckID, "passed", 2*time.Minute)
+	assertNotListedAsRelease(t, ctx, clients, releaseChecks[0].CheckID)
+	t.Logf("release check confirmed: project=%s kind=%s check=%s",
+		releaseChecks[0].Project, releaseChecks[0].Kind, releaseChecks[0].CheckID)
 
 	// (f) SELECT the proposal's id from the DB so we can call the PR-creation endpoint.
 	var proposalID string
@@ -361,9 +361,9 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 // recover: a proposal claimed for PR creation (pr_state='opening') whose PR
 // already exists on GitHub for its deterministic branch, but was never
 // recorded onto the row. It seeds a proposal row directly (bypassing the full
-// validation-rejection-to-remediation pipeline covered by
+// validation-rejection-to-remediation flow covered by
 // TestE2E_AgentRemediation_ProposesFixForRejection above, since this test
-// isolates the reconciler's opening sweep rather than that pipeline), claims
+// isolates the reconciler's opening sweep rather than that flow), claims
 // it via the real BeginPullRequest RPC, then creates the PR directly on
 // stub-github for the branch BeginPullRequest's response reports — reading
 // the persisted branch name from the system rather than re-deriving the
@@ -396,7 +396,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 
 	// 1. Seed a proposal row directly in 'proposed'/source_resolved=true — the
 	//    only precondition the PR-creation path checks — sidestepping the full
-	//    validation-rejection pipeline, which this test does not exercise.
+	//    validation-rejection flow, which this test does not exercise.
 	var proposalID string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &proposalID, `
 		INSERT INTO proposal

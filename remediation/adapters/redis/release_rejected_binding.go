@@ -29,8 +29,8 @@ type rejectedPayload struct {
 	// bundle: a compile- or parse-stage rejection precedes the parse that
 	// produces one.
 	CodeBundleURI string `json:"code_bundle_uri"`
-	// Shadow marks a rejection emitted for a fix-verification run.
-	// release-controller never sets it — a verification run's failure emits no
+	// Shadow marks a rejection emitted for a fix's release check.
+	// release-controller never sets it — a release check's failure emits no
 	// release event at all — so it appears only on a message another producer
 	// left in the backlog. The field exists solely so such a message is
 	// dropped (see evidenceFromRejected) rather than misclassified.
@@ -119,7 +119,7 @@ func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
 // payload. It prefers the explicit stage field and falls back to the reason
 // field, which covers the stage-less duplicate_table rejection. The bool is
 // false when the rejection is not remediable — a stage this build does not
-// know, or a stage-less reason that names no pipeline leg; the caller then
+// know, or a stage-less reason that names no release check leg; the caller then
 // produces no evidence rather than misrouting it.
 func sourceFromPayload(stage, reason string) (pkg_model.RemediationSource, bool) {
 	switch stage {
@@ -165,9 +165,9 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 		return nil, fmt.Errorf("unmarshal release.rejected payload: %w", err)
 	}
 
-	// A rejection flagged shadow is one emitted for a fix-verification run.
-	// Classifying it would mint a remediation trigger keyed on a verification
-	// id — which agent-remediation cannot resolve for an image tag through
+	// A rejection flagged shadow is one emitted for a fix's release check.
+	// Classifying it would mint a remediation trigger keyed on a fix's
+	// release check id — which agent-remediation cannot resolve for an image tag through
 	// /releases/{id}, leaving a bogus attempt that retries forever.
 	// release-controller never flags a payload shadow, so dropping these
 	// costs nothing.
@@ -190,7 +190,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 
 	src, ok := sourceFromPayload(p.Stage, p.Reason)
 	if !ok {
-		// Not a remediable pipeline-leg rejection (a stage this build does not
+		// Not a remediable release-check-leg rejection (a stage this build does not
 		// know, or a stage-less reason that names no leg): produce no evidence
 		// rather than misrouting it onto a leg's path.
 		return nil, nil

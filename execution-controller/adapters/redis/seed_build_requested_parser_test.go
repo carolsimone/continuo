@@ -209,7 +209,7 @@ func TestParseSeedBuildRequested_SeedHasNoUpstreamsOrSQLURI(t *testing.T) {
 }
 
 // TestParseSeedBuildRequested_CarriesSourceOverlayURI verifies the parser
-// decodes the verification run's source overlay, so a proposed seed fix
+// decodes a fix's source overlay, so a proposed seed fix
 // reaches the seed-build Job that verifies it.
 func TestParseSeedBuildRequested_CarriesSourceOverlayURI(t *testing.T) {
 	p := seedBuildPayload()

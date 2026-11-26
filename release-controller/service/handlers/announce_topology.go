@@ -17,9 +17,9 @@ import (
 var ErrNoCurrentProd = errors.New("no current_prod to re-announce")
 
 // ErrReleaseIDTaken reports an announcement under a release id that already
-// names a pipeline run or current_prod: announcing under it would replace that
+// names a release check or current_prod: announcing under it would replace that
 // release's topology artifact.
-var ErrReleaseIDTaken = errors.New("release id already names a pipeline run or current_prod")
+var ErrReleaseIDTaken = errors.New("release id already names a release check or current_prod")
 
 // releaseIDPattern is the release id rule of the public release API
 // (RELEASE_ID_PATTERN in ui/src/server/routes/v1.ts); a test in pkg/streams
@@ -70,15 +70,15 @@ func AnnounceTopology(ctx context.Context, d *Deps, releaseID string, topo relea
 		return AnnounceResult{}, fmt.Errorf("lock release queue: %w", err)
 	}
 
-	run, err := u.RunRepo().Get(ctx, releaseID)
+	check, err := u.ReleaseCheckRepo().Get(ctx, releaseID)
 	if err != nil {
-		return AnnounceResult{}, fmt.Errorf("get run %s: %w", releaseID, err)
+		return AnnounceResult{}, fmt.Errorf("get release %s: %w", releaseID, err)
 	}
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return AnnounceResult{}, fmt.Errorf("get current prod: %w", err)
 	}
-	if run != nil || cp.ReleaseID() == releaseID {
+	if check != nil || cp.ReleaseID() == releaseID {
 		return AnnounceResult{}, fmt.Errorf("%w: %s", ErrReleaseIDTaken, releaseID)
 	}
 

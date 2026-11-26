@@ -13,8 +13,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/stretchr/testify/assert"
@@ -23,10 +23,10 @@ import (
 
 // rejectedRelease builds a release that reached StatusRejected with reason
 // "compile_failed" and, when payload is non-empty, a stored rejection payload.
-func rejectedRelease(t *testing.T, id, payload string) *pipeline.Run {
+func rejectedRelease(t *testing.T, id, payload string) *releasecheck.Check {
 	t.Helper()
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
-	r := pipeline.NewCandidate(id, "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+	r := releasecheck.NewCandidate(id, "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToCompiling(now))
 	require.NoError(t, r.Fail("compile_failed", "", []string{"finance"}, now))
 	if payload != "" {
@@ -147,40 +147,40 @@ func TestRetryRemediation_Refusals(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name string
-		rel  func() *pipeline.Run
+		rel  func() *releasecheck.Check
 		want error
 	}{
-		{"not rejected", func() *pipeline.Run {
-			return pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
-		}, pipeline.ErrNotRejected},
-		{"not healable", func() *pipeline.Run {
-			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+		{"not rejected", func() *releasecheck.Check {
+			return releasecheck.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+		}, releasecheck.ErrNotRejected},
+		{"not healable", func() *releasecheck.Check {
+			r := releasecheck.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 			require.NoError(t, r.TransitionToParsing(now))
 			require.NoError(t, r.Fail("invalid_artifact", "", nil, now))
 			r.SetRejectionPayload([]byte(`{}`))
 			return r
 		}, handlers.ErrNotHealable},
-		{"an upstream that could not be copied is not healable", func() *pipeline.Run {
-			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+		{"an upstream that could not be copied is not healable", func() *releasecheck.Check {
+			r := releasecheck.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 			require.NoError(t, r.TransitionToParsing(now))
 			require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"analytics.b"}, now))
 			require.NoError(t, r.Fail(string(pkg_model.RejectReasonUpstreamCloneFailed), "", []string{"analytics.b"}, now))
 			r.SetRejectionPayload([]byte(`{"stage":"validation","reason":"upstream_clone_failed"}`))
 			return r
 		}, handlers.ErrNotHealable},
-		{"parse invalid_sql is healable (fails later on no payload)", func() *pipeline.Run {
-			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+		{"parse invalid_sql is healable (fails later on no payload)", func() *releasecheck.Check {
+			r := releasecheck.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 			require.NoError(t, r.TransitionToParsing(now))
 			require.NoError(t, r.Fail("invalid_sql", "", []string{"a.b"}, now))
 			return r
 		}, handlers.ErrNotRetryable},
-		{"no stored payload", func() *pipeline.Run { return rejectedRelease(t, "rel-1", "") }, handlers.ErrNotRetryable},
-		{"rounds exhausted", func() *pipeline.Run {
+		{"no stored payload", func() *releasecheck.Check { return rejectedRelease(t, "rel-1", "") }, handlers.ErrNotRetryable},
+		{"rounds exhausted", func() *releasecheck.Check {
 			r := rejectedRelease(t, "rel-1", `{}`)
 			_, _ = r.StartRemediationRound(now)
 			_, _ = r.StartRemediationRound(now)
 			return r
-		}, pipeline.ErrRoundsExhausted},
+		}, releasecheck.ErrRoundsExhausted},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -248,19 +248,19 @@ func TestRetryRemediation_SecondPostBeforeNewRoundRowsIsRefused(t *testing.T) {
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
-// TestRetryRemediation_VerificationRunIsNotAnID verifies that a verification
-// run's id is refused the same way an unknown id is: a verification is not a
-// release. A verification's Fail always lands on StatusFailed, never
-// StatusRejected (the release_pipeline_runs_kind_status_check constraint
+// TestRetryRemediation_ReleaseCheckIsNotAnID verifies that a fix's release check
+// check's id is refused the same way an unknown id is: a fix's release check is not a
+// release. A fix's Fail always lands on StatusFailed, never
+// StatusRejected (the release_checks_kind_status_check constraint
 // forbids the row existing otherwise), so this rehydrates the row directly to
 // exercise the kind guard defensively, the same way a stray row would.
-func TestRetryRemediation_VerificationRunIsNotAnID(t *testing.T) {
+func TestRetryRemediation_ReleaseCheckIsNotAnID(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, store := newDeps(now)
-	r := pipeline.Rehydrate(pipeline.RehydrateInput{
+	r := releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID:                "rel-1",
-		Kind:              pipeline.KindVerification,
-		Status:            pipeline.StatusRejected,
+		Kind:              releasecheck.KindFix,
+		Status:            releasecheck.StatusRejected,
 		ChangedProject:    "finance",
 		VerifiesReleaseID: "rel-orig",
 		Attempt:           1,

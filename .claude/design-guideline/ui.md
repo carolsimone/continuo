@@ -1155,7 +1155,7 @@ Rules:
   lighter than `.nodes-table thead th`, never sticky, no background, never
   wrapped onto a second line), not a peer header. Inner rows keep the table row contract (hover, selected,
   static) and use `.pill-sm` for status.
-- Per-item detail lines under a row (a verification run, say) are a
+- Per-item detail lines under a row (a release check, say) are a
   `.remediation-verif` sub-row: a 10px uppercase label followed by compact
   12px lines, each with its `.btn--secondary` link-out.
 - The expander is `.remediation-chevron` in the first cell — a 14px chevron
@@ -1622,8 +1622,8 @@ Content rules:
 
 One line directly under the header of a detail page saying what the page
 is about, before any strip or section. Used on the release page
-(`Changes core · acme/demo @ c2d1add ↗`) and the verification-run page
-(`Verification run for release rel-1 · attempt 2 · service core · dbt`).
+(`Changes core · acme/demo @ c2d1add ↗`) and the release-check page
+(`Release check for release rel-1 · attempt 2 · service core · dbt`).
 
 ```jsx
 <p className="page-sub">
@@ -1655,7 +1655,7 @@ Rules:
 ## Service tiles
 
 The set of service images a run executes with, on the release and
-verification-run detail pages (`ServiceTiles`, `ui/src/client/ServiceTiles.tsx`).
+release-check detail pages (`ServiceTiles`, `ui/src/client/ServiceTiles.tsx`).
 One tile per service. Tiles are identity, not navigation: nothing happens
 on click, so there is no hover state.
 
@@ -1703,8 +1703,8 @@ Rules:
 - Exactly one tile carries `--changed` and the `changed` chip: the service
   whose image is new in this run. The section sub-line says so and counts
   the rest as carried over, naming the kind of run the page shows
-  (`subject`: "release", or "verification run") and where the rest came
-  from (`carriedFrom`: "prod" for a candidate; for a verification run, the
+  (`subject`: "release", or "release check") and where the rest came
+  from (`carriedFrom`: "prod" for a candidate; for a release check, the
   release it verifies, since its image set is that release's with the fixed
   service swapped in). When the changed service is the only one, the
   sub-line stops after "is new in this release". Unknown changed service:
@@ -1713,10 +1713,10 @@ Rules:
   registry reference — in monospace, wrapping inside its tile.
 - No images recorded yet: render nothing, not an empty section.
 
-## Pipeline timeline
+## Release check timeline
 
-A run's path through the pipeline, on the release and verification-run
-detail pages (`PipelineTimeline`, `ui/src/client/PipelineTimeline.tsx`):
+A release check's path through its legs, on the release and release-check
+detail pages (`ReleaseCheckTimeline`, `ui/src/client/ReleaseCheckTimeline.tsx`):
 one step per recorded transition, in order, joined by connectors.
 
 ```jsx

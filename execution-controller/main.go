@@ -273,8 +273,8 @@ func main() {
 		redis.NewCompileRequestedBinding(uowFactory, compileReqHandler, logger))
 	validationResultTeardownConsumer := newConsumer(streams.ValidationResultV1, streams.ExecutionControllerValidationResultTeardown,
 		redis.NewValidationResultTeardownBinding(candidateSchemaCleaner, logger))
-	pipelineRunFinishedTeardownConsumer := newConsumer(streams.PipelineRunFinishedV1, streams.ExecutionControllerPipelineRunFinished,
-		redis.NewPipelineRunFinishedTeardownBinding(candidateSchemaCleaner, logger))
+	releaseCheckFinishedTeardownConsumer := newConsumer(streams.ReleaseCheckFinishedV1, streams.ExecutionControllerReleaseCheckFinished,
+		redis.NewReleaseCheckFinishedTeardownBinding(candidateSchemaCleaner, logger))
 	releasePromotedTeardownConsumer := newConsumer(streams.ReleasePromotedV1, streams.ExecutionControllerReleasePromoted,
 		redis.NewReleasePromotedTeardownBinding(candidateSchemaCleaner, logger))
 	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutionControllerReleaseRejected,
@@ -435,7 +435,7 @@ func main() {
 	runSchemaOpConsumer("seed_build_requested", seedBuildReqConsumer)
 	runConsumer("compile_requested", compileReqConsumer)
 	runSchemaOpConsumer("validation_result_teardown", validationResultTeardownConsumer)
-	runSchemaOpConsumer("pipeline_run_finished_teardown", pipelineRunFinishedTeardownConsumer)
+	runSchemaOpConsumer("release_check_finished_teardown", releaseCheckFinishedTeardownConsumer)
 	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
 	runSchemaOpConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
 

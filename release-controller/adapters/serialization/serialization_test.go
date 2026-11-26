@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 )
 
 // goldenPerNode is the exact JSON a fully-populated []NodeValidationResult is
@@ -21,7 +21,7 @@ func TestNodeValidationResultDTORoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal golden: %v", err)
 	}
 	got := NodeValidationResultsToDomain(dto)
-	want := []pipeline.NodeValidationResult{{
+	want := []releasecheck.NodeValidationResult{{
 		Stage: "validation", NodeID: "svc.sch.tbl", Status: "failed",
 		DBTLogURI: "s3://l", RunResultsURI: "s3://r", DurationMS: 42,
 		FilePath: "models/x.sql", NodeType: "dbt-model",
@@ -40,7 +40,7 @@ func TestNodeValidationResultDTORoundTrip(t *testing.T) {
 }
 
 func TestNodeValidationResultOmitemptyStaysOmitted(t *testing.T) {
-	out, err := json.Marshal(NodeValidationResultsFromDomain([]pipeline.NodeValidationResult{{NodeID: "n", Status: "ok"}}))
+	out, err := json.Marshal(NodeValidationResultsFromDomain([]releasecheck.NodeValidationResult{{NodeID: "n", Status: "ok"}}))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestNodeValidationResultOmitemptyStaysOmitted(t *testing.T) {
 }
 
 // goldenTransitions is the exact JSON a []Transition is stored and returned as.
-// "to" holds a pipeline.Status value; "at" is an RFC3339 time (json trims
+// "to" holds a releasecheck.Status value; "at" is an RFC3339 time (json trims
 // trailing fractional-second zeros, so a whole-second time has no fraction).
 const goldenTransitions = `[{"to":"received","at":"2026-01-02T03:04:05Z"},{"to":"remediation_retry","at":"2026-01-02T03:05:06Z"}]`
 
@@ -61,9 +61,9 @@ func TestTransitionDTORoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal golden: %v", err)
 	}
 	got := TransitionsToDomain(dto)
-	want := []pipeline.Transition{
-		{To: pipeline.StatusReceived, At: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
-		{To: pipeline.Status("remediation_retry"), At: time.Date(2026, 1, 2, 3, 5, 6, 0, time.UTC)},
+	want := []releasecheck.Transition{
+		{To: releasecheck.StatusReceived, At: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
+		{To: releasecheck.Status("remediation_retry"), At: time.Date(2026, 1, 2, 3, 5, 6, 0, time.UTC)},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
