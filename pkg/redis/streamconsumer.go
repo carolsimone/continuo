@@ -107,10 +107,10 @@ type consumerConfig struct {
 	// the reclaim gate unless one was set explicitly.
 	handlerTimeout time.Duration
 
-	// service names the consuming service; it is stamped as the producer of
+	// component names the consuming component; it is stamped as the producer of
 	// every dead letter this consumer writes. Start refuses to run without it.
-	service string
-	// infraClassifiers recognise outages of service-specific dependencies on
+	component string
+	// infraClassifiers recognise outages of component-specific dependencies on
 	// top of the ones Classify knows.
 	infraClassifiers []InfraClassifier
 	// infraBackoffBase doubles per pause after an infrastructure error, up to
@@ -183,7 +183,7 @@ func WithHandlerTimeout(d time.Duration) ConsumerOption {
 	}
 }
 
-// WithInfraClassifier adds a classifier for a service-specific dependency
+// WithInfraClassifier adds a classifier for a component-specific dependency
 // whose failures mean an outage rather than a bad message.
 func WithInfraClassifier(f InfraClassifier) ConsumerOption {
 	return func(c *StreamConsumer) { c.infraClassifiers = append(c.infraClassifiers, f) }
@@ -209,9 +209,9 @@ func (c *StreamConsumer) SetHandlerTimeout(d time.Duration) {
 	}
 }
 
-// SetService names the service this consumer runs in. It must be called
+// SetComponent names the component this consumer runs in. It must be called
 // before Start: the name is the producer of every dead letter it writes.
-func (c *StreamConsumer) SetService(name string) { c.service = name }
+func (c *StreamConsumer) SetComponent(name string) { c.component = name }
 
 // HeartbeatBudget is the staleness bound to pass to Healthy: the handler
 // timeout plus heartbeatMargin, derived from the timeout the consumer runs
@@ -426,7 +426,7 @@ func (c *StreamConsumer) attempt(ctx context.Context, msg goredis.XMessage, sche
 // schedule. Infrastructure errors are retried for as long as they last, with
 // capped exponential backoff and without counting a delivery. The result is
 // nil on success; otherwise the class and error of the last attempt, or ctx's
-// error once the service is stopping.
+// error once the component is stopping.
 func (c *StreamConsumer) run(ctx context.Context, msg goredis.XMessage, schedule []time.Duration) (ErrorClass, error) {
 	for pauses := 1; ; pauses++ {
 		class, err := c.attempt(ctx, msg, schedule)
@@ -626,7 +626,7 @@ func (c *StreamConsumer) xaddDeadLetter(ctx context.Context, values map[string]a
 // pending to be dead-lettered again.
 func (c *StreamConsumer) deadLetterAndAck(ctx context.Context, msg goredis.XMessage, kind model.DeadLetterKind, cause error, deliveries int64) {
 	values, err := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
-		TenantID: tenantOf(msg), Producer: c.service, OccurredAt: c.nowFn(),
+		TenantID: tenantOf(msg), Producer: c.component, OccurredAt: c.nowFn(),
 		Stream: c.streamName, Group: c.consumerGroup, MessageID: msg.ID, Key: c.key,
 		Fields: stringFields(msg.Values), FailureKind: kind, Error: cause.Error(), DeliveryCount: deliveries,
 	})
@@ -687,8 +687,8 @@ func stringFields(values map[string]any) map[string]string {
 // ctx ends, or the error that ended them: a NOGROUP read, meaning the group was
 // removed while the consumer ran.
 func (c *StreamConsumer) Start(ctx context.Context) error {
-	if c.service == "" {
-		return fmt.Errorf("stream consumer %q/%q has no service name: call SetService before Start", c.streamName, c.consumerGroup)
+	if c.component == "" {
+		return fmt.Errorf("stream consumer %q/%q has no component name: call SetComponent before Start", c.streamName, c.consumerGroup)
 	}
 	ready, err := c.waitForGroup(ctx)
 	if err != nil || !ready {

@@ -10,7 +10,7 @@ import (
 )
 
 // The migration files must produce exactly the effective schema the
-// service is written against. Column order does not matter; names, types,
+// component is written against. Column order does not matter; names, types,
 // nullability and defaults do.
 func TestExecutionSchemaMatchesContract(t *testing.T) {
 	db, cleanup := setupPostgres(t)

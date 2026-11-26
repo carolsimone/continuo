@@ -19,7 +19,7 @@ import (
 
 // The run-controller database keeps its outbox in run_controller_outbox: the
 // table, its constraints, its indexes and the trigger that notifies its relay
-// all carry the service's name, and the relay targets the same table through
+// all carry the component's name, and the relay targets the same table through
 // postgres.OutboxTable.
 func TestOutboxTableIsRunControllerOutbox(t *testing.T) {
 	db := newTestDB(t)

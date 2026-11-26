@@ -183,8 +183,8 @@ func (r *Registry) Live(ctx context.Context) bool {
 	return len(r.LivenessCheck(ctx)) == 0
 }
 
-// StartupGate holds readiness false while a service is still starting. It lets
-// a service bring its health server up before its dependencies are reachable:
+// StartupGate holds readiness false while a component is still starting. It lets
+// a component bring its health server up before its dependencies are reachable:
 // liveness keeps answering through a long dependency wait at boot, so the
 // kubelet does not restart the pod mid-wait, while readiness stays false so no
 // traffic is routed to a pod that is not serving yet.

@@ -6,11 +6,11 @@
 // objects held in memory, StreamReader and StreamWriter for objects too large
 // to hold whole, Lister, Deleter and PrefixDeleter, and ReadWriter for an
 // adapter that both reads and writes. An adapter depends on the narrowest role
-// it uses and never on *Client. Only a service's main builds a Client, with
+// it uses and never on *Client. Only a component's main builds a Client, with
 // New, and passes it to each adapter as the role that adapter uses. Client is
 // the one production implementation of every role.
 //
-// Object storage is infrastructure. A service's domain and application code
+// Object storage is infrastructure. A component's domain and application code
 // depends only on ports of its own (service/ports or domain/repository),
 // phrased in its own vocabulary. An adapter implements such a port by
 // composing a role with the codec of its document, and translates this

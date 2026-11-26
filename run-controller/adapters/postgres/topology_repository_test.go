@@ -658,7 +658,7 @@ func TestTopologyRepository_SaveReleaseRefreshesThePlannerStatistics(t *testing.
 		"estimated %v of the release's %d edges", plans[0].Plan.Rows, len(rel.Edges))
 }
 
-// runtimeLoginDB opens the run-controller database as the service's own login,
+// runtimeLoginDB opens the run-controller database as the component's own login,
 // which owns no table, as every deployment runs it. The password is the local
 // one db/init-databases.sh gives it, or RUN_CONTROLLER_LOGIN_TEST_PASSWORD.
 func runtimeLoginDB(t *testing.T) *sqlx.DB {
@@ -683,9 +683,9 @@ func analyzeCount(t *testing.T, db *sqlx.DB) int64 {
 }
 
 // A loaded release refreshes the planner's statistics on the topology tables
-// even though the service's login does not own them: Postgres skips an
+// even though the component's login does not own them: Postgres skips an
 // ANALYZE by a non-owner with only a warning.
-func TestTopologyRepository_SaveReleaseAnalyzesAsTheServiceLogin(t *testing.T) {
+func TestTopologyRepository_SaveReleaseAnalyzesAsTheComponentLogin(t *testing.T) {
 	owner := newTestDB(t)
 	tenant := newTopoTenant(t, owner)
 	before := analyzeCount(t, owner)

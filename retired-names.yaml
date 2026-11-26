@@ -33,11 +33,21 @@
 #     use: gadget run
 #     paths: [run-controller, "ui/src/client/**/runs*"]
 names:
+  # Component group: one of continuo's own programs is a component. Its name
+  # is config.ComponentName, which a stream consumer takes through
+  # SetComponent.
+  - pattern: 'SetService'
+    use: SetComponent
+  - pattern: '\w*config\.ServiceName'
+    use: config.ComponentName
+  - pattern: 'ServiceName'
+    use: ComponentName
+    paths: ["*/config"]
   # Project group: the code a team releases as one unit is a project.
-  # Bare service_name and ServiceName also name continuo's own components
-  # (config.ServiceName, topology-controller's SERVICE_NAME), gRPC's
-  # ServiceDesc.ServiceName and a StatefulSet's serviceName, so those two
-  # are retired only where they meant a project.
+  # Bare service_name and ServiceName also name topology-controller's
+  # SERVICE_NAME (its component name), gRPC's ServiceDesc.ServiceName and a
+  # StatefulSet's serviceName, so those two are retired only where they meant
+  # a project.
   - pattern: 'service_names|serviceNames|ServiceNames|SERVICE_NAMES'
     use: project names
   - pattern: 'service_name|SERVICE_NAME'

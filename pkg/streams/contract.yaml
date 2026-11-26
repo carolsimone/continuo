@@ -3,10 +3,10 @@
 #
 # Naming policy:
 #   - Stream name: lowercase, dot-separated, ends with `:vN`. Frozen contract.
-#   - Group name: lowercase kebab-case, no underscores, `<consuming service>-<purpose>`
-#     (TestConsumerGroupsStartWithTheirServiceName).
+#   - Group name: lowercase kebab-case, no underscores, `<consuming component>-<purpose>`
+#     (TestConsumerGroupsStartWithTheirComponentName).
 #   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV2).
-#   - Consumer const: PascalCase, service-prefixed (RunControllerTaskStatusUpdated).
+#   - Consumer const: PascalCase, component-prefixed (RunControllerTaskStatusUpdated).
 
 # Every Redis key the system owns is named key_prefix + the contract name, so
 # the stream `task.dispatch:v1` lives at `continuo:task.dispatch:v1`.
@@ -37,7 +37,7 @@ streams:
 
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
-    description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each service that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
+    description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each component that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
     producers: [run-controller, execution-controller, release-controller, remediation, agent-remediation, dead-letter-controller]
     consumers:
       - service: dead-letter-controller
@@ -53,7 +53,7 @@ streams:
         group: dead-letter-controller-consumer-dead-letters
         const: DeadLetterControllerConsumerDeadLetters
 
-  # ---------------- cross-service fanout ----------------
+  # ---------------- cross-component fanout ----------------
 
   - name: run.cancelled:v1
     const: RunCancelledV1
@@ -216,7 +216,7 @@ streams:
 
   - name: remediation.handed_over:v1
     const: RemediationHandedOverV1
-    description: One event when a remediation ends with nodes a human must fix, each with its reason code and its owner; emitted by the remediation agent, read by people and not consumed by any service.
+    description: One event when a remediation ends with nodes a human must fix, each with its reason code and its owner; emitted by the remediation agent, read by people and not consumed by any component.
     producers: [agent-remediation]
     consumers: []
 
@@ -238,9 +238,9 @@ streams:
         group: catalog-remediation-pr-closed-provenance
         const: CatalogRemediationPrClosedProvenance
 
-# Redis grants a service needs beyond the streams it produces and consumes. The
+# Redis grants a component needs beyond the streams it produces and consumes. The
 # rules generator turns each entry into key patterns and commands of that
-# service's login:
+# component's login:
 #   keys:        plain-key prefixes (after key_prefix), granted with `commands`
 #   all_streams: every key under key_prefix, granted with `commands`
 #   commands:    Redis commands, lowercase, `command|subcommand` for a subcommand
@@ -295,7 +295,7 @@ retired_streams:
   - name: validation.completed:v1
   - name: validation.node.completed:v1
 
-# Closed value sets shared across services. Each becomes a typed string in Go
+# Closed value sets shared across components. Each becomes a typed string in Go
 # (pkg/domain/model/vocabulary.gen.go) and a StrEnum in Python
 # (topology-controller/domain/contract_vocabulary.py). They land in the domain
 # layer, not alongside the stream names above, because domain code names these

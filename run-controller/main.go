@@ -81,7 +81,7 @@ var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 20, MaxIdleConns: 10}
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
 	// recorded on v, and the missing-configuration check below stops the
-	// service once this logger can report it.
+	// component once this logger can report it.
 	v := &pkgconfig.Validator{}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
 
@@ -91,7 +91,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Starting run-controller service")
+	logger.Info("Starting run-controller component")
 	if cfg.Maintenance {
 		logger.Warn("Maintenance mode is on: cron fires are skipped and RPCs that start runs are refused")
 	}
@@ -111,7 +111,7 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	liveReg := liveness.NewRegistry()
-	metricsReg := pkgmetrics.New(config.ServiceName)
+	metricsReg := pkgmetrics.New(config.ComponentName)
 
 	// runConsumer starts a tracked stream consumer. Its goroutine is tracked by
 	// the lifecycle WaitGroup so shutdown drains in-flight handler invocations
@@ -120,7 +120,7 @@ func main() {
 	// pod is restarted; a worker heartbeat probe also catches a consumer whose
 	// read loop has gone wedged without exiting.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		consumer.SetService(config.ServiceName)
+		consumer.SetComponent(config.ComponentName)
 		consumer.SetObserver(metricsReg.Consumers())
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
@@ -273,7 +273,7 @@ func main() {
 	clk := ports.SystemClock{}
 
 	// The parser rebuilds each stored schedule's expression from its cron and
-	// timezone. It is built once, so a failure to build it stops the service
+	// timezone. It is built once, so a failure to build it stops the component
 	// before any consumer starts.
 	cronParser, err := cron.NewParser()
 	if err != nil {
@@ -474,7 +474,7 @@ func main() {
 	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
 		return postgres.NewNodeRunRepository(db, tenantID, logger)
 	}
-	// The schedules service edits each tenant's crons one statement at a time
+	// schedules.Service edits each tenant's crons one statement at a time
 	// on the autocommit db: a save while the cron loop holds the schedule's
 	// row for a fire waits for that fire to commit.
 	scheduleService := schedules.New(
@@ -518,7 +518,7 @@ func main() {
 	// Everything is initialised and serving: readiness may now turn true.
 	startup.Done()
 
-	logger.Info("run-controller service started successfully",
+	logger.Info("run-controller component started successfully",
 		"grpc_port", cfg.GRPCPort,
 		"health_port", cfg.HealthPort,
 	)
@@ -528,5 +528,5 @@ func main() {
 	// the infra-close handlers; Done() closes only after that sequence finishes,
 	// so there is no fixed sleep racing the shutdown.
 	<-lifecycleManager.Done()
-	logger.Info("Service stopped")
+	logger.Info("run-controller component stopped")
 }

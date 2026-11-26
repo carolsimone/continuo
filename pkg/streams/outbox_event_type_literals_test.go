@@ -12,7 +12,7 @@ import (
 
 // forbiddenEventTypeLiterals is the set of outbox event_type routing-key values
 // that must never appear as a bare string literal in a publisher switch or a
-// producer's outbox INSERT. Each value has a named per-service constant
+// producer's outbox INSERT. Each value has a named per-component constant
 // (execution-controller/domain/event); the literal must be referenced through
 // that constant so the emit site and the publisher share one source of truth.
 var forbiddenEventTypeLiterals = map[string]bool{
@@ -21,7 +21,7 @@ var forbiddenEventTypeLiterals = map[string]bool{
 
 // eventTypeScanDirs are the publisher adapters and producer packages that route
 // or emit outbox rows. Their event_type strings must come from a constant, never
-// a literal. The constant declarations themselves live in the services' domain/
+// a literal. The constant declarations themselves live in the components' domain/
 // packages, which are deliberately not scanned here.
 var eventTypeScanDirs = []string{
 	"execution-controller/adapters/publisher",
@@ -34,7 +34,7 @@ var eventTypeScanDirs = []string{
 
 // TestOutboxEventTypesUseConstants fails if any scanned production file contains
 // a string literal equal to a known outbox event_type value. Such a literal must
-// be replaced with its per-service EventType* constant so the emit site and the
+// be replaced with its per-component EventType* constant so the emit site and the
 // publisher cannot silently drift apart.
 //
 // Test files (*_test.go) are out of scope: a publisher contract test legitimately
@@ -67,7 +67,7 @@ func TestOutboxEventTypesUseConstants(t *testing.T) {
 				}
 				val := strings.Trim(bl.Value, `"`)
 				if forbiddenEventTypeLiterals[val] {
-					t.Errorf("%s:%d: outbox event_type literal %q — use the per-service EventType* constant",
+					t.Errorf("%s:%d: outbox event_type literal %q — use the per-component EventType* constant",
 						path, fset.Position(bl.Pos()).Line, val)
 				}
 				return true

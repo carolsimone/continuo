@@ -13,7 +13,7 @@ const ConsumerDeadLetterSchemaVersion = 1
 
 // ConsumerDeadLetter is the payload of a consumer.dead_letter:v1 entry: one
 // stream message a consumer group gave up on. The envelope's producer names
-// the consuming service and its tenant_id the message's tenant.
+// the consuming component and its tenant_id the message's tenant.
 type ConsumerDeadLetter struct {
 	OriginalStream    string `json:"original_stream"`
 	OriginalGroup     string `json:"original_group"`

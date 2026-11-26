@@ -190,8 +190,8 @@ func goldenInput(t *testing.T, name string) (uuid.UUID, time.Time, json.RawMessa
 }
 
 // The envelope of every enveloped stream run-controller publishes names the
-// producer config.ServiceName, the name its consumers' dead letters carry.
-func TestRender_EnvelopeProducerIsTheServiceName(t *testing.T) {
+// producer config.ComponentName, the name its consumers' dead letters carry.
+func TestRender_EnvelopeProducerIsTheComponentName(t *testing.T) {
 	for _, tc := range []struct{ stream, fixture string }{
 		{streams.TaskDispatchV1, "task_dispatch_v1.json"},
 		{streams.RunCancelledV1, "run_cancelled_v1.json"},
@@ -203,7 +203,7 @@ func TestRender_EnvelopeProducerIsTheServiceName(t *testing.T) {
 				EventType: tc.stream, StreamName: tc.stream, Payload: wrapped(t, "acme", payload)})
 			require.NoError(t, err)
 
-			assert.Equal(t, config.ServiceName, rendered["producer"])
+			assert.Equal(t, config.ComponentName, rendered["producer"])
 		})
 	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 // Handler maps a registry check to an HTTP health response, hoisting the glue
-// every service repeats: 200 with body "<kind> OK" when the check reports no
+// every component repeats: 200 with body "<kind> OK" when the check reports no
 // failures, or 503 with body "NOT <kind>: N component(s) unhealthy" (logging
 // each failing component at Warn) otherwise. kind names the probe ("readiness"
 // or "liveness") in the body and logs.

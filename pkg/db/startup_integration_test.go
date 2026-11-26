@@ -55,7 +55,7 @@ func loadStartupTestPostgres(t *testing.T) pkgconfig.PostgresConfig {
 func forward(t *testing.T, addr, upstream string) {
 	t.Helper()
 	lis, err := net.Listen("tcp", addr)
-	require.NoError(t, err, "take the port the service is waiting on")
+	require.NoError(t, err, "take the port the component is waiting on")
 	t.Cleanup(func() { _ = lis.Close() })
 	go func() {
 		for {

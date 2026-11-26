@@ -44,7 +44,7 @@ func (p *orderPublisher) PublishBatch(ctx context.Context, entries []*outbox.Ent
 	return errs
 }
 
-// sequentialPublisher publishes one row per call, as the Publish-only services
+// sequentialPublisher publishes one row per call, as the Publish-only components
 // do. The first attempt at a row named in failOnce returns that error; ids
 // records the rows it published, in publish order.
 type sequentialPublisher struct {

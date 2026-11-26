@@ -65,7 +65,7 @@ func (e *keysEnv) consume(t *testing.T, handle pkgredis.MessageHandler, opts ...
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	c := pkgredis.NewStreamConsumer(e.rc, e.stream, e.group, handle, discardLogger(), opts...)
-	c.SetService("dead-letter-controller-test")
+	c.SetComponent("dead-letter-controller-test")
 	done := make(chan error, 1)
 	go func() { done <- c.Start(ctx) }()
 	t.Cleanup(func() {

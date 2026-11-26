@@ -72,7 +72,7 @@ func main() {
 	// outage stops traffic but must not restart a pod whose consumer is already
 	// retrying).
 	liveReg := liveness.NewRegistry()
-	metricsReg := pkgmetrics.New(config.ServiceName)
+	metricsReg := pkgmetrics.New(config.ComponentName)
 
 	// runConsumer starts a tracked stream consumer: a bounded handler deadline
 	// so a hung handler eventually returns; RegisterWorker before launch so a
@@ -80,7 +80,7 @@ func main() {
 	// permanent consumer-group bootstrap error as well as on a clean shutdown);
 	// and a worker heartbeat probe so a wedged-but-not-exited loop is caught.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		consumer.SetService(config.ServiceName)
+		consumer.SetComponent(config.ComponentName)
 		consumer.SetObserver(metricsReg.Consumers())
 		consumer.SetHandlerTimeout(consumerHandlerTimeout)
 		liveReg.RegisterWorker(name)
@@ -220,8 +220,8 @@ func main() {
 	// Everything is initialised and running: readiness may now turn true.
 	startup.Done()
 
-	logger.Info("remediation service started", "http_port", cfg.HTTPPort)
+	logger.Info("remediation component started", "http_port", cfg.HTTPPort)
 	<-ctx.Done()
 	_ = srv.Shutdown(context.Background())
-	logger.Info("remediation service stopped")
+	logger.Info("remediation component stopped")
 }

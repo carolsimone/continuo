@@ -48,7 +48,7 @@ func remediationRequestedPayload() events.RemediationRequested {
 	}
 }
 
-// remediationRequestedMessage is the entry the remediation service publishes
+// remediationRequestedMessage is the entry the remediation component publishes
 // for tenantID, with the outbox row id its publisher stamps.
 func remediationRequestedMessage(t *testing.T, tenantID string, p events.RemediationRequested) goredis.XMessage {
 	t.Helper()

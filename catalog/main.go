@@ -43,7 +43,7 @@ const topologyHandlerTimeout = 5 * time.Minute
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
 	// recorded on v, and the missing-configuration check below stops the
-	// service once this logger can report it.
+	// component once this logger can report it.
 	v := &pkgconfig.Validator{}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
 
@@ -53,7 +53,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Starting catalog service")
+	logger.Info("Starting catalog component")
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -66,7 +66,7 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	liveReg := liveness.NewRegistry()
-	metricsReg := pkgmetrics.New(config.ServiceName)
+	metricsReg := pkgmetrics.New(config.ComponentName)
 
 	// runConsumer starts a tracked stream consumer. Its goroutine is tracked by
 	// the lifecycle WaitGroup so shutdown drains in-flight handler invocations
@@ -75,7 +75,7 @@ func main() {
 	// pod is restarted; a worker heartbeat probe also catches a consumer whose
 	// read loop has gone wedged without exiting.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		consumer.SetService(config.ServiceName)
+		consumer.SetComponent(config.ComponentName)
 		consumer.SetObserver(metricsReg.Consumers())
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
@@ -339,7 +339,7 @@ func main() {
 	// versions path's bundle reader to fetch the failing code; the proposals
 	// and provenance handlers need no bundle. The provenance handler draws the
 	// RESOLVED_BY/EDITED case-base edges on a merged PR and stamps every PR's
-	// terminal state. The catalog service remains the sole Neo4j writer.
+	// terminal state. The catalog component remains the sole Neo4j writer.
 	rejectionsHandler := handlers.NewRemediationRequestedRejectionsHandler(graphUnitOfWork, codeBundleReader, logger)
 	proposalsHandler := handlers.NewPrOpenedProposalsHandler(graphUnitOfWork, logger)
 	provenanceHandler := handlers.NewPrClosedProvenanceHandler(graphUnitOfWork, logger)
@@ -426,7 +426,7 @@ func main() {
 		return grpcServer.Shutdown(ctx)
 	})
 
-	logger.Info("Catalog service initialized, starting gRPC server",
+	logger.Info("Catalog component initialized, starting gRPC server",
 		"grpc_port", cfg.GRPCPort,
 		"http_port", cfg.HTTPPort,
 	)
@@ -444,5 +444,5 @@ func main() {
 	// Block until the graceful-shutdown sequence has fully completed: stop
 	// intake, drain in-flight goroutines, then close infra. No fixed sleep.
 	<-lifecycleManager.Done()
-	logger.Info("Catalog service stopped")
+	logger.Info("Catalog component stopped")
 }

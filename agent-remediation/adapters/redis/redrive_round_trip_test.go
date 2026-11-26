@@ -40,7 +40,7 @@ func consumeOne(t *testing.T, rc *goredis.Client) runner.Accepted {
 		}
 		return nil
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	consumer.SetService("agent-remediation")
+	consumer.SetComponent("agent-remediation")
 	done := make(chan error, 1)
 	go func() { done <- consumer.Start(ctx) }()
 	var a runner.Accepted

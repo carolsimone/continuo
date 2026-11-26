@@ -11,9 +11,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// ServiceName names this service as the producer of the dead letters its
+// ComponentName names this component as the producer of the dead letters its
 // stream consumers and outbox write.
-const ServiceName = "dead-letter-controller"
+const ComponentName = "dead-letter-controller"
 
 const defaultShutdownGrace = 15 * time.Second
 

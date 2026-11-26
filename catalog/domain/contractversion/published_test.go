@@ -307,7 +307,7 @@ func TestServerType_RefusesAnUnknownEngine(t *testing.T) {
 }
 
 func TestServerType_AcceptsEveryEngineTheWarehouseFamiliesKnow(t *testing.T) {
-	// WAREHOUSE_ENGINE stops a service at boot when it names no family; the
+	// WAREHOUSE_ENGINE stops a component at boot when it names no family; the
 	// published servers list must honour the same set.
 	for _, engine := range warehouse.Engines() {
 		_, err := contractversion.ServerType(engine)

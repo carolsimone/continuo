@@ -11,9 +11,9 @@ import (
 // that names no tenant.
 var ErrNoTenant = errors.New("outbox row has no tenant")
 
-// tenantRow is how a service stores a row that belongs to one tenant: the
+// tenantRow is how a component stores a row that belongs to one tenant: the
 // tenant beside the payload it publishes. The outbox columns are the same for
-// every service, so the tenant travels inside the stored payload.
+// every component, so the tenant travels inside the stored payload.
 type tenantRow struct {
 	TenantID string          `json:"tenant_id"`
 	Payload  json.RawMessage `json:"payload"`

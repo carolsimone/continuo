@@ -20,6 +20,7 @@ shipped in those.
 - Breaking: the remediation streams move to `remediation.requested:v3` and `remediation.retry_requested:v2`, and the old versions are retired.
 - Breaking: every dbt model, seed and snapshot has an ODCS contract that continuo builds from your dbt project, and an invalid one rejects the release as `invalid_contract`. A seed whose declared columns and CSV header differ is one of them.
 - Breaking: a malformed ontology binding key in `meta.continuo` rejects the release as `invalid_contract`, with the ontology switch off too, and so does `contract: {enforced: true}` on a snapshot.
+- Breaking: run-controller, dead-letter-controller, egress-proxy and agent-chat name themselves under the key `component` instead of `service` in their probe bodies. A probe that checks only the status code needs no change.
 - New: catalog keeps and publishes dbt contracts, and the release page shows how long the parse and the contract generation took.
 - New: the release page says why each node was handed to a human, and a remediation that ends as a system failure is dead-lettered and can be redriven.
 - New: an optional company ontology (`contracts.ontology.enabled`, off by default). A company releases its ontology as a project of the kind `ontology`, binds dbt models and Python contracts to it, and every release checks the bindings. With the switch off, continuo ignores the ontology.
@@ -108,6 +109,7 @@ This release adds three values keys, `agentRemediation.workflows.files`, `contra
   - A contract's id is the node's id, in lower case: the model `orders` in the schema `Analytics` has the contract id `analytics.orders`. The topology's schema and the warehouse relation keep the spelling your project declares.
   - One rejection names every invalid contract of the release, dbt and Python ones together. A manifest that is malformed as a whole (a `metadata.project_name` or the links of a test that are not text, a kept node or test with no `fqn`, a node that is not an object, a `compiled_code`, `raw_code` or `database` that is not text, a `depends_on` that is not an object, a `nodes` that is null, a macro, function or unit test entry that is not an object, text that UTF-8 cannot encode) is still `invalid_artifact`, and a defect of the library is `internal`. Before, such a node made the parse fail, the release request was retried and then dead-lettered, and the release got no answer.
   - Before you upgrade, run `continuo-contracts dbt check <project>` (continuo-contracts 0.5.0) on the dbt project folder of each project, fix every error line, seed headers included, and release and promote the fixes (step 3).
+- **A continuo program is a component.** TL;DR: run-controller, dead-letter-controller, egress-proxy and agent-chat name themselves under the key `component` instead of `service` in their probe bodies (`/health`, `/ready`, `/livez`). A probe that checks only the status code, as the chart's do, needs no change; a script that reads the body's `service` key reads `component`. The header comment of `deploy/redis-acl-rules.acl` now says one login per component: no Redis rule changes, so there is nothing to re-apply.
 
 ### Added
 

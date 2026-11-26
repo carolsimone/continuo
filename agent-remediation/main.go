@@ -108,7 +108,7 @@ func main() {
 	// outage stops traffic but must not restart a pod whose consumer is already
 	// retrying).
 	liveReg := liveness.NewRegistry()
-	metricsReg := pkgmetrics.New(config.ServiceName)
+	metricsReg := pkgmetrics.New(config.ComponentName)
 
 	// runConsumer starts a tracked stream consumer: a bounded handler deadline
 	// so a hung handler (e.g. a stuck database call) eventually returns;
@@ -117,7 +117,7 @@ func main() {
 	// error as well as on a clean shutdown); and a worker heartbeat probe so a
 	// wedged-but-not-exited loop is caught.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		consumer.SetService(config.ServiceName)
+		consumer.SetComponent(config.ComponentName)
 		consumer.SetObserver(metricsReg.Consumers())
 		consumer.SetHandlerTimeout(consumerHandlerTimeout)
 		liveReg.RegisterWorker(name)

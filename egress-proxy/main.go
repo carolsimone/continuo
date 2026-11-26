@@ -133,5 +133,5 @@ func main() {
 	)
 
 	<-lifecycleManager.Done()
-	logger.Info("Service stopped")
+	logger.Info("egress-proxy component stopped")
 }

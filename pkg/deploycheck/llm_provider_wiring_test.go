@@ -12,7 +12,7 @@ import (
 // A value the schema allows but the agents reject would render and then stop
 // both agents at startup; one the agents accept but the schema rejects could
 // never be configured.
-func TestChartLLMProvidersMatchTheServices(t *testing.T) {
+func TestChartLLMProvidersMatchTheComponents(t *testing.T) {
 	var schema struct {
 		Properties struct {
 			LLM struct {

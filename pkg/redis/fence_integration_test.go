@@ -213,7 +213,7 @@ func TestFencePassesForEveryGeneratedLogin(t *testing.T) {
 }
 
 // Connect runs the fence once Redis answers PING, so a key-wide login in
-// perService mode never reaches the service.
+// perService mode never reaches the component.
 func TestConnectRefusesAKeyWideLoginInPerServiceMode(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := fenceConfig(t, "keywide", pkgconfig.RedisACLModePerService)

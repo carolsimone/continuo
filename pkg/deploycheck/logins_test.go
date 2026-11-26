@@ -94,7 +94,7 @@ func readLoginValues(t *testing.T) loginValues {
 }
 
 // TestEveryPostgresDatabaseHasItsLogin: each database db/migrate-all.sh
-// migrates has a service that keeps it, a login in credentials.postgres, an
+// migrates has a component that keeps it, a login in credentials.postgres, an
 // entry in the chart's continuo.postgres.serviceDatabases (from which the
 // migrate Job's CONTINUO_PG_LOGINS is built), a CREATE ROLE in the compose
 // init script and a row in the credentials guide; and so has the warehouse
@@ -122,7 +122,7 @@ func TestEveryPostgresDatabaseHasItsLogin(t *testing.T) {
 			}
 		}
 		if svc == "" {
-			t.Errorf("continuo_%s: no service in values.yaml keeps it (env.POSTGRES_DB)", db)
+			t.Errorf("continuo_%s: no component in values.yaml keeps it (env.POSTGRES_DB)", db)
 			continue
 		}
 		if serviceDatabases[svc] != db {
@@ -153,11 +153,11 @@ func TestEveryPostgresDatabaseHasItsLogin(t *testing.T) {
 	}
 }
 
-// TestEveryRedisServiceHasItsLogin: each service the chart treats as a Redis
+// TestEveryRedisComponentHasItsLogin: each component the chart treats as a Redis
 // client, and streams-init, has a login in credentials.redis.logins whose
 // username is the one the generated rules give it, and a row in the guide;
 // the rules name no login the chart does not use.
-func TestEveryRedisServiceHasItsLogin(t *testing.T) {
+func TestEveryRedisComponentHasItsLogin(t *testing.T) {
 	values := readLoginValues(t)
 	var clients []string
 	helperJSON(t, "continuo.redis.clientServices", &clients)
@@ -200,7 +200,7 @@ func TestEveryRedisServiceHasItsLogin(t *testing.T) {
 }
 
 // TestGuideNamesOnlyLoginsTheChartUses: every row of the guide's login table
-// names a login the chart gives a service, streams-init, the warehouse or the
+// names a login the chart gives a component, streams-init, the warehouse or the
 // migration step.
 func TestGuideNamesOnlyLoginsTheChartUses(t *testing.T) {
 	values := readLoginValues(t)

@@ -19,7 +19,7 @@ import (
 // of truth and asserts the Go constants still match it, failing CI the
 // moment they diverge.
 //
-// It lives in pkg (not execution-controller) because the per-service test
+// It lives in pkg (not execution-controller) because the per-component test
 // containers hold only their own module — the s3-sidecar/ tree is present
 // only in the full-repo checkout, where the pkg static-guard suite runs.
 func TestContractMatchesPythonFetcher(t *testing.T) {

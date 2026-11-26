@@ -11,11 +11,11 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// StartupPolicy bounds how long a service waits for Redis to answer PING at
+// StartupPolicy bounds how long a component waits for Redis to answer PING at
 // boot. The wait covers a Redis that is still starting, or whose Service name
-// has not propagated to DNS yet, which is the normal state when a service's
+// has not propagated to DNS yet, which is the normal state when a component's
 // Deployment rolls out next to the Redis StatefulSet, or when a docker-compose
-// service starts before its Redis container. An answer waiting cannot change
+// component starts before its Redis container. An answer waiting cannot change
 // (bad credentials, a disallowed command) is not retried: it fails at once.
 type StartupPolicy = startupwait.Policy
 

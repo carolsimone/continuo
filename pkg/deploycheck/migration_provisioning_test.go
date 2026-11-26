@@ -229,7 +229,7 @@ func dbInitLoopDatabases(t *testing.T, content, where string) []string {
 	return tokens
 }
 
-// postgresDatabases are the services that own a Postgres database, named as
+// postgresDatabases are the components that own a Postgres database, named as
 // their db/migration directory and as the suffix of `continuo_<name>`. catalog
 // is absent on purpose: it keeps its graph and its processed-message markers in
 // Neo4j and has no database to create, migrate or reach.
@@ -238,7 +238,7 @@ var postgresDatabases = []string{
 	"remediation", "run_controller",
 }
 
-// warehouseDatabase is provisioned beside the service databases but holds the
+// warehouseDatabase is provisioned beside the component databases but holds the
 // dbt warehouse, so it has no migration directory and no Flyway job.
 const warehouseDatabase = "dbt"
 
@@ -282,13 +282,13 @@ func withoutPrefix(t *testing.T, where string, tokens []string, prefix string) [
 	return out
 }
 
-// TestProvisioning_ListsExactlyTheServicesThatKeepPostgres pins every place a
+// TestProvisioning_ListsExactlyTheComponentsThatKeepPostgres pins every place a
 // database is provisioned to one list: the migration job's DATABASES, the
 // migration image's COPY lines, the migration directories, the Postgres
 // initdb script, the chart's db-init loop and the compose migrations job's logins. A
-// service that keeps no Postgres appears in none of them, so no install creates
+// component that keeps no Postgres appears in none of them, so no install creates
 // a database nothing connects to.
-func TestProvisioning_ListsExactlyTheServicesThatKeepPostgres(t *testing.T) {
+func TestProvisioning_ListsExactlyTheComponentsThatKeepPostgres(t *testing.T) {
 	root := repoRoot(t)
 	read := func(rel string) string {
 		t.Helper()

@@ -78,7 +78,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Starting dead-letter-controller service")
+	logger.Info("Starting dead-letter-controller component")
 	if cfg.Maintenance {
 		logger.Warn("Maintenance mode is on: RedriveDeadLetters is refused; listing and the stream trim loop keep running")
 	}
@@ -93,7 +93,7 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	liveReg := liveness.NewRegistry()
-	metricsReg := pkgmetrics.New(config.ServiceName)
+	metricsReg := pkgmetrics.New(config.ComponentName)
 
 	// runConsumer starts a tracked stream consumer. Its goroutine is tracked by
 	// the lifecycle WaitGroup so shutdown drains in-flight handler invocations
@@ -102,7 +102,7 @@ func main() {
 	// pod is restarted; a worker heartbeat probe also catches a consumer whose
 	// read loop has gone wedged without exiting.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		consumer.SetService(config.ServiceName)
+		consumer.SetComponent(config.ComponentName)
 		consumer.SetObserver(metricsReg.Consumers())
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
@@ -306,12 +306,12 @@ func main() {
 	// Everything is initialised and serving: readiness may now turn true.
 	startup.Done()
 
-	logger.Info("dead-letter-controller service started successfully",
+	logger.Info("dead-letter-controller component started successfully",
 		"grpc_port", cfg.GRPCPort,
 		"http_port", cfg.HTTPPort,
 	)
 
 	// Block until the graceful-shutdown sequence has fully completed.
 	<-lifecycleManager.Done()
-	logger.Info("Service stopped")
+	logger.Info("dead-letter-controller component stopped")
 }

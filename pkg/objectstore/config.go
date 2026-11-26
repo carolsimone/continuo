@@ -39,7 +39,7 @@ func ConfigFromS3(s pkgconfig.S3Config) Config {
 // whose credential chain resolves credentials from the environment, shared
 // config, an IAM role or workload identity. The chain resolves lazily on first
 // use, so startup does not depend on the identity endpoint being reachable. A
-// default configuration that cannot be loaded is an error, so a service
+// default configuration that cannot be loaded is an error, so a component
 // refuses to start.
 func awsConfig(ctx context.Context, region, accessKeyID, secretKey string) (aws.Config, error) {
 	if accessKeyID != "" && secretKey != "" {

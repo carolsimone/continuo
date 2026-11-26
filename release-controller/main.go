@@ -55,7 +55,7 @@ var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 15, MaxIdleConns: 5}
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
 	// recorded on v, and the missing-configuration check below stops the
-	// service once this logger can report it.
+	// component once this logger can report it.
 	v := &pkgconfig.Validator{}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
 
@@ -88,7 +88,7 @@ func main() {
 	// outage stops traffic but must not restart a pod whose consumers are
 	// already retrying).
 	liveReg := liveness.NewRegistry()
-	metricsReg := pkgmetrics.New(config.ServiceName)
+	metricsReg := pkgmetrics.New(config.ComponentName)
 
 	// runConsumer starts a tracked stream consumer: a bounded handler deadline
 	// so a hung handler eventually returns; RegisterWorker before launch so a
@@ -96,7 +96,7 @@ func main() {
 	// permanent consumer-group bootstrap error as well as on a clean shutdown);
 	// and a worker heartbeat probe so a wedged-but-not-exited loop is caught.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		consumer.SetService(config.ServiceName)
+		consumer.SetComponent(config.ComponentName)
 		consumer.SetObserver(metricsReg.Consumers())
 		consumer.SetHandlerTimeout(consumerHandlerTimeout)
 		liveReg.RegisterWorker(name)

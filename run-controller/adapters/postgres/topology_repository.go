@@ -98,7 +98,7 @@ func (r *TopologyRepository) SaveRelease(ctx context.Context, rel topology.Relea
 	// Analysing inside the transaction puts the new release into the planner's
 	// statistics before any run can name it; the share-update-exclusive lock it
 	// takes only holds off autovacuum on these two tables until commit.
-	// analyze_topology() runs the ANALYZE as the tables' owner: the service's
+	// analyze_topology() runs the ANALYZE as the tables' owner: the component's
 	// own login owns no table, and Postgres skips its ANALYZE with a warning.
 	if _, err := r.tx.ExecContext(ctx, `SELECT analyze_topology()`); err != nil {
 		return false, fmt.Errorf("analyze the topology after release %s: %w", rel.ReleaseID, err)

@@ -46,8 +46,8 @@ func newClient(ctx context.Context, cfg Config, extra ...func(*awss3.Options)) (
 	opts := []func(*awss3.Options){func(o *awss3.Options) {
 		o.UsePathStyle = true
 		// An object stored without a checksum comes back without one. The SDK
-		// would log a plain-text warning on every such read; the JSON service
-		// logs carry no line the service did not write.
+		// would log a plain-text warning on every such read; the JSON component
+		// logs carry no line the component did not write.
 		o.DisableLogOutputChecksumValidationSkipped = true
 	}}
 	if cfg.EndpointURL != "" {

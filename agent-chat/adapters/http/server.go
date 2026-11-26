@@ -57,14 +57,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // healthResponse is the JSON body for /health.
 type healthResponse struct {
-	Status  string `json:"status"`
-	Service string `json:"service"`
+	Status    string `json:"status"`
+	Component string `json:"component"`
 }
 
 // readinessResponse is the JSON body for /ready and /livez.
 type readinessResponse struct {
 	Status    string   `json:"status"`
-	Service   string   `json:"service"`
+	Component string   `json:"component"`
 	Unhealthy []string `json:"unhealthy,omitempty"`
 }
 
@@ -73,7 +73,7 @@ type readinessResponse struct {
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(healthResponse{Status: "healthy", Service: "agent-chat"}) //nolint:errcheck
+	json.NewEncoder(w).Encode(healthResponse{Status: "healthy", Component: "agent-chat"}) //nolint:errcheck
 }
 
 // newReadinessHandler returns a readiness handler backed by the liveness
@@ -86,7 +86,7 @@ func newReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 		failures := registry.Check(r.Context())
 		if len(failures) == 0 {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(readinessResponse{Status: "ready", Service: "agent-chat"}) //nolint:errcheck
+			json.NewEncoder(w).Encode(readinessResponse{Status: "ready", Component: "agent-chat"}) //nolint:errcheck
 			return
 		}
 		names := make([]string, 0, len(failures))
@@ -94,7 +94,7 @@ func newReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 			names = append(names, f.Name)
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(readinessResponse{Status: "not_ready", Service: "agent-chat", Unhealthy: names}) //nolint:errcheck
+		json.NewEncoder(w).Encode(readinessResponse{Status: "not_ready", Component: "agent-chat", Unhealthy: names}) //nolint:errcheck
 	}
 }
 
@@ -103,7 +103,7 @@ func newReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 // error or a worker heartbeat has gone stale — never for a dependency-probe
 // failure, since a dependency outage must stop traffic (readiness) rather
 // than restart a pod whose workers are already retrying through it. Reuses
-// readinessResponse: the payload shape (status/service/unhealthy) is shared
+// readinessResponse: the payload shape (status/component/unhealthy) is shared
 // with /ready, only the status values and the source check differ.
 func newLivenessHandler(registry *liveness.Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func newLivenessHandler(registry *liveness.Registry) http.HandlerFunc {
 		failures := registry.LivenessCheck(r.Context())
 		if len(failures) == 0 {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(readinessResponse{Status: "live", Service: "agent-chat"}) //nolint:errcheck
+			json.NewEncoder(w).Encode(readinessResponse{Status: "live", Component: "agent-chat"}) //nolint:errcheck
 			return
 		}
 		names := make([]string, 0, len(failures))
@@ -119,6 +119,6 @@ func newLivenessHandler(registry *liveness.Registry) http.HandlerFunc {
 			names = append(names, f.Name)
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(readinessResponse{Status: "not_live", Service: "agent-chat", Unhealthy: names}) //nolint:errcheck
+		json.NewEncoder(w).Encode(readinessResponse{Status: "not_live", Component: "agent-chat", Unhealthy: names}) //nolint:errcheck
 	}
 }

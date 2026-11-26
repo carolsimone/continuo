@@ -28,7 +28,7 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// integrationClient connects to the test Neo4j and applies the service's
+// integrationClient connects to the test Neo4j and applies the component's
 // schema, whose meta_key_unique constraint makes the export gate's MERGE of a
 // tenant's lease node race-free.
 func integrationClient(t *testing.T) Neo4jClient {

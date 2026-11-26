@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// aclFixtureYAML is a small contract: two services that talk over one stream,
-// both dead-letter streams, one stream no service writes any more, and the
+// aclFixtureYAML is a small contract: two components that talk over one stream,
+// both dead-letter streams, one stream no component writes any more, and the
 // plain-key and all-streams grants of ui and dead-letter-controller.
 const aclFixtureYAML = `
 key_prefix: "continuo:"
@@ -132,11 +132,11 @@ func TestACLRulesAreDeterministic(t *testing.T) {
 	}
 }
 
-// TestEveryRedisServiceHasALogin: every service the contract names (a
+// TestEveryRedisComponentHasALogin: every component the contract names (a
 // consumer, a producer or a redis_access entry) has a login, the migration
 // login of streams-init is there too, and nothing else is. egress-proxy, which
 // the contract never names, has none.
-func TestEveryRedisServiceHasALogin(t *testing.T) {
+func TestEveryRedisComponentHasALogin(t *testing.T) {
 	c := loadRealContract(t)
 	logins, err := redisLogins(c)
 	if err != nil {
@@ -146,15 +146,15 @@ func TestEveryRedisServiceHasALogin(t *testing.T) {
 	for _, l := range logins {
 		have[l.Service] = l.Username
 	}
-	services := contractServices(c)
-	for _, svc := range services {
+	components := contractComponents(c)
+	for _, svc := range components {
 		want := "continuo_" + strings.ReplaceAll(svc, "-", "_")
 		if have[svc] != want {
-			t.Errorf("service %s: login %q, want %q", svc, have[svc], want)
+			t.Errorf("component %s: login %q, want %q", svc, have[svc], want)
 		}
 	}
 	for _, svc := range []string{"run-controller", "topology-controller", "ui", "agent-chat"} {
-		if !slices.Contains(services, svc) {
+		if !slices.Contains(components, svc) {
 			t.Errorf("the contract does not name %s", svc)
 		}
 	}
@@ -164,18 +164,18 @@ func TestEveryRedisServiceHasALogin(t *testing.T) {
 	if have["streams-init"] != "continuo_redis_migrate" {
 		t.Errorf("streams-init login: got %q, want continuo_redis_migrate", have["streams-init"])
 	}
-	if len(logins) != len(services)+1 {
-		t.Errorf("got %d logins, want %d", len(logins), len(services)+1)
+	if len(logins) != len(components)+1 {
+		t.Errorf("got %d logins, want %d", len(logins), len(components)+1)
 	}
 	if !slices.IsSortedFunc(logins, func(a, b redisLogin) int { return strings.Compare(a.Service, b.Service) }) {
-		t.Errorf("logins are not sorted by service: %+v", logins)
+		t.Errorf("logins are not sorted by component: %+v", logins)
 	}
 }
 
-// TestANewServiceGetsALogin: a service the contract names for the first time,
+// TestANewComponentGetsALogin: a component the contract names for the first time,
 // as a producer, a consumer or a redis_access entry, gets its login from the
 // contract alone.
-func TestANewServiceGetsALogin(t *testing.T) {
+func TestANewComponentGetsALogin(t *testing.T) {
 	y := strings.Replace(aclFixtureYAML, "producers: [run-controller]\n", "producers: [run-controller, billing-controller]\n", 1)
 	y = strings.Replace(y, "      - service: execution-controller\n        group: execution-controller-task-dispatch\n        const: ExecutionControllerTaskDispatch\n",
 		"      - service: execution-controller\n        group: execution-controller-task-dispatch\n        const: ExecutionControllerTaskDispatch\n"+
@@ -202,10 +202,10 @@ func TestANewServiceGetsALogin(t *testing.T) {
 	}
 }
 
-// TestContractServicesAreRepositoryDirectories: the generator refuses a
-// contract that names a service with no top-level directory of its own, so a
-// misspelt service name gets no login.
-func TestContractServicesAreRepositoryDirectories(t *testing.T) {
+// TestContractComponentsAreRepositoryDirectories: the generator refuses a
+// contract that names a component with no top-level directory of its own, so a
+// misspelt component name gets no login.
+func TestContractComponentsAreRepositoryDirectories(t *testing.T) {
 	c := mustLoad(t, aclFixtureYAML)
 	root := t.TempDir()
 	for _, svc := range []string{"run-controller", "execution-controller", "dead-letter-controller", "ui"} {
@@ -213,26 +213,26 @@ func TestContractServicesAreRepositoryDirectories(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := checkServiceDirectories(c, root); err != nil {
-		t.Fatalf("every service has its directory: %v", err)
+	if err := checkComponentDirectories(c, root); err != nil {
+		t.Fatalf("every component has its directory: %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, "ui")); err != nil {
 		t.Fatal(err)
 	}
-	err := checkServiceDirectories(c, root)
+	err := checkComponentDirectories(c, root)
 	if err == nil || !strings.Contains(err.Error(), `"ui"`) {
 		t.Fatalf("expected an error naming ui, got %v", err)
 	}
 }
 
-// TestRealContractServicesAreRepositoryDirectories runs the same check on the
+// TestRealContractComponentsAreRepositoryDirectories runs the same check on the
 // real contract and this repository.
-func TestRealContractServicesAreRepositoryDirectories(t *testing.T) {
+func TestRealContractComponentsAreRepositoryDirectories(t *testing.T) {
 	root, err := findRepoRoot()
 	if err != nil {
 		t.Fatalf("findRepoRoot: %v", err)
 	}
-	if err := checkServiceDirectories(loadRealContract(t), root); err != nil {
+	if err := checkComponentDirectories(loadRealContract(t), root); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -279,11 +279,11 @@ func TestRedisAccessRejectsDangerousCommands(t *testing.T) {
 
 func TestRedisAccessValidation(t *testing.T) {
 	cases := map[string]string{
-		"malformed service name":        strings.Replace(aclFixtureYAML, "service: ui", "service: UI_service", 1),
+		"malformed component name":      strings.Replace(aclFixtureYAML, "service: ui", "service: UI_component", 1),
 		"malformed producer name":       strings.Replace(aclFixtureYAML, "producers: [run-controller]", "producers: [run_controller]", 1),
 		"key prefix without a colon":    strings.Replace(aclFixtureYAML, "[uisession:]", "[uisession]", 1),
 		"key prefix that is a wildcard": strings.Replace(aclFixtureYAML, "[uisession:]", `["*"]`, 1),
-		"duplicate service":             aclFixtureYAML + "  - service: ui\n    keys: [other:]\n    commands: [get]\n",
+		"duplicate component":           aclFixtureYAML + "  - service: ui\n    keys: [other:]\n    commands: [get]\n",
 		"entry that grants nothing":     strings.Replace(aclFixtureYAML, "    keys: [uisession:]\n    commands: [get, set, del, expire]\n", "", 1),
 	}
 	for name, y := range cases {
@@ -294,7 +294,7 @@ func TestRedisAccessValidation(t *testing.T) {
 }
 
 // TestRedisLoginsNeedTheDeadLetterStreams: a contract without the two
-// dead-letter streams cannot produce rules, because no service could dead-letter.
+// dead-letter streams cannot produce rules, because no component could dead-letter.
 func TestRedisLoginsNeedTheDeadLetterStreams(t *testing.T) {
 	c := mustLoad(t, validYAML)
 	if _, err := redisLogins(c); err == nil || !strings.Contains(err.Error(), "dead_letter") {
@@ -303,7 +303,7 @@ func TestRedisLoginsNeedTheDeadLetterStreams(t *testing.T) {
 }
 
 // specRunControllerRule is the run-controller rule of section 7 of the
-// per-service credentials design.
+// per-component credentials design.
 const specRunControllerRule = "~continuo:release.promoted:v2 ~continuo:task.status.updated:v2 " +
 	"%W~continuo:task.dispatch:v1 %W~continuo:run.cancelled:v1 " +
 	"%W~continuo:consumer.dead_letter:v1 %W~continuo:outbox.dead_letter:v1 " +
@@ -377,8 +377,8 @@ func TestNoLoginReachesABareStreamName(t *testing.T) {
 	}
 }
 
-// TestEveryConsumerMayWriteItsDeadLetters: the services that write the
-// consumer dead-letter stream (its producers list) include every service that
+// TestEveryConsumerMayWriteItsDeadLetters: the components that write the
+// consumer dead-letter stream (its producers list) include every component that
 // consumes a stream.
 func TestEveryConsumerMayWriteItsDeadLetters(t *testing.T) {
 	c := loadRealContract(t)
@@ -416,13 +416,13 @@ func TestDeadLetterControllerRule(t *testing.T) {
 	}
 }
 
-func ruleOf(t *testing.T, logins []redisLogin, service string) string {
+func ruleOf(t *testing.T, logins []redisLogin, component string) string {
 	t.Helper()
 	for _, l := range logins {
-		if l.Service == service {
+		if l.Service == component {
 			return l.Rule
 		}
 	}
-	t.Fatalf("no login for %s", service)
+	t.Fatalf("no login for %s", component)
 	return ""
 }

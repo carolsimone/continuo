@@ -15,7 +15,7 @@ import (
 // drift-from-hardcoded-DDL bug.
 //
 // Resolution: the directory is located relative to this source file's path,
-// so tests work both inside the service container (source mounted at /app)
+// so tests work both inside the component container (source mounted at /app)
 // and on a developer machine running `go test ./run-controller/test/...` from the
 // repo root.
 func ApplyMigrations(db *sql.DB) error {

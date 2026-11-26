@@ -8,10 +8,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestConsumerGroupsStartWithTheirServiceName pins the naming rule of a
-// consumer group: it is `<consuming service>-<purpose>`, so the group a Redis
-// stream shows in XINFO GROUPS names the service that reads through it.
-func TestConsumerGroupsStartWithTheirServiceName(t *testing.T) {
+// TestConsumerGroupsStartWithTheirComponentName pins the naming rule of a
+// consumer group: it is `<consuming component>-<purpose>`, so the group a Redis
+// stream shows in XINFO GROUPS names the component that reads through it.
+func TestConsumerGroupsStartWithTheirComponentName(t *testing.T) {
 	raw, err := os.ReadFile("contract.yaml")
 	if err != nil {
 		t.Fatalf("read contract.yaml: %v", err)
@@ -34,7 +34,7 @@ func TestConsumerGroupsStartWithTheirServiceName(t *testing.T) {
 		for _, cons := range s.Consumers {
 			checked++
 			if !strings.HasPrefix(cons.Group, cons.Service+"-") {
-				t.Errorf("group %q of service %q must start with %q", cons.Group, cons.Service, cons.Service+"-")
+				t.Errorf("group %q of component %q must start with %q", cons.Group, cons.Service, cons.Service+"-")
 			}
 		}
 	}

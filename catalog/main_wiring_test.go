@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// parseMain parses this service's main.go.
+// parseMain parses this component's main.go.
 func parseMain(t *testing.T) *ast.File {
 	t.Helper()
 	return parseFile(t, "main.go")
@@ -191,7 +191,7 @@ func TestMain_ImportsNoSQLPackage(t *testing.T) {
 }
 
 // postgresPackages are the packages that link a Postgres connection into a
-// binary: the two SQL drivers the services use (sqlx and lib/pq, with their
+// binary: the two SQL drivers the components use (sqlx and lib/pq, with their
 // subpackages) and this repository's Postgres-backed packages, the connection
 // helper and the transactional outbox. The standard library's database/sql is
 // not among them: it opens no connection by itself, and packages catalog

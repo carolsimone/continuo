@@ -118,10 +118,10 @@ def warehouse_system_relations() -> SystemRelations:
 
 
 # LOG_LEVEL (the chart's global.logLevel, injected through the shared
-# ConfigMap) -> the logging level this service logs at, matched without regard
-# to case. These are the names every Go service accepts
+# ConfigMap) -> the logging level this component logs at, matched without regard
+# to case. These are the names every Go component accepts
 # (pkg/config.AcceptedLogLevels, in the same order; pkg/streams'
-# TestTopologyControllerLogLevelsMatchTheGoServices pins the two). Unset or
+# TestTopologyControllerLogLevelsMatchTheGoComponents pins the two). Unset or
 # empty is INFO.
 _LOG_LEVELS = {
     "debug": logging.DEBUG,

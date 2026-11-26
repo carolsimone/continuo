@@ -13,10 +13,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ServiceName names this service as the producer of the dead letters its
+// ComponentName names this component as the producer of the dead letters its
 // stream consumers write and of the events whose envelope its outbox publisher
 // renders.
-const ServiceName = "agent-remediation"
+const ComponentName = "agent-remediation"
 
 // Config is the full agent-remediation runtime configuration, read once at boot.
 type Config struct {

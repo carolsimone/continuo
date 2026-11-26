@@ -93,7 +93,7 @@ func TestLoad_MaxConcurrentJobs(t *testing.T) {
 			v := &pkgconfig.Validator{}
 			cfg := Load(v)
 			if c.invalid {
-				require.NotEmpty(t, v.Missing(), "a cap the service cannot honour stops it at boot")
+				require.NotEmpty(t, v.Missing(), "a cap the component cannot honour stops it at boot")
 				assert.Contains(t, strings.Join(v.Missing(), ","), "MAX_CONCURRENT_JOBS")
 				return
 			}
@@ -163,7 +163,7 @@ func TestLoad_JobStartTimeout(t *testing.T) {
 			v := &pkgconfig.Validator{}
 			cfg := Load(v)
 			if c.invalid {
-				require.NotEmpty(t, v.Missing(), "a start timeout the service cannot honour stops it at boot")
+				require.NotEmpty(t, v.Missing(), "a start timeout the component cannot honour stops it at boot")
 				assert.Contains(t, strings.Join(v.Missing(), ","), "JOB_START_TIMEOUT_SECONDS")
 				return
 			}
@@ -173,8 +173,8 @@ func TestLoad_JobStartTimeout(t *testing.T) {
 	}
 }
 
-// The chart's execution.startTimeoutMinutes is the value the service accepts,
-// in minutes: a value the chart allows but the service refused would render
+// The chart's execution.startTimeoutMinutes is the value the component accepts,
+// in minutes: a value the chart allows but the component refused would render
 // and then stop execution-controller at startup.
 func TestJobStartTimeoutRangeMatchesTheChart(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "values.schema.json"))
@@ -225,7 +225,7 @@ func TestLoad_JobTTL(t *testing.T) {
 			v := &pkgconfig.Validator{}
 			cfg := Load(v)
 			if c.invalid {
-				require.NotEmpty(t, v.Missing(), "a finished-Job TTL the service cannot honour stops it at boot")
+				require.NotEmpty(t, v.Missing(), "a finished-Job TTL the component cannot honour stops it at boot")
 				assert.Contains(t, strings.Join(v.Missing(), ","), "JOB_TTL_SECONDS")
 				return
 			}
@@ -235,10 +235,10 @@ func TestLoad_JobTTL(t *testing.T) {
 	}
 }
 
-// The chart's execution.jobTTLMinutes accepts the range the service accepts
-// and defaults to the service's default, in its schema, its values and the
+// The chart's execution.jobTTLMinutes accepts the range the component accepts
+// and defaults to the component's default, in its schema, its values and the
 // helper that renders JOB_TTL_SECONDS (whose default a release without the key
-// gets): a value the chart allows but the service refused would render and
+// gets): a value the chart allows but the component refused would render and
 // then stop execution-controller at startup, and an install without the key
 // would get another TTL than one that never set it.
 func TestJobTTLRangeAndDefaultMatchTheChart(t *testing.T) {
@@ -319,7 +319,7 @@ func TestKubeClientRateLimit(t *testing.T) {
 			v := &pkgconfig.Validator{}
 			cfg := Load(v)
 			if len(c.wantInvalid) > 0 {
-				require.NotEmpty(t, v.Missing(), "a rate limit the service cannot honour stops it at boot")
+				require.NotEmpty(t, v.Missing(), "a rate limit the component cannot honour stops it at boot")
 				for _, key := range c.wantInvalid {
 					assert.Contains(t, strings.Join(v.Missing(), ","), key)
 				}
@@ -333,7 +333,7 @@ func TestKubeClientRateLimit(t *testing.T) {
 }
 
 // The chart's execution.kubeClientQPS and execution.kubeClientBurst accept
-// the ranges the service accepts: a value the chart allows but the service
+// the ranges the component accepts: a value the chart allows but the component
 // refused would render and then stop execution-controller at startup.
 func TestKubeClientRateLimitRangesMatchTheChart(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "values.schema.json"))

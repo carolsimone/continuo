@@ -148,7 +148,7 @@ func assertNoBackupProblem(t *testing.T, missing []string) {
 func strconvQuote(s string) string { return fmt.Sprintf("%q", s) }
 
 // LoadNeo4j reads the three Neo4j settings the operator command shares with
-// the service, and records each one that is missing.
+// the component, and records each one that is missing.
 func TestLoadNeo4j_ReadsAndRequiresTheThreeKeys(t *testing.T) {
 	t.Setenv("NEO4J_URI", "bolt://neo4j:7687")
 	t.Setenv("NEO4J_USER", "neo4j")
@@ -371,7 +371,7 @@ func TestLoad_ContractsServer_RefusesWhatItCannotPublish(t *testing.T) {
 }
 
 // A WAREHOUSE_ENGINE catalog cannot map to a server type stops it, even when
-// no host is set: the install's engine is checked as every service checks it.
+// no host is set: the install's engine is checked as every component checks it.
 func TestLoad_AnUnknownWarehouseEngineStopsCatalog(t *testing.T) {
 	for _, withHost := range []bool{false, true} {
 		t.Run(fmt.Sprintf("host=%v", withHost), func(t *testing.T) {

@@ -10,23 +10,23 @@ import (
 	"testing"
 )
 
-// TestMainsThatRunConsumersNameTheirService discovers every service's main.go
+// TestMainsThatRunConsumersNameTheirComponent discovers every component's main.go
 // by glob and fails when one that refers to the pkg/redis StreamConsumer, under
-// any import name, never calls SetService(config.ServiceName). A consumer
-// refuses to start without a service name (it is the producer of every dead
+// any import name, never calls SetComponent(config.ComponentName). A consumer
+// refuses to start without a component name (it is the producer of every dead
 // letter the consumer writes), so a missing call would only surface when the
-// pod boots. Passing the config.ServiceName constant, rather than a literal,
-// keeps one spelling of the name per service. The services whose main.go runs
-// consumers must be exactly those that declare a ServiceName, so the guard
+// pod boots. Passing the config.ComponentName constant, rather than a literal,
+// keeps one spelling of the name per component. The components whose main.go runs
+// consumers must be exactly those that declare a ComponentName, so the guard
 // fails rather than passes when it stops recognising consumer wiring.
-func TestMainsThatRunConsumersNameTheirService(t *testing.T) {
+func TestMainsThatRunConsumersNameTheirComponent(t *testing.T) {
 	root := repoRootFromTest(t)
 	mains, err := filepath.Glob(filepath.Join(root, "*", "main.go"))
 	if err != nil {
 		t.Fatalf("glob main.go: %v", err)
 	}
 	if len(mains) == 0 {
-		t.Fatal("no service main.go files found one level under the repo root")
+		t.Fatal("no component main.go files found one level under the repo root")
 	}
 
 	fset := token.NewFileSet()
@@ -36,44 +36,44 @@ func TestMainsThatRunConsumersNameTheirService(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
-		runsConsumers, namesService := consumerWiring(f)
+		runsConsumers, namesComponent := consumerWiring(f)
 		if runsConsumers {
 			running = append(running, filepath.Base(filepath.Dir(path)))
 		}
-		if runsConsumers && !namesService {
-			t.Errorf("%s runs stream consumers but never calls SetService(config.ServiceName)", path)
+		if runsConsumers && !namesComponent {
+			t.Errorf("%s runs stream consumers but never calls SetComponent(config.ComponentName)", path)
 		}
 	}
 
 	var declaring []string
-	for rel := range goServiceNames(t, root) {
+	for rel := range goComponentNames(t, root) {
 		declaring = append(declaring, strings.Split(filepath.ToSlash(rel), "/")[0])
 	}
 	slices.Sort(running)
 	slices.Sort(declaring)
 	if !slices.Equal(running, declaring) {
-		t.Errorf("mains detected running stream consumers %v, want the services that declare a ServiceName %v", running, declaring)
+		t.Errorf("mains detected running stream consumers %v, want the components that declare a ComponentName %v", running, declaring)
 	}
 }
 
-// TestRunsConsumersWithoutServiceName_Detector pins the detector the guard
+// TestRunsConsumersWithoutComponentName_Detector pins the detector the guard
 // above relies on, so a change to it cannot silently stop flagging a main.
-func TestRunsConsumersWithoutServiceName_Detector(t *testing.T) {
+func TestRunsConsumersWithoutComponentName_Detector(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 		want bool
 	}{
-		{"aliased import without SetService", `package main
+		{"aliased import without SetComponent", `package main
 import rds "github.com/carolsimone/continuo/pkg/redis"
 func run(c *rds.StreamConsumer) {}`, true},
-		{"aliased import with SetService", `package main
+		{"aliased import with SetComponent", `package main
 import (
 	rds "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/run-controller/config"
 )
-func run(c *rds.StreamConsumer) { c.SetService(config.ServiceName) }`, false},
-		{"unaliased import without SetService", `package main
+func run(c *rds.StreamConsumer) { c.SetComponent(config.ComponentName) }`, false},
+		{"unaliased import without SetComponent", `package main
 import "github.com/carolsimone/continuo/pkg/redis"
 func run(c *redis.StreamConsumer) {}`, true},
 		{"consumer constructed without naming the type", `package main
@@ -92,8 +92,8 @@ var _ = rds.WaitForRedis`, false},
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			if got := runsConsumersWithoutServiceName(f); got != tc.want {
-				t.Errorf("runsConsumersWithoutServiceName = %v, want %v", got, tc.want)
+			if got := runsConsumersWithoutComponentName(f); got != tc.want {
+				t.Errorf("runsConsumersWithoutComponentName = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -118,19 +118,19 @@ func importedName(f *ast.File, path string) string {
 	return ""
 }
 
-// runsConsumersWithoutServiceName reports whether the file refers to the
+// runsConsumersWithoutComponentName reports whether the file refers to the
 // pkg/redis StreamConsumer, by its type or its constructor, under whatever
 // name the file imports pkg/redis as, without ever calling
-// SetService(config.ServiceName).
-func runsConsumersWithoutServiceName(f *ast.File) bool {
-	runsConsumers, namesService := consumerWiring(f)
-	return runsConsumers && !namesService
+// SetComponent(config.ComponentName).
+func runsConsumersWithoutComponentName(f *ast.File) bool {
+	runsConsumers, namesComponent := consumerWiring(f)
+	return runsConsumers && !namesComponent
 }
 
 // consumerWiring reports whether the file refers to the pkg/redis
 // StreamConsumer by its type or its constructor, and whether it calls
-// SetService(config.ServiceName).
-func consumerWiring(f *ast.File) (runsConsumers, namesService bool) {
+// SetComponent(config.ComponentName).
+func consumerWiring(f *ast.File) (runsConsumers, namesComponent bool) {
 	redisPkg := importedName(f, pkgRedisImportPath)
 	if redisPkg == "" || redisPkg == "_" {
 		return false, false
@@ -144,16 +144,16 @@ func consumerWiring(f *ast.File) (runsConsumers, namesService bool) {
 			}
 		case *ast.CallExpr:
 			sel, ok := x.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "SetService" || len(x.Args) != 1 {
+			if !ok || sel.Sel.Name != "SetComponent" || len(x.Args) != 1 {
 				return true
 			}
 			if arg, ok := x.Args[0].(*ast.SelectorExpr); ok {
-				if pkg, ok := arg.X.(*ast.Ident); ok && pkg.Name == "config" && arg.Sel.Name == "ServiceName" {
-					namesService = true
+				if pkg, ok := arg.X.(*ast.Ident); ok && pkg.Name == "config" && arg.Sel.Name == "ComponentName" {
+					namesComponent = true
 				}
 			}
 		}
 		return true
 	})
-	return runsConsumers, namesService
+	return runsConsumers, namesComponent
 }

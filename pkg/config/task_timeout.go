@@ -13,7 +13,7 @@ import (
 // such task's dispatch; execution-controller applies it to the release legs.
 const TaskTimeoutEnvKey = "TASK_TIMEOUT_SECONDS"
 
-// The task timeout's default and the range both services accept: the chart's
+// The task timeout's default and the range both components accept: the chart's
 // runs.taskTimeoutHours, 1 to 168 hours.
 const (
 	DefaultTaskTimeout = 24 * time.Hour
@@ -23,7 +23,7 @@ const (
 
 // LoadTaskTimeout reads TASK_TIMEOUT_SECONDS, a whole number of seconds from
 // MinTaskTimeout to MaxTaskTimeout; unset selects DefaultTaskTimeout. Any other
-// value is recorded on v, so the service refuses to start. The seconds are
+// value is recorded on v, so the component refuses to start. The seconds are
 // compared with the range before they become a duration, so a value too large
 // for one is refused rather than wrapped into the range.
 func LoadTaskTimeout(v *Validator) time.Duration {

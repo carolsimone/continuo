@@ -1,4 +1,4 @@
-// Package maintenance holds what every service shares about maintenance mode:
+// Package maintenance holds what every component shares about maintenance mode:
 // the refusal message, the error that carries it, and the marker a gRPC
 // refusal carries so a client can tell it from an outage.
 package maintenance

@@ -19,7 +19,7 @@ func composeServiceBlock(t *testing.T, service string) string {
 }
 
 // The ontology settings reach every process that acts on them, on every
-// deployment path that runs it, and each service's configuration reads the
+// deployment path that runs it, and each component's configuration reads the
 // key it is given:
 //   - ONTOLOGY_ENABLED (contracts.ontology.enabled) is read by
 //     topology-controller and release-controller. Compose sets it to false on

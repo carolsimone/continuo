@@ -31,7 +31,7 @@ var credentialReadGuardSkips = []string{"pkg/config", "tests/e2e"}
 // variable, or of its <NAME>_FILE form, that bypasses Secret: a call to
 // os.Getenv, os.LookupEnv, pkgconfig.EnvOrDefault, Require or RequireInt whose
 // first argument names one. A credential read that way never honours the
-// <NAME>_FILE form, so a file-mounted credential silently reaches the service
+// <NAME>_FILE form, so a file-mounted credential silently reaches the component
 // as an empty string. It scans every non-test Go file of every go.work module.
 func TestCredentialsAreReadOnlyThroughSecrets(t *testing.T) {
 	root := repoRoot(t)

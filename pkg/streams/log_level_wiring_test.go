@@ -20,20 +20,20 @@ var slogHandlerConstructors = map[string]bool{
 	"NewTextHandler": true,
 }
 
-// TestServiceMainsLogAtTheConfiguredLevel discovers every service's main.go
+// TestComponentMainsLogAtTheConfiguredLevel discovers every component's main.go
 // one level under the repo root and fails when one builds a log/slog handler
 // whose HandlerOptions.Level is not a pkgconfig.LoadLogLevel(...) call, or
 // builds no handler at all. LOG_LEVEL reaches every pod from the chart's
 // global.logLevel; a main that fixes its own level, or passes no options,
 // logs at that level whatever the install asked for.
-func TestServiceMainsLogAtTheConfiguredLevel(t *testing.T) {
+func TestComponentMainsLogAtTheConfiguredLevel(t *testing.T) {
 	root := repoRootFromTest(t)
 	mains, err := filepath.Glob(filepath.Join(root, "*", "main.go"))
 	if err != nil {
 		t.Fatalf("glob main.go: %v", err)
 	}
 	if len(mains) == 0 {
-		t.Fatal("no service main.go files found one level under the repo root")
+		t.Fatal("no component main.go files found one level under the repo root")
 	}
 	fset := token.NewFileSet()
 	for _, path := range mains {
@@ -56,13 +56,13 @@ func TestServiceMainsLogAtTheConfiguredLevel(t *testing.T) {
 			}
 			handlers++
 			if len(call.Args) != 2 || !levelIsLoadLogLevel(call.Args[1]) {
-				t.Errorf("%s:%d: slog.%s is built without HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}, so the service ignores LOG_LEVEL",
+				t.Errorf("%s:%d: slog.%s is built without HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}, so the component ignores LOG_LEVEL",
 					path, fset.Position(call.Pos()).Line, sel.Sel.Name)
 			}
 			return true
 		})
 		if handlers == 0 {
-			t.Errorf("%s builds no slog handler; build the service logger in main with HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}", path)
+			t.Errorf("%s builds no slog handler; build the component logger in main with HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}", path)
 		}
 	}
 }
@@ -95,12 +95,12 @@ func levelIsLoadLogLevel(opts ast.Expr) bool {
 	return false
 }
 
-// TestChartLogLevelsMatchTheServices pins the level list the chart's
+// TestChartLogLevelsMatchTheComponents pins the level list the chart's
 // continuo.logLevel helper (deploy/continuo/templates/_helpers.tpl) accepts to
-// the LOG_LEVEL names the services accept. A name the chart rendered and the
-// services refused would stop every service at startup; one the services
+// the LOG_LEVEL names the components accept. A name the chart rendered and the
+// components refused would stop every component at startup; one the components
 // accept and the chart refuses could not be installed.
-func TestChartLogLevelsMatchTheServices(t *testing.T) {
+func TestChartLogLevelsMatchTheComponents(t *testing.T) {
 	path := filepath.Join(repoRootFromTest(t), "deploy", "continuo", "templates", "_helpers.tpl")
 	src, err := os.ReadFile(path) //nolint:gosec // G304: path is built from the repo root and fixed segments
 	if err != nil {
@@ -119,11 +119,11 @@ func TestChartLogLevelsMatchTheServices(t *testing.T) {
 	}
 }
 
-// TestTopologyControllerLogLevelsMatchTheGoServices pins the LOG_LEVEL names
+// TestTopologyControllerLogLevelsMatchTheGoComponents pins the LOG_LEVEL names
 // topology-controller accepts (_LOG_LEVELS in its config module) to
 // pkgconfig.AcceptedLogLevels, so one install-wide value is honoured by every
-// service or refused by every one.
-func TestTopologyControllerLogLevelsMatchTheGoServices(t *testing.T) {
+// component or refused by every one.
+func TestTopologyControllerLogLevelsMatchTheGoComponents(t *testing.T) {
 	path := filepath.Join(repoRootFromTest(t), "topology-controller", "config", "config.py")
 	src, err := os.ReadFile(path) //nolint:gosec // G304: path is built from the repo root and fixed segments
 	if err != nil {

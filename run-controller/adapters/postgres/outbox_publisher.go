@@ -18,7 +18,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// OutboxTable is the outbox table this service writes its events to and its
+// OutboxTable is the outbox table this component writes its events to and its
 // relay publishes from. Its insert trigger notifies the Postgres channel of the
 // same name, on which the relay's waker listens.
 const OutboxTable = "run_controller_outbox"

@@ -9,7 +9,7 @@ import (
 // acceptedLLMProviders are the LLM_PROVIDER values agent-chat and
 // agent-remediation accept. deploy/continuo/values.schema.json enumerates the
 // same values for llm.provider, and pkg/deploycheck's
-// TestChartLLMProvidersMatchTheServices pins the two lists to each other.
+// TestChartLLMProvidersMatchTheComponents pins the two lists to each other.
 var acceptedLLMProviders = []string{"anthropic", "openai", "openai-compatible"}
 
 // AcceptedLLMProviders returns the LLM_PROVIDER values the agents accept, in

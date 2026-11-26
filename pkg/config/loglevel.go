@@ -20,17 +20,17 @@ var logLevels = map[string]slog.Level{
 	"error":   slog.LevelError,
 }
 
-// AcceptedLogLevels returns the LOG_LEVEL names every service accepts, in
-// lower case; a service matches them without regard to case. The chart's
+// AcceptedLogLevels returns the LOG_LEVEL names every component accepts, in
+// lower case; a component matches them without regard to case. The chart's
 // continuo.logLevel helper (deploy/continuo/templates/_helpers.tpl) refuses
 // to render a global.logLevel outside the same list.
 func AcceptedLogLevels() []string {
 	return slices.Clone(acceptedLogLevels)
 }
 
-// LoadLogLevel reads LOG_LEVEL, the lowest level a service writes log records
+// LoadLogLevel reads LOG_LEVEL, the lowest level a component writes log records
 // at. Unset or empty is info. A name outside AcceptedLogLevels is recorded on
-// v, so the service refuses to start, and info is returned so the caller's
+// v, so the component refuses to start, and info is returned so the caller's
 // logger can report that failure.
 func LoadLogLevel(v *Validator) slog.Level {
 	raw := os.Getenv("LOG_LEVEL")

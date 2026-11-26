@@ -10,8 +10,8 @@ import (
 
 // HealthResponse represents the health check response
 type HealthResponse struct {
-	Status  string `json:"status"`
-	Service string `json:"service"`
+	Status    string `json:"status"`
+	Component string `json:"component"`
 }
 
 // HealthHandler handles the process-up check. It returns 200 as long as the
@@ -21,8 +21,8 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	response := HealthResponse{
-		Status:  "healthy",
-		Service: "egress-proxy",
+		Status:    "healthy",
+		Component: "egress-proxy",
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -33,7 +33,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 // ReadinessResponse represents the readiness check response.
 type ReadinessResponse struct {
 	Status    string   `json:"status"`
-	Service   string   `json:"service"`
+	Component string   `json:"component"`
 	Unhealthy []string `json:"unhealthy,omitempty"`
 }
 
@@ -46,7 +46,7 @@ func NewReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 		failures := registry.Check(r.Context())
 		if len(failures) == 0 {
 			w.WriteHeader(http.StatusOK)
-			if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "ready", Service: "egress-proxy"}); err != nil {
+			if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "ready", Component: "egress-proxy"}); err != nil {
 				slog.Error("ReadinessHandler: failed to encode response", "error", err)
 			}
 			return
@@ -56,7 +56,7 @@ func NewReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 			names = append(names, f.Name)
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "not_ready", Service: "egress-proxy", Unhealthy: names}); err != nil {
+		if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "not_ready", Component: "egress-proxy", Unhealthy: names}); err != nil {
 			slog.Error("ReadinessHandler: failed to encode response", "error", err)
 		}
 	}
@@ -65,7 +65,7 @@ func NewReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 // NewLivenessHandler returns a liveness handler backed by the liveness
 // registry. It responds 503 only when a registered worker has exited with an
 // error or a worker heartbeat has gone stale, never while a startup gate is
-// open. Reuses ReadinessResponse: the payload shape (status/service/unhealthy)
+// open. Reuses ReadinessResponse: the payload shape (status/component/unhealthy)
 // is shared with /ready, only the status values and the source check differ.
 func NewLivenessHandler(registry *liveness.Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +73,7 @@ func NewLivenessHandler(registry *liveness.Registry) http.HandlerFunc {
 		failures := registry.LivenessCheck(r.Context())
 		if len(failures) == 0 {
 			w.WriteHeader(http.StatusOK)
-			if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "live", Service: "egress-proxy"}); err != nil {
+			if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "live", Component: "egress-proxy"}); err != nil {
 				slog.Error("LivenessHandler: failed to encode response", "error", err)
 			}
 			return
@@ -83,7 +83,7 @@ func NewLivenessHandler(registry *liveness.Registry) http.HandlerFunc {
 			names = append(names, f.Name)
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "not_live", Service: "egress-proxy", Unhealthy: names}); err != nil {
+		if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "not_live", Component: "egress-proxy", Unhealthy: names}); err != nil {
 			slog.Error("LivenessHandler: failed to encode response", "error", err)
 		}
 	}

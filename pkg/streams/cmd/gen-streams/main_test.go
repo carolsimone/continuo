@@ -145,10 +145,10 @@ streams:
 	}
 }
 
-// TestValidate_MalformedServiceName: a service name that is not lowercase
+// TestValidate_MalformedComponentName: a component name that is not lowercase
 // words joined by hyphens is refused. A well-formed name with no directory of
-// its own is refused by checkServiceDirectories.
-func TestValidate_MalformedServiceName(t *testing.T) {
+// its own is refused by checkComponentDirectories.
+func TestValidate_MalformedComponentName(t *testing.T) {
 	y := `
 key_prefix: "continuo:"
 streams:
@@ -161,8 +161,8 @@ streams:
         const: NopeGroup
 `
 	_, err := loadAndValidate(strings.NewReader(y))
-	if err == nil || !strings.Contains(err.Error(), `service "Nope_Controller" must match`) {
-		t.Fatalf("expected a malformed service name error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `component "Nope_Controller" must match`) {
+		t.Fatalf("expected a malformed component name error, got %v", err)
 	}
 }
 

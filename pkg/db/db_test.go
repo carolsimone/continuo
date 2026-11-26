@@ -48,7 +48,7 @@ func TestApplyPool_SetsTheOpenLimit(t *testing.T) {
 }
 
 func TestOpen_ConnectsWithTheMergedPool(t *testing.T) {
-	// The pool keys are cleared so the service defaults below are the pool.
+	// The pool keys are cleared so the component defaults below are the pool.
 	t.Setenv("DB_MAX_OPEN_CONNS", "")
 	t.Setenv("DB_MAX_IDLE_CONNS", "")
 	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})

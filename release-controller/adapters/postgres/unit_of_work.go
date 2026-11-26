@@ -65,7 +65,7 @@ func (u *UnitOfWork) PromotionSequenceRepo() repository.PromotionSequenceReposit
 	return NewPromotionSequenceRepository(u.queryer())
 }
 
-// OutboxTable is the outbox table this service writes its events to and its
+// OutboxTable is the outbox table this component writes its events to and its
 // relay publishes from. Its insert trigger notifies the Postgres channel of the
 // same name, on which the relay's waker listens.
 const OutboxTable = "release_controller_outbox"
@@ -137,7 +137,7 @@ func (u *UnitOfWork) Rollback() error {
 // releaseQueueAdvisoryLockKey is the integer key passed to
 // pg_advisory_xact_lock to serialise AdvanceQueue invocations across all
 // release-controller callers. The value is arbitrary; only stability matters.
-// Generated once for this service; do not change.
+// Generated once for this component; do not change.
 const releaseQueueAdvisoryLockKey int64 = 7142026052800
 
 // LockReleaseQueue acquires a tx-scoped advisory lock on the release queue.

@@ -2,7 +2,7 @@
 
 ## Structure
 
-Each service that keeps Postgres owns one database and one directory here:
+Each component that keeps Postgres owns one database and one directory here:
 
 | Directory | Database | Service |
 |-----------|----------|---------|
@@ -14,9 +14,9 @@ Each service that keeps Postgres owns one database and one directory here:
 | `agent_remediation/` | `continuo_agent_remediation` | agent-remediation |
 | `dead_letter/` | `continuo_dead_letter` | dead-letter-controller |
 
-Each directory starts with one `V1__` file that builds the whole database: every table as one block (its columns and constraints, then its indexes, triggers and comments), and the rows the services need from the start. A change to a table or column edits that block, or adds the next migration.
+Each directory starts with one `V1__` file that builds the whole database: every table as one block (its columns and constraints, then its indexes, triggers and comments), and the rows the components need from the start. A change to a table or column edits that block, or adds the next migration.
 
-`catalog` keeps no Postgres: its graph and its processed-message markers live in Neo4j, so it has no migration directory, no `continuo_*` database and no Flyway job. `TestProvisioning_ListsExactlyTheServicesThatKeepPostgres` (`pkg/deploycheck`) holds every provisioning site (`db/migrate-all.sh`, `db/Dockerfile.migrate`, `db/init-databases.sh`, the chart's db-init loop, the compose Flyway jobs and the directories here) to the same list of services.
+`catalog` keeps no Postgres: its graph and its processed-message markers live in Neo4j, so it has no migration directory, no `continuo_*` database and no Flyway job. `TestProvisioning_ListsExactlyTheComponentsThatKeepPostgres` (`pkg/deploycheck`) holds every provisioning site (`db/migrate-all.sh`, `db/Dockerfile.migrate`, `db/init-databases.sh`, the chart's db-init loop, the compose Flyway jobs and the directories here) to the same list of components.
 
 ## Running Migrations
 

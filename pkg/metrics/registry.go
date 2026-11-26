@@ -23,11 +23,11 @@ type Registry struct {
 	consumers *consumerMetrics
 }
 
-// New returns a registry whose series carry service=<service>, with Go
+// New returns a registry whose series carry service=<component>, with Go
 // runtime and process metrics registered.
-func New(service string) *Registry {
+func New(component string) *Registry {
 	reg := prometheus.NewRegistry()
-	r := &Registry{reg: reg, labelled: prometheus.WrapRegistererWith(prometheus.Labels{"service": service}, reg)}
+	r := &Registry{reg: reg, labelled: prometheus.WrapRegistererWith(prometheus.Labels{"service": component}, reg)}
 	r.labelled.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	return r
 }
@@ -44,5 +44,5 @@ func (r *Registry) WatchDB(db *sql.DB, name string) {
 	r.labelled.MustRegister(collectors.NewDBStatsCollector(db, name))
 }
 
-// Register adds service-specific collectors; their series carry the service label.
+// Register adds component-specific collectors; their series carry the service label.
 func (r *Registry) Register(cs ...prometheus.Collector) { r.labelled.MustRegister(cs...) }

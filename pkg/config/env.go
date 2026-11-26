@@ -54,7 +54,7 @@ func (v *Validator) Add(name string) {
 // "1m30s"), returning fallback when it is unset or empty.
 //
 // A value that is set but does not parse is recorded as a validation failure
-// naming the key, so start-up fails rather than the service running a default
+// naming the key, so start-up fails rather than the component running a default
 // the operator never asked for. That distinction is the whole point of this
 // helper over EnvDurationOrDefault: an install declares such a value once, in
 // its chart values, and a typo there otherwise produces a system that looks
@@ -158,7 +158,7 @@ func (v *Validator) PositiveIntOrZero(key string) int {
 // PortOrDefault reads an OPTIONAL TCP port env var, returning fallback when it
 // is unset or empty. A value that is not a whole number from 1 to 65535 is
 // recorded as a validation failure naming the key, so start-up fails rather
-// than the service connecting to the default port. The fallback is still
+// than the component connecting to the default port. The fallback is still
 // returned so the caller holds a usable value while it finishes collecting
 // the rest of the configuration problems.
 func (v *Validator) PortOrDefault(key string, fallback int) int {

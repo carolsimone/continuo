@@ -7,7 +7,7 @@ import (
 )
 
 // PoolConfig bounds a Postgres connection pool. A zero field means the
-// environment did not set it; pkg/db then takes the opening service's default.
+// environment did not set it; pkg/db then takes the opening component's default.
 type PoolConfig struct {
 	MaxOpenConns int
 	MaxIdleConns int
@@ -120,7 +120,7 @@ func LoadPostgres(v *Validator) PostgresConfig {
 	return loadPostgresCommon(v, "")
 }
 
-// LoadPostgresWithDefaultDB is LoadPostgres for a service that falls back to
+// LoadPostgresWithDefaultDB is LoadPostgres for a component that falls back to
 // defaultDB when POSTGRES_DB is unset; every other key is read as LoadPostgres
 // reads it.
 func LoadPostgresWithDefaultDB(v *Validator, defaultDB string) PostgresConfig {

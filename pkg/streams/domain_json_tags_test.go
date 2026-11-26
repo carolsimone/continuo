@@ -29,7 +29,7 @@ var domainModules = []string{
 }
 
 // TestNoJSONTagsInDomainPackages fails on any `json:` struct tag under any
-// service's domain/ tree (or pkg/domain). Serialization is an adapter concern: a
+// component's domain/ tree (or pkg/domain). Serialization is an adapter concern: a
 // json-tagged domain struct couples the domain to a wire or persistence format.
 // Move the tags to a DTO in the owning adapter (or a top-level serialization)
 // package with toDomain/fromDomain mappers, and route the marshal/unmarshal
@@ -91,7 +91,7 @@ var forbiddenDomainImportPrefixes = []string{
 }
 
 // TestNoSerializationImportsInDomainPackages fails on any import of a
-// serialization framework under a service's domain/ tree (or pkg/domain).
+// serialization framework under a component's domain/ tree (or pkg/domain).
 // Serialization is an adapter concern: move the marshal/unmarshal to a DTO in
 // the owning adapter (or a top-level serialization package) with to/from-domain
 // mappers, and keep the domain type free of the format. This complements the
@@ -150,7 +150,7 @@ func forbiddenDomainImport(importPath string) bool {
 
 // TestNoObjectStoreImportsInDomainOrServicePackages fails on any Go file under
 // a module's domain/ or service/ tree that imports pkg/objectstore or a
-// package of the AWS SDK. Object storage is infrastructure: a service declares
+// package of the AWS SDK. Object storage is infrastructure: a component declares
 // the port it needs in service/ports (or domain/repository), phrased in its
 // own vocabulary, and an adapter implements it over a pkg/objectstore role.
 // Test files are guarded too: a handler test that reaches for the store is the
@@ -228,7 +228,7 @@ import (
 // adapters/ tree that names the concrete objectstore.Client. An adapter
 // depends on the narrowest role pkg/objectstore declares (Reader, Writer,
 // PrefixDeleter or ReadWriter): it reaches no operation it does not use, and
-// its unit tests substitute objectstoretest.Memory. Only a service's main
+// its unit tests substitute objectstoretest.Memory. Only a component's main
 // builds the Client and passes it in as those roles. Test files are guarded
 // too: an adapter's credential-wiring test passes objectstore.New's result
 // straight to the constructor without naming its type.

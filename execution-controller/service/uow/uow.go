@@ -3,7 +3,7 @@
 // orchestrate over, so they compose repository work into one transaction
 // without seeing sqlx or any concrete adapter. The Postgres implementation
 // lives in adapters/postgres. Matches run-controller/service/uow's UnitOfWork shape so
-// the parser+binding+handler pattern is identical across services.
+// the parser+binding+handler pattern is identical across components.
 package uow
 
 import (

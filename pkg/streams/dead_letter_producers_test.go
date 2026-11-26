@@ -19,38 +19,38 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// pythonServiceNameRe matches topology-controller's SERVICE_NAME assignment.
-var pythonServiceNameRe = regexp.MustCompile(`(?m)^SERVICE_NAME\s*=\s*"([^"]+)"\s*$`)
+// pythonComponentNameRe matches topology-controller's SERVICE_NAME assignment.
+var pythonComponentNameRe = regexp.MustCompile(`(?m)^SERVICE_NAME\s*=\s*"([^"]+)"\s*$`)
 
-// TestDeadLetterProducersMatchTheServiceNames pins the producers of
-// consumer.dead_letter:v1 in contract.yaml to the service names the consumers
-// stamp on the dead letters they write: every Go service's config.ServiceName
-// and topology-controller's SERVICE_NAME. A service that runs stream consumers
-// declares that constant (TestMainsThatRunConsumersNameTheirService), so the
+// TestDeadLetterProducersMatchTheComponentNames pins the producers of
+// consumer.dead_letter:v1 in contract.yaml to the component names the consumers
+// stamp on the dead letters they write: every Go component's config.ComponentName
+// and topology-controller's SERVICE_NAME. A component that runs stream consumers
+// declares that constant (TestMainsThatRunConsumersNameTheirComponent), so the
 // two sets are equal.
-func TestDeadLetterProducersMatchTheServiceNames(t *testing.T) {
+func TestDeadLetterProducersMatchTheComponentNames(t *testing.T) {
 	root := repoRootFromTest(t)
-	names := goServiceNames(t, root)
-	names["topology-controller/config/config.py"] = pythonServiceName(t, filepath.Join(root, "topology-controller", "config", "config.py"))
+	names := goComponentNames(t, root)
+	names["topology-controller/config/config.py"] = pythonComponentName(t, filepath.Join(root, "topology-controller", "config", "config.py"))
 
 	producers := streamProducers(t, streams.ConsumerDeadLetterV1)
 	stamped := make([]string, 0, len(names))
 	for file, name := range names {
 		stamped = append(stamped, name)
 		if !slices.Contains(producers, name) {
-			t.Errorf("%s names the service %q, which is not a producer of %s in contract.yaml", file, name, streams.ConsumerDeadLetterV1)
+			t.Errorf("%s names the component %q, which is not a producer of %s in contract.yaml", file, name, streams.ConsumerDeadLetterV1)
 		}
 	}
 	for _, p := range producers {
 		if !slices.Contains(stamped, p) {
-			t.Errorf("contract.yaml lists %q as a producer of %s, but no service declares that name", p, streams.ConsumerDeadLetterV1)
+			t.Errorf("contract.yaml lists %q as a producer of %s, but no component declares that name", p, streams.ConsumerDeadLetterV1)
 		}
 	}
 }
 
-// goServiceNames returns the ServiceName constant of every */config/config.go
+// goComponentNames returns the ComponentName constant of every */config/config.go
 // that declares one, keyed by the file's path relative to root.
-func goServiceNames(t *testing.T, root string) map[string]string {
+func goComponentNames(t *testing.T, root string) map[string]string {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(root, "*", "config", "config.go"))
 	if err != nil {
@@ -72,16 +72,16 @@ func goServiceNames(t *testing.T, root string) map[string]string {
 			for _, spec := range gd.Specs {
 				vs := spec.(*ast.ValueSpec)
 				for i, id := range vs.Names {
-					if id.Name != "ServiceName" {
+					if id.Name != "ComponentName" {
 						continue
 					}
 					lit, ok := vs.Values[i].(*ast.BasicLit)
 					if !ok || lit.Kind != token.STRING {
-						t.Fatalf("%s: ServiceName must be a string literal", rel)
+						t.Fatalf("%s: ComponentName must be a string literal", rel)
 					}
 					name, err := strconv.Unquote(lit.Value)
 					if err != nil {
-						t.Fatalf("%s: unquote ServiceName: %v", rel, err)
+						t.Fatalf("%s: unquote ComponentName: %v", rel, err)
 					}
 					names[rel] = name
 				}
@@ -89,19 +89,19 @@ func goServiceNames(t *testing.T, root string) map[string]string {
 		}
 	}
 	if len(names) == 0 {
-		t.Fatal("no */config/config.go declares a ServiceName constant")
+		t.Fatal("no */config/config.go declares a ComponentName constant")
 	}
 	return names
 }
 
-// pythonServiceName returns the SERVICE_NAME string assigned in path.
-func pythonServiceName(t *testing.T, path string) string {
+// pythonComponentName returns the SERVICE_NAME string assigned in path.
+func pythonComponentName(t *testing.T, path string) string {
 	t.Helper()
 	src, err := os.ReadFile(path) //nolint:gosec // G304: path is built from the repo root and fixed segments
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	m := pythonServiceNameRe.FindSubmatch(src)
+	m := pythonComponentNameRe.FindSubmatch(src)
 	if m == nil {
 		t.Fatalf("%s: no SERVICE_NAME = \"...\" assignment", path)
 	}
@@ -137,22 +137,22 @@ func streamProducers(t *testing.T, stream string) []string {
 const outboxImportPath = "github.com/carolsimone/continuo/pkg/outbox"
 
 // TestOutboxDeadLetterProducersMatchTheOutboxRelays pins the producers of
-// outbox.dead_letter:v1 in contract.yaml to the services that run an outbox
+// outbox.dead_letter:v1 in contract.yaml to the components that run an outbox
 // relay. A relay writes the dead letter of a row it gives up on to its own
-// outbox and publishes it to outbox.dead_letter:v1, so a service is a producer
+// outbox and publishes it to outbox.dead_letter:v1, so a component is a producer
 // exactly when its own code calls pkg/outbox's NewProcessor. The producers
 // list decides which Redis logins may write the stream, so a relay missing
 // from it is refused with NOPERM on its first dead letter.
 func TestOutboxDeadLetterProducersMatchTheOutboxRelays(t *testing.T) {
 	root := repoRootFromTest(t)
-	relays := outboxRelayServices(t, root)
+	relays := outboxRelayComponents(t, root)
 	if len(relays) == 0 {
-		t.Fatal("no service calls pkg/outbox's NewProcessor: the scan found nothing")
+		t.Fatal("no component calls pkg/outbox's NewProcessor: the scan found nothing")
 	}
 	producers := streamProducers(t, streams.OutboxDeadLetterV1)
-	for service, file := range relays {
-		if !slices.Contains(producers, service) {
-			t.Errorf("%s runs an outbox relay, but %s is not a producer of %s in contract.yaml", file, service, streams.OutboxDeadLetterV1)
+	for component, file := range relays {
+		if !slices.Contains(producers, component) {
+			t.Errorf("%s runs an outbox relay, but %s is not a producer of %s in contract.yaml", file, component, streams.OutboxDeadLetterV1)
 		}
 	}
 	for _, p := range producers {
@@ -162,11 +162,11 @@ func TestOutboxDeadLetterProducersMatchTheOutboxRelays(t *testing.T) {
 	}
 }
 
-// outboxRelayServices returns each service directory under root with a
+// outboxRelayComponents returns each component directory under root with a
 // non-test Go file that calls pkg/outbox's NewProcessor, mapped to the first
 // such file. pkg/ (where the relay lives), cli/, tests/ and hidden directories
-// are not services.
-func outboxRelayServices(t *testing.T, root string) map[string]string {
+// are not components.
+func outboxRelayComponents(t *testing.T, root string) map[string]string {
 	t.Helper()
 	entries, err := os.ReadDir(root)
 	if err != nil {

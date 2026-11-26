@@ -304,7 +304,7 @@ func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
 		ProjectRepoPaths:    map[string]string{"svc": "path"},
 	}
 	collab := runnerCollaborators(cfg, runnerAdapters{}, discardLogger())
-	counted := rametrics.NewRemediationMetrics(pkgmetrics.New(config.ServiceName))
+	counted := rametrics.NewRemediationMetrics(pkgmetrics.New(config.ComponentName))
 	deps := newRunnerDeps(cfg, collab, workflow.Set{}, runnerWiring{owner: "host:7", logger: discardLogger(), metrics: counted})
 
 	assert.Equal(t, 37*time.Minute, deps.VerificationTimeout)

@@ -571,7 +571,7 @@ above it would stop that service from starting.
      services match the level without regard to case and treat an unset or
      empty one as info; any other name stops every service at startup, so the
      render fails on it first. $accepted is pkg/config.AcceptedLogLevels, and
-     pkg/streams' TestChartLogLevelsMatchTheServices pins the two lists to each
+     pkg/streams' TestChartLogLevelsMatchTheComponents pins the two lists to each
      other. The shared ConfigMap includes this helper, so every install runs the
      check. */}}
 {{- define "continuo.logLevel" -}}

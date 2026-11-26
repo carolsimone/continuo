@@ -34,7 +34,7 @@ func TestEveryOutboxTableHasClaimIndexesAndNotifyTrigger(t *testing.T) {
 }
 
 // outboxTables is how many outbox tables the databases under db/migration
-// have: one per service that keeps Postgres and publishes events.
+// have: one per component that keeps Postgres and publishes events.
 const outboxTables = 6
 
 // Deleting the statement that creates an outbox table leaves no table for the

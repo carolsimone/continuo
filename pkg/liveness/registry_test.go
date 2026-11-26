@@ -166,7 +166,7 @@ func TestRegistry_LiveWithHealthyMixIgnoresDeps(t *testing.T) {
 	}
 }
 
-// A service brings its health server up before it waits for its dependencies:
+// A component brings its health server up before it waits for its dependencies:
 // through that wait liveness must answer (or the kubelet restarts the pod
 // mid-wait) while readiness must not (or traffic reaches a pod that is not
 // serving yet).
