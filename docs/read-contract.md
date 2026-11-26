@@ -167,5 +167,5 @@ ontology](ontology.md) says what is filled in.
 | The contract bundle's read set and version | `topology-controller/tests/test_contract_bundle.py` writes a bundle and compares it with a fixture. `pkg/contractbundle/contractbundle_test.go` reads a copy of that fixture and checks each value, and `pkg/streams` keeps the two copies identical. |
 | Readers ignore unknown keys and refuse a newer version | The same tests, in `Decode` of each package. |
 | The pointer's key | `tests/e2e/public_api_test.go` reads `current_prod_release_id` through the public route. |
-| The live release's objects are kept | `TestPruneFinishedRuns_PassesCutoffAndKeepIDs` (the production release is never pruned) and `TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes` (a kept release's prefixes are never deleted). |
+| The live release's objects are kept | `TestPruneFinishedChecks_PassesCutoffAndKeepIDs` (the production release is never pruned) and `TestReleaseCheckRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes` (a kept release's prefixes are never deleted). |
 | No expiry rule on the two prefixes | `scripts/check-read-retention.sh`, run by `make guards`. |
