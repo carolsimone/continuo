@@ -1280,6 +1280,12 @@ contracts carries a newer contract library than the one your install runs.
 Pin an older `continuo-python-runtime` in CI, or upgrade continuo. See
 [the library version CI must pin](contracts.md#the-library-version-ci-must-pin).
 
+**A python release is refused with a `400` that says `unknown manifest kind`.**
+The post names a kind continuo does not read. A Python project is released with
+`"kind": "python"` and the bundle that `continuo-runtime pack` writes from the
+project's `contracts/*.odcs.yaml` files. Change the kind in your CI and post the
+same bundle again.
+
 **A release sits in `compiling` and then rejects with `compile_failed`.** Your
 dbt project does not compile. The most common cause is a `{{ ref() }}` pointing
 at a model in a *different* project — see the cross-project rule in chapter 1.
