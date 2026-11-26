@@ -208,6 +208,26 @@ func TestRetiredNames_PathLimitedEntryFailsOnlyInsideItsPaths(t *testing.T) {
 	)
 }
 
+// The guard wraps each pattern in word boundaries, so a pattern that ends on
+// a quote can only match before a word character, which a struct tag never
+// has. The repository's list must still catch a struct tag naming a
+// component under the key service, and leave a tag of another key alone.
+func TestRetiredNames_RepositoryListCatchesTheServiceStructTag(t *testing.T) {
+	names, err := parseRetiredNames([]byte(readRepoFile(t, retiredNamesFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := "package a\n\ntype c struct {\n\tA string `yaml:\"service\"`\n\tB string `json:\"service\"`\n\tC string `yaml:\"services\"`\n\tD string `json:\"service_id\"`\n}\n"
+	var got []string
+	for _, f := range scanForRetiredNames("src/a.go", []byte(src), names) {
+		got = append(got, f.String())
+	}
+	assertFindings(t, got,
+		`src/a.go:4: "yaml:\"service" is a retired name; use "yaml:\"component\", json:\"component\""`,
+		`src/a.go:5: "json:\"service" is a retired name; use "yaml:\"component\", json:\"component\""`,
+	)
+}
+
 func TestRetiredNames_ListItselfAndBinaryFilesPass(t *testing.T) {
 	got := findingsIn(t, frobnicateList+"# frobnicate in a comment\n", map[string]string{
 		"img/logo.png": "\x89PNG\x00frobnicate",

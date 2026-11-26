@@ -71,7 +71,7 @@ names:
     use: the metric label component
   # The streams contract names the component that owns a stream or reads
   # through a group with the `component:` key.
-  - pattern: 'yaml:"service"|json:"service"'
+  - pattern: '(yaml|json):"service'
     use: yaml:"component", json:"component"
   # The guard of retired component names, the e2e start script and the
   # Makefile's component variables.

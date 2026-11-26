@@ -76,9 +76,9 @@ func TestRemediationWorkflowFileKindsMatchTheChart(t *testing.T) {
 	}
 }
 
-// workflowsValuesService is the part of a values.yaml components entry the
+// workflowsValuesComponent is the part of a values.yaml components entry the
 // workflows folder check reads.
-type workflowsValuesService struct {
+type workflowsValuesComponent struct {
 	Name         string            `yaml:"name"`
 	Env          map[string]string `yaml:"env"`
 	VolumeMounts []struct {
@@ -111,12 +111,12 @@ func TestRemediationWorkflowsDirMatchesTheChart(t *testing.T) {
 	want := m[1]
 
 	var values struct {
-		Components []workflowsValuesService `yaml:"components"`
+		Components []workflowsValuesComponent `yaml:"components"`
 	}
 	if err := yaml.Unmarshal([]byte(readRepoFile(t, "deploy", "continuo", "values.yaml")), &values); err != nil {
 		t.Fatalf("parse values.yaml: %v", err)
 	}
-	i := slices.IndexFunc(values.Components, func(s workflowsValuesService) bool { return s.Name == "agent-remediation" })
+	i := slices.IndexFunc(values.Components, func(s workflowsValuesComponent) bool { return s.Name == "agent-remediation" })
 	if i < 0 {
 		t.Fatal("values.yaml has no agent-remediation components entry")
 	}

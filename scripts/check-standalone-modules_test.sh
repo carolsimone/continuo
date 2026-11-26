@@ -12,7 +12,7 @@ make_repo() {
   printf 'module example.com/pkg\n\ngo 1.22\n\n%s\n' "${5:-}" > "$dir/pkg/go.mod"
   printf '%s' "$gosum" > "$dir/pkg/go.sum"
   printf 'package main\n\n%s\n\nfunc main() {}\n' "$import_line" > "$dir/pkg/cmd/x/main.go"
-  printf 'x:\n  matrix:\n    include:\n      - {service: "a", dockerfile: "a/Dockerfile", context: "."}\n      - {service: "b", dockerfile: "pkg/cmd/x/Dockerfile", context: "pkg"}\n%s' "$extra_ctx" > "$dir/.github/workflows/deploy.yml"
+  printf 'x:\n  matrix:\n    include:\n      - {image: "a", dockerfile: "a/Dockerfile", context: "."}\n      - {image: "b", dockerfile: "pkg/cmd/x/Dockerfile", context: "pkg"}\n%s' "$extra_ctx" > "$dir/.github/workflows/deploy.yml"
 }
 
 # 1. stdlib-only module with a complete (empty) go.sum: pass
@@ -24,7 +24,7 @@ make_repo "$tmp/gap" 'import _ "github.com/google/uuid"' '' '' 'require github.c
 if bash "$here/check-standalone-modules.sh" "$tmp/gap" >/dev/null 2>&1; then echo "FAIL: missing go.sum entry must fail"; exit 1; fi
 
 # 3. deploy.yml builds a Go module standalone that MODULES does not list: fail
-make_repo "$tmp/unlisted" 'import _ "fmt"' '' '      - {service: "c", dockerfile: "other/Dockerfile", context: "other"}'
+make_repo "$tmp/unlisted" 'import _ "fmt"' '' '      - {image: "c", dockerfile: "other/Dockerfile", context: "other"}'
 mkdir -p "$tmp/unlisted/other" && printf 'module example.com/other\n\ngo 1.22\n' > "$tmp/unlisted/other/go.mod"
 if bash "$here/check-standalone-modules.sh" "$tmp/unlisted" >/dev/null 2>&1; then echo "FAIL: unlisted standalone module must fail"; exit 1; fi
 

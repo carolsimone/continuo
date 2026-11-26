@@ -52,10 +52,10 @@ func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger)
 			return
 		}
 		for _, f := range failures {
-			logger.Warn("Readiness check failed", "component", f.Name, "error", f.Err)
+			logger.Warn("Readiness check failed", "check", f.Name, "error", f.Err)
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		if _, err := fmt.Fprintf(w, "NOT READY: %d component(s) unhealthy", len(failures)); err != nil {
+		if _, err := fmt.Fprintf(w, "NOT READY: %d check(s) unhealthy", len(failures)); err != nil {
 			logger.Warn("Failed to write readiness response", "error", err)
 		}
 	})

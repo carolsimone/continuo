@@ -102,14 +102,14 @@ func readLoginValues(t *testing.T) loginValues {
 // migrate Job, and a login the guide does not name is one no company creates.
 func TestEveryPostgresDatabaseHasItsLogin(t *testing.T) {
 	values := readLoginValues(t)
-	var serviceDatabases map[string]string
-	helperJSON(t, "continuo.postgres.componentDatabases", &serviceDatabases)
+	var componentDatabases map[string]string
+	helperJSON(t, "continuo.postgres.componentDatabases", &componentDatabases)
 	initScript := readRepoFile(t, "db", "init-databases.sh")
 	rows := guideLoginTable(t)
 
 	dbs := databasesAssignment(t, readRepoFile(t, "db", "migrate-all.sh"), "db/migrate-all.sh")
 	var mapped []string
-	for _, db := range serviceDatabases {
+	for _, db := range componentDatabases {
 		mapped = append(mapped, db)
 	}
 	assertSameSet(t, "_helpers.tpl continuo.postgres.componentDatabases", mapped, dbs)
@@ -125,8 +125,8 @@ func TestEveryPostgresDatabaseHasItsLogin(t *testing.T) {
 			t.Errorf("continuo_%s: no component in values.yaml keeps it (env.POSTGRES_DB)", db)
 			continue
 		}
-		if serviceDatabases[svc] != db {
-			t.Errorf("continuo_%s: _helpers.tpl continuo.postgres.componentDatabases maps %s to %q", db, svc, serviceDatabases[svc])
+		if componentDatabases[svc] != db {
+			t.Errorf("continuo_%s: _helpers.tpl continuo.postgres.componentDatabases maps %s to %q", db, svc, componentDatabases[svc])
 		}
 		login := values.Credentials.Postgres[svc].Username
 		if login == "" {
