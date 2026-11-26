@@ -1676,6 +1676,10 @@ refuse_render() {
   grep -qF -- "$want" "${tmp}/refused.err" || { echo "FAIL: rendering with $* failed for another reason (want: ${want}):"; cat "${tmp}/refused.err"; exit 1; }
 }
 refuse_render 'llm.baseUrl' --set llm.provider=openai-compatible
+# The list of component entries is `components:` and the Redis mode with one
+# login per component is perComponent: the schema refuses any other key or mode.
+refuse_render "additional properties 'services' not allowed" --set-json 'services=[{"name":"ui","enabled":true}]'
+refuse_render "value must be one of 'perComponent', 'shared'" --set credentials.redis.mode=perLogin
 refuse_render 'ends in /v1' --set llm.provider=openai-compatible --set llm.baseUrl=https://api.mistral.ai/v1
 refuse_render 'baseUrl' --set llm.baseUrl=api.mistral.ai
 refuse_render 'with a host' --set llm.baseUrl=https://

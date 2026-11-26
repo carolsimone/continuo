@@ -19,6 +19,16 @@ streams:
         const: RunControllerNodeUpdated
 `
 
+// A consumer names its component under `component:`; a contract that writes
+// any other key there is refused rather than read as naming none.
+func TestParseContract_RefusesAConsumerKeyOtherThanComponent(t *testing.T) {
+	y := strings.Replace(validYAML, "      - component: run-controller", "      - service: run-controller", 1)
+	_, err := parseContract(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "field service not found") {
+		t.Fatalf("parseContract = %v; want an unknown-field error naming service", err)
+	}
+}
+
 func TestParseContract_Valid(t *testing.T) {
 	c, err := parseContract(strings.NewReader(validYAML))
 	if err != nil {
