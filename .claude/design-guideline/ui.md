@@ -1623,7 +1623,7 @@ Content rules:
 One line directly under the header of a detail page saying what the page
 is about, before any strip or section. Used on the release page
 (`Changes core · acme/demo @ c2d1add ↗`) and the release-check page
-(`Release check for release rel-1 · attempt 2 · service core · dbt`).
+(`Release check for release rel-1 · attempt 2 · project core · dbt`).
 
 ```jsx
 <p className="page-sub">
@@ -1655,7 +1655,7 @@ Rules:
 ## Service tiles
 
 The set of service images a run executes with, on the release and
-release-check detail pages (`ServiceTiles`, `ui/src/client/ServiceTiles.tsx`).
+release-check detail pages (`ProjectTiles`, `ui/src/client/ProjectTiles.tsx`).
 One tile per service. Tiles are identity, not navigation: nothing happens
 on click, so there is no hover state.
 
