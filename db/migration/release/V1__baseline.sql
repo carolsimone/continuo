@@ -113,7 +113,7 @@ CREATE TABLE release_pipeline_runs (
     contracts_by_family jsonb,
     CONSTRAINT releases_pkey PRIMARY KEY (run_id),
     CONSTRAINT release_pipeline_runs_kind_status_check CHECK ((((run_kind = 'candidate') AND (status <> ALL (ARRAY['passed', 'failed']))) OR ((run_kind = 'verification') AND (status <> ALL (ARRAY['promoted', 'rejected', 'superseded']))))),
-    CONSTRAINT release_pipeline_runs_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'python-odcs', 'ontology'))),
+    CONSTRAINT release_pipeline_runs_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'ontology'))),
     CONSTRAINT release_pipeline_runs_rebaseline_needs_bootstrap CHECK (((NOT rebaseline) OR bootstrap)),
     CONSTRAINT release_pipeline_runs_run_kind_check CHECK ((run_kind IN ('candidate', 'verification'))),
     CONSTRAINT release_pipeline_runs_status_check CHECK ((status IN ('received', 'compiling', 'parsing', 'seed_building', 'validating', 'promoted', 'rejected', 'superseded', 'passed', 'failed')))
@@ -137,7 +137,7 @@ CREATE TABLE service_prod (
     updated_at timestamptz DEFAULT now() NOT NULL,
     manifest_kind text DEFAULT 'dbt' NOT NULL,
     CONSTRAINT service_prod_pkey PRIMARY KEY (project_name),
-    CONSTRAINT service_prod_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'python-odcs', 'ontology')))
+    CONSTRAINT service_prod_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'ontology')))
 );
 
 -- release_controller_outbox

@@ -18,11 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIntegration_PythonODCSRelease_SkipsCompileLeg verifies the full HTTP path
-// for a python-odcs release: POST /releases activates it straight into Parsing
+// TestIntegration_PythonRelease_SkipsCompileLeg verifies the full HTTP path
+// for a Python release: POST /releases activates it straight into Parsing
 // (no compile leg), release.requested:v1 carries the per-entry kind and the
 // odcs-bundle.json artifact URI, and no compile.requested:v1 row is ever written.
-func TestIntegration_PythonODCSRelease_SkipsCompileLeg(t *testing.T) {
+func TestIntegration_PythonRelease_SkipsCompileLeg(t *testing.T) {
 	srv, deps, db := setup(t)
 	defer db.Close()
 
@@ -32,7 +32,7 @@ func TestIntegration_PythonODCSRelease_SkipsCompileLeg(t *testing.T) {
 		ImageTag:  "img",
 		Repo:      "acme/py",
 		CommitSHA: "cafebabe",
-		Kind:      "python-odcs",
+		Kind:      "python",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/releases", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -43,7 +43,7 @@ func TestIntegration_PythonODCSRelease_SkipsCompileLeg(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Equal(t, pipeline.StatusParsing, r.Status())
-	assert.Equal(t, release.ManifestKindPythonODCS, r.ManifestKind())
+	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
 
 	entries, err := deps.NewUoW().OutboxRepo().GetPendingBatch(context.Background(), 10)
 	require.NoError(t, err)
@@ -62,6 +62,6 @@ func TestIntegration_PythonODCSRelease_SkipsCompileLeg(t *testing.T) {
 	assert.Equal(t, "it-py-1", p.ReleaseID)
 	require.Len(t, p.ManifestKeys, 1)
 	assert.Equal(t, "svc-py", p.ManifestKeys[0].Project)
-	assert.Equal(t, "python-odcs", p.ManifestKeys[0].Kind)
+	assert.Equal(t, "python", p.ManifestKeys[0].Kind)
 	assert.Equal(t, "s3://test-bucket/svc-py/it-py-1/odcs-bundle.json", p.ManifestKeys[0].S3URI)
 }

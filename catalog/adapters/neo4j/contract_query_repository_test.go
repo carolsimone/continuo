@@ -243,8 +243,8 @@ func (f *swapFixture) recordLiveFolder(seq int64, release string) {
 	}))
 }
 
-// A live node whose contract the newest recorded promotion did not carry (its
-// project went back from python-odcs to python) has no current contract once
+// A live node whose contract the newest recorded promotion did not carry (the
+// promotion's bundle left it out) has no current contract once
 // that promotion's live folder is recorded, as its file is gone from the
 // folder. Until then, and for a node the promotion carried, the pointer is
 // current.

@@ -24,7 +24,7 @@ import (
 var ErrContractRejected = errors.New("the packaging tool refused the contract")
 
 // ContractPackager packs the ODCS contracts of a project's contract directory
-// into the odcs-bundle.json a python-odcs release is submitted with, by running
+// into the odcs-bundle.json a Python release is submitted with, by running
 // the same tool the team's CI runs for a release. A python fix is packed by
 // that tool, so its bundle is read by topology-controller for the same reason
 // any other release's is: nothing downstream reimplements the packing.

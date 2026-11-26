@@ -408,7 +408,7 @@ jobs:
         #     hours.
         #   - 85m for the rest of the suite. A healthy run of every test but
         #     those two in this job, which starts the stack cold, takes at most
-        #     about 70m, the two python-odcs contract tests (28m and 6m
+        #     about 70m, the two Python contract tests (28m and 6m
         #     ceilings) adding about 10m to it; 85m leaves about 15m for a
         #     slower run.
         timeout-minutes: 187

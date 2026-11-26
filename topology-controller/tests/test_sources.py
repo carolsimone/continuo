@@ -173,12 +173,12 @@ def test_source_carries_the_declared_kind_onto_each_manifest_file():
     source = _make_s3_source(keys=[
         ManifestRequest(project="service-1", key="service-1/rel-1/manifest.json"),
         ManifestRequest(project="marketing-py", key="marketing-py/rel-1/odcs-bundle.json",
-                        kind=ManifestKind.PYTHON_ODCS),
+                        kind=ManifestKind.PYTHON),
     ])
     try:
         files = source.list_manifests()
 
-        assert [f.kind for f in files] == ["dbt", "python-odcs"]
+        assert [f.kind for f in files] == ["dbt", "python"]
         assert [f.declared_project for f in files] == ["service-1", "marketing-py"]
     finally:
         source.cleanup()
@@ -187,7 +187,7 @@ def test_source_carries_the_declared_kind_onto_each_manifest_file():
 @pytest.mark.parametrize("key, kind, release_id", [
     ("company-ontology/rel-7/ontology.yaml", ManifestKind.ONTOLOGY, "rel-7"),
     ("service-1/rel-9/manifest.json", ManifestKind.DBT, "rel-9"),
-    ("marketing-py/rel-3/odcs-bundle.json", ManifestKind.PYTHON_ODCS, "rel-3"),
+    ("marketing-py/rel-3/odcs-bundle.json", ManifestKind.PYTHON, "rel-3"),
 ])
 def test_the_release_id_comes_from_the_key(key, kind, release_id):
     """The folder that holds the artifact is the release that wrote it, which is not
@@ -298,9 +298,9 @@ def test_s3_source_propagates_an_extras_outage():
         source.cleanup()
 
 
-def test_s3_source_reads_no_extras_for_a_python_odcs_bundle():
+def test_s3_source_reads_no_extras_for_a_python_bundle():
     source, s3 = _source(
-        _write, [ManifestRequest(project="py", key="py/rel-1/odcs-bundle.json", kind=ManifestKind.PYTHON_ODCS)])
+        _write, [ManifestRequest(project="py", key="py/rel-1/odcs-bundle.json", kind=ManifestKind.PYTHON)])
     try:
         assert source.list_manifests()[0].extras_path == "" and s3.download_file.call_count == 1
     finally:

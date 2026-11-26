@@ -60,8 +60,8 @@ describe('upcomingStages', () => {
       { stage: 'validating', condition: 'unless nothing changed' },
     ]);
   });
-  it.each(['python', 'python-odcs'])('skips the compile leg and the seed build for a %s release', manifestKind => {
-    expect(upcomingStages(t('received'), { manifestKind })).toEqual([
+  it('skips the compile leg and the seed build for a python release', () => {
+    expect(upcomingStages(t('received'), { manifestKind: 'python' })).toEqual([
       { stage: 'parsing' },
       { stage: 'validating', condition: 'unless nothing changed' },
     ]);
@@ -69,7 +69,6 @@ describe('upcomingStages', () => {
   it.each([
     ['dbt', ['compiling', 'parsing', 'seed_building', 'validating']],
     ['python', ['parsing', 'validating']],
-    ['python-odcs', ['parsing', 'validating']],
     ['an-unknown-kind', ['compiling', 'parsing', 'seed_building', 'validating']],
   ])('lists the stages ahead of a received %s release', (manifestKind, stages) => {
     expect(upcomingStages(t('received'), { manifestKind }).map(s => s.stage)).toEqual(stages);
@@ -77,7 +76,6 @@ describe('upcomingStages', () => {
   it.each([
     ['dbt', ['compiling', 'parsing']],
     ['python', ['parsing']],
-    ['python-odcs', ['parsing']],
     ['an-unknown-kind', ['compiling', 'parsing']],
   ])('ends a bootstrap %s release at parsing, which promotes without validating', (manifestKind, stages) => {
     expect(upcomingStages(t('received'), { manifestKind, bootstrap: true }).map(s => s.stage)).toEqual(stages);

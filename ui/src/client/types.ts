@@ -410,8 +410,8 @@ export interface ReleaseDetail {
   repo?: string;
   commit_sha?: string;
   commit_url?: string;
-  // How the release's artifact is parsed: 'dbt', 'python', 'python-odcs' or
-  // 'ontology'. Decides the pipeline path — only a dbt release has a compile leg.
+  // How the release's artifact is parsed: 'dbt', 'python' or 'ontology'.
+  // Decides the pipeline path — only a dbt release has a compile leg.
   manifest_kind?: string;
   // What the parse reported: milliseconds the parse took without its contract
   // stages, milliseconds those stages took, and how many contracts it wrote by

@@ -56,12 +56,12 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 
 	// manifest_kind survives the Upsert -> Get roundtrip.
 	spPy := release.NewServiceProd("svc-py", "rel-1", "s3://b/svc-py/rel-1/odcs-bundle.json",
-		"img:1", release.ManifestKindPythonODCS, now)
+		"img:1", release.ManifestKindPython, now)
 	require.NoError(t, repo.Upsert(ctx, spPy))
 	gotPy, err := repo.Get(ctx, "svc-py")
 	require.NoError(t, err)
 	require.NotNil(t, gotPy)
-	assert.Equal(t, release.ManifestKindPythonODCS, gotPy.ManifestKind())
+	assert.Equal(t, release.ManifestKindPython, gotPy.ManifestKind())
 }
 
 // TestServiceProdRepository_StoresAnOntologyProject proves service_prod accepts
@@ -111,7 +111,7 @@ func TestProjectsWithKind_ListsThePythonProjects(t *testing.T) {
 		{prefix + "py-c", release.ManifestKindPython},
 		{prefix + "dbt", release.ManifestKindDbt},
 		{prefix + "py-b", release.ManifestKindPython},
-		{prefix + "odcs", release.ManifestKindPythonODCS},
+		{prefix + "ontology", release.ManifestKindOntology},
 		{prefix + "py-a", release.ManifestKindPython},
 	}
 	t.Cleanup(func() {
@@ -138,9 +138,9 @@ func TestProjectsWithKind_ListsThePythonProjects(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{prefix + "py-a", prefix + "py-b", prefix + "py-c"}, named(python))
 
-	odcs, err := repo.ProjectsWithKind(ctx, release.ManifestKindPythonODCS)
+	ontology, err := repo.ProjectsWithKind(ctx, release.ManifestKindOntology)
 	require.NoError(t, err)
-	assert.Equal(t, []string{prefix + "odcs"}, named(odcs))
+	assert.Equal(t, []string{prefix + "ontology"}, named(ontology))
 
 	// A kind that no row of this test holds yields an empty list, not an error.
 	_, err = db.Exec(`DELETE FROM service_prod WHERE project_name LIKE $1 AND manifest_kind = 'python'`, prefix+"%")

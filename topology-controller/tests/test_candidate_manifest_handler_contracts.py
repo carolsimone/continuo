@@ -1,4 +1,4 @@
-"""The handler's treatment of invalid python-odcs contracts: every manifest's parse reports its
+"""The handler's treatment of invalid Python contracts: every manifest's parse reports its
 invalid contracts, the release goes on through resolve with the valid nodes, and one
 `publish_failed` names every failed node."""
 import itertools
@@ -271,8 +271,8 @@ def test_an_artifact_level_error_fails_the_release_with_no_failed_nodes(
     assert kwargs["failed_nodes"] == []
 
 
-def test_a_python_odcs_node_whose_query_fails_to_resolve_is_named_by_its_contract_file(tmp_path):
-    """The SQL of a python-odcs node lives in its contract, so a resolve failure names the
+def test_a_python_node_whose_query_fails_to_resolve_is_named_by_its_contract_file(tmp_path):
+    """The SQL of a Python node lives in its contract, so a resolve failure names the
     contract file, not the script."""
     publisher = MagicMock()
     unqualified = demo_text("py_daily_kpis").replace(

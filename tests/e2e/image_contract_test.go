@@ -55,7 +55,7 @@ var pyMismatchReleasedContract []byte
 //     the runtime's own `continuo-runtime pack`, run in the mismatch image, so
 //     it carries the hash parts the harness computes and the image's package
 //     list;
-//  2. a bootstrap python-odcs release of svc-py-mismatch-e2e names the mismatch
+//  2. a bootstrap Python release of svc-py-mismatch-e2e names the mismatch
 //     image, whose baked contract reads another column, and promotes;
 //  3. StartRun(e2e-py-mismatch) runs the node: the harness recomputes the
 //     node's content_hash from the image, finds it differs from the CONTENT_HASH

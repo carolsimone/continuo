@@ -21,7 +21,7 @@ def _parse(kind, mf, **kwargs):
 
 def test_each_kind_resolves_to_its_own_failure_vocabulary():
     dbt = parser_for(ManifestKind.DBT)
-    odcs = parser_for(ManifestKind.PYTHON_ODCS)
+    odcs = parser_for(ManifestKind.PYTHON)
 
     assert json.JSONDecodeError in dbt.permanent_errors
     assert InvalidCompileExtrasError in dbt.permanent_errors
@@ -79,7 +79,7 @@ def test_the_odcs_entry_parses_a_bundle_with_the_library_this_install_runs_on(tm
     timings = release_timings()
     calls = []
 
-    parsed = parser_for(ManifestKind.PYTHON_ODCS).parse(
+    parsed = parser_for(ManifestKind.PYTHON).parse(
         bundle_file(tmp_path, demo_nodes()), progress=lambda: calls.append(1), timings=timings,
         validator=ContractValidator())
 
@@ -92,10 +92,10 @@ def test_the_odcs_entry_parses_a_bundle_with_the_library_this_install_runs_on(tm
 def test_a_plain_string_resolves_the_same_as_the_enum_member():
     """main.py passes the raw wire value through, so lookups must work on str."""
     assert parser_for("dbt") is parser_for(ManifestKind.DBT)
-    assert parser_for("python-odcs") is parser_for(ManifestKind.PYTHON_ODCS)
+    assert parser_for("python") is parser_for(ManifestKind.PYTHON)
 
 
 def test_an_unrecognized_kind_resolves_to_nothing():
     assert parser_for("spark") is None
-    assert parser_for("python") is None
+    assert parser_for("python-" + "odcs") is None, "the retired Python kind is unknown"
     assert parser_for("") is None

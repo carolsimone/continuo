@@ -31,7 +31,7 @@ class MalformedContractError(ValueError):
 
 
 class InvalidOdcsBundleError(ValueError):
-    """A `python-odcs` producer bundle (`odcs-bundle.json`) that cannot be read
+    """A Python producer bundle (`odcs-bundle.json`) that cannot be read
     as a whole: it is not the JSON document of a version this install reads, it
     names another project, one of its keys is missing or mistyped, two of its
     nodes share a path or resolve to one node, or its producer's

@@ -40,7 +40,7 @@ documents never change after they are written, so reading them for one release
 id always gives a consistent set.
 
 Every release that passes writes a contract bundle. It holds the contract of
-every dbt model, seed and snapshot the release keeps and of every `python-odcs`
+every dbt model, seed and snapshot the release keeps and of every Python
 node, and `summary.by_family` counts them by family. It is empty when the
 release has none. The bundle is canonical JSON (RFC 8785).
 `release.parsed:v1` and `release.promoted:v1` carry the SHA-256 of
@@ -70,8 +70,8 @@ are `kind` (string), `owner` (string) and `reads` (object: each read's name to
 the `SELECT` text it runs). A node of `kind` `python-csv` has one read, `csv`,
 which is a file location, not SQL. Every other key of the entry may change.
 
-A Python node's entry comes from its ODCS file (a project is released as
-`python-odcs`, one ODCS file per node): `owner` is the contract's `team.name`
+A Python node's entry comes from its ODCS file (a project is released with
+the kind `python`, one ODCS file per node): `owner` is the contract's `team.name`
 and `reads` holds its `readQueries`, or its `csvSource` as the read `csv`.
 
 **Topology artifact, `schema_version` 1**

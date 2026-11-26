@@ -13,10 +13,6 @@ from domain.model import (
 from domain.exceptions import UnqualifiedTableReferenceError
 
 
-def test_python_is_no_longer_a_manifest_kind():
-    assert "python" not in {kind.value for kind in ManifestKind}
-
-
 def test_manifest_file_attributes():
     mf = ManifestFile(path="/manifests/service_a/manifest_v3.json")
     assert mf.path == "/manifests/service_a/manifest_v3.json"
@@ -174,7 +170,7 @@ def test_the_registry_of_nodes_leaves_tests_out_and_marks_ephemeral_models():
 
 
 def test_the_manifest_kinds_are_the_values_a_release_names():
-    assert [kind.value for kind in ManifestKind] == ["dbt", "python-odcs", "ontology"]
+    assert [kind.value for kind in ManifestKind] == ["dbt", "python", "ontology"]
 
 
 def test_the_ontology_is_a_manifest_kind():

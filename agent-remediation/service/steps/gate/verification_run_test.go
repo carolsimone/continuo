@@ -281,13 +281,13 @@ func TestVerificationRun_UploadsAnODCSBundle(t *testing.T) {
 	assert.Equal(t, []string{"verify-rel-1-ledger-a2"}, res.Result.RunIDs)
 	assert.True(t, res.Result.Waiting)
 	assert.Equal(t, []proposal.Verification{
-		{Project: "ledger", Kind: "python-odcs", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+		{Project: "ledger", Kind: "python", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
 	}, res.Verifications)
 	assert.Equal(t, []ports.VerificationRequest{{
 		RunID:             "verify-rel-1-ledger-a2",
 		Project:           "ledger",
 		ImageTag:          "tag-rel-1-ledger",
-		Kind:              "python-odcs",
+		Kind:              "python",
 		VerifiesReleaseID: "rel-1",
 		Attempt:           2,
 	}}, r.pipeline.submitted)
@@ -305,7 +305,7 @@ func notABundleCluster(contract string) step.ClusterDraft {
 
 // A packaged contract is verified only as an ODCS producer bundle: a JSON
 // object with a bundle_version key, whatever its spacing or key order.
-func TestVerificationRun_VerifiesAnODCSBundleAsKindPythonODCS(t *testing.T) {
+func TestVerificationRun_VerifiesAnODCSBundleAsKindPython(t *testing.T) {
 	for name, contract := range map[string]string{
 		"an ODCS producer bundle":     pythonContract,
 		"an ODCS bundle with spacing": "\n  {\"nodes\": [], \"bundle_version\": 1}\n",
@@ -315,7 +315,7 @@ func TestVerificationRun_VerifiesAnODCSBundleAsKindPythonODCS(t *testing.T) {
 			res, err := r.step.Submit(context.Background(), gateInput(notABundleCluster(contract)))
 			require.NoError(t, err)
 			require.Len(t, res.Verifications, 1)
-			assert.Equal(t, "python-odcs", res.Verifications[0].Kind)
+			assert.Equal(t, "python", res.Verifications[0].Kind)
 			assert.Equal(t, []write{{
 				key: "ledger/verify-rel-1-ledger-a2/odcs-bundle.json", body: contract, contentType: "application/json",
 			}}, r.artifacts.writes)
@@ -382,7 +382,7 @@ func TestPoll_ReportsTheKindTheRunWasSubmittedAs(t *testing.T) {
 	res, err := r.step.Poll(context.Background(), in, submitted.Result)
 	require.NoError(t, err)
 	require.Len(t, res.Verifications, 1)
-	assert.Equal(t, "python-odcs", res.Verifications[0].Kind, "Poll rebuilds the runs with the kind Submit gave them")
+	assert.Equal(t, "python", res.Verifications[0].Kind, "Poll rebuilds the runs with the kind Submit gave them")
 }
 
 func TestSubmit_TwoProjectsSubmitOneRunEachInProjectOrder(t *testing.T) {
@@ -391,11 +391,11 @@ func TestSubmit_TwoProjectsSubmitOneRunEachInProjectOrder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"verify-rel-1-ledger-a2", "verify-rel-1-sales-a2"}, res.Result.RunIDs)
 	assert.Equal(t, []proposal.Verification{
-		{Project: "ledger", Kind: "python-odcs", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+		{Project: "ledger", Kind: "python", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
 		{Project: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
 	}, res.Verifications)
 	require.Len(t, r.pipeline.submitted, 2)
-	assert.Equal(t, "python-odcs", r.pipeline.submitted[0].Kind)
+	assert.Equal(t, "python", r.pipeline.submitted[0].Kind)
 	assert.Equal(t, "dbt", r.pipeline.submitted[1].Kind)
 }
 
@@ -513,7 +513,7 @@ func TestPoll_QueuedAndRunningRunsKeepTheGateWaiting(t *testing.T) {
 	assert.Empty(t, v.VerifyError)
 	act := t0.Add(30 * time.Second)
 	want := []proposal.Verification{
-		{Project: "ledger", Kind: "python-odcs", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act},
+		{Project: "ledger", Kind: "python", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act},
 		{Project: "sales", Kind: "dbt", RunID: salesRun, Phase: proposal.PhaseQueued},
 	}
 	assert.Equal(t, want, v.Verifications)
@@ -716,7 +716,7 @@ func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
 	// Only the run that was read is reported: writing the unread one as queued
 	// would reset the phase and activation time recorded for it.
 	act := t0
-	want := []proposal.Verification{{Project: "ledger", Kind: "python-odcs", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act}}
+	want := []proposal.Verification{{Project: "ledger", Kind: "python", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act}}
 	assert.Equal(t, want, v.Verifications)
 	assert.Equal(t, want, v.Phases)
 }

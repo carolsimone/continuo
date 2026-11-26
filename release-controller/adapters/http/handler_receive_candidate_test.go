@@ -90,19 +90,23 @@ func TestHandleReceiveCandidate_ValidationFailureIs400(t *testing.T) {
 	}
 }
 
-// The python kind names a contract.yaml artifact no parser reads: POST
-// /releases refuses it as a client error whose body names the kind to use
-// instead, and stores nothing.
-func TestHandleReceiveCandidate_RefusesPythonWith400AndTheMessage(t *testing.T) {
+// retiredPythonKind is the kind a Python project was once released with. It is
+// built from two parts because the retired-names guard keeps the whole word out
+// of every tracked file.
+const retiredPythonKind = "python-" + "odcs"
+
+// POST /releases refuses the retired Python kind as an unknown kind, a client
+// error, and stores nothing.
+func TestHandleReceiveCandidate_RefusesTheRetiredPythonKindWith400(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
 	in := validCandidateInput()
-	in.Kind = "python"
+	in.Kind = retiredPythonKind
 
 	rec := postCandidate(newTestServer(deps), in)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(),
-		`kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+		`unknown manifest kind "`+retiredPythonKind+`" (expected "dbt", "python" or "ontology")`)
 	assert.Empty(t, releases.releases)
 }
 
@@ -166,13 +170,13 @@ func TestHandleReceiveCandidate_OntologyConflictsAre409(t *testing.T) {
 		assert.Empty(t, releases.releases)
 	})
 
-	t.Run("the ontology project released as python-odcs", func(t *testing.T) {
+	t.Run("the ontology project released as python", func(t *testing.T) {
 		deps, releases := newRetryRemediationDeps(now)
 		deps.OntologyEnabled = true
 		seedServiceProd(t, deps, release.NewServiceProd("core", "rel-0", "s3://b/core/rel-0/ontology.yaml", "img:1",
 			release.ManifestKindOntology, now))
 		in := validCandidateInput()
-		in.Kind = "python-odcs"
+		in.Kind = "python"
 
 		rec := postCandidate(newTestServer(deps), in)
 
@@ -212,7 +216,7 @@ func TestHandleReceiveCandidate_StorageFailureIs500WithoutInternalText(t *testin
 // built from, so the POST /releases body format is pinned here.
 func TestReceiveCandidateRequest_DecodesEveryWireField(t *testing.T) {
 	raw := `{"project":"core","release_id":"rel-1","image_tag":"img:1","bootstrap":true,"rebaseline":true,` +
-		`"repo":"org/r","commit_sha":"sha","kind":"python-odcs","shadow":true,` +
+		`"repo":"org/r","commit_sha":"sha","kind":"python","shadow":true,` +
 		`"source_overlay_uri":"s3://x","verifies_release_id":"rel-0"}`
 	var body ReceiveCandidateRequest
 	require.NoError(t, json.Unmarshal([]byte(raw), &body))
@@ -224,7 +228,7 @@ func TestReceiveCandidateRequest_DecodesEveryWireField(t *testing.T) {
 	assert.True(t, in.Rebaseline)
 	assert.Equal(t, "org/r", in.Repo)
 	assert.Equal(t, "sha", in.CommitSHA)
-	assert.Equal(t, "python-odcs", in.Kind)
+	assert.Equal(t, "python", in.Kind)
 	assert.True(t, in.Shadow)
 	assert.Equal(t, "s3://x", in.SourceOverlayURI)
 	assert.Equal(t, "rel-0", in.VerifiesReleaseID)

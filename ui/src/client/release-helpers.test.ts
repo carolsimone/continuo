@@ -327,8 +327,8 @@ describe('upcomingStages', () => {
     expect(stagesOf('received')).toEqual(['compiling', 'parsing', 'seed_building', 'validating']);
   });
 
-  it.each(['python', 'python-odcs'])('shows no compiling and no seed building for a %s release', kind => {
-    expect(stagesOf('received', kind)).toEqual(['parsing', 'validating']);
+  it('shows no compiling and no seed building for a python release', () => {
+    expect(stagesOf('received', 'python')).toEqual(['parsing', 'validating']);
   });
 
   it('shows no compiling and no seed building for an ontology release', () => {

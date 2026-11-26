@@ -30,7 +30,7 @@ type ContractReader interface {
 	// promotion's bundle named and no newer promotion reached, whatever their
 	// active flag. Every bundle names every node of the release's topology
 	// that has a contract (each dbt model, seed and snapshot and each
-	// python-odcs node), so a node the promotion added is in the set, and a
+	// Python node), so a node the promotion added is in the set, and a
 	// node it dropped, whose watermark lags, is not.
 	Live(ctx context.Context, tenantID string, promotionSeq int64) ([]contractversion.LiveContract, error)
 	// LatestPromotionSeq returns the largest contract watermark of the

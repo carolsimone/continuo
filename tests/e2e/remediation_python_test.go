@@ -116,7 +116,7 @@ const (
 // TestE2E_PythonValidationFailure_VerifiedFix drives the runner's
 // python-validation type end to end on a single-try repair:
 //
-//	POST /releases (kind=python-odcs, one node whose declared read cannot bind)
+//	POST /releases (kind=python, one node whose declared read cannot bind)
 //	→ the validation Job's bind check fails → release rejected
 //	→ classifier emits heal.triggered:v1 (one node, node_type=python-node)
 //	→ agent-remediation's runner matches it to the python-validation type: its
@@ -368,7 +368,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 }
 
 // rejectPythonFixtureRelease posts one of the remediation fixture repository's
-// projects as a python-odcs release and waits for it to be rejected. The
+// projects as a Python release and waits for it to be rejected. The
 // bundle it uploads is built from the same files the served repository
 // checkout holds, so the node the release fails on is the node the
 // python-validation type will later find in the checkout.
@@ -710,7 +710,7 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 // TestE2E_PythonParseFailure_VerifiedFix drives the runner's python-parse type
 // from the parse stage, the leg that runs before any Job:
 //
-//	POST /releases (kind=python-odcs, one node whose declared read is not schema-qualified)
+//	POST /releases (kind=python, one node whose declared read is not schema-qualified)
 //	→ topology-controller's SQL parser rejects the node (unqualified_reference)
 //	→ release-controller: Fail(unqualified_reference), RecordStageResults("parse")
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path,
@@ -853,7 +853,7 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedT
 			require.Equal(t, "unqualified_reference", p.PerNode[0].Kind)
 			require.Contains(t, p.PerNode[0].Detail, "right_name")
 			require.Equal(t, path.Join("contracts", path.Base(pyParseContract)), p.PerNode[0].FilePath,
-				"a python-odcs node's parse failure names its contract file, by its path in the project's bundle")
+				"a Python node's parse failure names its contract file, by its path in the project's bundle")
 			require.Equal(t, pyParseProject, p.PerNode[0].Project)
 			require.Equal(t, "python-node", p.PerNode[0].NodeType)
 			return true, nil

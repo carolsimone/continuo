@@ -7,28 +7,9 @@ import (
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
-	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
-
-// isStoredPythonRun reports whether r is an unfinished run of the kind python.
-// Only a row an earlier continuo version accepted holds that kind: no parser
-// reads its contract.yaml, and the service_prod row its promotion would write
-// would name an artifact no release can read, so such a run never promotes or
-// passes.
-func isStoredPythonRun(r *pipeline.Run) bool {
-	return r.ManifestKind() == release.ManifestKindPython && !r.Status().IsTerminal()
-}
-
-// rejectStoredPythonRun ends a stored kind-python run before any leg acts on
-// it, with the refusal ParseManifestKind gives for the kind as its detail
-// (rejectInvalidArtifactRun).
-func rejectStoredPythonRun(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
-	d.Logger.Warn("rejecting a stored run of the kind python",
-		"release_id", r.ID(), "project", r.ChangedProject(), "status", string(r.Status()))
-	return rejectInvalidArtifactRun(ctx, d, u, r, release.ErrPythonKindNotAccepted.Error(), now)
-}
 
 // rejectInvalidArtifactRun ends a run that no leg can act on: a candidate ends
 // rejected invalid_artifact and emits release.rejected:v1 with the parse body,

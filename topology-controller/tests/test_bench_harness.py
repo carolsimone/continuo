@@ -62,11 +62,11 @@ def test_the_estate_built_without_the_ontology_hashes_to_its_recorded_digest():
 
 
 def test_the_estate_writes_the_python_project_as_one_odcs_bundle(tmp_path):
-    """The Python project is one `odcs-bundle.json` of kind python-odcs with one
+    """The Python project is one `odcs-bundle.json` of kind python with one
     ODCS contract per node, each valid under the library the bundle names, and
     its reads are the ones the estate counts."""
     estate = generate_estate(20, columns=4)
-    (request,) = [request for request in estate.requests if request.kind is ManifestKind.PYTHON_ODCS]
+    (request,) = [request for request in estate.requests if request.kind is ManifestKind.PYTHON]
     assert request.key == f"svc-py/{estate.release_id}/odcs-bundle.json"
     path = tmp_path / "odcs-bundle.json"
     path.write_bytes(estate.objects[request.key])
@@ -77,7 +77,7 @@ def test_the_estate_writes_the_python_project_as_one_odcs_bundle(tmp_path):
 
     timings = ReleaseTimings(estate.release_id, FakeClock(), ScriptedMemoryProbe(0))
     parsed = parse_odcs_bundle(
-        ManifestFile(path=str(path), image_tag="bench", declared_project="svc-py", kind=ManifestKind.PYTHON_ODCS),
+        ManifestFile(path=str(path), image_tag="bench", declared_project="svc-py", kind=ManifestKind.PYTHON),
         progress=lambda: None, timings=timings, validator=ContractValidator(),
     )
     assert not parsed.failed
@@ -174,7 +174,7 @@ def test_an_estate_without_the_ontology_has_no_ontology_manifest_and_no_binding(
         for node in manifest["nodes"].values():
             assert "continuo" not in node["config"].get("meta", {})
             assert all("meta" not in column for column in node.get("columns", {}).values())
-    (python,) = [request for request in estate.requests if request.kind is ManifestKind.PYTHON_ODCS]
+    (python,) = [request for request in estate.requests if request.kind is ManifestKind.PYTHON]
     assert "entity" not in estate.objects[python.key].decode()
 
 
@@ -218,7 +218,7 @@ def test_the_ontology_estate_binds_every_model_seed_and_python_node_to_the_thing
                 assert column["meta"] == {"continuo": expected}, (node["unique_id"], name)
             bound += 1
     assert bound == estate.models + estate.seeds
-    (python,) = [request for request in estate.requests if request.kind is ManifestKind.PYTHON_ODCS]
+    (python,) = [request for request in estate.requests if request.kind is ManifestKind.PYTHON]
     nodes = json.loads(estate.objects[python.key])["nodes"]
     assert len(nodes) == estate.python_nodes
     for node in nodes:

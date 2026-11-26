@@ -128,7 +128,7 @@ The workflow requests a token whose audience is the same origin continuo expects
 then submits the release and polls it to a terminal status. This example
 releases a dbt project, so it sends only the three required fields. `kind`
 names how continuo reads the project's artifact: `dbt` (the default when absent),
-`python-odcs` (a Python project's `odcs-bundle.json`, see
+`python` (a Python project's `odcs-bundle.json`, see
 [Python contracts](../docs/contracts.md)) or `ontology` (the install's company
 ontology, see [the company ontology](../docs/ontology.md)).
 The first release of a project has no production version to validate against,
@@ -183,7 +183,7 @@ All three routes live under `/api/v1` on the `ui`. Each takes
 
 **Submit body.** `release_id`, `project` and `image_tag` are required;
 `bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default,
-`python-odcs` or `ontology`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
+`python` or `ontology`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
 match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`: it starts with a letter or digit and
 continues with letters, digits, `.`, `_` or `-`, at most 128 characters in all;
 anything else is a `400`. With a CI token, `repo` and `commit_sha` are taken from
@@ -224,7 +224,7 @@ one read every few seconds.
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, a `release_id` outside the pattern above, or a `kind` other than `dbt`, `python-odcs` or `ontology`: the kind `python` is refused with a message that says to release the project as `python-odcs`, and the kind `ontology` is refused while the install's ontology switch is off (`contracts.ontology.enabled`). |
+| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, a `release_id` outside the pattern above, or a `kind` other than `dbt`, `python` or `ontology`: the kind `ontology` is refused while the install's ontology switch is off (`contracts.ontology.enabled`). |
 | 401 | `invalid_token` | The bearer token is malformed, expired, for the wrong audience, from an untrusted issuer, signed with an algorithm other than RS256, or valid for longer than one hour. The response carries `WWW-Authenticate: Bearer error="invalid_token"`. A request with no credential at all answers `401` with code `unauthenticated`. |
 | 403 | `forbidden` | The identity may not do this: a repository not bound to the project it submits, a repository bound to no project at all (on every route), a viewer submitting, or a CI token calling any other route. |
 | 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
@@ -251,11 +251,6 @@ fingerprint.
 
 Before you start:
 
-- Release every Python project as `python-odcs`, on a continuo version that
-  accepts it, before the upgrade
-  ([Python contracts](../docs/contracts.md#moving-from-contractyaml)). The
-  upgrade stops while a project in production is still released as the kind
-  `python`.
 - Check every dbt team image: the compile Job runs `compile_extras.py` with the
   image's `python3`, so
   `docker run --rm --entrypoint python3 <team-image> -c 'import yaml, dbt'` must
@@ -265,13 +260,7 @@ Before you start:
 1. **Freeze producer merges.** No pipeline may release a project until step 6
    ends: an ordinary release inside the window validates a large set of nodes
    and reloads every seed.
-2. **Upgrade continuo.** The upgrade stops while a project in production is
-   still released as the kind `python`, in one of two ways. With your own
-   database the migration Job fails and `helm upgrade` fails before any pod
-   changes. With the bundled Postgres `helm upgrade` can report success while
-   the pods roll, and release-controller refuses to start; `helm rollback`
-   recovers. Both name the projects, which "Before you start" had not released
-   as `python-odcs`.
+2. **Upgrade continuo.**
 3. **Release each dbt project** with its current `image_tag` and both flags.
    The pipeline that posts these releases needs `allowBootstrap: true` on its CI
    binding. `repo` and `commit_sha` (the full SHA) are required for a call with
@@ -285,7 +274,7 @@ Before you start:
    `continuo-python-runtime` 0.13.0 or later (the image's `FROM` tag), pack its
    contracts with `continuo-runtime pack --project <name>` of runtime 0.15.0 or
    later (the runtime your CI installs), upload the `odcs-bundle.json` ([Python contracts](../docs/contracts.md#the-ci-steps))
-   and release it with the same two flags and `"kind": "python-odcs"`. Its
+   and release it with the same two flags and `"kind": "python"`. Its
    `image_tag` is the full registry reference, not the bare short SHA, for
    example `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`.
 5. **Check.** Release any one project normally with no change. Its release must

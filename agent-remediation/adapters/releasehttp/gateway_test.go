@@ -70,7 +70,7 @@ func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
 	}))
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Project: "py", ImageTag: "i", Kind: ports.VerificationKindPythonODCS, VerifiesReleaseID: "rel-1", Attempt: 2}))
+	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Project: "py", ImageTag: "i", Kind: ports.VerificationKindPython, VerifiesReleaseID: "rel-1", Attempt: 2}))
 	_, has := got["source_overlay_uri"]
 	assert.False(t, has)
 }

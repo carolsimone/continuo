@@ -323,8 +323,8 @@ export interface UpcomingStage {
 }
 
 // What the timeline reads of a run: what decides its path through the
-// pipeline (how its artifact is parsed, 'dbt', 'python', 'python-odcs' or
-// 'ontology', and whether it is a bootstrap release) and what its parse reported (see
+// pipeline (how its artifact is parsed, 'dbt', 'python' or 'ontology', and
+// whether it is a bootstrap release) and what its parse reported (see
 // parseLines). The parse fields are absent until the parse reports them.
 export interface PipelineRun {
   manifestKind?: string;
@@ -342,7 +342,7 @@ export interface PipelineRun {
 // CI builds and uploads the artifact before the release is posted, and only a
 // dbt release compiles and builds seeds. release-controller's
 // ManifestKind.HasCompileLeg decides the same.
-const KINDS_WITHOUT_COMPILE = ['python', 'python-odcs', 'ontology'];
+const KINDS_WITHOUT_COMPILE = ['python', 'ontology'];
 
 // pipelinePath lists the stages a run of this kind passes through, in order,
 // naming the condition on each stage that does not run on every path:

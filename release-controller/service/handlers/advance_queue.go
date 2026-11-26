@@ -31,18 +31,16 @@ import (
 //     manifest-key set is assembled again in HandleCompileResult (ok path),
 //     reading live service_prod a second time when the release advances to
 //     Parsing.
-//   - python-odcs and ontology: no compile leg exists — CI already uploaded
+//   - python and ontology: no compile leg exists — CI already uploaded
 //     the odcs-bundle.json or the ontology.yaml before POST /releases — so the
 //     release goes straight to TransitionToParsing and emits
 //     release.requested:v1 with the set assembled here.
 //
-// A run of the kind python, which only a row an earlier continuo version
-// stored holds, is never activated: it is rejected invalid_artifact
-// (rejectStoredPythonRun) and the run behind it is activated instead. So is a
-// run of the kind ontology met while the install's ontology switch is off (a
-// run accepted while it was on): it is rejected invalid_artifact with
-// ErrOntologyDisabled as its detail (rejectOntologyRunWhileSwitchOff), before
-// anything is assembled. So is a run whose kind is on the other side of the
+// A run of the kind ontology met while the install's ontology switch is off (a
+// run accepted while it was on) is never activated: it is rejected
+// invalid_artifact with ErrOntologyDisabled as its detail
+// (rejectOntologyRunWhileSwitchOff), before anything is assembled, and the run
+// behind it is activated instead. So is a run whose kind is on the other side of the
 // line between the ontology and the node kinds from its project's service_prod
 // pointer: it is rejected invalid_artifact with the kind-change refusal as its
 // detail.
@@ -77,14 +75,6 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	}
 	if next == nil {
 		return u.Commit()
-	}
-	if isStoredPythonRun(next) {
-		// The rejection ends the run and commits, so the queue is advanced
-		// again for the run behind it.
-		if err := rejectStoredPythonRun(ctx, d, u, next, d.Clock.Now()); err != nil {
-			return err
-		}
-		return AdvanceQueue(ctx, d)
 	}
 	if isOntologyRunWhileSwitchOff(d, next) {
 		// Nothing needs assembling for a run that is not activated. The

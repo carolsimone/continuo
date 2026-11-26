@@ -111,7 +111,7 @@ func refusalFinding(err error) (remediation.Finding, bool) {
 }
 
 // plan groups the try's edits into the runs that judge them, sorted by project.
-// A project with a packaged contract is verified as kind python-odcs, and the
+// A project with a packaged contract is verified as kind python, and the
 // try is refused with errNotABundle when that contract is not an ODCS producer
 // bundle.
 func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
@@ -129,7 +129,7 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 			if !isODCSBundle(grp.Contract) {
 				return nil, fmt.Errorf("%w: project %s", errNotABundle, grp.Project)
 			}
-			run.kind = ports.VerificationKindPythonODCS
+			run.kind = ports.VerificationKindPython
 		}
 		runs[i] = run
 	}
@@ -138,7 +138,7 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 
 // Submit posts one verification run per project the try edits. A python project
 // is verified by the odcs-bundle.json its fix packed, uploaded under the run's
-// own id as kind python-odcs. A dbt project is verified by re-running its
+// own id as kind python. A dbt project is verified by re-running its
 // project with the proposed content laid over it, so each edit's content is
 // read back from the artifact the draft stored and packed into one source
 // overlay, keyed by the edit's path within that project's directory.

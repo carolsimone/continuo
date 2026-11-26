@@ -135,7 +135,7 @@ func TestPromoteToProduction_CarriesTheContractBundle(t *testing.T) {
 		deps.Bucket = "continuo"
 		ctx := context.Background()
 		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-			Project: "svc-a", ReleaseID: "rV", ImageTag: "sha-rV", Repo: "acme/demo", CommitSHA: "deadbeef", Kind: "python-odcs",
+			Project: "svc-a", ReleaseID: "rV", ImageTag: "sha-rV", Repo: "acme/demo", CommitSHA: "deadbeef", Kind: "python",
 		}))
 		require.NoError(t, handlers.AdvanceQueue(ctx, deps))
 		require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{

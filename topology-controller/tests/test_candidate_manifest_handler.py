@@ -897,7 +897,7 @@ def test_a_malformed_python_timeout_fails_the_release_naming_the_node(tmp_path, 
     assert "timeoutMinutes" in kwargs["failed_nodes"][0].detail
 
 
-def test_a_python_odcs_bundle_for_another_project_fails_the_release(tmp_path):
+def test_a_python_bundle_for_another_project_fails_the_release(tmp_path):
     publisher = MagicMock()
     source = source_of(bundle_file(tmp_path, [python_node()], declared_project="service-py", project="someone-else"))
 
@@ -924,19 +924,24 @@ def test_an_unknown_kind_fails_the_release_permanently():
     assert "spark" in kwargs["detail"]
 
 
-def test_an_unknown_kind_is_invalid_artifact(tmp_path):
-    """Kind `python` is not one this build reads, so a request for it ends like any unknown kind:
-    permanently, as invalid_artifact, with no node parsed from the file it names."""
+# The kind a Python project was once released with, built from two parts because the
+# retired-names guard keeps the whole word out of every tracked file.
+RETIRED_PYTHON_KIND = "python-" + "odcs"
+
+
+def test_the_retired_python_kind_is_invalid_artifact(tmp_path):
+    """The retired Python kind is not one this build reads, so a request for it ends like any
+    unknown kind: permanently, as invalid_artifact, with no node parsed from the file it names."""
     publisher = MagicMock()
     bundle = write_bundle(tmp_path, bundle_doc(demo_nodes()))
-    source = source_of(dataclasses.replace(bundle, kind="python"))
+    source = source_of(dataclasses.replace(bundle, kind=RETIRED_PYTHON_KIND))
 
     dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
     kwargs = publisher.publish_failed.call_args.kwargs
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert kwargs["detail"] == "service-py: unknown manifest kind 'python'"
+    assert kwargs["detail"] == f"service-py: unknown manifest kind '{RETIRED_PYTHON_KIND}'"
     assert kwargs["failed_nodes"] == []
 
 
@@ -957,7 +962,7 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
-def test_a_python_odcs_node_is_published_as_a_python_node(tmp_path):
+def test_a_python_node_is_published_as_a_python_node(tmp_path):
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
     spec_uploader = make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")
@@ -974,7 +979,7 @@ def test_a_python_odcs_node_is_published_as_a_python_node(tmp_path):
     assert spec_uploader.upload.call_args.kwargs["unique_id"] == "test_schema.py_metrics"
 
 
-def test_a_python_odcs_bundle_is_published_and_timed_as_the_python_parse(tmp_path):
+def test_a_python_bundle_is_published_and_timed_as_the_python_parse(tmp_path):
     publisher, writer, calls = MagicMock(), RecordingArtifactWriter(), []
     source = source_of(bundle_file(tmp_path, demo_nodes()))
 

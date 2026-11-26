@@ -158,7 +158,7 @@ def _artifact_entry(node: ManifestNode) -> dict:
 
 
 class CandidateManifestHandler:
-    """Parses a per-release set of dbt manifests and python-odcs bundles, with
+    """Parses a per-release set of dbt manifests and Python bundles, with
     the contract of each dbt and python node, writes the resolved candidate
     topology to S3 as the release's topology artifact, and publishes a
     reference to it back to release-controller.
@@ -181,9 +181,9 @@ class CandidateManifestHandler:
     each dbt project's provenance with the image tag the request names for it)
     is uploaded via bundle_uploader, then the release's contract bundle via
     contract_bundle_writer (the stored form and hash of each dbt and
-    python-odcs contract, with the tables its node's SQL or read queries name
+    Python contract, with the tables its node's SQL or read queries name
     and, for a dbt contract, the reads it declares, and the provenance of each
-    python-odcs project), then the topology artifact via artifact_writer, and
+    Python project), then the topology artifact via artifact_writer, and
     only then is the outcome published, so a published reference never
     dangles. Every release that publishes ok writes a contract bundle, one with
     no contract included. An empty release (no manifests) writes an empty
@@ -441,7 +441,7 @@ class CandidateManifestHandler:
                 )
                 return
 
-            parse_stage = Stage.PYTHON_PARSE if mf.kind == ManifestKind.PYTHON_ODCS else Stage.DBT_PARSE
+            parse_stage = Stage.PYTHON_PARSE if mf.kind == ManifestKind.PYTHON else Stage.DBT_PARSE
             manifest_skips: list[SkippedNode] = []
             try:
                 with self._timings.stage(parse_stage, manifests=1) as record:
@@ -620,7 +620,7 @@ class CandidateManifestHandler:
                         node_id=node.unique_id,
                         kind=exc.kind,
                         project=node.project_name,
-                        # A python-odcs node's SQL is in its contract file, not its script.
+                        # A Python node's SQL is in its contract file, not its script.
                         file_path=node.contract.path if node.contract is not None else node.original_file_path,
                         node_type=node.node_type,
                         detail=str(exc),

@@ -117,7 +117,7 @@ def _counting_schema_checks(monkeypatch) -> list[int]:
 
 def _with_one_contract_changed(estate, position):
     """The estate's objects with the description of one Python contract rewritten."""
-    (key,) = [request.key for request in estate.requests if request.kind is ManifestKind.PYTHON_ODCS]
+    (key,) = [request.key for request in estate.requests if request.kind is ManifestKind.PYTHON]
     bundle = json.loads(estate.objects[key])
     entry = bundle["nodes"][position]
     contract = yaml.safe_load(entry["text"])

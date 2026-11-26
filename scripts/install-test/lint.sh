@@ -1041,7 +1041,7 @@ if grep -qF "$service_account_note" "${tmp}/notes-install.txt"; then
 fi
 
 # An upgrading operator is told once to upgrade with empty databases, which
-# five databases to drop, and to release each Python project as python-odcs
+# five databases to drop, and to release each Python project with kind python
 # when it releases its projects again; an installing one is told nothing.
 empty_db_note='BREAKING: upgrade with empty databases.'
 [ "$(grep -cF "$empty_db_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
@@ -1050,17 +1050,17 @@ for db in continuo_run_controller continuo_execution continuo_release continuo_r
   grep -F "$empty_db_note" "${tmp}/notes-upgrade.txt" | grep -qF "$db" \
     || { echo "FAIL: the empty-database upgrade note does not name ${db}"; exit 1; }
 done
-grep -qF 'release each Python project as "python-odcs"' "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: the empty-database upgrade note does not tell an operator to release a Python project as python-odcs"; exit 1; }
+grep -qF 'Release each Python project with kind "python"' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the empty-database upgrade note does not tell an operator to release a Python project with kind python"; exit 1; }
 if grep -qF "$empty_db_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the empty-database upgrade note"; exit 1
 fi
 # The re-baseline note agrees with deploy/README.md: a Python project is
-# released as python-odcs, built on runtime 0.13.0 or later, and no older
+# released with kind python, built on runtime 0.13.0 or later, and no older
 # runtime is named.
-grep -qF 'a Python project is released as "python-odcs", built on' "${tmp}/notes-upgrade.txt" \
+grep -qF 'a Python project is released as "python", built on' "${tmp}/notes-upgrade.txt" \
   && grep -qF 'continuo-python-runtime 0.13.0 or later' "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: the re-baseline upgrade note does not say a Python project is released as python-odcs on runtime 0.13.0 or later"; exit 1; }
+  || { echo "FAIL: the re-baseline upgrade note does not say a Python project is released with kind python on runtime 0.13.0 or later"; exit 1; }
 if grep -qE 'continuo-python-runtime 0\.1[0-2]\.' "${tmp}/notes-upgrade.txt"; then
   echo "FAIL: the upgrade notes name a continuo-python-runtime older than 0.13.0"; exit 1
 fi

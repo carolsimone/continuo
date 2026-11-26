@@ -10,7 +10,7 @@ import (
 // VerificationRequest is a fix-verification run to submit: the edited
 // project's delta, the rejected release the fix answers, and the attempt it
 // belongs to. Kind is the project's manifest kind, VerificationKindDbt or
-// VerificationKindPythonODCS — required, never defaulted. SourceOverlayURI is
+// VerificationKindPython — required, never defaulted. SourceOverlayURI is
 // the tarball of proposed source a dbt run lays over the project; a python run
 // is verified by its packaged odcs-bundle.json and carries none.
 type VerificationRequest struct {
@@ -25,11 +25,11 @@ type VerificationRequest struct {
 
 // Manifest kinds a verification request may carry.
 const (
-	VerificationKindDbt        = "dbt"
-	VerificationKindPythonODCS = "python-odcs"
+	VerificationKindDbt    = "dbt"
+	VerificationKindPython = "python"
 )
 
-// ODCSBundleName is the object name of a python-odcs project's bundle of
+// ODCSBundleName is the object name of a Python project's bundle of
 // ODCS contracts: its CI uploads one for a release at
 // <project>/<release id>/odcs-bundle.json, and a fix's verification run reads
 // the packed one at <project>/<run id>/odcs-bundle.json.

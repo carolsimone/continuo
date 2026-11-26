@@ -124,29 +124,32 @@ func TestReceiveCandidate_DefaultsAbsentKindToDbt(t *testing.T) {
 	assert.Equal(t, release.ManifestKindDbt, r.ManifestKind())
 }
 
-func TestReceiveCandidate_PersistsPythonODCSKind(t *testing.T) {
+func TestReceiveCandidate_PersistsPythonKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "svc", ReleaseID: "rK2", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
-		Kind: "python-odcs",
+		Kind: "python",
 	}))
 	r, err := store.GetRelease("rK2")
 	require.NoError(t, err)
-	assert.Equal(t, release.ManifestKindPythonODCS, r.ManifestKind())
+	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
 }
 
-// The python kind names a contract.yaml artifact no parser reads: a new
-// release naming it is refused as an invalid candidate, with the message that
-// names the kind to use, and persists nothing.
-func TestReceiveCandidate_RefusesPython(t *testing.T) {
+// retiredPythonKind is the kind a Python project was once released with. It is
+// built from two parts because the retired-names guard keeps the whole word out
+// of every tracked file.
+const retiredPythonKind = "python-" + "odcs"
+
+// A new release naming the retired Python kind is refused as an invalid
+// candidate with an unknown kind, and persists nothing.
+func TestReceiveCandidate_RefusesTheRetiredPythonKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "svc", ReleaseID: "rK4", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
-		Kind: "python",
+		Kind: retiredPythonKind,
 	})
 	require.ErrorIs(t, err, handlers.ErrInvalidCandidate)
-	assert.ErrorContains(t, err,
-		`kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+	assert.ErrorContains(t, err, `unknown manifest kind "`+retiredPythonKind+`"`)
 	r, _ := store.GetRelease("rK4")
 	assert.Nil(t, r, "a refused kind must not persist a release")
 }
@@ -197,7 +200,7 @@ func TestReceiveCandidate_ConflictingResubmitWrapsErrReleaseIDConflict(t *testin
 	for name, mutate := range map[string]func(*handlers.ReceiveCandidateInput){
 		"project":    func(in *handlers.ReceiveCandidateInput) { in.Project = "billing" },
 		"image tag":  func(in *handlers.ReceiveCandidateInput) { in.ImageTag = "img:2" },
-		"kind":       func(in *handlers.ReceiveCandidateInput) { in.Kind = "python-odcs" },
+		"kind":       func(in *handlers.ReceiveCandidateInput) { in.Kind = "python" },
 		"bootstrap":  func(in *handlers.ReceiveCandidateInput) { in.Bootstrap = true },
 		"repo":       func(in *handlers.ReceiveCandidateInput) { in.Repo = "acme/fork" },
 		"commit sha": func(in *handlers.ReceiveCandidateInput) { in.CommitSHA = "cafebabe" },

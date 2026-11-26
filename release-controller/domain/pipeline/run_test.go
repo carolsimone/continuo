@@ -174,7 +174,7 @@ func TestMatchesSubmission_AnyDifferingFactDoesNotMatch(t *testing.T) {
 	for name, mutate := range map[string]func(*pipeline.CandidateSubmission){
 		"project":    func(s *pipeline.CandidateSubmission) { s.Project = "other" },
 		"image tag":  func(s *pipeline.CandidateSubmission) { s.ImageTag = "img:2" },
-		"kind":       func(s *pipeline.CandidateSubmission) { s.Kind = release.ManifestKindPythonODCS },
+		"kind":       func(s *pipeline.CandidateSubmission) { s.Kind = release.ManifestKindPython },
 		"bootstrap":  func(s *pipeline.CandidateSubmission) { s.Bootstrap = true },
 		"repo":       func(s *pipeline.CandidateSubmission) { s.Repo = "org/fork" },
 		"commit sha": func(s *pipeline.CandidateSubmission) { s.CommitSHA = "def456" },

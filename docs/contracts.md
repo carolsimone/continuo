@@ -280,7 +280,7 @@ Your pipeline does these steps, in this order.
    machine. `--image-packages <file>` takes a list you saved for that image
    before. Give one of the two, not both.
 4. **Upload the bundle** to `s3://<bucket>/<project>/<release_id>/odcs-bundle.json`.
-5. **Post the release** with the kind `python-odcs`. The `image_tag` is the
+5. **Post the release** with the kind `python`. The `image_tag` is the
    full image reference, used exactly as written.
 
    ```bash
@@ -291,7 +291,7 @@ Your pipeline does these steps, in this order.
        "release_id": "rel-py-v1",
        "project": "service-py",
        "image_tag": "service-py:v1",
-       "kind": "python-odcs",
+       "kind": "python",
        "repo": "<your-username>/continuo-demo-docs",
        "commit_sha": "<sha>"
      }'
@@ -582,25 +582,12 @@ tool may rely on.
 
 ## Moving from `contract.yaml`
 
-A Python project releases as `python-odcs`. The kind `python`, one
-`contract.yaml` for the whole project, is not accepted: `POST /api/v1/releases`
-answers `400` with a message that says `kind "python" is no longer accepted`
-and names `python-odcs`.
-
-An upgrade of continuo stops while a project in production is still released
-as the kind `python`, in one of two ways. With your own database the migration
-Job fails and `helm upgrade` fails before any pod changes. With the bundled
-Postgres `helm upgrade` can report success while the pods roll, and
-release-controller refuses to start; `helm rollback` recovers. Either way the
-message names the projects. Release each of them as `python-odcs`, on a
-continuo version that accepts it, then upgrade.
-
-A release of the kind `python` that is still queued or in flight when the new
-version starts is rejected `invalid_artifact`, with the refusal above as its
-detail, and promotes nothing. Upgrade with no release in flight.
+A Python project releases with the kind `python`, one ODCS file per node.
+continuo reads no `contract.yaml`, the one file for the whole project that
+older projects kept.
 
 To move a project, convert the files, change the CI steps above, and post with
-the kind `python-odcs`. Every field of a `contract.yaml` has a place in the
+the kind `python`. Every field of a `contract.yaml` has a place in the
 `.odcs.yaml` file:
 
 | In `contract.yaml` | In the `.odcs.yaml` file |
