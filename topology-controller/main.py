@@ -82,7 +82,7 @@ def main() -> None:
         decode_responses=False,
         credential_provider=EnvOrFileCredentialProvider(),
     )
-    # In perService mode the login must be fenced to its own keys; a login
+    # In perComponent mode the login must be fenced to its own keys; a login
     # that reaches others raises PermissionFenceError here, which stops the
     # process before anything consumes.
     check_permission_fence(redis_client, redis_acl_mode())

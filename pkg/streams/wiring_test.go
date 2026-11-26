@@ -67,7 +67,7 @@ func contractComponentPrefixes(t *testing.T) []string {
 	var c struct {
 		Streams []struct {
 			Consumers []struct {
-				Service string `yaml:"service"`
+				Component string `yaml:"component"`
 			} `yaml:"consumers"`
 		} `yaml:"streams"`
 	}
@@ -78,9 +78,9 @@ func contractComponentPrefixes(t *testing.T) []string {
 	var prefixes []string
 	for _, s := range c.Streams {
 		for _, cons := range s.Consumers {
-			if cons.Service != "" && !seen[cons.Service] {
-				seen[cons.Service] = true
-				prefixes = append(prefixes, cons.Service+"-")
+			if cons.Component != "" && !seen[cons.Component] {
+				seen[cons.Component] = true
+				prefixes = append(prefixes, cons.Component+"-")
 			}
 		}
 	}

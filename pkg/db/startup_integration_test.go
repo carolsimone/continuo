@@ -45,7 +45,7 @@ func loadStartupTestPostgres(t *testing.T) pkgconfig.PostgresConfig {
 	t.Setenv("DB_MAX_IDLE_CONNS", "")
 	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})
 	if cfg.Host == "" {
-		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go SERVICE=pkg`")
+		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go COMPONENT=pkg`")
 	}
 	return cfg
 }

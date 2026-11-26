@@ -4,7 +4,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${HERE}/common.sh"
 fail=0; assert(){ if eval "$2"; then echo "ok - $1"; else echo "NOT OK - $1"; fail=1; fi; }
 for fn in log_info log_warn log_error wait_for_tcp_port wait_for_http_host \
-          wait_for_container_running check_container_health start_go_service \
+          wait_for_container_running check_container_health start_go_component \
           kind_load_pulled_image; do
   assert "$fn is a function" "declare -F $fn >/dev/null"
 done

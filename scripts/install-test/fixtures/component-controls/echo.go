@@ -1,6 +1,6 @@
-// Command echo is the workload of the chart's service-controls live test. It
+// Command echo is the workload of the chart's component-controls live test. It
 // serves a TCP echo on :50060 from an image without Python, as the shipped Go
-// service images are. With -dial host:port it instead sends one message to
+// component images are. With -dial host:port it instead sends one message to
 // that address and exits non-zero unless the same bytes come back.
 package main
 
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const message = "chart-service-ok"
+const message = "chart-component-ok"
 
 func main() {
 	dial := flag.String("dial", "", "address to send one message to and check its echo")

@@ -16,8 +16,8 @@ services:
     volumes:
       - ./db/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
 
-  # One-shot: runs every service's Flyway migrations as the migration login
-  # continuo_svc, then lets each service's login connect to its own database,
+  # One-shot: runs every component's Flyway migrations as the migration login
+  # continuo_svc, then lets each component's login connect to its own database,
   # grants it read and write on its tables and checks it holds nothing more.
   # The same image and script (db/migrate-all.sh) as the chart's migrate job;
   # db/init-databases.sh creates the logins with their local passwords.
@@ -41,7 +41,7 @@ services:
       - "${REDIS_HOST_PORT:-6379}:6379"
     # Disable all persistence (both RDB snapshots and AOF) to avoid
     # "No space left on device" errors when Colima's virtual disk is tight.
-    # Each service signs in as its own login, from the ACL file the streams
+    # Each component signs in as its own login, from the ACL file the streams
     # generator writes (compose/redis-users.acl): every login has the local
     # password local-<login>, and the default user keeps the password
     # continuo for the test suites and the e2e harness.
@@ -108,7 +108,7 @@ services:
       - REDIS_ADDR=redis:6379
       - REDIS_USERNAME=continuo_run_controller
       - REDIS_PASSWORD=local-continuo_run_controller
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       - MAINTENANCE_ENABLED=false
       # The chart's runs.taskMaxRetries and runs.taskTimeoutHours defaults.
       - TASK_MAX_RETRIES=2
@@ -154,7 +154,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_USERNAME=continuo_execution_controller
       - REDIS_PASSWORD=local-continuo_execution_controller
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -244,7 +244,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_USERNAME=continuo_catalog
       - REDIS_PASSWORD=local-continuo_catalog
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       # Object storage — the version-ingestion consumer reads each release's
       # code-bundle document
       - S3_ENDPOINT_URL=http://minio:9000
@@ -321,7 +321,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_USERNAME=continuo_release_controller
       - REDIS_PASSWORD=local-continuo_release_controller
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       - RELEASE_CONTROLLER_HTTP_PORT=8088
       - RELEASE_CONTROLLER_GRPC_PORT=50056
       - LOG_LEVEL=INFO
@@ -369,7 +369,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_USERNAME=continuo_remediation
       - REDIS_PASSWORD=local-continuo_remediation
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       - REMEDIATION_HTTP_PORT=8090
       - LOG_LEVEL=INFO
       - S3_BUCKET=continuo
@@ -417,7 +417,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_USERNAME=continuo_agent_remediation
       - REDIS_PASSWORD=local-continuo_agent_remediation
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       - AGENT_REMEDIATION_HTTP_PORT=8092
       - AGENT_REMEDIATION_GRPC_PORT=50054
       - AGENT_REMEDIATION_WORKFLOWS_DIR=/etc/continuo-workflows
@@ -497,7 +497,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_USERNAME=continuo_dead_letter_controller
       - REDIS_PASSWORD=local-continuo_dead_letter_controller
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       - DEAD_LETTER_HTTP_PORT=8096
       - DEAD_LETTER_GRPC_PORT=50055
       - LOG_LEVEL=INFO
@@ -529,7 +529,7 @@ services:
       - REDIS_ADDR=redis:6379
       - REDIS_USERNAME=continuo_redis_migrate
       - REDIS_PASSWORD=local-continuo_redis_migrate
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       - LOG_LEVEL=INFO
     restart: "no"
     networks:
@@ -616,7 +616,7 @@ services:
       - REDIS_ADDR=redis:6379
       - REDIS_USERNAME=continuo_agent_chat
       - REDIS_PASSWORD=local-continuo_agent_chat
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       - CHAT_MAX_CONCURRENT_SESSIONS=100
       - LOG_LEVEL=INFO
       - ENV=local
@@ -629,7 +629,7 @@ services:
       # Outbound HTTP (the LLM) goes through egress-proxy. The gRPC dials to
       # run-controller, catalog, dead-letter-controller and release-controller, which
       # agent-chat's continuo CLI subprocess inherits, are the stack's own
-      # services and bypass it. stub-llm is deliberately absent from NO_PROXY:
+      # components and bypass it. stub-llm is deliberately absent from NO_PROXY:
       # it is an allowlisted egress destination. The Go module hosts are listed
       # so `go run` in this container can still fetch modules. minio is the S3
       # endpoint agent-chat is given when its archive is enabled; it is the
@@ -788,7 +788,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - REDIS_USERNAME=continuo_ui
       - REDIS_PASSWORD=local-continuo_ui
-      - REDIS_ACL_MODE=perService
+      - REDIS_ACL_MODE=perComponent
       - CI_AUTH_CONFIG_PATH=/app/ci-auth/ci-auth.json
       - CI_AUTH_ALLOW_INSECURE_ISSUER=true
       - MAINTENANCE_ENABLED=false
@@ -825,7 +825,7 @@ services:
 
   # One-shot bucket provisioner: creates the continuo bucket and installs the
   # 30-day expiry lifecycle rules. `mc ilm import` replaces the full rule set,
-  # so re-running the service is idempotent. Services that read or write S3 at
+  # so re-running the service is idempotent. Components that read or write S3 at
   # startup depend on this completing, not merely on minio being healthy.
   #
   # There is no age rule on code-bundles/ or tenants/: they hold the code bundle
@@ -863,7 +863,7 @@ services:
       REDIS_URL: redis://redis:6379
       REDIS_USERNAME: continuo_topology_controller
       REDIS_PASSWORD: local-continuo_topology_controller
-      REDIS_ACL_MODE: perService
+      REDIS_ACL_MODE: perComponent
       S3_ENDPOINT_URL: http://minio:9000
       S3_BUCKET: continuo
       S3_ENV: local

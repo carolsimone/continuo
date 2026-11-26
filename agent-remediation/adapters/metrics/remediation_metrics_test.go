@@ -46,16 +46,16 @@ func TestRemediationMetrics_CountersCarryTheirLabels(t *testing.T) {
 	m.Tokens("rejected-release", "dbt-compile", "out", 20)
 
 	requireSeries(t, scrape(reg),
-		`continuo_remediation_tries_total{flow="rejected-release",result="passed",service="agent-remediation",type="dbt-compile"} 2`,
-		`continuo_remediation_tries_total{flow="rejected-release",result="gate_failed",service="agent-remediation",type="dbt-validation"} 1`,
-		`continuo_remediation_rounds_total{flow="rejected-release",result="revised",service="agent-remediation",type="dbt-compile"} 1`,
-		`continuo_remediation_rounds_total{flow="rejected-release",result="passed",service="agent-remediation",type="dbt-compile"} 1`,
-		`continuo_remediation_outcomes_total{flow="rejected-release",outcome="handed_over",reason="tries_spent",service="agent-remediation",type="dbt-validation"} 1`,
-		`continuo_remediation_outcomes_total{flow="rejected-release",outcome="fixed",reason="",service="agent-remediation",type="dbt-compile"} 1`,
-		`continuo_remediation_outcomes_total{flow="rejected-release",outcome="handed_over",reason="no_type",service="agent-remediation",type="none"} 1`,
-		`continuo_remediation_system_failures_total{flow="rejected-release",reason="step_failures",service="agent-remediation"} 1`,
-		`continuo_remediation_model_tokens_total{direction="in",flow="rejected-release",service="agent-remediation",type="dbt-compile"} 150`,
-		`continuo_remediation_model_tokens_total{direction="out",flow="rejected-release",service="agent-remediation",type="dbt-compile"} 20`,
+		`continuo_remediation_tries_total{component="agent-remediation",flow="rejected-release",result="passed",type="dbt-compile"} 2`,
+		`continuo_remediation_tries_total{component="agent-remediation",flow="rejected-release",result="gate_failed",type="dbt-validation"} 1`,
+		`continuo_remediation_rounds_total{component="agent-remediation",flow="rejected-release",result="revised",type="dbt-compile"} 1`,
+		`continuo_remediation_rounds_total{component="agent-remediation",flow="rejected-release",result="passed",type="dbt-compile"} 1`,
+		`continuo_remediation_outcomes_total{component="agent-remediation",flow="rejected-release",outcome="handed_over",reason="tries_spent",type="dbt-validation"} 1`,
+		`continuo_remediation_outcomes_total{component="agent-remediation",flow="rejected-release",outcome="fixed",reason="",type="dbt-compile"} 1`,
+		`continuo_remediation_outcomes_total{component="agent-remediation",flow="rejected-release",outcome="handed_over",reason="no_type",type="none"} 1`,
+		`continuo_remediation_system_failures_total{component="agent-remediation",flow="rejected-release",reason="step_failures"} 1`,
+		`continuo_remediation_model_tokens_total{component="agent-remediation",direction="in",flow="rejected-release",type="dbt-compile"} 150`,
+		`continuo_remediation_model_tokens_total{component="agent-remediation",direction="out",flow="rejected-release",type="dbt-compile"} 20`,
 	)
 }
 
@@ -70,12 +70,12 @@ func TestRemediationMetrics_StageObservesSecondsInItsBuckets(t *testing.T) {
 	m.Stage("rejected-release", "", "gate", 10*time.Minute)
 
 	requireSeries(t, scrape(reg),
-		`continuo_remediation_stage_seconds_bucket{flow="rejected-release",service="agent-remediation",stage="propose",type="dbt-compile",le="1"} 0`,
-		`continuo_remediation_stage_seconds_bucket{flow="rejected-release",service="agent-remediation",stage="propose",type="dbt-compile",le="5"} 1`,
-		`continuo_remediation_stage_seconds_bucket{flow="rejected-release",service="agent-remediation",stage="propose",type="dbt-compile",le="60"} 2`,
-		`continuo_remediation_stage_seconds_count{flow="rejected-release",service="agent-remediation",stage="propose",type="dbt-compile"} 2`,
-		`continuo_remediation_stage_seconds_sum{flow="rejected-release",service="agent-remediation",stage="propose",type="dbt-compile"} 22`,
-		`continuo_remediation_stage_seconds_bucket{flow="rejected-release",service="agent-remediation",stage="gate",type="",le="900"} 1`,
-		`continuo_remediation_stage_seconds_bucket{flow="rejected-release",service="agent-remediation",stage="gate",type="",le="3600"} 1`,
+		`continuo_remediation_stage_seconds_bucket{component="agent-remediation",flow="rejected-release",stage="propose",type="dbt-compile",le="1"} 0`,
+		`continuo_remediation_stage_seconds_bucket{component="agent-remediation",flow="rejected-release",stage="propose",type="dbt-compile",le="5"} 1`,
+		`continuo_remediation_stage_seconds_bucket{component="agent-remediation",flow="rejected-release",stage="propose",type="dbt-compile",le="60"} 2`,
+		`continuo_remediation_stage_seconds_count{component="agent-remediation",flow="rejected-release",stage="propose",type="dbt-compile"} 2`,
+		`continuo_remediation_stage_seconds_sum{component="agent-remediation",flow="rejected-release",stage="propose",type="dbt-compile"} 22`,
+		`continuo_remediation_stage_seconds_bucket{component="agent-remediation",flow="rejected-release",stage="gate",type="",le="900"} 1`,
+		`continuo_remediation_stage_seconds_bucket{component="agent-remediation",flow="rejected-release",stage="gate",type="",le="3600"} 1`,
 	)
 }

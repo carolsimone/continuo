@@ -31,7 +31,7 @@ func newTestDB(t *testing.T) *sqlx.DB {
 	v := &pkgconfig.Validator{}
 	cfg := pkgconfig.LoadPostgres(v)
 	if len(v.Missing()) > 0 {
-		testdeps.Unavailable(t, "POSTGRES_* not set; run `make test-go SERVICE=agent-chat`")
+		testdeps.Unavailable(t, "POSTGRES_* not set; run `make test-go COMPONENT=agent-chat`")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

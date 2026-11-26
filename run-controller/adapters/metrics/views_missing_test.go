@@ -30,8 +30,8 @@ func TestViewsMissingCollector_ReportsBothStatesAtScrape(t *testing.T) {
 
 	body := scrape(reg)
 	for _, want := range []string{
-		`continuo_views_missing{service="run-controller",state="missing"} 2`,
-		`continuo_views_missing{service="run-controller",state="stale"} 0`,
+		`continuo_views_missing{component="run-controller",state="missing"} 2`,
+		`continuo_views_missing{component="run-controller",state="stale"} 0`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)

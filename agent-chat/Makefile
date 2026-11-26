@@ -9,7 +9,7 @@ test-unit:
 	go test -v -short ./...
 
 # Run integration tests against the Flyway-built agent-chat database.
-# Point POSTGRES_HOST/PORT/DB/USER/PASSWORD at it, or run `make test-go SERVICE=agent-chat`
+# Point POSTGRES_HOST/PORT/DB/USER/PASSWORD at it, or run `make test-go COMPONENT=agent-chat`
 # from the repository root, which starts and migrates it.
 test-integration:
 	go test -v -tags integration ./... -timeout 5m

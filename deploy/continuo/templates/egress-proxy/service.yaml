@@ -11,7 +11,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "continuo.selectorLabels" (dict "root" . "service" "egress-proxy") | nindent 4 }}
+    {{- include "continuo.selectorLabels" (dict "root" . "name" "egress-proxy") | nindent 4 }}
   ports:
     - name: proxy
       port: 3128

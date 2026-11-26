@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Every chart-deployed service that serves /metrics (a Go service whose source
-imports pkg/metrics, or a Python service whose source imports prometheus_client)
+"""Every chart-deployed component that serves /metrics (a Go component whose
+source imports pkg/metrics, or a Python component whose source imports
+prometheus_client)
 exposes the metrics port the shared ConfigMap names, with prometheus.io
 annotations, and no other Deployment exposes it. The scrape NetworkPolicy is
-absent by default and, when rendered, admits exactly those services on that
+absent by default and, when rendered, admits exactly those components on that
 port only.
 
-Which services serve /metrics is read from their source: an import of
+Which components serve /metrics is read from their source: an import of
 github.com/carolsimone/continuo/pkg/metrics in a non-test .go file of a
 directory holding main.go, or an import of prometheus_client in a non-test .py
 file of a directory holding main.py, so the chart's list cannot drift from the
@@ -33,14 +34,14 @@ PY_SKIPPED_DIRS = {"tests", "bench"}
 DOCUMENTED_METRIC = re.compile(r'^\| `(continuo_[a-z0-9_]+)`', re.MULTILINE)
 
 
-def python_sources(service_dir: pathlib.Path):
+def python_sources(component_dir: pathlib.Path):
     """Yield the non-test .py files under a directory holding main.py.
 
     A path part that starts with a dot (a virtualenv, a cache), a tests or bench
     directory and a test_*.py file are skipped.
     """
-    for source in service_dir.rglob("*.py"):
-        relative = source.relative_to(service_dir).parts
+    for source in component_dir.rglob("*.py"):
+        relative = source.relative_to(component_dir).parts
         if any(p.startswith(".") for p in relative) or PY_SKIPPED_DIRS.intersection(relative[:-1]):
             continue
         if source.name.startswith("test_"):
@@ -48,18 +49,18 @@ def python_sources(service_dir: pathlib.Path):
         yield source
 
 
-def serving_services(root: pathlib.Path) -> set[str]:
+def serving_components(root: pathlib.Path) -> set[str]:
     found = set()
     for main in root.glob("*/main.go"):
-        service_dir = main.parent
-        for source in service_dir.rglob("*.go"):
+        component_dir = main.parent
+        for source in component_dir.rglob("*.go"):
             if not source.name.endswith("_test.go") and IMPORT.search(source.read_text()):
-                found.add(service_dir.name)
+                found.add(component_dir.name)
                 break
     for main in root.glob("*/main.py"):
-        service_dir = main.parent
-        if any(PY_IMPORT.search(source.read_text(encoding="utf-8")) for source in python_sources(service_dir)):
-            found.add(service_dir.name)
+        component_dir = main.parent
+        if any(PY_IMPORT.search(source.read_text(encoding="utf-8")) for source in python_sources(component_dir)):
+            found.add(component_dir.name)
     return found
 
 
@@ -145,7 +146,7 @@ def check_scrape_rule(docs: list[dict], serving: set[str], port: str) -> list[st
 def main(argv: list[str]) -> int:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(message)s")
     root, defaults_path, scrape_path = pathlib.Path(argv[1]), argv[2], argv[3]
-    serving = serving_services(root)
+    serving = serving_components(root)
     defaults = load(defaults_path)
     port = configmap_port(defaults)
     problems = check_defaults(defaults, serving, port) + check_scrape_rule(load(scrape_path), serving, port) + check_documented_metrics(root)

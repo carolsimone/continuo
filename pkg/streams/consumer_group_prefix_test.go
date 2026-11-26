@@ -20,8 +20,8 @@ func TestConsumerGroupsStartWithTheirComponentName(t *testing.T) {
 		Streams []struct {
 			Name      string `yaml:"name"`
 			Consumers []struct {
-				Service string `yaml:"service"`
-				Group   string `yaml:"group"`
+				Component string `yaml:"component"`
+				Group     string `yaml:"group"`
 			} `yaml:"consumers"`
 		} `yaml:"streams"`
 	}
@@ -33,8 +33,8 @@ func TestConsumerGroupsStartWithTheirComponentName(t *testing.T) {
 	for _, s := range c.Streams {
 		for _, cons := range s.Consumers {
 			checked++
-			if !strings.HasPrefix(cons.Group, cons.Service+"-") {
-				t.Errorf("group %q of component %q must start with %q", cons.Group, cons.Service, cons.Service+"-")
+			if !strings.HasPrefix(cons.Group, cons.Component+"-") {
+				t.Errorf("group %q of component %q must start with %q", cons.Group, cons.Component, cons.Component+"-")
 			}
 		}
 	}

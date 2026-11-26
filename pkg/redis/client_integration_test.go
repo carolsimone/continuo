@@ -29,7 +29,7 @@ func TestNewClientReadsThePasswordFileForEveryNewConnection(t *testing.T) {
 	)
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
-		testdeps.Unavailable(t, "REDIS_ADDR not set; run `make test-go SERVICE=pkg`")
+		testdeps.Unavailable(t, "REDIS_ADDR not set; run `make test-go COMPONENT=pkg`")
 	}
 	ctx := context.Background()
 

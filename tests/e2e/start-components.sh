@@ -4,7 +4,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/common.sh"
 
 check_health(){ check_container_health "$1" "$2" "${3:-/health}"; }
-start_component(){ start_go_service "$1" "$3"; }
+start_component(){ start_go_component "$1" "$3"; }
 
 log_info "Starting all components..."
 

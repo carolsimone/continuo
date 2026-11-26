@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""How the chart hands credentials to the pods of its `services` Deployments.
+"""How the chart hands credentials to the pods of its `components` Deployments.
 
 Modes:
   env      every Deployment runs under a ServiceAccount named after it.
-  file     the same, and no container of a service Deployment has a
+  file     the same, and no container of a component Deployment has a
            secretKeyRef: every credential is a `<VAR>_FILE` variable naming a
            file under /var/run/secrets/continuo, projected from its Secret into
            the pod's `continuo-credentials` volume and mounted read-only there.
@@ -18,7 +18,7 @@ Modes:
            execution-controller mounts the fixture's Secrets Store CSI volume.
 
 Deployments the chart renders from their own templates (dex, egress-proxy) are
-not services entries and are not checked.
+not `components` entries and are not checked.
 
 Usage: assert-credential-delivery.py <rendered.yaml> <env|file|company> [<baseline.yaml>]
 """
@@ -31,11 +31,11 @@ logger = logging.getLogger("assert-credential-delivery")
 
 MOUNT_DIR = "/var/run/secrets/continuo"
 VOLUME = "continuo-credentials"
-NOT_SERVICES = {"dex", "egress-proxy"}
-COMPANY_SERVICE, COMPANY_VAR, COMPANY_PATH = "agent-chat", "LLM_API_KEY", "/vault/secrets/llm"
+NOT_COMPONENT_ENTRIES = {"dex", "egress-proxy"}
+COMPANY_COMPONENT, COMPANY_VAR, COMPANY_PATH = "agent-chat", "LLM_API_KEY", "/vault/secrets/llm"
 VAULT_ANNOTATION = "vault.hashicorp.com/agent-inject"
 ROLE_ANNOTATION = "eks.amazonaws.com/role-arn"
-CSI_SERVICE, CSI_DRIVER = "execution-controller", "secrets-store.csi.k8s.io"
+CSI_COMPONENT, CSI_DRIVER = "execution-controller", "secrets-store.csi.k8s.io"
 
 
 def rendered(path: str, kind: str) -> dict:
@@ -44,13 +44,13 @@ def rendered(path: str, kind: str) -> dict:
         for doc in yaml.safe_load_all(fh):
             if not doc or doc.get("kind") != kind:
                 continue
-            if doc["metadata"].get("labels", {}).get("app.kubernetes.io/name") in NOT_SERVICES:
+            if doc["metadata"].get("labels", {}).get("app.kubernetes.io/name") in NOT_COMPONENT_ENTRIES:
                 continue
             found[doc["metadata"]["name"]] = doc
     return found
 
 
-def service_deployments(path: str) -> dict:
+def component_deployments(path: str) -> dict:
     return rendered(path, "Deployment")
 
 
@@ -114,31 +114,31 @@ def check_file(deployments: dict, baseline: dict, failures: list) -> None:
 
 
 def check_company(deployments: dict, service_accounts: dict, failures: list) -> None:
-    deployment = deployments.get(COMPANY_SERVICE)
+    deployment = deployments.get(COMPANY_COMPONENT)
     if deployment is None:
-        failures.append(f"no {COMPANY_SERVICE} Deployment rendered")
+        failures.append(f"no {COMPANY_COMPONENT} Deployment rendered")
         return
     main = deployment["spec"]["template"]["spec"]["containers"][0]
     env = {e["name"]: e for e in main.get("env") or []}
     got = (env.get(f"{COMPANY_VAR}_FILE") or {}).get("value")
     if got != COMPANY_PATH:
-        failures.append(f"{COMPANY_SERVICE}: {COMPANY_VAR}_FILE does not name {COMPANY_PATH}")
+        failures.append(f"{COMPANY_COMPONENT}: {COMPANY_VAR}_FILE does not name {COMPANY_PATH}")
     if COMPANY_VAR in env:
-        failures.append(f"{COMPANY_SERVICE}: {COMPANY_VAR} is set; a company-provided file has no Secret behind it")
+        failures.append(f"{COMPANY_COMPONENT}: {COMPANY_VAR} is set; a company-provided file has no Secret behind it")
     if COMPANY_VAR in projected_items(deployment):
-        failures.append(f"{COMPANY_SERVICE}: the {VOLUME} volume projects {COMPANY_VAR} from a Secret")
+        failures.append(f"{COMPANY_COMPONENT}: the {VOLUME} volume projects {COMPANY_VAR} from a Secret")
     annotations = deployment["spec"]["template"]["metadata"].get("annotations") or {}
     if annotations.get(VAULT_ANNOTATION) != "true":
-        failures.append(f"{COMPANY_SERVICE}: pod annotation {VAULT_ANNOTATION} is {annotations.get(VAULT_ANNOTATION)!r}, want 'true'")
-    account = service_accounts.get(COMPANY_SERVICE)
+        failures.append(f"{COMPANY_COMPONENT}: pod annotation {VAULT_ANNOTATION} is {annotations.get(VAULT_ANNOTATION)!r}, want 'true'")
+    account = service_accounts.get(COMPANY_COMPONENT)
     if account is None:
-        failures.append(f"{COMPANY_SERVICE}: no ServiceAccount rendered")
+        failures.append(f"{COMPANY_COMPONENT}: no ServiceAccount rendered")
     elif not (account["metadata"].get("annotations") or {}).get(ROLE_ANNOTATION):
-        failures.append(f"{COMPANY_SERVICE}: ServiceAccount carries no {ROLE_ANNOTATION} annotation")
-    executor = deployments.get(CSI_SERVICE)
+        failures.append(f"{COMPANY_COMPONENT}: ServiceAccount carries no {ROLE_ANNOTATION} annotation")
+    executor = deployments.get(CSI_COMPONENT)
     volumes = executor["spec"]["template"]["spec"].get("volumes") or [] if executor else []
     if not any((v.get("csi") or {}).get("driver") == CSI_DRIVER for v in volumes):
-        failures.append(f"{CSI_SERVICE}: no {CSI_DRIVER} volume rendered")
+        failures.append(f"{CSI_COMPONENT}: no {CSI_DRIVER} volume rendered")
 
 
 def main() -> int:
@@ -147,13 +147,13 @@ def main() -> int:
         logger.error("usage: assert-credential-delivery.py <rendered.yaml> <env|file|company> [<baseline.yaml>]")
         return 2
     rendered_path, mode = sys.argv[1], sys.argv[2]
-    deployments = service_deployments(rendered_path)
+    deployments = component_deployments(rendered_path)
     failures = []
     if not deployments:
-        failures.append(f"no service Deployment in {rendered_path}")
+        failures.append(f"no component Deployment in {rendered_path}")
     check_service_accounts(deployments, failures)
     if mode == "file":
-        baseline = service_deployments(sys.argv[3]) if len(sys.argv) == 4 else {}
+        baseline = component_deployments(sys.argv[3]) if len(sys.argv) == 4 else {}
         check_file(deployments, baseline, failures)
     elif mode == "company":
         check_company(deployments, rendered(rendered_path, "ServiceAccount"), failures)

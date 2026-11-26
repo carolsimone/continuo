@@ -3,9 +3,9 @@ import { redisClientOptions } from '../../src/server/auth/redis-client';
 
 describe('redisClientOptions', () => {
   // ioredis's ready check sends INFO, which the generated continuo_ui rule
-  // does not grant: in perService mode every connect would log a NOPERM.
-  it('turns the ready check off in perService mode', () => {
-    const opts = redisClientOptions({ redisUsername: 'continuo_ui', redisAclMode: 'perService' }, {});
+  // does not grant: in perComponent mode every connect would log a NOPERM.
+  it('turns the ready check off in perComponent mode', () => {
+    const opts = redisClientOptions({ redisUsername: 'continuo_ui', redisAclMode: 'perComponent' }, {});
     expect(opts.enableReadyCheck).toBe(false);
   });
 
@@ -18,7 +18,7 @@ describe('redisClientOptions', () => {
 
   it('signs in with the configured username and REDIS_PASSWORD', () => {
     const opts = redisClientOptions(
-      { redisUsername: 'continuo_ui', redisAclMode: 'perService' },
+      { redisUsername: 'continuo_ui', redisAclMode: 'perComponent' },
       { REDIS_PASSWORD: 'secret' },
     );
     expect(opts.username).toBe('continuo_ui');
@@ -30,8 +30,8 @@ describe('redisClientOptions', () => {
     const path = await import('path');
     const rules = JSON.parse(
       readFileSync(path.join(__dirname, '../../../deploy/continuo/files/redis-acl-rules.json'), 'utf8'),
-    ) as { logins: { service: string; rule: string }[] };
-    const ui = rules.logins.find((l) => l.service === 'ui');
+    ) as { logins: { component: string; rule: string }[] };
+    const ui = rules.logins.find((l) => l.component === 'ui');
     expect(ui).toBeDefined();
     expect(ui!.rule.split(' ')).not.toContain('+info');
   });

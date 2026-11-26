@@ -1,12 +1,12 @@
 {{- /*
-  Every enabled service runs under a ServiceAccount named after it, carrying
+  Every enabled component runs under a ServiceAccount named after it, carrying
   its serviceAccount.annotations (e.g. a cloud IAM role, or the identity a
   Vault role is bound to) and the image pull secrets its pods pull with:
   serviceAccount.imagePullSecrets when the entry sets it, else the top-level
-  imagePullSecrets. Only a service with rbac.enabled gets a Role and
+  imagePullSecrets. Only a component with rbac.enabled gets a Role and
   RoleBinding; every other ServiceAccount holds no Kubernetes permission.
 */ -}}
-{{- range $svc := .Values.services }}
+{{- range $svc := .Values.components }}
 {{- if $svc.enabled }}
 ---
 apiVersion: v1

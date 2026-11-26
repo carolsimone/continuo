@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Optional Helm/Kubernetes E2E for the service templates in an isolated namespace.
+"""Optional Helm/Kubernetes E2E for the component templates in an isolated namespace.
 
 Requires helm, kubectl, a current test cluster, and the image built from
-fixtures/service-controls: a Go TCP echo on 50060 on alpine without Python, as
-the shipped Go service images are, so the chart's probes must work without it.
+fixtures/component-controls: a Go TCP echo on 50060 on alpine without Python, as
+the shipped Go component images are, so the chart's probes must work without it.
 Pass its image reference as the only argument. No full continuo dependency
 stack is started.
 """
@@ -26,27 +26,27 @@ def run(*args):
 
 def main():
     if len(sys.argv) != 2:
-        raise SystemExit("usage: test-service-controls-live.py <tcp-echo-image>")
-    with tempfile.TemporaryDirectory(prefix="service-controls-") as directory:
+        raise SystemExit("usage: test-component-controls-live.py <tcp-echo-image>")
+    with tempfile.TemporaryDirectory(prefix="component-controls-") as directory:
         chart = Path(directory)
         source = ROOT / "deploy/continuo"
         for name in ["Chart.yaml", "values.yaml", "values.schema.json"]:
             shutil.copy(source / name, chart / name)
         shutil.copytree(source / "files", chart / "files")
         (chart / "templates").mkdir()
-        # Keep the production service templates and their shared ConfigMap.
+        # Keep the production component templates and their shared ConfigMap.
         # Datastore provisioning and controllers are outside this regression.
         for name in ["_helpers.tpl", "deployment.yaml", "service.yaml", "rbac.yaml", "configmap.yaml"]:
             shutil.copy(source / "templates" / name, chart / "templates" / name)
         run("kubectl", "create", "namespace", NAMESPACE)
         try:
-            service = {"name": "control-worker", "enabled": True, "replicas": 0,
+            component = {"name": "control-worker", "enabled": True, "replicas": 0,
                        "image": sys.argv[1], "grpcPort": 50060,
                        "rbac": {"enabled": True, "rules": []}}
 
             def upgrade():
-                run("helm", "upgrade", "--install", "service-controls", str(chart),
-                    "--namespace", NAMESPACE, "--set-json", "services=" + json.dumps([service]))
+                run("helm", "upgrade", "--install", "component-controls", str(chart),
+                    "--namespace", NAMESPACE, "--set-json", "components=" + json.dumps([component]))
 
             upgrade()
             deployment = json.loads(run("kubectl", "get", "deployment/control-worker",
@@ -56,7 +56,7 @@ def main():
             assert not pods["items"]
             print("replicas=0: Kubernetes stores zero replicas and creates no Pods", flush=True)
 
-            service["replicas"] = 1
+            component["replicas"] = 1
             upgrade()
             run("kubectl", "rollout", "status", "deployment/control-worker", "-n", NAMESPACE, "--timeout=90s")
             endpoint = json.loads(run("kubectl", "get", "service/control-worker",
@@ -70,7 +70,7 @@ def main():
                 "/echo", "-dial", "control-worker:50060")
             print("grpcPort only: Service routes TCP traffic to the ready workload", flush=True)
 
-            service["enabled"] = False
+            component["enabled"] = False
             upgrade()
             for kind in ["deployment", "service", "serviceaccount", "role", "rolebinding"]:
                 result = run("kubectl", "get", kind, "control-worker", "-n", NAMESPACE,

@@ -53,7 +53,7 @@ func TestOpen_ConnectsWithTheMergedPool(t *testing.T) {
 	t.Setenv("DB_MAX_IDLE_CONNS", "")
 	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})
 	if cfg.Host == "" {
-		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go SERVICE=pkg`")
+		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go COMPONENT=pkg`")
 	}
 	db, err := pkgdb.Open(context.Background(), cfg, pkgconfig.PoolConfig{MaxOpenConns: 6, MaxIdleConns: 2})
 	require.NoError(t, err)

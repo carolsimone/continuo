@@ -19,7 +19,7 @@ Closes #
 - [ ] Tests added or updated for the behavior changed
 - [ ] `scripts/lint-go.sh --ci` passes (Go changes)
 - [ ] Full `npm test` and `npm run build` pass (ui changes)
-- [ ] `docs/arch/*` updated if service behavior, interfaces, storage ownership, Redis
+- [ ] `docs/arch/*` updated if component behavior, interfaces, storage ownership, Redis
       flows, gRPC surfaces, Kubernetes behavior, or S3 usage changed
 - [ ] Chart changes also update `deploy/continuo/values.schema.json` and
       `deploy/continuo/CHANGELOG.md`

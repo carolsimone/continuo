@@ -168,14 +168,14 @@ def metrics_port() -> int:
 
 
 # REDIS_ACL_MODE (the chart's Redis login mode, injected through the shared
-# ConfigMap): in perService mode each component signs in as its own Redis login,
+# ConfigMap): in perComponent mode each component signs in as its own Redis login,
 # whose rule fences it to its own keys, and the component refuses to start when
 # its login reaches keys outside them (adapters.redis.fence). In shared mode
 # every component signs in with the same password and nothing is checked. These
 # are the values pkg/config accepts for the Go components. Unset is shared.
 REDIS_ACL_MODE_SHARED = "shared"
-REDIS_ACL_MODE_PER_SERVICE = "perService"
-_REDIS_ACL_MODES = (REDIS_ACL_MODE_SHARED, REDIS_ACL_MODE_PER_SERVICE)
+REDIS_ACL_MODE_PER_COMPONENT = "perComponent"
+_REDIS_ACL_MODES = (REDIS_ACL_MODE_SHARED, REDIS_ACL_MODE_PER_COMPONENT)
 
 
 def redis_acl_mode() -> str:
@@ -246,7 +246,7 @@ def validate() -> None:
     this component has a SQL dialect and a list of system relations for, a
     LOG_LEVEL that names no level this component logs at, a METRICS_PORT that is
     not a whole number from 1 to 65535, a REDIS_ACL_MODE other than shared
-    or perService, and an ONTOLOGY_ENABLED other than true or false.
+    or perComponent, and an ONTOLOGY_ENABLED other than true or false.
     """
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
     missing += [key for key in _REQUIRED_SECRETS if not read_secret(key)]

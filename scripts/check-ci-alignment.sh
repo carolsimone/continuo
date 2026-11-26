@@ -4,8 +4,8 @@
 set -uo pipefail
 CI_FILE="${1:-.github/workflows/ci.yml}"
 patterns=(
-  'docker exec .*go build|inline Go build (use a Make target / start-services.sh)'
-  'go run main\.go|inline service start (use start_go_service)'
+  'docker exec .*go build|inline Go build (use a Make target / start-components.sh)'
+  'go run main\.go|inline component start (use start_go_component)'
   'for i in \$\(seq|inline retry/wait loop (use wait_for_* from scripts/lib/common.sh)'
   '/dev/tcp/|inline TCP probe (use wait_for_tcp_port)'
   'scripts/check-[a-z0-9_-]+\.sh|inline guard script (run make guards instead — a gate added to the target must reach CI)'

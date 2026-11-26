@@ -38,12 +38,12 @@ UPGRADE NOTES
   seed preflight. Re-pin it to v0.12.0 or later, or drop the override to
   track the chart's default.
 
-  A values file that overrides the whole services list gets neither
+  A values file that overrides the whole components list gets neither
   release-controller's grpcPort and RELEASE_CONTROLLER_GRPC_PORT nor
   agent-chat's CONTINUO_RELEASE_CONTROLLER_ADDR: copy them from the chart's
   values.yaml, or continuo release notices cannot reach release-controller.
 
-  From continuo 0.11.x or earlier: the run-controller service now plans every
+  From continuo 0.11.x or earlier: run-controller now plans every
   run. When it first starts on this version, it cancels each run still pending
   or running that it did not plan (cancelled by "system", reason "the run's
   tasks were not planned by run-controller, so it cannot continue"). Their
@@ -74,7 +74,7 @@ UPGRADE NOTES
 
   catalog now reads object storage to record node code-version history, so
   it needs S3 to be reachable and authenticated. The chart supplies the
-  credentials for you — they no longer come from the `services` list, so an older
+  credentials for you — they no longer come from the `components` list, so an older
   copy of values.yaml still works — but two things are yours to check:
     * If you run a NetworkPolicy of your own (not this chart's), allow
       catalog egress to your object store.
@@ -163,13 +163,13 @@ the table.
 
 {{- if and .Release.IsUpgrade (not .Values.postgresql.enabled) }}
 
-BREAKING: every service signs in to Postgres as its own login. Before this
+BREAKING: every component signs in to Postgres as its own login. Before this
 upgrade, create each login below with LOGIN and a password and nothing else,
-and a Secret holding its password, named in credentials.postgres.<service>.existingSecret
+and a Secret holding its password, named in credentials.postgres.<component>.existingSecret
 (deploy/CREDENTIALS.md). The migrate job, signed in as {{ .Values.externalDatabase.username }},
 grants each login its rights and stops the upgrade, naming the login, when one
 is missing or has more rights than its own.
-{{- range $svc, $_ := (include "continuo.postgres.serviceDatabases" . | fromJson) }}
+{{- range $svc, $_ := (include "continuo.postgres.componentDatabases" . | fromJson) }}
   {{ (include "continuo.postgres.login" (dict "root" $ "svc" $svc) | fromJson).username }} ({{ $svc }})
 {{- end }}
 dbt and the validation runner sign in with the warehouse Secret
@@ -177,15 +177,15 @@ validation.warehouseSecret, which is yours: the chart builds one only for the
 bundled Postgres.
 {{- end }}
 
-{{- if and .Release.IsUpgrade (not .Values.redis.enabled) (eq (include "continuo.redis.mode" .) "perService") }}
+{{- if and .Release.IsUpgrade (not .Values.redis.enabled) (eq (include "continuo.redis.mode" .) "perComponent") }}
 
-BREAKING: every service signs in to Redis as its own login. Before this
+BREAKING: every component signs in to Redis as its own login. Before this
 upgrade, create each login below with its rule from deploy/redis-acl-rules.acl
 (or deploy/continuo/files/redis-acl-rules.json) and a password, and a Secret
 holding its password, named in credentials.redis.logins.<name>.existingSecret
 (deploy/CREDENTIALS.md). The streams-init hook signs in as each of them before
-any service rolls and stops the upgrade, naming the login, when one is missing
-or its password is wrong; a service refuses to start when its login reaches
+any component rolls and stops the upgrade, naming the login, when one is missing
+or its password is wrong; a component refuses to start when its login reaches
 keys outside its own. A Redis with no ACL users runs with
 credentials.redis.mode=shared instead.
 {{- range $name := (include "continuo.redis.loginNames" . | fromJsonArray) }}
@@ -195,16 +195,16 @@ credentials.redis.mode=shared instead.
 
 {{- if .Release.IsUpgrade }}
 
-Every service now runs under its own ServiceAccount, named after it, not the namespace's default one.
+Every component now runs under its own ServiceAccount, named after it, not the namespace's default one.
 Image pull secrets, RoleBindings and cloud roles bound to the default ServiceAccount no longer apply:
-set imagePullSecrets (and services[].serviceAccount.annotations for cloud roles) in your values.
+set imagePullSecrets (and components[].serviceAccount.annotations for cloud roles) in your values.
 
 Every Redis key now lives under the prefix `continuo:` (streams, ui sessions,
 agent-chat's rate-limit keys, agent-remediation's LLM cache keys). Consumer
 group names do not change. The streams-init step creates each stream and
 consumer group under that prefix. With redis.enabled=false it is a pre-upgrade
-hook Job that runs before the services roll. With the bundled Redis it is a Job
-of the release, which the services wait for (up to five minutes). The ui keeps
+hook Job that runs before the components roll. With the bundled Redis it is a Job
+of the release, which the components wait for (up to five minutes). The ui keeps
 its sessions under continuo:uisession:, so every ui user signs in once more
 after this upgrade, and agent-chat's rate-limit counters and agent-remediation's
 LLM cache start empty.
@@ -217,7 +217,7 @@ their groups and producers retry.
 
 {{- if .Release.IsUpgrade }}
 
-catalog keeps no Postgres: if your values override services, name catalog's
+catalog keeps no Postgres: if your values override components, name catalog's
 entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.
 With the bundled Postgres a POSTGRES_DB left there gives catalog's pod an init
 container that waits for that database and can keep catalog from starting: it
@@ -238,8 +238,8 @@ finished). release-controller refuses to start until that migration has
 applied; if it keeps exiting with a message naming the db-init-migrate Job,
 the migration refused: upgrade to 0.10.0 first.
 
-BREAKING (service renames): the "ui-service" service is now "ui". If your
-values override services[].name entries, update them before upgrading.
+BREAKING (component renames): the "ui-service" component is now "ui". If your
+values override components[].name entries, update them before upgrading.
 Also, if you use ingress.tls.enabled=true with the default TLS secret name,
 it changed from "ui-service-tls" to "ui-tls"; rename/recreate the Secret or
 set ingress.tls.secretName explicitly, or TLS will break.
@@ -265,15 +265,15 @@ manifest-controller-release-requested.
   SHADOW_VERIFY_POLL_INTERVAL, rename them to VERIFICATION_TIMEOUT and
   VERIFICATION_POLL_INTERVAL; the old keys are no longer read.
 
-BREAKING: "executor-controller" and "k8s-controller" are now one service,
+BREAKING: "executor-controller" and "k8s-controller" are now one component,
 "execution-controller", with its own database continuo_execution (created and
 migrated by this upgrade). Nothing is copied from continuo_executor or
-continuo_k8s, so upgrade only when nothing is in flight: stop the old services
+continuo_k8s, so upgrade only when nothing is in flight: stop the old components
 and let every run, release and queued retry finish first. After the new pod is
 Ready and a run has completed, drop the old databases yourself: DROP DATABASE
 continuo_executor; DROP DATABASE continuo_k8s;
-This chart never drops a database. If your values override services[].name
-entries for either old service, replace them with one execution-controller
+This chart never drops a database. If your values override components[].name
+entries for either old component, replace them with one execution-controller
 entry (see values.yaml). That merge renames no consumer group; do not delete any
 for it.
 
@@ -283,9 +283,9 @@ the database continuo_run_controller. Before upgrading, rename its database:
 ALTER DATABASE continuo_state RENAME TO continuo_run_controller; otherwise a
 fresh empty database is created and the run history is stranded. If your
 values set global.stateGrpcAddr, rename it to global.runControllerGrpcAddr; if
-they override services[].name entries, name the entry of that service
+they override components[].name entries, name the entry of that component
 run-controller with POSTGRES_DB continuo_run_controller. The consumer groups
-follow their services' names (state-task-status-updated,
+follow their components' names (state-task-status-updated,
 state-release-promoted and the nine executor-* groups of execution-controller
 become run-controller-* and execution-controller-*). In this order, as the
 CHANGELOG's entry for this version describes in full: redrive the open dead
@@ -361,7 +361,7 @@ Nothing restricts the agents' outbound traffic.
 {{- end }}
 
 {{- $uiPort := 8090 }}
-{{- range .Values.services }}
+{{- range .Values.components }}
 {{- if eq .name "ui" }}
 {{- $uiPort = .httpPort }}
 {{- end }}

@@ -1,7 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $instance := .Release.Name }}
 # Default-deny ingress for every pod in the release; the documents below
-# re-open exactly the edges the service graph needs. With egress.enabled the
+# re-open exactly the edges the release's workloads need. With egress.enabled the
 # egress documents at the end also restrict outbound traffic: agent-chat and
 # agent-remediation reach DNS, the pods of this namespace (egress-proxy among
 # them), an external Postgres or Redis, the in-cluster addresses of other
@@ -399,7 +399,7 @@ spec:
 {{- with $m.scrapeNamespaceSelector }}
 ---
 # Admits the namespaces metrics.scrapeNamespaceSelector names to the metrics
-# port of every service in continuo.metrics.services, and to no other port.
+# port of every component in continuo.metrics.components, and to no other port.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -414,7 +414,7 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: In
-        values: {{ include "continuo.metrics.services" $ }}
+        values: {{ include "continuo.metrics.components" $ }}
   policyTypes: ["Ingress"]
   ingress:
     - from:
@@ -428,12 +428,12 @@ spec:
 # agent-chat and agent-remediation send their outbound calls through
 # egress-proxy while it renders (the chart sets their proxy variables). They
 # may resolve names; reach every pod in this namespace on any port (the proxy,
-# the services and the bundled datastores); reach an external Postgres or
+# the components and the bundled datastores); reach an external Postgres or
 # Redis on its configured port, on a private network or as a pod of any
 # namespace; reach the pods of another namespace on the port of each in-cluster
 # address in that namespace that they reach without the proxy
 # ("continuo.egress.otherNamespaceDestinations": a <name>.<namespace>.svc host
-# in a global.*GrpcAddr or in their `services` env that the allowlist does not
+# in a global.*GrpcAddr or in their `components` env that the allowlist does not
 # admit); and reach their direct
 # destinations ("continuo.egress.directDestinations": egress.directDestinations,
 # every IP address they are given and an external Postgres or Redis at a

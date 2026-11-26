@@ -58,6 +58,29 @@ names:
     use: TestMetrics_ComponentsServePrometheusMetrics
   - pattern: 'TestVendored\w+ProtoMatchesService'
     use: TestVendored...ProtoMatchesComponent
+  # The Redis sign-in mode where each component signs in as its own login is
+  # perComponent (credentials.redis.mode, REDIS_ACL_MODE,
+  # RedisACLModePerComponent, REDIS_ACL_MODE_PER_COMPONENT).
+  - pattern: '(?i)\w*per_?service\w*'
+    use: perComponent
+  # The chart's list of component entries is `components:`.
+  - pattern: 'Values\.services|services\[(name|%s|\]\.\w+)'
+    use: .Values.components, components[name=...]
+  # Every continuo metric series carries the label `component`.
+  - pattern: 'Labels\{"service|service=~?"[\w-]+|by ?\(service'
+    use: the metric label component
+  # The streams contract names the component that owns a stream or reads
+  # through a group with the `component:` key.
+  - pattern: 'yaml:"service"|json:"service"'
+    use: yaml:"component", json:"component"
+  # The guard of retired component names, the e2e start script and the
+  # Makefile's component variables.
+  - pattern: 'check-service-names\w*|check_service_names'
+    use: check-component-names
+  - pattern: 'start-services|e2e-start-services|start_go_service|GO_SERVICES|build-service|build-prod-service|\w*SERVICE=\w+'
+    use: start-components, e2e-start-components, start_go_component, GO_COMPONENTS, build-component, COMPONENT=
+  - pattern: '(?i)microservices?'
+    use: component
   # Project group: the code a team releases as one unit is a project.
   # Bare ServiceName also names gRPC's ServiceDesc.ServiceName and a
   # StatefulSet's serviceName, so it is retired only where it meant a project.

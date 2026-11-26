@@ -62,9 +62,9 @@ LONG_HOST = ".".join(["a" * 60] * 4) + ".com"  # 247 characters: a name, but cod
 
 
 def agent_remediation_github(url: str) -> list:
-    """The services override that points agent-remediation at a GitHub API URL."""
-    services = [{"name": "agent-remediation", "enabled": True, "env": {"GITHUB_BASE_URL": url}}]
-    return ["--set-json", "services=" + json.dumps(services)]
+    """The components override that points agent-remediation at a GitHub API URL."""
+    components = [{"name": "agent-remediation", "enabled": True, "env": {"GITHUB_BASE_URL": url}}]
+    return ["--set-json", "components=" + json.dumps(components)]
 
 
 def values(key: str, entries: list) -> list:
@@ -121,9 +121,9 @@ CASES = [
     ("GitHub Enterprise at an IPv4 address", agent_remediation_github("https://10.1.2.3/api/v3"), ANTHROPIC),
     ("GitHub Enterprise at an IPv6 address", agent_remediation_github("https://[fd00::7]:8443/api/v3"), ANTHROPIC),
     ("agent-remediation without GITHUB_BASE_URL",
-     ["--set-json", 'services=[{"name":"agent-remediation","enabled":true}]'], ANTHROPIC | GITHUB),
+     ["--set-json", 'components=[{"name":"agent-remediation","enabled":true}]'], ANTHROPIC | GITHUB),
     ("no agent-remediation entry",
-     ["--set-json", 'services=[{"name":"run-controller","enabled":true}]'], ANTHROPIC | GITHUB),
+     ["--set-json", 'components=[{"name":"run-controller","enabled":true}]'], ANTHROPIC | GITHUB),
     # Ports of URLs are read in base 10, as written.
     ("URL port with a leading zero", llm_url("http://gpu:08080"), {("gpu", 8080, True)} | GITHUB),
     ("GitHub Enterprise port with a leading zero",
@@ -254,7 +254,7 @@ REFUSED.append(("one bad entry among good ones",
 # address, or whose port is outside 1-65535: the render fails naming the key and
 # the value rather than leaving the agent pointed at a proxy that refuses it.
 LLM_KEY = "llm.baseUrl"
-GITHUB_KEY = "services[name=agent-remediation].env.GITHUB_BASE_URL"
+GITHUB_KEY = "components[name=agent-remediation].env.GITHUB_BASE_URL"
 S3_KEY = "s3.endpointUrl"
 BAD_URLS = [
     ("URL port 0", LLM_KEY, "http://gpu:0", llm_url),
@@ -280,8 +280,8 @@ REFUSED.append(("every URL is unusable and no domain is listed",
                 LLM_KEY, f'{LLM_KEY}="http://vllm_x:8000"'))
 REFUSED.append(("metrics.port equal to the proxy port", ["--set", "metrics.port=3128"], "metrics.port", None))
 REFUSED.append(("metrics.port equal to the health port", ["--set", "metrics.port=8093"], "metrics.port", None))
-REFUSED.append(("a services entry named egress-proxy",
-                ["--set-json", 'services=[{"name":"egress-proxy","enabled":true}]'], "egress-proxy", None))
+REFUSED.append(("a components entry named egress-proxy",
+                ["--set-json", 'components=[{"name":"egress-proxy","enabled":true}]'], "egress-proxy", None))
 
 # Refusals whose message must also say why.
 WHY = [
@@ -373,12 +373,12 @@ def check_disabled(chart: str, kube_version: str, failures: list) -> None:
     elif objects := proxy_objects(docs(off.stdout)):
         failures.append(f"egress.enabled=false still renders {objects}")
     # With the proxy off its ports are free: a metrics.port equal to them, and a
-    # service named egress-proxy, render.
+    # component named egress-proxy, render.
     for name, args in (
         ("metrics.port=3128", ["--set", "metrics.port=3128"]),
         ("metrics.port=8093", ["--set", "metrics.port=8093"]),
-        ("a services entry named egress-proxy",
-         ["--set-json", 'services=[{"name":"egress-proxy","enabled":true}]']),
+        ("a components entry named egress-proxy",
+         ["--set-json", 'components=[{"name":"egress-proxy","enabled":true}]']),
     ):
         result = helm(chart, kube_version, ["--set", "egress.enabled=false", *args])
         if result.returncode != 0:
@@ -394,13 +394,13 @@ def check_disabled(chart: str, kube_version: str, failures: list) -> None:
             failures.append(f"an empty allowlist with {name}: render failed: {result.stderr.strip()}")
         elif objects := proxy_objects(docs(result.stdout)):
             failures.append(f"an empty allowlist with {name} still renders {objects}")
-    named = ["--set-json", "services=" + json.dumps([
+    named = ["--set-json", "components=" + json.dumps([
         {"name": "egress-proxy", "enabled": True},
         {"name": "agent-remediation", "enabled": True, "env": {"GITHUB_BASE_URL": "http://10.0.0.8:8080"}},
     ])]
     result = helm(chart, kube_version, [*llm_url("http://10.0.0.7:8000"), *named])
     if result.returncode != 0:
-        failures.append(f"an empty allowlist with a services entry named egress-proxy: render failed: {result.stderr.strip()}")
+        failures.append(f"an empty allowlist with a components entry named egress-proxy: render failed: {result.stderr.strip()}")
     # One listed domain brings the proxy back, with that single entry.
     result = helm(chart, kube_version, [*empty, *values("allowedDomains", ["api.example.com"])])
     found = allowlist(docs(result.stdout)) if result.returncode == 0 else None

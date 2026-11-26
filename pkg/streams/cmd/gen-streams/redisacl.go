@@ -20,7 +20,7 @@ import (
 // RedisAccess is what one component may do in Redis beyond reading the streams
 // it consumes and writing the streams it produces.
 type RedisAccess struct {
-	Service string `yaml:"service"`
+	Component string `yaml:"component"`
 	// Keys lists plain-key prefixes (after the contract's key prefix) the
 	// component reads and writes with the commands below.
 	Keys []string `yaml:"keys"`
@@ -37,10 +37,10 @@ const (
 	consumerDeadLetterStream = "consumer.dead_letter:v1"
 	outboxDeadLetterStream   = "outbox.dead_letter:v1"
 
-	// streamsInitService is the deploy step that creates every stream and
+	// streamsInitComponent is the deploy step that creates every stream and
 	// consumer group. Its login is the Redis migration login.
-	streamsInitService  = "streams-init"
-	streamsInitUsername = "continuo_redis_migrate"
+	streamsInitComponent = "streams-init"
+	streamsInitUsername  = "continuo_redis_migrate"
 
 	// redisBaseCommands are what every login may run, after -@all: the
 	// connection handshake and the group lookup a consumer waits on.
@@ -69,11 +69,11 @@ func contractComponents(c *Contract) []string {
 			components[p] = struct{}{}
 		}
 		for _, cons := range s.Consumers {
-			components[cons.Service] = struct{}{}
+			components[cons.Component] = struct{}{}
 		}
 	}
 	for _, a := range c.RedisAccess {
-		components[a.Service] = struct{}{}
+		components[a.Component] = struct{}{}
 	}
 	return sortedKeys(components)
 }
@@ -81,9 +81,9 @@ func contractComponents(c *Contract) []string {
 // validateComponentNames checks that every component the contract names has the
 // shape of a component name, so each login name derived from it is well formed.
 func validateComponentNames(c *Contract) error {
-	for _, svc := range contractComponents(c) {
-		if !componentNameRe.MatchString(svc) {
-			return fmt.Errorf("component %q must match %s", svc, componentNameRe.String())
+	for _, comp := range contractComponents(c) {
+		if !componentNameRe.MatchString(comp) {
+			return fmt.Errorf("component %q must match %s", comp, componentNameRe.String())
 		}
 	}
 	return nil
@@ -94,10 +94,10 @@ func validateComponentNames(c *Contract) error {
 // generator instead of getting a login no process signs in as.
 func checkComponentDirectories(c *Contract, root string) error {
 	var missing []string
-	for _, svc := range contractComponents(c) {
-		info, err := os.Stat(filepath.Join(root, svc))
+	for _, comp := range contractComponents(c) {
+		info, err := os.Stat(filepath.Join(root, comp))
 		if err != nil || !info.IsDir() {
-			missing = append(missing, fmt.Sprintf("%q", svc))
+			missing = append(missing, fmt.Sprintf("%q", comp))
 		}
 	}
 	if len(missing) > 0 {
@@ -118,27 +118,27 @@ var (
 func validateRedisAccess(c *Contract) error {
 	seen := map[string]struct{}{}
 	for i, a := range c.RedisAccess {
-		if _, dup := seen[a.Service]; dup {
-			return fmt.Errorf("redis_access[%d]: duplicate component %q", i, a.Service)
+		if _, dup := seen[a.Component]; dup {
+			return fmt.Errorf("redis_access[%d]: duplicate component %q", i, a.Component)
 		}
-		seen[a.Service] = struct{}{}
+		seen[a.Component] = struct{}{}
 		if len(a.Keys) == 0 && !a.AllStreams {
-			return fmt.Errorf("redis_access[%d] (%s): names no keys and not all_streams, so it grants nothing", i, a.Service)
+			return fmt.Errorf("redis_access[%d] (%s): names no keys and not all_streams, so it grants nothing", i, a.Component)
 		}
 		if len(a.Commands) == 0 {
-			return fmt.Errorf("redis_access[%d] (%s): names no commands", i, a.Service)
+			return fmt.Errorf("redis_access[%d] (%s): names no commands", i, a.Component)
 		}
 		for _, k := range a.Keys {
 			if !redisKeyPrefixRe.MatchString(k) {
-				return fmt.Errorf("redis_access[%d] (%s): key prefix %q must match %s", i, a.Service, k, redisKeyPrefixRe.String())
+				return fmt.Errorf("redis_access[%d] (%s): key prefix %q must match %s", i, a.Component, k, redisKeyPrefixRe.String())
 			}
 		}
 		for _, cmd := range a.Commands {
 			if !redisCommandRe.MatchString(cmd) {
-				return fmt.Errorf("redis_access[%d] (%s): command %q must match %s", i, a.Service, cmd, redisCommandRe.String())
+				return fmt.Errorf("redis_access[%d] (%s): command %q must match %s", i, a.Component, cmd, redisCommandRe.String())
 			}
 			if slices.Contains(redisForbiddenCmd, strings.SplitN(cmd, "|", 2)[0]) || strings.HasPrefix(cmd, "flush") {
-				return fmt.Errorf("redis_access[%d] (%s): command %q is administrative or reaches the whole keyspace and is never granted", i, a.Service, cmd)
+				return fmt.Errorf("redis_access[%d] (%s): command %q is administrative or reaches the whole keyspace and is never granted", i, a.Component, cmd)
 			}
 		}
 	}
@@ -148,9 +148,9 @@ func validateRedisAccess(c *Contract) error {
 // redisLogin is one Redis user: the component that signs in as it, its name in
 // Redis and its rule, which holds no password.
 type redisLogin struct {
-	Service  string `json:"service"`
-	Username string `json:"username"`
-	Rule     string `json:"rule"`
+	Component string `json:"component"`
+	Username  string `json:"username"`
+	Rule      string `json:"rule"`
 }
 
 // redisUsername is the login name of a component.
@@ -176,15 +176,15 @@ func redisLogins(c *Contract) ([]redisLogin, error) {
 
 	components := contractComponents(c)
 	logins := make([]redisLogin, 0, len(components)+1)
-	for _, svc := range components {
-		logins = append(logins, redisLogin{Service: svc, Username: redisUsername(svc), Rule: redisRule(c, svc)})
+	for _, comp := range components {
+		logins = append(logins, redisLogin{Component: comp, Username: redisUsername(comp), Rule: redisRule(c, comp)})
 	}
 	logins = append(logins, redisLogin{
-		Service:  streamsInitService,
-		Username: streamsInitUsername,
-		Rule:     migrationRule(c),
+		Component: streamsInitComponent,
+		Username:  streamsInitUsername,
+		Rule:      migrationRule(c),
 	})
-	sort.Slice(logins, func(i, j int) bool { return logins[i].Service < logins[j].Service })
+	sort.Slice(logins, func(i, j int) bool { return logins[i].Component < logins[j].Component })
 	return logins, nil
 }
 
@@ -201,7 +201,7 @@ func redisRule(c *Contract, component string) string {
 	write := map[string]struct{}{} // streams the component produces and does not consume
 	produced := false
 	for _, st := range c.Streams {
-		if slices.ContainsFunc(st.Consumers, func(cons Consumer) bool { return cons.Service == component }) {
+		if slices.ContainsFunc(st.Consumers, func(cons Consumer) bool { return cons.Component == component }) {
 			read[st.Name] = struct{}{}
 		}
 	}
@@ -219,7 +219,7 @@ func redisRule(c *Contract, component string) string {
 
 	var access *RedisAccess
 	for i := range c.RedisAccess {
-		if c.RedisAccess[i].Service == component {
+		if c.RedisAccess[i].Component == component {
 			access = &c.RedisAccess[i]
 		}
 	}

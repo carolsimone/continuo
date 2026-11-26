@@ -71,7 +71,7 @@ export async function buildAuth(cfg: AuthConfig, configuredCi: CiAuthConfig | nu
   ]);
   const redis = new Redis(cfg.redisUrl, redisClientOptions(cfg, process.env));
   watchRedisCredentials(redis, process.env, console);
-  // In perService mode the ui's login must be fenced to its own keys; a login
+  // In perComponent mode the ui's login must be fenced to its own keys; a login
   // that reaches others stops the boot here.
   await checkPermissionFence(redis, cfg.redisAclMode);
   const sessions = new SessionStore(redis, cfg.sessionIdleTtlSeconds, cfg.sessionMaxTtlSeconds);

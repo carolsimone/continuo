@@ -62,7 +62,7 @@ Database (every Job): the operator-owned warehouse Secret
 (`validation.warehouseSecret`) is attached to your container verbatim via
 `envFrom`, so your `profiles.yml` reads the deployment engine's native keys and
 your image bakes that engine's dbt adapter. It carries the company's warehouse
-login, never a login of continuo's own services; in the bundled quickstart it
+login, never a login of continuo's own components; in the bundled quickstart it
 is the chart's `<release>-warehouse-validation`, for the login
 `continuo_warehouse`, which owns the warehouse database.
 

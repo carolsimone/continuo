@@ -126,7 +126,7 @@ spec:
             - name: REDIS_PASSWORD
               value: "local-continuo_execution_controller"
             - name: REDIS_ACL_MODE
-              value: "perService"
+              value: "perComponent"
             - name: POSTGRES_HOST
               value: "${DOCKER_BRIDGE_IP}"
             - name: POSTGRES_PORT

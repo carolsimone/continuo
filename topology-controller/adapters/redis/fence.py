@@ -1,4 +1,4 @@
-"""The Redis permission fence: in perService mode a component refuses to start
+"""The Redis permission fence: in perComponent mode a component refuses to start
 when its Redis login can read keys outside its own.
 
 The fence runs XINFO GROUPS on PERMISSION_PROBE_KEY. Every generated Redis rule
@@ -28,7 +28,7 @@ PERMISSION_PROBE_KEY = "continuo-permission-probe"
 # The REDIS_ACL_MODE values the fence acts on: config.config.redis_acl_mode
 # accepts exactly these.
 SHARED = "shared"
-PER_SERVICE = "perService"
+PER_COMPONENT = "perComponent"
 
 # The clock the fence's waits read and sleep on. They are this module's own,
 # so a test can fake them without faking time.sleep for every thread.
@@ -49,7 +49,7 @@ class PermissionFenceError(RuntimeError):
 
 
 def check_permission_fence(client: Redis, mode: str) -> None:
-    """Make sure, in perService mode, that client's login cannot reach keys
+    """Make sure, in perComponent mode, that client's login cannot reach keys
     outside its own.
 
     Returns when Redis answers the probe with NOPERM, and raises
@@ -61,9 +61,9 @@ def check_permission_fence(client: Redis, mode: str) -> None:
     """
     if mode == SHARED:
         return
-    if mode != PER_SERVICE:
+    if mode != PER_COMPONENT:
         raise PermissionFenceError(
-            f"unknown REDIS_ACL_MODE {mode!r}: expected {SHARED} or {PER_SERVICE}"
+            f"unknown REDIS_ACL_MODE {mode!r}: expected {SHARED} or {PER_COMPONENT}"
         )
     deadline = _monotonic() + _STARTUP_TIMEOUT_S
     delay = _STARTUP_INITIAL_DELAY_S

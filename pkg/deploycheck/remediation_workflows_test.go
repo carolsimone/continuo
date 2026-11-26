@@ -76,7 +76,7 @@ func TestRemediationWorkflowFileKindsMatchTheChart(t *testing.T) {
 	}
 }
 
-// workflowsValuesService is the part of a values.yaml services entry the
+// workflowsValuesService is the part of a values.yaml components entry the
 // workflows folder check reads.
 type workflowsValuesService struct {
 	Name         string            `yaml:"name"`
@@ -99,7 +99,7 @@ type workflowsValuesVolume struct {
 // agent-remediation reads an install's remediation files from
 // AGENT_REMEDIATION_WORKFLOWS_DIR, or from config.go's default when it is unset.
 // Both deployment paths mount the files at that default and set the variable to
-// it: the chart's agent-remediation services entry, whose volume the template
+// it: the chart's agent-remediation components entry, whose volume the template
 // resolves to the workflows ConfigMap, and the compose service. There is no
 // Kubernetes manifest for agent-remediation under tests/e2e/k8s.
 func TestRemediationWorkflowsDirMatchesTheChart(t *testing.T) {
@@ -111,16 +111,16 @@ func TestRemediationWorkflowsDirMatchesTheChart(t *testing.T) {
 	want := m[1]
 
 	var values struct {
-		Services []workflowsValuesService `yaml:"services"`
+		Components []workflowsValuesService `yaml:"components"`
 	}
 	if err := yaml.Unmarshal([]byte(readRepoFile(t, "deploy", "continuo", "values.yaml")), &values); err != nil {
 		t.Fatalf("parse values.yaml: %v", err)
 	}
-	i := slices.IndexFunc(values.Services, func(s workflowsValuesService) bool { return s.Name == "agent-remediation" })
+	i := slices.IndexFunc(values.Components, func(s workflowsValuesService) bool { return s.Name == "agent-remediation" })
 	if i < 0 {
-		t.Fatal("values.yaml has no agent-remediation services entry")
+		t.Fatal("values.yaml has no agent-remediation components entry")
 	}
-	svc := values.Services[i]
+	svc := values.Components[i]
 	if got := svc.Env["AGENT_REMEDIATION_WORKFLOWS_DIR"]; got != want {
 		t.Errorf("values.yaml agent-remediation env AGENT_REMEDIATION_WORKFLOWS_DIR is %q, want config.go's default %q", got, want)
 	}

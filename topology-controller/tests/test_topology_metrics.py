@@ -17,11 +17,11 @@ from service.release_timings import (
 from streams_contract import RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
-SERVICE = {"service": "topology-controller"}
+COMPONENT = {"component": "topology-controller"}
 
 
 def _value(metrics, name, **labels):
-    return metrics.registry.get_sample_value(name, {**SERVICE, **labels})
+    return metrics.registry.get_sample_value(name, {**COMPONENT, **labels})
 
 
 def _finished(nodes, skipped=None, outcome=ReleaseOutcome.OK, kind=None, peak=0, dormant=None):

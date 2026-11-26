@@ -45,7 +45,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "continuo.selectorLabels" (dict "root" $ "service" "db-init-migrate") | nindent 8 }}
+        {{- include "continuo.selectorLabels" (dict "root" $ "name" "db-init-migrate") | nindent 8 }}
     spec:
       restartPolicy: OnFailure
       securityContext:
@@ -55,7 +55,7 @@ spec:
       {{- if .Values.databaseInit.enabled }}
       initContainers:
         # Idempotently creates every continuo database: the 7 Flyway-migrated
-        # service databases and, with the bundled Postgres, the dbt warehouse
+        # component databases and, with the bundled Postgres, the dbt warehouse
         # (validation.warehouseDatabase). An external Postgres's warehouse is
         # the company's. Requires CREATEDB; disable databaseInit when a DBA
         # pre-creates the databases and makes the migration login their owner.
@@ -158,7 +158,7 @@ spec:
             # Bundled quickstart: the job creates each login with its password.
             - name: CONTINUO_PG_CREATE_LOGINS
               value: "true"
-            {{- range $svc, $db := (include "continuo.postgres.serviceDatabases" . | fromJson) }}
+            {{- range $svc, $db := (include "continuo.postgres.componentDatabases" . | fromJson) }}
             {{- $login := dict "root" $ "ref" "postgresLogin" "svc" (dict "name" $svc) }}
             - name: {{ printf "CONTINUO_PG_PASSWORD_%s" (upper $db) }}
               valueFrom:

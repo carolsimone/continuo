@@ -14,7 +14,7 @@ streams:
     description: Node state transitions.
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run-controller-node-updated
         const: RunControllerNodeUpdated
 `
@@ -85,14 +85,14 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: same-group
         const: ConstA
   - name: b:v1
     const: BV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: same-group
         const: ConstB
 `
@@ -110,14 +110,14 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: group-a
         const: SameConst
   - name: b:v1
     const: BV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: group-b
         const: SameConst
 `
@@ -135,7 +135,7 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run_controller_node_updated
         const: RunControllerNodeUpdated
 `
@@ -156,7 +156,7 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: Nope_Controller
+      - component: Nope_Controller
         group: nope-group
         const: NopeGroup
 `
@@ -174,7 +174,7 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: Run-Controller-Node-Updated
         const: RunControllerNodeUpdated
 `
@@ -227,7 +227,7 @@ streams:
     description: Manifest refresh trigger.
     producers: [run-controller]
     consumers:
-      - service: topology-controller
+      - component: topology-controller
         group: topology-controller-update-graph
         const: ManifestUpdateGraph
   - name: manifest.loaded:v1
@@ -235,7 +235,7 @@ streams:
     description: Topology after manifest load.
     producers: [topology-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run-controller-manifest-loaded
         const: RunControllerManifestLoaded
   - name: irrelevant.to.python:v1
@@ -243,7 +243,7 @@ streams:
     description: Should not appear in Python output.
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run-controller-irrelevant
         const: RunControllerIrrelevant
 `
@@ -1010,7 +1010,7 @@ func TestValidate_AcceptsDeadLetterControllerConsumer(t *testing.T) {
 	c := &Contract{KeyPrefix: "continuo:", Streams: []Stream{{
 		Name: "consumer.dead_letter:v1", Const: "ConsumerDeadLetterV1", Description: "d",
 		Producers: []string{"dead-letter-controller"},
-		Consumers: []Consumer{{Service: "dead-letter-controller", Group: "dead-letter-controller-consumer-dead-letters", Const: "DeadLetterControllerConsumerDeadLetters"}},
+		Consumers: []Consumer{{Component: "dead-letter-controller", Group: "dead-letter-controller-consumer-dead-letters", Const: "DeadLetterControllerConsumerDeadLetters"}},
 	}}}
 	if err := validate(c); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -1032,7 +1032,7 @@ func TestEmitGo_GroupsAndRetired(t *testing.T) {
 	c := &Contract{
 		KeyPrefix: "continuo:",
 		Streams: []Stream{
-			{Name: "a:v1", Const: "AV1", Description: "d", Consumers: []Consumer{{Service: "run-controller", Group: "run-controller-a", Const: "RunControllerA"}}},
+			{Name: "a:v1", Const: "AV1", Description: "d", Consumers: []Consumer{{Component: "run-controller", Group: "run-controller-a", Const: "RunControllerA"}}},
 			{Name: "b:v1", Const: "BV1", Description: "d"},
 		},
 		RetiredStreams: []RetiredStream{{Name: "old:v1"}},

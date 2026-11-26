@@ -4,9 +4,9 @@
 
      With redis.enabled=false the Redis exists before the release, so the Job
      is a pre-install/pre-upgrade hook ordered after the migrations: the
-     streams exist before the services roll. With the bundled Redis it is a
+     streams exist before the components roll. With the bundled Redis it is a
      regular, revision-named Job instead, because pre-install hooks run before
-     ANY release resource exists, Redis included; the services wait up to five
+     ANY release resource exists, Redis included; the components wait up to five
      minutes for their groups, so they need no ordering against it.
 
      A hook cannot read a Secret the release creates as a regular resource,
@@ -16,20 +16,20 @@
      dedicated hook Secret, created strictly before the Job, carries it, as
      templates/db-init-migrate-hook-secret.yaml does for Postgres. */ -}}
 {{- $isHook := not .Values.redis.enabled }}
-{{- $perService := eq (include "continuo.redis.mode" .) "perService" }}
-{{- $usesHookSecret := and $isHook (not $perService) (not .Values.externalRedis.existingSecret) }}
-{{- /* perService: streams-init signs in as its own login, and mounts the
+{{- $perComponent := eq (include "continuo.redis.mode" .) "perComponent" }}
+{{- $usesHookSecret := and $isHook (not $perComponent) (not .Values.externalRedis.existingSecret) }}
+{{- /* perComponent: streams-init signs in as its own login, and mounts the
      password of every other login whose password is in a Secret, one file
      per login named after its username, for the sign-in check it runs before
      creating any stream. A login whose password the company puts in its
-     service's pod as a file (credentials.files) is out of its reach and is
-     checked when that service starts. */ -}}
+     component's pod as a file (credentials.files) is out of its reach and is
+     checked when that component starts. */ -}}
 {{- $self := dict "root" $ "ref" "redisLogin" "svc" (dict "name" "streams-init") }}
 {{- $loginFiles := dict }}
 {{- $loginOrder := list }}
-{{- if $perService }}
+{{- if $perComponent }}
 {{- $files := include "continuo.credentialFiles" . | fromJson }}
-{{- range $name := (include "continuo.redis.clientServices" . | fromJsonArray) }}
+{{- range $name := (include "continuo.redis.clientComponents" . | fromJsonArray) }}
 {{- if not (dig $name "REDIS_PASSWORD" "" $files) }}
 {{- $ref := dict "root" $ "ref" "redisLogin" "svc" (dict "name" $name) }}
 {{- $secret := include "continuo.secretName" $ref }}
@@ -90,7 +90,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "continuo.selectorLabels" (dict "root" $ "service" "streams-init") | nindent 8 }}
+        {{- include "continuo.selectorLabels" (dict "root" $ "name" "streams-init") | nindent 8 }}
     spec:
       restartPolicy: OnFailure
       securityContext:
@@ -110,14 +110,14 @@ spec:
             - name: REDISCLI_AUTH
               valueFrom:
                 secretKeyRef:
-                  {{- if $perService }}
+                  {{- if $perComponent }}
                   name: {{ include "continuo.secretName" $self | quote }}
                   key: {{ include "continuo.secretKey" $self | quote }}
                   {{- else }}
                   name: {{ include "continuo.secretName" (dict "root" $ "ref" "redis") | quote }}
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
                   {{- end }}
-            {{- if $perService }}
+            {{- if $perComponent }}
             - name: REDIS_USERNAME
               value: {{ (include "continuo.redis.login" (dict "root" $ "svc" "streams-init") | fromJson).username | quote }}
             {{- end }}
@@ -155,7 +155,7 @@ spec:
           env:
             - name: REDIS_ADDR
               value: {{ printf "%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) | quote }}
-            {{- if $perService }}
+            {{- if $perComponent }}
             - name: REDIS_USERNAME
               value: {{ (include "continuo.redis.login" (dict "root" $ "svc" "streams-init") | fromJson).username | quote }}
             - name: REDIS_PASSWORD
@@ -165,7 +165,7 @@ spec:
                   key: {{ include "continuo.secretKey" $self | quote }}
             {{- if $loginOrder }}
             # Only with a login file to check: a login given only as a company
-            # file is checked when its service starts.
+            # file is checked when its component starts.
             - name: REDIS_LOGINS_DIR
               value: {{ printf "%s/redis-logins" (include "continuo.credentialDir" .) | quote }}
             {{- end }}
@@ -182,7 +182,7 @@ spec:
                   {{- end }}
             {{- end }}
             # A hook reads no ConfigMap of the release, so the Job carries the
-            # mode itself; in perService it refuses to run when its own login
+            # mode itself; in perComponent it refuses to run when its own login
             # reaches keys outside continuo:.
             - name: REDIS_ACL_MODE
               value: {{ include "continuo.redis.mode" . | quote }}

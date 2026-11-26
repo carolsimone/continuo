@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Each service signs in to Postgres as its own login.
+"""Each component signs in to Postgres as its own login.
 
 Checks a rendered manifest:
   - every Deployment whose main container has POSTGRES_DB sets POSTGRES_USER
-    to that service's login, and reads POSTGRES_PASSWORD (as a secretKeyRef
+    to that component's login, and reads POSTGRES_PASSWORD (as a secretKeyRef
     variable, or as the file projected from a Secret) from that login's Secret;
-  - a bundled render gates the service on its wait-for-migrations init
+  - a bundled render gates the component on its wait-for-migrations init
     container signing in as the same login;
   - the migrate Job's CONTINUO_PG_LOGINS names each database's login once;
   - bundled: the migrate Job creates the logins (CONTINUO_PG_CREATE_LOGINS)
@@ -15,8 +15,8 @@ Checks a rendered manifest:
 Usage:
   assert-postgres-logins.py <rendered.yaml> bundled
   assert-postgres-logins.py <rendered.yaml> external <secret-name-format>
-    <secret-name-format> names each login's Secret, with {service} for the
-    service name (e.g. continuo-pg-{service}); its key is `password`.
+    <secret-name-format> names each login's Secret, with {component} for the
+    component name (e.g. continuo-pg-{component}); its key is `password`.
 """
 import logging
 import sys
@@ -96,7 +96,7 @@ def main() -> int:
         if user != login:
             problems.append(f"{name}: POSTGRES_USER is {user!r}, want {login!r}")
         want = (f"{RELEASE}-logins", f"postgres-{name}") if mode == "bundled" \
-            else (ref_name_format.format(service=name), "password")
+            else (ref_name_format.format(component=name), "password")
         got = credential_ref(spec, main, "POSTGRES_PASSWORD")
         if got != want:
             problems.append(f"{name}: POSTGRES_PASSWORD comes from {got}, want {want}")
@@ -132,10 +132,10 @@ def main() -> int:
         if mode == "bundled":
             if create != "true":
                 problems.append(f"bundled migrate Job CONTINUO_PG_CREATE_LOGINS is {create!r}, want 'true'")
-            for svc, (db, _) in LOGINS.items():
+            for component, (db, _) in LOGINS.items():
                 var = f"CONTINUO_PG_PASSWORD_{db.upper()}"
                 ref = (menv.get(var, {}).get("valueFrom") or {}).get("secretKeyRef")
-                if not ref or (ref["name"], ref["key"]) != (f"{RELEASE}-logins", f"postgres-{svc}"):
+                if not ref or (ref["name"], ref["key"]) != (f"{RELEASE}-logins", f"postgres-{component}"):
                     problems.append(f"bundled migrate Job {var} comes from {ref}")
             wh = menv.get("CONTINUO_PG_WAREHOUSE_LOGIN", {}).get("value")
             if wh != WAREHOUSE_LOGIN:
@@ -153,7 +153,7 @@ def main() -> int:
             problems.append(f"bundled render has no {RELEASE}-logins Secret")
         else:
             keys = set((logins.get("stringData") or {}) | (logins.get("data") or {}))
-            want_keys = {f"postgres-{svc}" for svc in LOGINS}
+            want_keys = {f"postgres-{component}" for component in LOGINS}
             if not want_keys <= keys:
                 problems.append(f"{RELEASE}-logins lacks {sorted(want_keys - keys)}")
         warehouse = [s for s in ref_docs.values()
@@ -169,7 +169,7 @@ def main() -> int:
     for p in problems:
         logger.error("FAIL: %s", p)
     if not problems:
-        logger.info("ok: every Postgres service signs in as its own login (%s)", mode)
+        logger.info("ok: every Postgres component signs in as its own login (%s)", mode)
     return 1 if problems else 0
 
 

@@ -7,7 +7,7 @@
 # execution-controller as environment variables (the install's env delivery).
 # Job pods can only reference a Kubernetes Secret, so execution.jobS3Secret
 # names the one they get the S3 key pair from. lint.sh asserts the render.
-# `services` is a list that Helm replaces whole: the other services keep
+# `components` is a list that Helm replaces whole: the other components keep
 # minimal entries so every NetworkPolicy still selects their pods.
 credentials:
   files:
@@ -21,7 +21,7 @@ execution:
   jobS3Secret:
     name: company-job-s3
 
-services:
+components:
   - name: agent-chat
     enabled: true
     httpPort: 8091

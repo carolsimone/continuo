@@ -10,7 +10,7 @@ metadata:
 spec:
   clusterIP: None
   selector:
-    {{- include "continuo.selectorLabels" (dict "root" $ "service" "minio") | nindent 4 }}
+    {{- include "continuo.selectorLabels" (dict "root" $ "name" "minio") | nindent 4 }}
   ports:
     - name: s3
       port: 9000

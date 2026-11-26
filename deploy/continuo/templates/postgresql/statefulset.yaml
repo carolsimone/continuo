@@ -14,11 +14,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "continuo.selectorLabels" (dict "root" $ "service" "postgresql") | nindent 6 }}
+      {{- include "continuo.selectorLabels" (dict "root" $ "name" "postgresql") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "continuo.selectorLabels" (dict "root" $ "service" "postgresql") | nindent 8 }}
+        {{- include "continuo.selectorLabels" (dict "root" $ "name" "postgresql") | nindent 8 }}
     spec:
       securityContext:
         {{- include "continuo.podSecurityContext" . | nindent 8 }}

@@ -21,16 +21,16 @@ type chartValues struct {
 	Validation struct {
 		WarehouseDatabase string `yaml:"warehouseDatabase"`
 	} `yaml:"validation"`
-	Services []struct {
+	Components []struct {
 		Name string            `yaml:"name"`
 		Env  map[string]string `yaml:"env"`
-	} `yaml:"services"`
+	} `yaml:"components"`
 }
 
 type redisRules struct {
 	Logins []struct {
-		Service  string `yaml:"service" json:"service"`
-		Username string `yaml:"username" json:"username"`
+		Component string `yaml:"component" json:"component"`
+		Username  string `yaml:"username" json:"username"`
 	} `json:"logins"`
 }
 
@@ -47,7 +47,7 @@ var composeRedisExempt = map[string]bool{"e2e": true}
 // as the login credentials.postgres names for it (the warehouse login for the
 // dbt warehouse), and a component that connects to Redis signs in as its
 // generated Redis login, each with the local password local-<login>, and with
-// REDIS_ACL_MODE=perService. The one migrations service receives every
+// REDIS_ACL_MODE=perComponent. The one migrations service receives every
 // database's login.
 func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 	var compose composeFile
@@ -64,7 +64,7 @@ func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 	}
 
 	pgLoginByDB := map[string]string{}
-	for _, svc := range values.Services {
+	for _, svc := range values.Components {
 		db := svc.Env["POSTGRES_DB"]
 		if db == "" {
 			continue
@@ -82,7 +82,7 @@ func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 	}
 	redisLogin := map[string]string{}
 	for _, l := range rules.Logins {
-		redisLogin[l.Service] = l.Username
+		redisLogin[l.Component] = l.Username
 	}
 
 	names := make([]string, 0, len(compose.Services))
@@ -124,8 +124,8 @@ func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 			if env["REDIS_PASSWORD"] != "local-"+want {
 				t.Errorf("docker-compose.yml %s: REDIS_PASSWORD=%q, want %q", name, env["REDIS_PASSWORD"], "local-"+want)
 			}
-			if env["REDIS_ACL_MODE"] != "perService" {
-				t.Errorf("docker-compose.yml %s: REDIS_ACL_MODE=%q, want perService", name, env["REDIS_ACL_MODE"])
+			if env["REDIS_ACL_MODE"] != "perComponent" {
+				t.Errorf("docker-compose.yml %s: REDIS_ACL_MODE=%q, want perComponent", name, env["REDIS_ACL_MODE"])
 			}
 		}
 	}

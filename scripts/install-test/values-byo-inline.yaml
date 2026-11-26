@@ -26,7 +26,7 @@ externalNeo4j:
   password: ci-neo4j-pw
 
 credentials:
-  # One Postgres login per service, each with a Secret holding its password
+  # One Postgres login per component, each with a Secret holding its password
   # under the key `password` (deploy/CREDENTIALS.md).
   postgres:
     run-controller: {existingSecret: continuo-pg-run-controller}
@@ -37,7 +37,7 @@ credentials:
     agent-chat: {existingSecret: continuo-pg-agent-chat}
     dead-letter-controller: {existingSecret: continuo-pg-dead-letter-controller}
   redis:
-    mode: perService
+    mode: perComponent
     logins:
       streams-init: {existingSecret: continuo-redis-streams-init}
       run-controller: {existingSecret: continuo-redis-run-controller}

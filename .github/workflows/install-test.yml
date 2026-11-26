@@ -125,7 +125,7 @@ jobs:
 
   migrate-logins:
     # Runs the migrations image against throwaway Postgres containers: the
-    # connect rules, grants and catalog check for each service's login, a
+    # connect rules, grants and catalog check for each component's login, a
     # missing login, a login with too many rights, and the bundled
     # quickstart's logins and warehouse handover.
     runs-on: ubuntu-latest
@@ -167,7 +167,7 @@ jobs:
 
       - name: Build and load PR-changed images into kind
         # PR runs install with global.imageTag=latest, which otherwise pulls the
-        # images published from main. A PR that renames a service or database
+        # images published from main. A PR that renames a component or database
         # references image names / migrations that main's :latest lacks, failing
         # the install against stale images. Build only what this PR changed and
         # side-load it so those refs are already present (imagePullPolicy is

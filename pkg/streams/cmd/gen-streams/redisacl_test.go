@@ -19,30 +19,30 @@ streams:
     const: TaskDispatchV1
     producers: [run-controller]
     consumers:
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-task-dispatch
         const: ExecutionControllerTaskDispatch
   - name: consumer.dead_letter:v1
     const: ConsumerDeadLetterV1
     producers: [run-controller, execution-controller, dead-letter-controller]
     consumers:
-      - service: dead-letter-controller
+      - component: dead-letter-controller
         group: dead-letter-controller-consumer-dead-letters
         const: DeadLetterControllerConsumerDeadLetters
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
     producers: [run-controller, dead-letter-controller]
     consumers:
-      - service: dead-letter-controller
+      - component: dead-letter-controller
         group: dead-letter-controller-outbox-dead-letters
         const: DeadLetterControllerOutboxDeadLetters
 retired_streams:
   - name: task.failed:v1
 redis_access:
-  - service: ui
+  - component: ui
     keys: [uisession:]
     commands: [get, set, del, expire]
-  - service: dead-letter-controller
+  - component: dead-letter-controller
     all_streams: true
     commands: [xrange, xtrim, xlen, del, info, xinfo|groups, xpending]
 `
@@ -144,7 +144,7 @@ func TestEveryRedisComponentHasALogin(t *testing.T) {
 	}
 	have := map[string]string{}
 	for _, l := range logins {
-		have[l.Service] = l.Username
+		have[l.Component] = l.Username
 	}
 	components := contractComponents(c)
 	for _, svc := range components {
@@ -167,7 +167,7 @@ func TestEveryRedisComponentHasALogin(t *testing.T) {
 	if len(logins) != len(components)+1 {
 		t.Errorf("got %d logins, want %d", len(logins), len(components)+1)
 	}
-	if !slices.IsSortedFunc(logins, func(a, b redisLogin) int { return strings.Compare(a.Service, b.Service) }) {
+	if !slices.IsSortedFunc(logins, func(a, b redisLogin) int { return strings.Compare(a.Component, b.Component) }) {
 		t.Errorf("logins are not sorted by component: %+v", logins)
 	}
 }
@@ -177,10 +177,10 @@ func TestEveryRedisComponentHasALogin(t *testing.T) {
 // contract alone.
 func TestANewComponentGetsALogin(t *testing.T) {
 	y := strings.Replace(aclFixtureYAML, "producers: [run-controller]\n", "producers: [run-controller, billing-controller]\n", 1)
-	y = strings.Replace(y, "      - service: execution-controller\n        group: execution-controller-task-dispatch\n        const: ExecutionControllerTaskDispatch\n",
-		"      - service: execution-controller\n        group: execution-controller-task-dispatch\n        const: ExecutionControllerTaskDispatch\n"+
-			"      - service: billing-reader\n        group: billing-reader-task-dispatch\n        const: BillingReaderTaskDispatch\n", 1)
-	y += "  - service: billing-ui\n    keys: [billing:]\n    commands: [get]\n"
+	y = strings.Replace(y, "      - component: execution-controller\n        group: execution-controller-task-dispatch\n        const: ExecutionControllerTaskDispatch\n",
+		"      - component: execution-controller\n        group: execution-controller-task-dispatch\n        const: ExecutionControllerTaskDispatch\n"+
+			"      - component: billing-reader\n        group: billing-reader-task-dispatch\n        const: BillingReaderTaskDispatch\n", 1)
+	y += "  - component: billing-ui\n    keys: [billing:]\n    commands: [get]\n"
 	c := mustLoad(t, y)
 	logins, err := redisLogins(c)
 	if err != nil {
@@ -188,7 +188,7 @@ func TestANewComponentGetsALogin(t *testing.T) {
 	}
 	have := map[string]string{}
 	for _, l := range logins {
-		have[l.Service] = l.Rule
+		have[l.Component] = l.Rule
 	}
 	want := map[string]string{
 		"billing-controller": "%W~continuo:task.dispatch:v1",
@@ -250,17 +250,17 @@ func TestNoRuleGrantsDangerousCommands(t *testing.T) {
 			lower := strings.ToLower(tok)
 			switch {
 			case strings.Contains(lower, "@dangerous"), strings.Contains(lower, "@admin"):
-				t.Errorf("%s: rule grants %s", l.Service, tok)
+				t.Errorf("%s: rule grants %s", l.Component, tok)
 			case strings.HasPrefix(lower, "+@"):
-				t.Errorf("%s: rule grants the command group %s", l.Service, tok)
+				t.Errorf("%s: rule grants the command group %s", l.Component, tok)
 			case lower == "+keys", strings.HasPrefix(lower, "+flush"), strings.HasPrefix(lower, "+keys|"):
-				t.Errorf("%s: rule grants %s", l.Service, tok)
+				t.Errorf("%s: rule grants %s", l.Component, tok)
 			case strings.HasPrefix(lower, "allcommands"), lower == "+@all", lower == "~*", lower == "allkeys":
-				t.Errorf("%s: rule grants everything with %s", l.Service, tok)
+				t.Errorf("%s: rule grants everything with %s", l.Component, tok)
 			}
 		}
 		if !strings.Contains(l.Rule, " -@all ") {
-			t.Errorf("%s: rule does not start from -@all: %s", l.Service, l.Rule)
+			t.Errorf("%s: rule does not start from -@all: %s", l.Component, l.Rule)
 		}
 	}
 }
@@ -279,11 +279,11 @@ func TestRedisAccessRejectsDangerousCommands(t *testing.T) {
 
 func TestRedisAccessValidation(t *testing.T) {
 	cases := map[string]string{
-		"malformed component name":      strings.Replace(aclFixtureYAML, "service: ui", "service: UI_component", 1),
+		"malformed component name":      strings.Replace(aclFixtureYAML, "component: ui", "component: UI_component", 1),
 		"malformed producer name":       strings.Replace(aclFixtureYAML, "producers: [run-controller]", "producers: [run_controller]", 1),
 		"key prefix without a colon":    strings.Replace(aclFixtureYAML, "[uisession:]", "[uisession]", 1),
 		"key prefix that is a wildcard": strings.Replace(aclFixtureYAML, "[uisession:]", `["*"]`, 1),
-		"duplicate component":           aclFixtureYAML + "  - service: ui\n    keys: [other:]\n    commands: [get]\n",
+		"duplicate component":           aclFixtureYAML + "  - component: ui\n    keys: [other:]\n    commands: [get]\n",
 		"entry that grants nothing":     strings.Replace(aclFixtureYAML, "    keys: [uisession:]\n    commands: [get, set, del, expire]\n", "", 1),
 	}
 	for name, y := range cases {
@@ -371,7 +371,7 @@ func TestNoLoginReachesABareStreamName(t *testing.T) {
 		fields := strings.Fields(l.Rule)
 		for _, name := range names {
 			if slices.Contains(fields, "~"+name) || slices.Contains(fields, "%W~"+name) {
-				t.Errorf("the rule of %s reaches the bare name %s: %s", l.Service, name, l.Rule)
+				t.Errorf("the rule of %s reaches the bare name %s: %s", l.Component, name, l.Rule)
 			}
 		}
 	}
@@ -390,8 +390,8 @@ func TestEveryConsumerMayWriteItsDeadLetters(t *testing.T) {
 	}
 	for _, s := range c.Streams {
 		for _, cons := range s.Consumers {
-			if !slices.Contains(consumerDL, cons.Service) {
-				t.Errorf("%s consumes %s but does not produce %s", cons.Service, s.Name, consumerDeadLetterStream)
+			if !slices.Contains(consumerDL, cons.Component) {
+				t.Errorf("%s consumes %s but does not produce %s", cons.Component, s.Name, consumerDeadLetterStream)
 			}
 		}
 	}
@@ -419,7 +419,7 @@ func TestDeadLetterControllerRule(t *testing.T) {
 func ruleOf(t *testing.T, logins []redisLogin, component string) string {
 	t.Helper()
 	for _, l := range logins {
-		if l.Service == component {
+		if l.Component == component {
 			return l.Rule
 		}
 	}

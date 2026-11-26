@@ -49,7 +49,7 @@ func TestEgress_ProxyAdmitsListedHost(t *testing.T) {
 
 // egressAllowedPattern captures the value of each allowed sample of
 // continuo_egress_requests_total, e.g.
-// continuo_egress_requests_total{decision="allowed",reason="ok",service="egress-proxy"} 3.
+// continuo_egress_requests_total{component="egress-proxy",decision="allowed",reason="ok"} 3.
 var egressAllowedPattern = regexp.MustCompile(`(?m)^continuo_egress_requests_total\{[^}]*decision="allowed"[^}]*\} (\S+)$`)
 
 // egressAllowed returns how many requests and tunnels egress-proxy has allowed,

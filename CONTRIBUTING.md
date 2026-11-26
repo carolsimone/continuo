@@ -38,7 +38,7 @@ repository; please do not add headers to new files.
 
 Prerequisites: Docker (or [colima](https://github.com/abiosoft/colima)), `kind`,
 `kubectl`, Helm 3.14+, Go 1.25+, Node 20, and [uv](https://docs.astral.sh/uv/) for the
-Python services.
+Python components.
 
 ```bash
 # Build the shared base image, then bring up the whole stack
@@ -46,26 +46,26 @@ DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
 bash scripts/setup.sh
 ```
 
-`scripts/setup.sh` creates a `kind` cluster, builds every service image, and writes the
-kubeconfig into the service directories that need Kubernetes API access. It also runs
+`scripts/setup.sh` creates a `kind` cluster, builds every component image, and writes the
+kubeconfig into the component directories that need Kubernetes API access. It also runs
 `scripts/ensure-dev-env.sh`, which generates a throwaway `.env` — **no real credentials
 are needed for local development**, and none should ever be committed.
 
-Run a service's tests inside its container, for example:
+Run a component's tests inside its container, for example:
 
 ```bash
 docker exec topology-controller uv run pytest -v
 ```
 
-The Go tests run on the host. `make test-go` covers every service and `make test-go
-SERVICE=pkg` one of them. Both first run `make test-deps-up`, which starts Postgres,
+The Go tests run on the host. `make test-go` covers every component and `make test-go
+COMPONENT=pkg` one of them. Both first run `make test-deps-up`, which starts Postgres,
 Neo4j and Redis, rebuilds the one-shot jobs that migrate them and create the Redis
 streams, and runs those jobs.
 
 To run them beside another worktree's stack, choose free host ports:
 
 ```bash
-make test-go SERVICE=pkg PG_HOST_PORT=25432 REDIS_HOST_PORT=26379 \
+make test-go COMPONENT=pkg PG_HOST_PORT=25432 REDIS_HOST_PORT=26379 \
   NEO4J_HOST_PORT=27687 NEO4J_HTTP_HOST_PORT=27474
 ```
 
@@ -92,17 +92,17 @@ these are the ones that most often trip people up:
   gRPC, Kubernetes, or S3 — those belong in `adapters/`. Application code depends on
   ports, never on a concrete adapter. `TestServiceHandlersDoNotImportAdapters` in
   `pkg/streams/handler_imports_test.go` fails the build otherwise.
-- **Port ownership.** Domain repository ports live in `<service>/domain/repository`;
-  technical ports live in `<service>/service/ports`. Adapters *implement* ports and never
+- **Port ownership.** Domain repository ports live in `<component>/domain/repository`;
+  technical ports live in `<component>/service/ports`. Adapters *implement* ports and never
   declare them.
 - **Stream names are generated, never inlined.** Every Redis stream and consumer group is
   declared in `pkg/streams/contract.yaml`. Add yours there, run
   `go generate ./pkg/streams/...`, and commit the regenerated files. Writing
   `"task.dispatch:v1"` as a literal anywhere — including in tests — fails CI.
-- **Shared logic goes in `pkg/`.** Service-specific logic stays in the owning service.
-- **Python services use the standard `logging` module**, never `print`, except for
+- **Shared logic goes in `pkg/`.** Component-specific logic stays in the owning component.
+- **Python components use the standard `logging` module**, never `print`, except for
   machine-parsed stdout protocols.
-- **Architecture docs are part of the change.** If your pull request alters service
+- **Architecture docs are part of the change.** If your pull request alters component
   behavior, interfaces, storage ownership, Redis flows, gRPC surfaces, Kubernetes
   behavior, or S3 usage, update the relevant file under `docs/arch/` in the same pull
   request.

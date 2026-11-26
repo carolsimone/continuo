@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Every chart-deployed service whose code connects to Redis must carry the
+"""Every chart-deployed component whose code connects to Redis must carry the
 wait-for-redis init container when the chart bundles Redis, and no Deployment
 may carry it when Redis is BYO.
 
 A bundled Redis is a StatefulSet with no ordering guarantee against the
 Deployments, so a Redis client that starts first logs connection failures, or
-crash-loops, before Redis is ready. Which services connect to Redis is taken
+crash-loops, before Redis is ready. Which components connect to Redis is taken
 from their own source, so the chart cannot drift from the code:
-  - Go services:  any non-test .go file importing github.com/redis/go-redis
-  - Python:       pyproject.toml declaring the `redis` distribution
-  - Node:         package.json depending on `ioredis` or `redis`
+  - Go components: any non-test .go file importing github.com/redis/go-redis
+  - Python:        pyproject.toml declaring the `redis` distribution
+  - Node:          package.json depending on `ioredis` or `redis`
 
-A Deployment that has a service directory in the repo but none of those
-manifests fails the check rather than being skipped, so a restructured service
-cannot silently leave the guard. Deployments with no service directory
+A Deployment that has a component directory in the repo but none of those
+manifests fails the check rather than being skipped, so a restructured component
+cannot silently leave the guard. Deployments with no component directory
 (third-party images such as dex) are not governed by repo code and are not
 checked.
 
@@ -39,9 +39,9 @@ NODE_REDIS_PACKAGES = ("ioredis", "redis")
 SKIP_DIRS = {"node_modules", ".venv", "vendor", "dist", "build"}
 
 
-def go_uses_redis(service_dir: pathlib.Path) -> bool:
-    for source in service_dir.rglob("*.go"):
-        if source.name.endswith("_test.go") or SKIP_DIRS.intersection(source.relative_to(service_dir).parts):
+def go_uses_redis(component_dir: pathlib.Path) -> bool:
+    for source in component_dir.rglob("*.go"):
+        if source.name.endswith("_test.go") or SKIP_DIRS.intersection(source.relative_to(component_dir).parts):
             continue
         if GO_REDIS_IMPORT.search(source.read_text()):
             return True
@@ -57,14 +57,14 @@ def node_uses_redis(package_json: pathlib.Path) -> bool:
     return any(name in deps for name in NODE_REDIS_PACKAGES)
 
 
-def uses_redis(service_dir: pathlib.Path):
-    """True/False from the service's own manifests; None if none is recognised."""
-    if (service_dir / "go.mod").exists():
-        return go_uses_redis(service_dir)
-    if (service_dir / "pyproject.toml").exists():
-        return python_uses_redis(service_dir / "pyproject.toml")
-    if (service_dir / "package.json").exists():
-        return node_uses_redis(service_dir / "package.json")
+def uses_redis(component_dir: pathlib.Path):
+    """True/False from the component's own manifests; None if none is recognised."""
+    if (component_dir / "go.mod").exists():
+        return go_uses_redis(component_dir)
+    if (component_dir / "pyproject.toml").exists():
+        return python_uses_redis(component_dir / "pyproject.toml")
+    if (component_dir / "package.json").exists():
+        return node_uses_redis(component_dir / "package.json")
     return None
 
 
@@ -91,12 +91,12 @@ def main() -> int:
 
     gated = []
     for name, has_gate in sorted(gated_deployments(bundled).items()):
-        service_dir = repo / name
-        if not service_dir.is_dir():
+        component_dir = repo / name
+        if not component_dir.is_dir():
             continue
-        want = uses_redis(service_dir)
+        want = uses_redis(component_dir)
         if want is None:
-            failures.append(f"{name}: has a service directory but no go.mod, pyproject.toml or package.json to read its Redis use from")
+            failures.append(f"{name}: has a component directory but no go.mod, pyproject.toml or package.json to read its Redis use from")
         elif want and not has_gate:
             failures.append(f"{name}: its code connects to Redis but the bundled render has no {GATE} init container")
         elif has_gate and not want:
@@ -104,7 +104,7 @@ def main() -> int:
         elif has_gate:
             gated.append(name)
     if not gated and not failures:
-        failures.append(f"no Deployment in {bundled} carries {GATE}; expected every Redis-using service to")
+        failures.append(f"no Deployment in {bundled} carries {GATE}; expected every Redis-using component to")
 
     for manifest in byo_manifests:
         for name, has_gate in sorted(gated_deployments(manifest).items()):
@@ -114,7 +114,7 @@ def main() -> int:
     for f in failures:
         logger.error("FAIL: %s", f)
     if not failures:
-        logger.info("%s present on every Redis-using service (%s) and absent in %d BYO render(s)",
+        logger.info("%s present on every Redis-using component (%s) and absent in %d BYO render(s)",
                     GATE, ", ".join(gated), len(byo_manifests))
     return 1 if failures else 0
 

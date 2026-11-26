@@ -7,7 +7,7 @@
   its built-in files alone. A file agent-remediation would refuse for its kind,
   its version, a duplicate kind or version line, an empty document or a
   misplaced directive fails the render here, before any pod changes, and
-  deployment.yaml fails the render when agent-remediation's services entry
+  deployment.yaml fails the render when agent-remediation's components entry
   would not mount this ConfigMap at that folder.
 
   Each file is written as a JSON string, which YAML reads as a double-quoted

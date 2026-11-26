@@ -28,7 +28,7 @@ exactly two values:
 
 > **`AUTH_MODE=dev` warning:** dev mode makes anyone who can reach the URL a full
 > operator (they can trigger, rerun, and cancel runs). It is only safe when the
-> service is **not** publicly exposed — i.e. `ingress.enabled: false` and you
+> deployment is **not** publicly exposed — i.e. `ingress.enabled: false` and you
 > reach it through an SSH tunnel / `kubectl port-forward`. Never point a public
 > DNS name at a dev-mode deployment.
 

@@ -171,7 +171,7 @@ func TestTheMigrationLoginMayCreateStreamsAndGroups(t *testing.T) {
 	if created, err := admin.EnsureStream(ctx, groupless); err != nil || !created {
 		t.Fatalf("EnsureStream as continuo_redis_migrate = %v, %v; want true, nil", created, err)
 	}
-	if err := pkgredis.CheckPermissionFence(ctx, migrate, pkgconfig.RedisACLModePerService); err != nil {
+	if err := pkgredis.CheckPermissionFence(ctx, migrate, pkgconfig.RedisACLModePerComponent); err != nil {
 		t.Fatalf("the permission fence refuses continuo_redis_migrate: %v", err)
 	}
 }

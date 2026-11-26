@@ -39,15 +39,15 @@ func TestWatchStreams_ReportsLengthAndMemory(t *testing.T) {
 	body := scrape(reg)
 
 	for _, want := range []string{
-		`continuo_stream_length{service="dead-letter-controller",stream="` + stream + `"} 2`,
-		`continuo_stream_length{service="dead-letter-controller",stream="` + missing + `"} 0`,
-		`continuo_redis_maxmemory_bytes{service="dead-letter-controller"}`,
+		`continuo_stream_length{component="dead-letter-controller",stream="` + stream + `"} 2`,
+		`continuo_stream_length{component="dead-letter-controller",stream="` + missing + `"} 0`,
+		`continuo_redis_maxmemory_bytes{component="dead-letter-controller"}`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s\n%s", want, body)
 		}
 	}
-	m := regexp.MustCompile(`(?m)^continuo_redis_used_memory_bytes\{service="dead-letter-controller"\} (\S+)$`).FindStringSubmatch(body)
+	m := regexp.MustCompile(`(?m)^continuo_redis_used_memory_bytes\{component="dead-letter-controller"\} (\S+)$`).FindStringSubmatch(body)
 	if m == nil {
 		t.Fatalf("missing continuo_redis_used_memory_bytes\n%s", body)
 	}

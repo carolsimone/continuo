@@ -5,8 +5,8 @@ fullnameOverride: ""
 
 # Image pull secrets for a private registry, as a list of {name: <Secret>}.
 # Install-time only: the chart puts them on every ServiceAccount it creates
-# (one per service), so each service's pods pull with them. A service's
-# serviceAccount.imagePullSecrets replaces this list for that service. Empty
+# (one per component), so each component's pods pull with them. A component's
+# serviceAccount.imagePullSecrets replaces this list for that component. Empty
 # (the default) renders none.
 imagePullSecrets: []
 
@@ -26,12 +26,12 @@ global:
   storageClass: ""
 
   # Names the install's environment, published as ENV on the shared
-  # ConfigMap. No service reads it yet.
+  # ConfigMap. No component reads it yet.
   env: production
-  # Level every Go service and topology-controller log at, published as
+  # Level every Go component and topology-controller log at, published as
   # LOG_LEVEL on the shared ConfigMap: DEBUG, INFO, WARN (or WARNING) or
   # ERROR, in any case. The chart refuses to render any other value, and a
-  # service given one refuses to start. ui writes its server log with console
+  # component given one refuses to start. ui writes its server log with console
   # and has no level.
   logLevel: INFO
 
@@ -49,7 +49,7 @@ global:
   releaseControllerGrpcAddr: release-controller:50056  # in-cluster gRPC address of release-controller's ReleaseQuery (`continuo release notices`)
 
   # Pod-level shutdown budget (kubectl/kubelet SIGTERM-to-SIGKILL window) for
-  # every Deployment. Each service also bounds its own graceful-shutdown
+  # every Deployment. Each component also bounds its own graceful-shutdown
   # sequence via the SHUTDOWN_GRACE env var (pkg/lifecycle; default 15s, 10s
   # for agent-chat) — keep this comfortably above the largest SHUTDOWN_GRACE
   # in use, or a slow shutdown gets SIGKILLed mid-teardown. The schema floors
@@ -103,8 +103,8 @@ redis:
     tag: "8.6.4"
   auth:
     # Optional pre-created Secret holding the bundled instance's password,
-    # which every service signs in with in credentials.redis.mode=shared (in
-    # perService mode each login has its own, generated password).
+    # which every component signs in with in credentials.redis.mode=shared (in
+    # perComponent mode each login has its own, generated password).
     # Empty = the chart generates one and keeps it stable across upgrades.
     existingSecret: ""
     existingSecretPasswordKey: password
@@ -120,19 +120,19 @@ redis:
 externalRedis:
   host: ""
   port: 6379
-  # The one password every service signs in with in
-  # credentials.redis.mode=shared; perService mode reads each login's own
+  # The one password every component signs in with in
+  # credentials.redis.mode=shared; perComponent mode reads each login's own
   # Secret instead. ui and topology-controller get REDIS_URL=redis://host:port,
-  # which carries no password; every service reads the password on its own, as
+  # which carries no password; every component reads the password on its own, as
   # REDIS_PASSWORD (or REDIS_PASSWORD_FILE), so any character is fine in it.
   password: ""
   existingSecret: ""
   existingSecretPasswordKey: password
 
 # The streams-init Job creates every Redis stream and consumer group of the
-# release, under the `continuo:` key prefix, before the services need them.
+# release, under the `continuo:` key prefix, before the components need them.
 # With redis.enabled=false it runs as a pre-install/pre-upgrade hook, so the
-# streams exist before the services roll; with the bundled Redis it is a
+# streams exist before the components roll; with the bundled Redis it is a
 # regular Job. Consumers wait up to five minutes for their group, and a
 # producer never creates a stream.
 redisInit:
@@ -309,7 +309,7 @@ github:
   existingSecretAppPrivateKeyKey: app-private-key
 
 # How the chart hands credentials to the pods. Install-time only: it shapes the
-# Deployments, and every service reads both forms. The credentials are
+# Deployments, and every component reads both forms. The credentials are
 # POSTGRES_PASSWORD, REDIS_PASSWORD, NEO4J_PASSWORD, AWS_ACCESS_KEY_ID,
 # AWS_SECRET_ACCESS_KEY, LLM_API_KEY, GITHUB_TOKEN, GITHUB_APP_PRIVATE_KEY and
 # AUTH_OIDC_CLIENT_SECRET.
@@ -319,15 +319,15 @@ credentials:
   # /var/run/secrets/continuo (one file per variable, named after it) and sets
   # <VAR>_FILE to the file; no credential is in the environment, and a key the
   # chart knows is empty (llm.apiKey or a GitHub key left unset) is left out.
-  # A service's credentialDelivery overrides it for that service. The bundled
+  # A component's credentialDelivery overrides it for that component. The bundled
   # datastores' wait init containers read the same way.
   delivery: env
   # Credentials a company provides as files of its own (the Vault Agent
-  # injector, a Secrets Store CSI volume), per service: the chart attaches no
+  # injector, a Secrets Store CSI volume), per component: the chart attaches no
   # Secret for them and sets <VAR>_FILE to the given path, whatever the
   # delivery. Add the pod annotations, ServiceAccount annotations and volumes
-  # that put the file there to the service's entry under `services`. A service
-  # with no enabled entry under `services`, or a key that is not one of the
+  # that put the file there to the component's entry under `components`. A component
+  # with no enabled entry under `components`, or a key that is not one of the
   # credentials above, fails the install. With the Vault
   # Agent injector, a bundled datastore's Redis or Postgres password given as
   # a file also needs the pod annotation
@@ -337,7 +337,7 @@ credentials:
   #     agent-chat:
   #       LLM_API_KEY: /vault/secrets/llm
   files: {}
-  # The Postgres login each service signs in as. It reaches the service as
+  # The Postgres login each component signs in as. It reaches the component as
   # POSTGRES_USER, and its password as POSTGRES_PASSWORD (or a file, as
   # `delivery` says) from `key` in the Secret `existingSecret`. The migrate Job
   # signs in as the migration login (externalDatabase.username, or
@@ -347,7 +347,7 @@ credentials:
   # right. It stops before any change when a login does not exist.
   #   - External Postgres: create each login with LOGIN and a password and
   #     nothing else, and a Secret holding its password (deploy/CREDENTIALS.md).
-  #     An enabled service whose login has no existingSecret, and no
+  #     An enabled component whose login has no existingSecret, and no
   #     credentials.files entry for POSTGRES_PASSWORD, fails the render.
   #   - Bundled Postgres: the chart generates every password into the Secret
   #     <release>-logins (kept across upgrades), and the migrate Job creates
@@ -365,28 +365,28 @@ credentials:
     agent-chat: {username: continuo_agent_chat, existingSecret: "", key: password}
     dead-letter-controller: {username: continuo_dead_letter_controller, existingSecret: "", key: password}
     warehouse: {username: continuo_warehouse}
-  # How each service signs in to Redis.
-  #   perService: each Redis service signs in as its own login (REDIS_USERNAME),
-  #     with its password from `key` in the Secret `existingSecret`. Each login's
+  # How each component signs in to Redis.
+  #   perComponent: each component that uses Redis signs in as its own login
+  #     (REDIS_USERNAME), with its password from `key` in the Secret `existingSecret`. Each login's
   #     rule is published in deploy/redis-acl-rules.acl and, one entry per
-  #     login, in files/redis-acl-rules.json; a service refuses to start when
+  #     login, in files/redis-acl-rules.json; a component refuses to start when
   #     its login reaches keys outside its own. streams-init signs in as
   #     `streams-init`'s login and, before it creates the streams, as every
   #     other login whose password is in a Secret, and stops the deploy when
   #     one is missing or its password is wrong.
   #     - External Redis: create each login with its rule and a password, and a
   #       Secret holding the password (deploy/CREDENTIALS.md). An enabled
-  #       service whose login has no existingSecret, and no credentials.files
+  #       component whose login has no existingSecret, and no credentials.files
   #       entry for REDIS_PASSWORD, fails the render, and so does streams-init's
   #       login without one.
   #     - Bundled Redis: the chart generates every password into
   #       <release>-logins and starts Redis with the rules, its default user
   #       off; existingSecret is not used.
-  #   shared: every service signs in with the one Redis password
+  #   shared: every component signs in with the one Redis password
   #     (redis.auth / externalRedis), for a Redis with no ACL users. Any
-  #     service's credential then reaches every key of the Redis.
+  #     component's credential then reaches every key of the Redis.
   redis:
-    mode: perService
+    mode: perComponent
     logins:
       streams-init: {username: continuo_redis_migrate, existingSecret: "", key: password}
       run-controller: {username: continuo_run_controller, existingSecret: "", key: password}
@@ -453,7 +453,7 @@ validation:
   # publishing its library/image and giving it (points 2–4) its own
   # connection. See the fail message in _helpers.tpl `continuo.validation.image`.
   #
-  # `engine` also reaches the control plane: it is published to every service as
+  # `engine` also reaches the control plane: it is published to every component as
   # WAREHOUSE_ENGINE on the shared ConfigMap. topology-controller uses it for
   # two things. It picks the SQL dialect it parses dbt's compiled SQL with
   # and re-renders the candidate SQL in. It also picks which relations are the
@@ -465,7 +465,7 @@ validation:
   # engine your warehouse actually is — topology-controller refuses to start on
   # an engine it has no dialect or system relations for.
   #
-  # Three more services read it. agent-remediation picks the SQL dialect it
+  # Three more components read it. agent-remediation picks the SQL dialect it
   # packages a proposed python-node fix under. run-controller and
   # release-controller pick the engine family, which decides how a seed load
   # that drops its table treats the views that read the table: on postgres
@@ -625,10 +625,10 @@ catalog:
 # blank must resolve, or the install fails and catalog refuses to start.
 # Blanks around a host or a database are trimmed. The three reach catalog through the shared ConfigMap as
 # CONTRACTS_SERVER_HOST, CONTRACTS_SERVER_PORT and CONTRACTS_SERVER_DATABASE, so
-# a change restarts every continuo service, and catalog rewrites every file of
+# a change restarts every continuo component, and catalog rewrites every file of
 # the live folder when it starts with other settings.
-# The install's ontology. Both keys reach the services through the shared
-# ConfigMap, so a change restarts every continuo service.
+# The install's ontology. Both keys reach the components through the shared
+# ConfigMap, so a change restarts every continuo component.
 # enabled: ONTOLOGY_ENABLED, read by topology-controller and release-controller,
 #   which each refuse to start on any value other than true or false. While it
 #   is false (the default), release-controller refuses a release of kind
@@ -669,7 +669,7 @@ contracts:
 # releases and fix verifications already in progress complete. Enforced by ui,
 # run-controller, release-controller, agent-remediation and
 # dead-letter-controller, which refuse to start on any value other than true or
-# false. Changing it restarts every continuo service (the shared ConfigMap
+# false. Changing it restarts every continuo component (the shared ConfigMap
 # changes); turn it on with
 #   helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=true
 # and off again with --set maintenance.enabled=false.
@@ -695,7 +695,7 @@ agentRemediation:
     # (a `---` that only blank lines or comments follow) and a directive
     # (%YAML 1.1, %TAG) that no `---` follows; agent-remediation refuses every
     # other duplicate key when it starts. With files set, the
-    # render also fails unless agent-remediation's services entry has the
+    # render also fails unless agent-remediation's components entry has the
     # volume remediation-workflows as a ConfigMap volume with an empty
     # configMap.name (the only form that mounts this ConfigMap with its digest
     # on the pod template, so a changed file rolls the pod; a name, this
@@ -705,12 +705,12 @@ agentRemediation:
     # below has them. A change rolls agent-remediation
     # only. Empty (the default) loads the built-in files alone.
     # Upgrade with your values file or --reset-then-reuse-values, not
-    # --reuse-values, which keeps the services list of the chart a release was
+    # --reuse-values, which keeps the components list of the chart a release was
     # installed with. See "Remediation files" in the chart's README.
     files: {}
 
 databaseInit:
-  # Idempotently creates the 7 service databases, and with the bundled Postgres
+  # Idempotently creates the 7 component databases, and with the bundled Postgres
   # the warehouse (validation.warehouseDatabase), before the Flyway migrations
   # run, owned by the migration login. Disable when a DBA pre-creates the
   # databases and makes the migration login their owner; it then no longer
@@ -718,16 +718,16 @@ databaseInit:
   enabled: true
 
 database:
-  # Postgres connection-pool limits for the Go services that keep a Postgres
+  # Postgres connection-pool limits for the Go components that keep a Postgres
   # database (catalog and egress-proxy keep none), published to them as
   # DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS on the shared ConfigMap. 0 keeps
-  # each service's own default, sized to how many queries it runs at once
+  # each component's own default, sized to how many queries it runs at once
   # (open/idle: run-controller 20/10,
   # execution-controller 30/5, release-controller 15/5, remediation 10/5,
   # agent-remediation 10/5, agent-chat 20/5, dead-letter-controller 12/5). Each
   # limit is a cap per pod, and the sum of the caps is the worst case: with the
-  # defaults and one replica of each service, 117 pooled connections plus nine
-  # LISTEN connections: one in each pod of the six services that run an outbox
+  # defaults and one replica of each component, 117 pooled connections plus nine
+  # LISTEN connections: one in each pod of the six components that run an outbox
   # relay (run-controller, execution-controller, release-controller,
   # remediation, agent-remediation, dead-letter-controller), a second in
   # execution-controller (its dispatcher), and a second and a third in
@@ -740,18 +740,18 @@ database:
   # its lease waker's 60 s pass or the attempt reconcile's pass, which grants
   # freed nodes before it looks for stalled runs, and run-controller's cron
   # loop sees a cron edit on its next pass, at most 60 s later.
-  # maxOpenConns replaces the default of every one of those services at once,
+  # maxOpenConns replaces the default of every one of those components at once,
   # the largest of which is execution-controller's 30: a lower value can leave
-  # a service's handlers waiting for a connection. To fit a small Postgres,
-  # lower the low-concurrency services one at a time through their
-  # services[].env (DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS), or raise Postgres
+  # a component's handlers waiting for a connection. To fit a small Postgres,
+  # lower the low-concurrency components one at a time through their
+  # components[].env (DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS), or raise Postgres
   # max_connections.
   # Set the two together: maxIdleConns may not exceed maxOpenConns, and the
   # render fails when maxIdleConns is set without maxOpenConns (an idle limit
-  # above a service's own open limit would stop that service from starting). A
-  # service's own services[].env entry overrides both for that service.
+  # above a component's own open limit would stop that component from starting). A
+  # component's own components[].env entry overrides both for that component.
   # docker-compose.yml and the e2e kind manifest leave both unset, so every
-  # service runs its own default.
+  # component runs its own default.
   pool:
     maxOpenConns: 0
     maxIdleConns: 0
@@ -769,10 +769,10 @@ streamReaper:
   retention: "72h"
 
 networkPolicy:
-  # Default-deny ingress within the release plus allow rules derived from the
-  # real service graph. With egress.enabled it also restricts the egress of
-  # agent-chat, agent-remediation and egress-proxy (see egress). Inert on CNIs
-  # that do not enforce NetworkPolicy.
+  # Default-deny ingress within the release plus allow rules for exactly the
+  # edges the release's workloads need. With egress.enabled it also restricts
+  # the egress of agent-chat, agent-remediation and egress-proxy (see egress).
+  # Inert on CNIs that do not enforce NetworkPolicy.
   enabled: true
 
 egress:
@@ -780,13 +780,13 @@ egress:
   # through egress-proxy, a forward proxy that admits a connection only to a
   # host and port on its allowlist. The chart renders the allowlist from llm.*
   # (llm.baseUrl, else the provider's public API), the GITHUB_BASE_URL of
-  # agent-remediation's `services` entry (its `env`; while egress is on, one in
+  # agent-remediation's `components` entry (its `env`; while egress is on, one in
   # either agent's `secretEnv` fails the render), s3.endpointUrl when
   # minio.enabled=false, and the two lists below, and sets HTTP_PROXY,
   # HTTPS_PROXY and NO_PROXY on both agents. NO_PROXY covers the release's own
   # Services and the in-cluster addresses the agents are given (a host with no
   # dot, or ending in .svc or .svc.cluster.local, in a global.*GrpcAddr or in
-  # their `services` env); any other host goes through the proxy. A services
+  # their `components` env); any other host goes through the proxy. A components
   # entry that sets a proxy variable for either agent fails the render.
   # A URL whose host is an IP address stays out of the allowlist: the agents
   # reach it directly (see directDestinations). A URL whose host is no DNS
@@ -858,17 +858,17 @@ egress:
     resources: {}
 
 metrics:
-  # Every Go service (run-controller, catalog, execution-controller,
+  # Every Go component (run-controller, catalog, execution-controller,
   # release-controller, remediation, agent-remediation, agent-chat,
   # dead-letter-controller, egress-proxy) and topology-controller serve
   # Prometheus metrics at /metrics on this port, on a listener of its own, so a
-  # scraper can be admitted to it without reaching the service's other ports.
-  # Published to the services as METRICS_PORT on the shared ConfigMap. Must
-  # differ from every service's httpPort and grpcPort and, while the egress-proxy
+  # scraper can be admitted to it without reaching the component's other ports.
+  # Published to the components as METRICS_PORT on the shared ConfigMap. Must
+  # differ from every component's httpPort and grpcPort and, while the egress-proxy
   # renders, from its ports 3128 and 8093 (rendering fails otherwise).
   port: 9464
   # Adds prometheus.io/scrape, prometheus.io/port and prometheus.io/path pod
-  # annotations to those services, for scrapers that discover pods by annotation.
+  # annotations to those components, for scrapers that discover pods by annotation.
   podAnnotations: true
   # Namespaces allowed through the NetworkPolicy (networkPolicy.enabled) to the
   # metrics port, as a label selector over namespaces, e.g.
@@ -890,25 +890,25 @@ ingress:
     enabled: true
     secretName: ""               # empty → <host must be set> "ui-tls"
 
-# Defaults applied to any service that does not override resources.
+# Defaults applied to any component that does not override resources.
 defaultResources:
   requests: {cpu: 100m, memory: 128Mi}
   limits: {cpu: "1", memory: 512Mi}
 
-# One entry per service. Every enabled service runs under a ServiceAccount
+# One entry per component. Every enabled component runs under a ServiceAccount
 # named after it. Besides the keys the entries below use, an entry takes:
-#   podAnnotations: {}             annotations on the service's pods (e.g. the
+#   podAnnotations: {}             annotations on the component's pods (e.g. the
 #                                  Vault Agent injector's)
 #   serviceAccount:
 #     annotations: {}              annotations on its ServiceAccount (e.g.
 #                                  eks.amazonaws.com/role-arn for IRSA)
 #     imagePullSecrets: []         when set, replaces the top-level
-#                                  imagePullSecrets for this service
+#                                  imagePullSecrets for this component
 #   credentialDelivery: ""         env or file; empty uses credentials.delivery
 #   volumes: []                    any Kubernetes volume (csi, secret, ...),
 #                                  mounted through volumeMounts. A configMap
 #                                  volume with an empty name mounts the chart's
-#                                  ConfigMap for the services that have one;
+#                                  ConfigMap for the components that have one;
 #                                  on agent-remediation, which has two, the one
 #                                  of the volume's name: project-repos, or
 #                                  remediation-workflows while the volume is
@@ -916,8 +916,8 @@ defaultResources:
 #                                  (/etc/continuo-workflows when unset); any
 #                                  other volume mounts project-repos.
 # These keys are install-time only: they shape the Deployments and
-# ServiceAccounts, and no service reads them.
-services:
+# ServiceAccounts, and no component reads them.
+components:
   - name: run-controller
     enabled: true
     replicas: 1
@@ -935,8 +935,8 @@ services:
       - {name: REDIS_PASSWORD, ref: redis}
       # S3 credentials are NOT listed here. run-controller reads each promoted
       # release's topology artifact, and the deployment template injects the
-      # credentials for every storage-reading service (see
-      # continuo.s3.credentialServices in _helpers.tpl). Endpoint, bucket and
+      # credentials for every storage-reading component (see
+      # continuo.s3.credentialComponents in _helpers.tpl). Endpoint, bucket and
       # region arrive via the shared ConfigMap.
     env:
       POSTGRES_DB: continuo_run_controller
@@ -960,7 +960,7 @@ services:
       - {name: REDIS_PASSWORD, ref: redis}
       # S3 credentials are NOT listed here. catalog reads each release's
       # code-bundle document, and the deployment template injects the credentials
-      # for every storage-reading service (see continuo.s3.credentialServices in
+      # for every storage-reading component (see continuo.s3.credentialComponents in
       # _helpers.tpl) so they survive an upgrade that carries an older copy of
       # this list. Endpoint, bucket and region arrive via the shared ConfigMap.
     env:
@@ -976,7 +976,7 @@ services:
     # (see adapters/http/server.go): /ready covers the Postgres dependency
     # probe (an outage stops traffic); agent-chat runs no consumers or
     # workers, so /livez has nothing registered today and is a constant 200 —
-    # the route exists so every service exposes the same probe contract.
+    # the route exists so every component exposes the same probe contract.
     readinessPath: /ready
     livenessPath: /livez
     secretEnv:
@@ -1106,9 +1106,9 @@ services:
     httpPort: 8086
     # No dedicated probePath override: both readiness and liveness fall back
     # to the template default (/health), which is intentional here — this
-    # service serves no application traffic through this port, so liveness
+    # component serves no application traffic through this port, so liveness
     # is wired to the same consumer-heartbeat check as readiness rather than
-    # the Go services' hardcoded-200 liveness. See adapters/health/server.py.
+    # the Go components' hardcoded-200 liveness. See adapters/health/server.py.
     secretEnv:
       - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
       - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}

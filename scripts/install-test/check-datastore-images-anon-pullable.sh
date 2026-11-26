@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 # Chart-rendered images + the compose minio/mc pins. Restrict to the datastore
-# repos (not our own continuo service images, which are gated to the release
+# repos (not our own continuo component images, which are gated to the release
 # tag and reachable via the ghcr packages the release publishes).
 chart="$(helm template t deploy/continuo | grep -oE 'image: "[^"]+"' | sed 's/image: "//;s/"//')"
 compose="$(grep -oE 'image: *ghcr\.io/[^ ]*continuo-(minio|mc):[^ ]+' docker-compose.yml | sed 's/image: *//')"

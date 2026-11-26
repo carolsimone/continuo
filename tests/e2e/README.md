@@ -37,7 +37,7 @@ DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
 
 # 3. Bootstrap everything in the background:
 #    - Creates the kind cluster
-#    - Builds all docker-compose service images (including dbt-base)
+#    - Builds every docker-compose image (including dbt-base)
 #    - Builds and loads dbt project images into kind
 #    - Compiles dbt manifests (requires postgres to be up briefly)
 #    - Writes kubeconfigs into component directories
@@ -45,7 +45,7 @@ DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
 bash scripts/setup.sh
 
 # 4. Start Go component processes inside containers and wait for health
-bash tests/e2e/start-services.sh
+bash tests/e2e/start-components.sh
 
 # 5. Start the ui container
 docker compose up -d ui
@@ -86,7 +86,7 @@ docker compose up -d
 docker compose ps   # neo4j should show "(healthy)"
 
 # Start Go component processes and wait for health
-bash tests/e2e/start-services.sh
+bash tests/e2e/start-components.sh
 
 # Start ui
 docker compose up -d ui
@@ -140,7 +140,7 @@ covered by ui unit tests.
 | Script | What it does |
 |--------|-------------|
 | `scripts/setup.sh` | Full bootstrap: kind cluster + image builds + dbt manifests + dbt seeds + the outside table `e2e_raw.ingest_probe` + kubeconfig + compose up |
-| `tests/e2e/start-services.sh` | Starts Go component processes inside containers (`go run`), waits for HTTP health |
+| `tests/e2e/start-components.sh` | Starts Go component processes inside containers (`go run`), waits for HTTP health |
 | `tests/e2e/provision-k8s-test-env.sh` | Rebuilds controller + dbt images, loads them into kind, regenerates kubeconfig, deploys k8s manifests |
 | `tests/e2e/deploy-execution-controller.sh` | Deploys the pre-built execution-controller image already in kind (no rebuild); used by CI after `setup.sh` |
 | `tests/e2e/cleanup-execution-controller.sh` | Removes the execution-controller Deployment from the kind cluster |
@@ -152,7 +152,7 @@ CI mirrors the blank-state flow above:
 1. `bash scripts/setup.sh` (with `CI=true` set automatically by GitHub Actions)
 2. Wait for containers to be running
 3. Build + start `run-controller` and `catalog` binaries (gRPC health check)
-4. Run per-service unit tests
+4. Run per-component unit tests
 5. Build + start `topology-controller`
 6. `docker compose up -d ui`
 7. `bash tests/e2e/deploy-execution-controller.sh` (images pre-loaded by setup.sh)
@@ -182,7 +182,7 @@ The E2E test uses a hybrid setup:
 **In docker-compose:**
 - PostgreSQL, Redis, Neo4j (data stores), MinIO (S3 — dbt manifests)
 - run-controller, catalog, topology-controller, release-controller (components)
-- egress-proxy (forward proxy for the outbound HTTP of agent-chat and agent-remediation; they reach their LLM and GitHub only through it, and reach the stack's own components directly via `NO_PROXY`). `start-services.sh` starts it before agent-remediation: health `:8093/ready`, proxy port `:3128`. Its allowlist is `tests/e2e/config/egress-allowlist.yaml`, which admits `stub-llm`, `stub-github` and the public LLM and GitHub APIs
+- egress-proxy (forward proxy for the outbound HTTP of agent-chat and agent-remediation; they reach their LLM and GitHub only through it, and reach the stack's own components directly via `NO_PROXY`). `start-components.sh` starts it before agent-remediation: health `:8093/ready`, proxy port `:3128`. Its allowlist is `tests/e2e/config/egress-allowlist.yaml`, which admits `stub-llm`, `stub-github` and the public LLM and GitHub APIs
 
 **In kind cluster (Kubernetes):**
 - execution-controller (Deployment)
@@ -225,7 +225,7 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `python_timeout_test.go` | `TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI` — one of the two python contracts of `fixtures/py-timeout` declares `timeoutMinutes: 90`. The test streams the fixture into the fixture image and runs the image's own `continuo-runtime pack` (`docker run`, no bind mount). Its `--image-packages` is the list the image's `continuo-runtime packages` prints. So the runtime release the chart defaults to writes the bundle, not the test. The bundle is uploaded and a `python-odcs` release posted; once it promotes, run-controller's live release carries `timeout_seconds = 5400` on that node and NULL on every other node. The image must be built on a runtime that reads `.odcs.yaml` files (0.13.0 or later); `scripts/setup.sh` rebuilds it |
 | `image_contract_test.go` | `TestE2E_PythonImageContractMismatch_FailsInvalid` — the release of python project `svc-py-mismatch-e2e` carries a bundle packed from `fixtures/py-probe/mismatch/py_mismatch.released.odcs.yaml` by the mismatch image's own `continuo-runtime pack`, and names the image `continuo-e2e-py-probe:mismatch` (the Dockerfile's `mismatch` target), which bakes `py_mismatch.baked.odcs.yaml` instead: the same node `e2e_schema.py_mismatch` with one read changed in meaning. The test first checks the `content_hash` the image's `continuo-runtime hash` computes from its baked contract differs from the one it computes from the released contract. The release is a bootstrap one, so it promotes without validation; `StartRun(e2e-py-mismatch)` then runs the node, the runtime harness finds the image cannot reproduce the `CONTENT_HASH` execution-controller passes, and the task fails `invalid` `image_contract_mismatch` after a single attempt. A deferred cleanup deletes the project's `service_prod` row |
 | `remediation_python_test.go` | `TestE2E_PythonValidationFailure_VerifiedFix`, `TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt`, `TestE2E_PythonParseFailure_VerifiedFix` — a rejected python node is repaired in its `.odcs.yaml` contract, verified by a real verification run that stops at `passed`, and proposed for review; the second test proves a failed verification run's error feeds the next attempt and reaches no classifier at all; the third drives the same lane from a parse-stage rejection (a read whose relation is not schema-qualified), where the rejection carries the parser's text inline and no log. Uses the fixture repository under `fixtures/py-remediation-repo`, which `stub-github` serves as a tarball; the test builds each release's bundle from the project's directory there rather than with `continuo-runtime pack`, since the parse scenario's read is one the runtime refuses |
-| `dead_letter_test.go` | `TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped`, `TestDeadLetter_RedriveReachesOnlyItsGroup`, `TestDeadLetter_CLIListsAndRedrives`, `TestDeadLetter_BacklogMetricIsExposed` — a message no consumer can parse is stored by dead-letter-controller and served through `ListDeadLetters`; a redrive of it on `release.promoted:v2` is handled only by the group that failed it (the other groups acknowledge it without a handler) and a repeated redrive publishes nothing; the real `continuo dlq list`/`redrive` binary (built from the `./cli` mount with `GOWORK=off`) drives the same flow; the backlog gauge appears once a dead letter is open. dead-letter-controller is started by `start-services.sh` (health `:8096/ready`, gRPC `:50055`) |
+| `dead_letter_test.go` | `TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped`, `TestDeadLetter_RedriveReachesOnlyItsGroup`, `TestDeadLetter_CLIListsAndRedrives`, `TestDeadLetter_BacklogMetricIsExposed` — a message no consumer can parse is stored by dead-letter-controller and served through `ListDeadLetters`; a redrive of it on `release.promoted:v2` is handled only by the group that failed it (the other groups acknowledge it without a handler) and a repeated redrive publishes nothing; the real `continuo dlq list`/`redrive` binary (built from the `./cli` mount with `GOWORK=off`) drives the same flow; the backlog gauge appears once a dead letter is open. dead-letter-controller is started by `start-components.sh` (health `:8096/ready`, gRPC `:50055`) |
 | `egress_test.go` | `TestEgress_ProxyRefusesHostNotOnAllowlist`, `TestEgress_ProxyAdmitsListedHost`, `TestEgress_ChatTrafficGoesThroughProxy` — a `CONNECT` to a host off the allowlist is answered 403 and one to `stub-llm:9100` is answered 200; one chat turn raises the proxy's `continuo_egress_requests_total{decision="allowed"}` count, which shows agent-chat reaches its LLM through egress-proxy. The remediation tests' LLM and GitHub calls go through the proxy as well |
 | `seed_topology_test.go` | `seedTopology` helper — announces the e2e DAG through release-controller's `announce-topology` (artifact in MinIO, next promotion seq, `release.promoted:v2`), which catalog applies to Neo4j and run-controller stores as its live release on the promotion path. It returns once both have applied it (`waitForAnnouncedTopology` in `announce_topology_test.go`): catalog's `:Meta` and run-controller's `live_release` name the announced release, and the release's `topology_nodes` in run-controller carry every schedule the DAG declares, which is what `StartRun` needs to know a schedule |
 | `topology_by_reference_test.go` | `TestTopologyByReference_LatePromotionMovesNothing` — announces A, with a model of schedule `e2e-stale-probe`, then B without it, and replays A's `release.promoted:v2` entry under a fresh event id: both catalog's and run-controller's groups acknowledge it without a dead letter, catalog's live pointer and run-controller's live release stay at B, and for 10 s no node of run-controller's live release carries `e2e-stale-probe` and `ListSchedules` does not list it. `TestTopologyByReference_CorruptArtifactIsDeadLettered` — a promotion whose artifact does not match its checksum is dead-lettered as permanent by catalog's and run-controller's groups, and catalog's live pointer does not move |
@@ -353,7 +353,7 @@ colima start --disk 100  # 100GB
 - A component the agents should reach directly (a compose service name) belongs in that agent's `NO_PROXY` in `docker-compose.yml`.
 
 **Neo4j not healthy / components fail to start:**
-- Neo4j takes up to 90 seconds to become healthy. Wait for `docker compose ps` to show `neo4j` as `(healthy)` before running `bash tests/e2e/start-services.sh`.
+- Neo4j takes up to 90 seconds to become healthy. Wait for `docker compose ps` to show `neo4j` as `(healthy)` before running `bash tests/e2e/start-components.sh`.
 
 **Test fails with kubectl errors:**
 - Verify kind cluster is running: `kind get clusters`
@@ -380,7 +380,7 @@ colima start --disk 100  # 100GB
 docker compose ps
 docker logs catalog --tail 50
 docker compose restart catalog run-controller
-bash tests/e2e/start-services.sh
+bash tests/e2e/start-components.sh
 ```
 
 **continuo-base image missing (after docker system prune):**
@@ -427,4 +427,4 @@ docker-compose up -d --force-recreate neo4j
 
 The harness runs inside the `catalog` container, whose `REDIS_*` and `POSTGRES_*` variables are catalog's own login, so it reads its own: `E2E_REDIS_PASSWORD` (default `continuo`, Redis's default user) and `E2E_POSTGRES_PASSWORD` (default `continuo`, the migration login `continuo_svc`). `E2E_WAREHOUSE_DB` (default `continuo_dbt`) selects the warehouse database the harness inspects for dbt-materialized tables; it signs in there as `E2E_WAREHOUSE_USER` (default `continuo_warehouse`) with `E2E_WAREHOUSE_PASSWORD` (default `local-continuo_warehouse`).
 
-**Maintenance mode (`TestMaintenanceMode`):** triggers a single-node run, then restarts the `run-controller` and `release-controller` containers with `MAINTENANCE_ENABLED=true` (relaunching `go run .` with the flag overridden; each component's output goes to `/tmp/<container>.log` inside its container). With maintenance on it asserts a new node run (via `ui`) and a new public release are refused with HTTP 503 and the `maintenance` code, and that the run already in flight still reaches `succeeded`. It then restarts both components with the flag off and asserts a new run is accepted and succeeds. The restarts take a minute or more each, and a `t.Cleanup` turns maintenance off again even on failure. If the test is interrupted before that cleanup runs, restore the stack with `docker restart run-controller release-controller && bash tests/e2e/start-services.sh`.
+**Maintenance mode (`TestMaintenanceMode`):** triggers a single-node run, then restarts the `run-controller` and `release-controller` containers with `MAINTENANCE_ENABLED=true` (relaunching `go run .` with the flag overridden; each component's output goes to `/tmp/<container>.log` inside its container). With maintenance on it asserts a new node run (via `ui`) and a new public release are refused with HTTP 503 and the `maintenance` code, and that the run already in flight still reaches `succeeded`. It then restarts both components with the flag off and asserts a new run is accepted and succeeds. The restarts take a minute or more each, and a `t.Cleanup` turns maintenance off again even on failure. If the test is interrupted before that cleanup runs, restore the stack with `docker restart run-controller release-controller && bash tests/e2e/start-components.sh`.

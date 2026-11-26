@@ -54,18 +54,18 @@ case "$MODE" in
     kubectl -n "$NS" rollout status deployment/byo-redis --timeout=180s
     kubectl -n "$NS" rollout status deployment/byo-neo4j --timeout=300s
     # Act as the company: create the migration login (CREATEDB, no
-    # superuser), each service's Postgres login with LOGIN and a password and
+    # superuser), each component's Postgres login with LOGIN and a password and
     # nothing else, the warehouse login owning its own database, each Redis
     # login with the rule continuo publishes, and one Secret per login.
     pg_super() {
       kubectl -n "$NS" exec deploy/byo-postgres -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres -qc "$1"
     }
     pg_super "CREATE ROLE continuo LOGIN CREATEDB PASSWORD 'ci-postgres-pw'"
-    for svc in run-controller execution-controller release-controller remediation \
+    for component in run-controller execution-controller release-controller remediation \
                agent-remediation agent-chat dead-letter-controller; do
-      login="continuo_${svc//-/_}"
+      login="continuo_${component//-/_}"
       pg_super "CREATE ROLE ${login} LOGIN PASSWORD 'ci-${login}'"
-      kubectl -n "$NS" create secret generic "continuo-pg-${svc}" \
+      kubectl -n "$NS" create secret generic "continuo-pg-${component}" \
         --from-literal=password="ci-${login}" --dry-run=client -o yaml | kubectl apply -f -
     done
     pg_super "CREATE ROLE continuo_warehouse LOGIN PASSWORD 'ci-continuo_warehouse'"
@@ -88,7 +88,7 @@ case "$MODE" in
         --from-literal=password="ci-${username}" --dry-run=client -o yaml | kubectl apply -f -
     done < <(python3 -c 'import json, sys
 for login in json.load(open(sys.argv[1]))["logins"]:
-    print(login["service"], login["username"], login["rule"])' deploy/continuo/files/redis-acl-rules.json)
+    print(login["component"], login["username"], login["rule"])' deploy/continuo/files/redis-acl-rules.json)
     if [ "$MODE" = byo-secret ]; then
       kubectl -n "$NS" create secret generic continuo-datastores \
         --from-literal=postgres-password=ci-postgres-pw \

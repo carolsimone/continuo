@@ -15,7 +15,7 @@ import (
 // continuo: prefix, so a login built from those rules is always refused it.
 const permissionProbeKey = "continuo-permission-probe"
 
-// CheckPermissionFence makes sure, in RedisACLModePerService, that the login
+// CheckPermissionFence makes sure, in RedisACLModePerComponent, that the login
 // client signs in as cannot reach keys outside its own. It runs XINFO GROUPS
 // on permissionProbeKey: every generated rule allows that command, so a NOPERM
 // answer can only mean the key is outside the login's patterns, and any other
@@ -27,10 +27,10 @@ func CheckPermissionFence(ctx context.Context, client *goredis.Client, mode stri
 	switch mode {
 	case pkgconfig.RedisACLModeShared:
 		return nil
-	case pkgconfig.RedisACLModePerService:
+	case pkgconfig.RedisACLModePerComponent:
 	default:
 		return fmt.Errorf("unknown REDIS_ACL_MODE %q: expected %s or %s",
-			mode, pkgconfig.RedisACLModeShared, pkgconfig.RedisACLModePerService)
+			mode, pkgconfig.RedisACLModeShared, pkgconfig.RedisACLModePerComponent)
 	}
 	err := client.Do(ctx, "XINFO", "GROUPS", permissionProbeKey).Err()
 	return fenceVerdict(loginName(ctx, client), err)

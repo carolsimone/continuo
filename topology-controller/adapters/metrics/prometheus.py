@@ -4,7 +4,7 @@
 release observer of the candidate handler (service.ports.ReleaseObserverPort)
 and the observer of the stream consumer (adapters.redis.consumer.ConsumerObserver).
 
-Every series declares `service` as its first label, because a prometheus-client
+Every series declares `component` as its first label, because a prometheus-client
 registry takes no labels of its own and the Go components' series carry it. The
 registry holds no process or Python runtime collectors for the same reason: they
 cannot carry the label. Each metric name is a literal at its definition, so a
@@ -48,76 +48,76 @@ class TopologyMetrics:
         self._stage_duration = Histogram(
             "continuo_topology_stage_duration_seconds",
             "Seconds one stage of a release's parse took, summed over its runs, once per release that ended.",
-            ["service", "stage"],
+            ["component", "stage"],
             buckets=STAGE_BUCKETS,
             registry=self.registry,
         )
         self._releases = Counter(
             "continuo_topology_releases_total",
             "Releases whose parse ended, by outcome (ok, failed) and failure kind (none when it did not fail).",
-            ["service", "outcome", "failure_kind"],
+            ["component", "outcome", "failure_kind"],
             registry=self.registry,
         )
         self._release_nodes = Gauge(
             "continuo_topology_release_nodes",
             "Nodes the last release that ended held, by family (dbt, python, external).",
-            ["service", "family"],
+            ["component", "family"],
             registry=self.registry,
         )
         self._release_columns = Gauge(
             "continuo_topology_release_columns",
             "Columns the nodes of the last release that ended declare, by family (dbt, python, external; external nodes declare none).",
-            ["service", "family"],
+            ["component", "family"],
             registry=self.registry,
         )
         self._release_skipped_nodes = Gauge(
             "continuo_topology_release_skipped_nodes",
             "Nodes the parse of the last release that ended left out, by reason.",
-            ["service", "reason"],
+            ["component", "reason"],
             registry=self.registry,
         )
         self._release_dormant_nodes = Gauge(
             "continuo_topology_release_dormant_nodes",
             "Dormant nodes (a model or snapshot with an owner and no schedule tag) the last release that ended held.",
-            ["service"],
+            ["component"],
             registry=self.registry,
         )
         self._contract_failures = Counter(
             "continuo_topology_contract_failures_total",
             "Contract failures of the releases that ended, by stage (generate, validate, normalise, hash) and reason.",
-            ["service", "stage", "reason"],
+            ["component", "stage", "reason"],
             registry=self.registry,
         )
         self._validation_cache = Counter(
             "continuo_topology_validation_cache_total",
             "Contract validations of the releases that ended, by result (hit when the schema check was answered from the cache, miss when it ran).",
-            ["service", "result"],
+            ["component", "result"],
             registry=self.registry,
         )
         self._release_peak_rss = Gauge(
             "continuo_topology_release_peak_rss_bytes",
             "Largest resident set read at a stage boundary during the last release that ended.",
-            ["service"],
+            ["component"],
             registry=self.registry,
         )
 
         self._handled = Histogram(
             "continuo_consumer_handler_duration_seconds",
             "Handler invocations by result (ok, permanent, infrastructure, transient) and their duration.",
-            ["service", "stream", "group", "result"],
+            ["component", "stream", "group", "result"],
             buckets=CONSUMER_BUCKETS,
             registry=self.registry,
         )
         self._dead_letters = Counter(
             "continuo_consumer_dead_letters_total",
             "Messages written to the consumer dead-letter stream, by kind.",
-            ["service", "stream", "group", "kind"],
+            ["component", "stream", "group", "kind"],
             registry=self.registry,
         )
         self._pauses = Counter(
             "continuo_consumer_infra_pauses_total",
             "Pauses after an infrastructure error.",
-            ["service", "stream", "group"],
+            ["component", "stream", "group"],
             registry=self.registry,
         )
 

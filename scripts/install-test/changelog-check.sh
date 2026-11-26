@@ -30,7 +30,7 @@ if [ -n "$(git diff --name-only "${BASE_SHA}" HEAD -- deploy/redis-acl-rules.acl
 fi
 
 # topology-controller reads every Python contract with the continuo-contracts
-# version it pins, and a service's CI pins the same version, which it learns
+# version it pins, and a project's CI pins the same version, which it learns
 # from the CHANGELOG. A pin change is therefore named in the CHANGELOG as
 # "continuo-contracts <version>", with the new version. A comment line that
 # names the library is not a pin.
@@ -54,7 +54,7 @@ if grep -Eq '^\+[^#+][^#]*continuo-contracts' <<<"$pin_diff"; then
       echo
       echo "Add a line containing the words 'continuo-contracts ${new_pin}' under" \
            "'## [Unreleased]' in deploy/continuo/CHANGELOG.md, saying what the new" \
-           "version reads so service teams pin the same version in their CI."
+           "version reads so project teams pin the same version in their CI."
       exit 1
     fi
     echo "$pin_file moves the continuo-contracts pin to ${new_pin} and CHANGELOG.md names it. OK."

@@ -49,7 +49,7 @@ into one dependency graph, and it heals broken pipelines by having an LLM
   your confirmation first.
 - **Fully event-driven.** No polling, horizontally scalable, and every message
   a consumer gives up on is stored and can be redriven. The streams are
-  continuo's own wiring: they are trimmed once its services have read them, so
+  continuo's own wiring: they are trimmed once its components have read them, so
   build on the `/api/v1` HTTP API and the metrics, not on the events.
 - **Two-step onboarding.** Publish an image and `POST /api/v1/releases` with a
   bearer token: your pipeline's GitHub Actions token

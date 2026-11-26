@@ -10,7 +10,7 @@ metadata:
 spec:
   clusterIP: None
   selector:
-    {{- include "continuo.selectorLabels" (dict "root" $ "service" "neo4j") | nindent 4 }}
+    {{- include "continuo.selectorLabels" (dict "root" $ "name" "neo4j") | nindent 4 }}
   ports:
     - name: bolt
       port: 7687

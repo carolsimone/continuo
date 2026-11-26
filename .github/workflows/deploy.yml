@@ -44,7 +44,7 @@ jobs:
         # Changes are detected since the last commit a push run deployed, not
         # since the previous push: a deploy run that was cancelled while it
         # waited behind another would otherwise take its commits' changes with
-        # it, and those services would keep running their older images.
+        # it, and those components would keep running their older images.
         id: since
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -183,26 +183,26 @@ jobs:
               --arg s3_sidecar "$S3_SIDECAR_CHANGED" \
               '{
                 include: [
-                  {service: "run-controller", changed: $run_controller, dockerfile: "run-controller/Dockerfile.prod", context: "."},
-                  {service: "catalog", changed: $catalog, dockerfile: "catalog/Dockerfile.prod", context: "."},
-                  {service: "execution-controller", changed: $execution_controller, dockerfile: "execution-controller/Dockerfile.prod", context: "."},
-                  {service: "ui", changed: $ui, dockerfile: "ui/Dockerfile", context: "ui"},
-                  {service: "topology-controller", changed: $topology, dockerfile: "topology-controller/Dockerfile.prod", context: "topology-controller"},
-                  {service: "release-controller", changed: $release_controller, dockerfile: "release-controller/Dockerfile.prod", context: "."},
-                  {service: "agent-chat", changed: $agent_chat, dockerfile: "agent-chat/Dockerfile.prod", context: "."},
-                  {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
-                  {service: "agent-remediation", changed: $agent_remediation, dockerfile: "agent-remediation/Dockerfile.prod", context: "."},
-                  {service: "dead-letter-controller", changed: $dead_letter_controller, dockerfile: "dead-letter-controller/Dockerfile.prod", context: "."},
-                  {service: "egress-proxy", changed: $egress_proxy, dockerfile: "egress-proxy/Dockerfile.prod", context: "."},
-                  {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
-                  {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"}
+                  {image: "run-controller", changed: $run_controller, dockerfile: "run-controller/Dockerfile.prod", context: "."},
+                  {image: "catalog", changed: $catalog, dockerfile: "catalog/Dockerfile.prod", context: "."},
+                  {image: "execution-controller", changed: $execution_controller, dockerfile: "execution-controller/Dockerfile.prod", context: "."},
+                  {image: "ui", changed: $ui, dockerfile: "ui/Dockerfile", context: "ui"},
+                  {image: "topology-controller", changed: $topology, dockerfile: "topology-controller/Dockerfile.prod", context: "topology-controller"},
+                  {image: "release-controller", changed: $release_controller, dockerfile: "release-controller/Dockerfile.prod", context: "."},
+                  {image: "agent-chat", changed: $agent_chat, dockerfile: "agent-chat/Dockerfile.prod", context: "."},
+                  {image: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
+                  {image: "agent-remediation", changed: $agent_remediation, dockerfile: "agent-remediation/Dockerfile.prod", context: "."},
+                  {image: "dead-letter-controller", changed: $dead_letter_controller, dockerfile: "dead-letter-controller/Dockerfile.prod", context: "."},
+                  {image: "egress-proxy", changed: $egress_proxy, dockerfile: "egress-proxy/Dockerfile.prod", context: "."},
+                  {image: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
+                  {image: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"}
                 ]
               }'
           )"
           echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
 
   build-base:
-    # When Dockerfile.base changes, the service images must build FROM the
+    # When Dockerfile.base changes, the component images must build FROM the
     # rebuilt continuo-base:v1 — publishing it here, inside this workflow's
     # DAG, guarantees build-publish never pulls a stale base. Publishing it
     # from a separate push-triggered workflow raced this one: the base build
@@ -272,7 +272,7 @@ jobs:
       - build-base
     # Self-hosted, deliberately trading wall-clock for cost.
     #
-    # This is a matrix (one job per service), so on GitHub-hosted it fans out for
+    # This is a matrix (one job per image), so on GitHub-hosted it fans out for
     # free — and it used to live there for exactly that reason. It is also the
     # single largest consumer of billable Actions minutes: ~743 job-minutes/month
     # of a ~2,029 total, against a 2,000-minute allowance. Keeping it hosted is
@@ -280,7 +280,7 @@ jobs:
     # goal that outranks speed here.
     #
     # The cost is real and was measured: the runner box runs runner_count=1, so
-    # these per-service jobs serialize (one agent = one job at a time) and queue
+    # these per-image jobs serialize (one agent = one job at a time) and queue
     # behind PR CI — ~6x slower for a release. Accepted knowingly.
     #
     # This becomes free again the moment the box has several agents: raise
@@ -294,7 +294,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.detect-changes.outputs.matrix) }}
     env:
-      IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/continuo-${{ matrix.service }}
+      IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/continuo-${{ matrix.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -309,7 +309,7 @@ jobs:
 
       - name: Set up QEMU
         # binfmt registration for the architecture this runner is NOT. The
-        # service images build their non-native half without emulation (the Go
+        # component images build their non-native half without emulation (the Go
         # images cross-compile; topology-controller installs the target's wheels
         # on the build platform), but the RUN steps of the other images' runtime
         # stages and the smoke step below execute the non-native variant.
@@ -328,7 +328,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Reuse latest image for unchanged service
+      - name: Reuse latest image when its source is unchanged
         id: reuse
         if: matrix.changed != 'true'
         continue-on-error: true
@@ -362,13 +362,13 @@ jobs:
           tags: |
             ${{ env.IMAGE_REPO }}:${{ github.sha }}
             ${{ env.IMAGE_REPO }}:latest
-          # matrix.build_args carries per-service extras (none set today). Unset
+          # matrix.build_args carries per-image extras (none set today). Unset
           # entries contribute a blank line, which build-push-action ignores.
           build-args: |
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/continuo-base:v1
             ${{ matrix.build_args }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
 
       - name: Report publish strategy
         run: |
@@ -401,7 +401,7 @@ jobs:
         # under QEMU. Catches a wrong GOARCH: the manifest would still list the
         # platform, but the binary inside would fail with "exec format error".
         # Skipped for images with no runnable entrypoint of this shape.
-        if: matrix.service != 'migrations'
+        if: matrix.image != 'migrations'
         env:
           SMOKE_ARCH: ${{ runner.arch == 'ARM64' && 'amd64' || 'arm64' }}
         run: |

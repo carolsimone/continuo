@@ -73,7 +73,7 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
     # The fake Redis client answers no command, so the permission fence stays
     # off whatever REDIS_ACL_MODE the test process inherits (the compose
-    # container sets perService); the fence's own test sets it.
+    # container sets perComponent); the fence's own test sets it.
     monkeypatch.setenv("REDIS_ACL_MODE", "shared")
     monkeypatch.setitem(
         sys.modules, "boto3",
@@ -541,7 +541,7 @@ def test_main_runs_the_permission_fence_on_its_redis_client_before_consuming(mon
     _common_monkeypatches(monkeypatch)
     client = object()
     monkeypatch.setattr(main.redis, "from_url", lambda *a, **kw: client)
-    monkeypatch.setenv("REDIS_ACL_MODE", "perService")
+    monkeypatch.setenv("REDIS_ACL_MODE", "perComponent")
     calls = []
 
     def _fence(redis_client, mode):
@@ -549,7 +549,7 @@ def test_main_runs_the_permission_fence_on_its_redis_client_before_consuming(mon
 
     monkeypatch.setattr(main, "check_permission_fence", _fence)
     main.main()
-    assert calls == [(client, "perService", 0)]
+    assert calls == [(client, "perComponent", 0)]
 
 
 def test_main_stops_when_the_permission_fence_refuses_the_login(monkeypatch):

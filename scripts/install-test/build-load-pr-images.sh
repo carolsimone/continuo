@@ -5,7 +5,7 @@
 #
 # Why this exists: install-test installs the chart with global.imageTag=latest
 # on PR runs, which by itself pulls the images published from main. A PR that
-# renames a service or a database (so the chart references an image name or a
+# renames a component or a database (so the chart references an image name or a
 # migration that main's published :latest does not yet contain) would fail the
 # install against those stale images — even though the PR is internally correct.
 # ci.yml's e2e suite already builds locally and never hit this; the chart-install
@@ -55,7 +55,7 @@ fi
 #   <image-name> <trigger-dir> <dockerfile> <context> <needs-base>
 # <trigger-dir> is the source path whose change means this image must rebuild;
 # <image-name> is what the chart references as continuo-<image-name>. Only the
-# 8 Go-service Deployments, ui, topology-controller and the migrations Job/init
+# 8 Go-component Deployments, ui, topology-controller and the migrations Job/init
 # container are gated by the install's --wait/--wait-for-jobs, but every image
 # the chart can reference is listed so a rename of any of them is handled.
 # needs-base=1 images build FROM continuo-base (Dockerfile.base); it is built

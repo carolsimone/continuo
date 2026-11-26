@@ -20,7 +20,7 @@ streams:
     description: One attempt of a task, from run-controller to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever run-controller asks about an attempt that has gone quiet, with run-controller's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
     producers: [run-controller]
     consumers:
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-task-dispatch
         const: ExecutionControllerTaskDispatch
 
@@ -29,7 +29,7 @@ streams:
     description: What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. run-controller applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
     producers: [execution-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run-controller-task-status-updated
         const: RunControllerTaskStatusUpdated
 
@@ -40,7 +40,7 @@ streams:
     description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each component that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
     producers: [run-controller, execution-controller, release-controller, remediation, agent-remediation, dead-letter-controller]
     consumers:
-      - service: dead-letter-controller
+      - component: dead-letter-controller
         group: dead-letter-controller-outbox-dead-letters
         const: DeadLetterControllerOutboxDeadLetters
 
@@ -49,7 +49,7 @@ streams:
     description: Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
     producers: [run-controller, catalog, execution-controller, release-controller, remediation, agent-remediation, topology-controller, dead-letter-controller]
     consumers:
-      - service: dead-letter-controller
+      - component: dead-letter-controller
         group: dead-letter-controller-consumer-dead-letters
         const: DeadLetterControllerConsumerDeadLetters
 
@@ -60,7 +60,7 @@ streams:
     description: A run's cancel, from run-controller to execution-controller, with who cancelled it, why, and the attempts to stop, each with the name of its Job. run-controller writes it with no attempt in the transaction that moves the run to cancelling, and again for each window in which attempts it asked to stop have not answered, naming those attempts. execution-controller fences the run, so no gate starts work for it, stops every attempt of the run it holds and every attempt the cancel names, and answers each with a stopped report once no pod of it can run again.
     producers: [run-controller]
     consumers:
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-run-cancelled
         const: ExecutionControllerRunCancelled
 
@@ -71,7 +71,7 @@ streams:
     description: Candidate release accepted by release-controller; triggers manifest load for validation.
     producers: [release-controller]
     consumers:
-      - service: topology-controller
+      - component: topology-controller
         group: topology-controller-release-requested
         const: TopologyControllerReleaseRequested
 
@@ -80,7 +80,7 @@ streams:
     description: How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream.
     producers: [topology-controller]
     consumers:
-      - service: release-controller
+      - component: release-controller
         group: release-controller-manifest-loaded-candidate
         const: ReleaseControllerManifestLoadedCandidate
 
@@ -89,7 +89,7 @@ streams:
     description: dbt --empty validation run requested by release-controller; execution-controller dispatches per-node jobs.
     producers: [release-controller]
     consumers:
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-validation-requested
         const: ExecutionControllerValidationRequested
 
@@ -98,10 +98,10 @@ streams:
     description: Unified validation-leg stream from execution-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. execution-controller drops the candidate schema on complete.
     producers: [execution-controller]
     consumers:
-      - service: release-controller
+      - component: release-controller
         group: release-controller-validation-result
         const: ReleaseControllerValidationResult
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-validation-result-teardown
         const: ExecutionControllerValidationResultTeardown
 
@@ -110,7 +110,7 @@ streams:
     description: release-controller requests candidate seed builds; execution-controller dispatches per-seed team-image jobs.
     producers: [release-controller]
     consumers:
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-seed-build-requested
         const: ExecutionControllerSeedBuildRequested
 
@@ -119,7 +119,7 @@ streams:
     description: aggregated candidate seed-build result from execution-controller back to release-controller.
     producers: [execution-controller]
     consumers:
-      - service: release-controller
+      - component: release-controller
         group: release-controller-seed-build-completed
         const: ReleaseControllerSeedBuildCompleted
 
@@ -128,7 +128,7 @@ streams:
     description: release-controller requests the changed project's dbt compile; execution-controller dispatches the compile Job.
     producers: [release-controller]
     consumers:
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-compile-requested
         const: ExecutionControllerCompileRequested
 
@@ -137,7 +137,7 @@ streams:
     description: aggregated compile result from execution-controller back to release-controller.
     producers: [execution-controller]
     consumers:
-      - service: release-controller
+      - component: release-controller
         group: release-controller-compile-completed
         const: ReleaseControllerCompileCompleted
 
@@ -146,19 +146,19 @@ streams:
     description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
     producers: [release-controller]
     consumers:
-      - service: catalog
+      - component: catalog
         group: catalog-release-topology
         const: CatalogReleaseTopology
-      - service: catalog
+      - component: catalog
         group: catalog-release-versions
         const: CatalogReleaseVersions
-      - service: catalog
+      - component: catalog
         group: catalog-release-contracts
         const: CatalogReleaseContracts
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-release-promoted
         const: ExecutionControllerReleasePromoted
-      - service: run-controller
+      - component: run-controller
         group: run-controller-release-promoted
         const: RunControllerReleasePromoted
 
@@ -167,10 +167,10 @@ streams:
     description: Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
     producers: [release-controller]
     consumers:
-      - service: remediation
+      - component: remediation
         group: remediation-release-rejected
         const: RemediationReleaseRejected
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-release-rejected
         const: ExecutionControllerReleaseRejected
 
@@ -179,7 +179,7 @@ streams:
     description: A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
     producers: [release-controller]
     consumers:
-      - service: execution-controller
+      - component: execution-controller
         group: execution-controller-pipeline-run-finished
         const: ExecutionControllerPipelineRunFinished
 
@@ -188,7 +188,7 @@ streams:
     description: An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
     producers: [release-controller]
     consumers:
-      - service: remediation
+      - component: remediation
         group: remediation-retry-requested
         const: RemediationRetryRequested
 
@@ -199,10 +199,10 @@ streams:
     description: One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
     producers: [remediation]
     consumers:
-      - service: agent-remediation
+      - component: agent-remediation
         group: agent-remediation-remediation-requested
         const: AgentRemediationRemediationRequested
-      - service: catalog
+      - component: catalog
         group: catalog-remediation-requested-rejections
         const: CatalogRemediationRequestedRejections
 
@@ -225,7 +225,7 @@ streams:
     description: Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
     producers: [agent-remediation]
     consumers:
-      - service: catalog
+      - component: catalog
         group: catalog-remediation-pr-opened-proposals
         const: CatalogRemediationPrOpenedProposals
 
@@ -234,7 +234,7 @@ streams:
     description: Terminal PR outcome (merged, or closed without merge), one per (release, attempt, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
     producers: [agent-remediation]
     consumers:
-      - service: catalog
+      - component: catalog
         group: catalog-remediation-pr-closed-provenance
         const: CatalogRemediationPrClosedProvenance
 
@@ -245,16 +245,16 @@ streams:
 #   all_streams: every key under key_prefix, granted with `commands`
 #   commands:    Redis commands, lowercase, `command|subcommand` for a subcommand
 redis_access:
-  - service: agent-chat
+  - component: agent-chat
     keys: ["agent-chat:ratelimit:"]
     commands: [eval, evalsha, zremrangebyscore, zcard, zadd, pexpire]
-  - service: agent-remediation
+  - component: agent-remediation
     keys: ["llmcache:"]
     commands: [get, set]
-  - service: dead-letter-controller
+  - component: dead-letter-controller
     all_streams: true
     commands: [xrange, xtrim, xlen, del, info, xinfo|groups, xpending]
-  - service: ui
+  - component: ui
     keys: ["uisession:"]
     commands: [get, set, del, expire]
 

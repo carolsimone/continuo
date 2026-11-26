@@ -60,11 +60,11 @@ for entry in "${renders[@]}"; do
   "${KUBE_LINTER[@]}" lint --config "${CHART}/.kube-linter.yaml" "${tmp}/${name}.yaml"
 done
 
-echo "--- service enablement, replica counts and independent application ports"
-python3 scripts/install-test/test-service-controls.py -v
+echo "--- component enablement, replica counts and independent application ports"
+python3 scripts/install-test/test-component-controls.py -v
 
-# The chart default-denies ingress and re-opens exactly the edges the service
-# graph needs. A service that starts calling another without its allow rule
+# The chart default-denies ingress and re-opens exactly the edges the component
+# graph needs. A component that starts calling another without its allow rule
 # ships a platform that is "up" but silently unreachable on that path. With
 # egress on, the agents reach the outside only through egress-proxy, and the
 # proxy only what its allowlist names. Assert both, in each topology (each has
@@ -77,9 +77,9 @@ for f in defaults byo-example byo-inline byo-secret; do
 done
 
 # streams-init creates every Redis stream and consumer group before the
-# services need them. With a BYO Redis (it exists already) it is a pre-install
+# components need them. With a BYO Redis (it exists already) it is a pre-install
 # and pre-upgrade hook ordered after the migrate hook, so the streams exist
-# before the services roll; with the bundled Redis (no release resource exists
+# before the components roll; with the bundled Redis (no release resource exists
 # while hooks run) it is a regular Job that waits for Redis. A hook cannot read
 # a Secret or ConfigMap the release creates as a regular resource, so a
 # shared-mode BYO render with an inline password must give it a hook Secret.
@@ -87,9 +87,9 @@ done
 # release has no redisInit values (helm upgrade --reuse-values), and the Redis
 # ACL mode as REDIS_ACL_MODE.
 echo "--- streams-init Job: a hook with a BYO Redis, a regular Job with the bundled one, createStreams reaches it"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/defaults.yaml" --mode job --create-streams true --acl-mode perService
+python3 scripts/install-test/assert-streams-init.py "${tmp}/defaults.yaml" --mode job --create-streams true --acl-mode perComponent
 for f in byo-example byo-inline byo-secret; do
-  python3 scripts/install-test/assert-streams-init.py "${tmp}/${f}.yaml" --mode hook --create-streams true --acl-mode perService
+  python3 scripts/install-test/assert-streams-init.py "${tmp}/${f}.yaml" --mode hook --create-streams true --acl-mode perComponent
 done
 python3 scripts/install-test/assert-streams-init.py "${tmp}/redis-shared.yaml" --mode job --create-streams true --acl-mode shared
 for f in byo-inline byo-secret; do
@@ -100,23 +100,23 @@ for f in byo-inline byo-secret; do
 done
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit.createStreams=false \
   > "${tmp}/streams-init-off.yaml"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-off.yaml" --mode job --create-streams false --acl-mode perService
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-off.yaml" --mode job --create-streams false --acl-mode perComponent
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-inline.yaml \
   --set redisInit.createStreams=false > "${tmp}/streams-init-byo-off.yaml"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-byo-off.yaml" --mode hook --create-streams false --acl-mode perService
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-byo-off.yaml" --mode hook --create-streams false --acl-mode perComponent
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit=null > "${tmp}/streams-init-null.yaml" \
   || { echo "FAIL: rendering with redisInit=null failed; values without a redisInit block must render"; exit 1; }
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-null.yaml" --mode job --create-streams true --acl-mode perService
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-null.yaml" --mode job --create-streams true --acl-mode perComponent
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit.createStreams=maybe > /dev/null 2>&1; then
   echo "FAIL: redisInit.createStreams=maybe must fail the render"; exit 1
 fi
 
-# A service reads its HTTP port under one specific env name. The chart sets a
+# A component reads its HTTP port under one specific env name. The chart sets a
 # differently named variable that works only while the default happens to equal
 # the Deployment's containerPort, and changing httpPort then moves the probes
-# and Service but not the listener. Assert each service gets its port under
+# and Service but not the listener. Assert each component gets its port under
 # the name its own code reads.
-echo "--- http port env names match what each service reads (defaults)"
+echo "--- http port env names match what each component reads (defaults)"
 python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
 
 # run-controller's pods all consume one status consumer group and dispatch what
@@ -135,17 +135,17 @@ echo "--- run-controller turns Ready as soon as it can serve (defaults)"
 python3 scripts/install-test/assert-run-controller-fast-ready.py "${tmp}/defaults.yaml"
 
 # A bundled Redis is a StatefulSet with no ordering guarantee against the
-# Deployments, so every service whose code connects to Redis must wait for it
+# Deployments, so every component whose code connects to Redis must wait for it
 # in bundled mode, and none may wait in BYO mode, where Redis is already up.
-# Which services connect to Redis is read from their source.
-echo "--- wait-for-redis gates every Redis-using service (defaults) and none (byo)"
+# Which components connect to Redis is read from their source.
+echo "--- wait-for-redis gates every Redis-using component (defaults) and none (byo)"
 python3 scripts/install-test/assert-redis-gate.py . "${tmp}/defaults.yaml" \
   "${tmp}/byo-example.yaml" "${tmp}/byo-inline.yaml" "${tmp}/byo-secret.yaml"
 
 # Credentials reach a pod in one of three ways: as secretKeyRef variables (env
 # delivery), as files projected from the same Secrets with <VAR>_FILE pointing
 # at them (file delivery), or as files the company provides at paths it names
-# (credentials.files), with no Secret behind them. Every service runs under a
+# (credentials.files), with no Secret behind them. Every component runs under a
 # ServiceAccount of its own in each. The file render is compared with the same
 # values in env delivery, so a credential cannot get lost between the two.
 echo "--- credential delivery: env, file and company-provided files"
@@ -169,7 +169,7 @@ for doc in yaml.safe_load_all(open(sys.argv[2])):
             print(f"{e['name']}<-{ref['name']}/{ref['key']}" if ref else f"{e['name']}={e.get('value', '')}")
 PY
 }
-# A company file needs no services entry of its own: execution-controller's S3
+# A company file needs no components entry of its own: execution-controller's S3
 # keys, given only in credentials.files, still reach it as files, and its
 # other credentials stay secretKeyRef variables under the install's env delivery.
 company_executor="$(deployment_env execution-controller "${tmp}/company-files.yaml")"
@@ -179,23 +179,23 @@ grep -qx 'AWS_ACCESS_KEY_ID_FILE=/mnt/secrets-store/s3-access-key-id' <<<"$compa
   || { echo "FAIL: execution-controller in the company-files render:"; echo "$company_executor"; exit 1; }
 # A key with no value in the chart's own Secret (llm.apiKey and the GitHub keys
 # default to empty) is left out under file delivery: an empty file fails the
-# service's start, where an empty variable reads as unset.
+# component's start, where an empty variable reads as unset.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set credentials.delivery=file > "${tmp}/file-defaults.yaml"
 if deployment_env agent-chat "${tmp}/file-defaults.yaml" | grep -q '^LLM_API_KEY'; then
   echo "FAIL: file delivery with an empty llm.apiKey must give agent-chat no LLM_API_KEY variable or file"; exit 1
 fi
 python3 scripts/install-test/assert-credential-delivery.py "${tmp}/file-defaults.yaml" file
-# Each service signs in to Postgres as its own login, read from that login's
+# Each component signs in to Postgres as its own login, read from that login's
 # Secret; the migrate Job grants each login its rights, and in the bundled
 # quickstart creates them.
-echo "--- Postgres: every service signs in as its own login"
+echo "--- Postgres: every component signs in as its own login"
 for f in defaults credential-files file-defaults; do
   python3 scripts/install-test/assert-postgres-logins.py "${tmp}/${f}.yaml" bundled
 done
 for f in byo-example byo-inline byo-secret; do
-  python3 scripts/install-test/assert-postgres-logins.py "${tmp}/${f}.yaml" external 'continuo-pg-{service}'
+  python3 scripts/install-test/assert-postgres-logins.py "${tmp}/${f}.yaml" external 'continuo-pg-{component}'
 done
-# An external Postgres values file written before per-service logins (no
+# An external Postgres values file written before per-component logins (no
 # credentials.postgres block) fails the render, naming the login to create.
 python3 - scripts/install-test/values-byo-secret.yaml "${tmp}/byo-secret-no-logins.yaml" <<'PY'
 import sys, yaml
@@ -216,27 +216,27 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/ins
 fi
 grep -qF 'validation.createWarehouseSecret needs the bundled Postgres' "${tmp}/pglogins.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/pglogins.err"; exit 1; }
-# Each Redis service signs in as its own login, with the rule the streams
+# Each Redis component signs in as its own login, with the rule the streams
 # generator wrote for it; the bundled Redis starts from an ACL file of those
 # rules with the default user off, and streams-init signs in as every login it
 # can reach before it creates the streams. A Redis with no ACL users runs in
 # shared mode, with one password.
-echo "--- Redis: every service signs in as its own login (perService), or with the one password (shared)"
+echo "--- Redis: every component signs in as its own login (perComponent), or with the one password (shared)"
 for f in defaults credential-files file-defaults; do
-  python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perService bundled
+  python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perComponent bundled
 done
 for f in byo-example byo-inline byo-secret; do
-  python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perService external 'continuo-redis-{service}'
+  python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perComponent external 'continuo-redis-{component}'
 done
 python3 scripts/install-test/assert-redis-logins.py "${tmp}/redis-shared.yaml" shared
-# A login whose password reaches its service only as a company file is checked
-# when that service starts, not by streams-init; with every login given that
+# A login whose password reaches its component only as a company file is checked
+# when that component starts, not by streams-init; with every login given that
 # way streams-init mounts no login file and gets no REDIS_LOGINS_DIR, which
 # would name a directory that does not exist.
 files_args=()
-for svc in run-controller catalog agent-chat execution-controller ui topology-controller \
+for component in run-controller catalog agent-chat execution-controller ui topology-controller \
            release-controller remediation agent-remediation dead-letter-controller; do
-  files_args+=(--set "credentials.files.${svc}.REDIS_PASSWORD=/vault/secrets/redis")
+  files_args+=(--set "credentials.files.${component}.REDIS_PASSWORD=/vault/secrets/redis")
 done
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-secret.yaml \
   "${files_args[@]}" > "${tmp}/redis-company-files.yaml"
@@ -272,7 +272,7 @@ yaml.safe_dump(values, open(sys.argv[2], "w"))
 PY
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/byo-secret-no-redis-logins.yaml" \
      > /dev/null 2> "${tmp}/redislogins.err"; then
-  echo "FAIL: an external Redis in perService mode with no login Secrets must fail the render"; exit 1
+  echo "FAIL: an external Redis in perComponent mode with no login Secrets must fail the render"; exit 1
 fi
 grep -qF 'credentials.redis.logins.run-controller.existingSecret is required: create the login continuo_run_controller' "${tmp}/redislogins.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/redislogins.err"; exit 1; }
@@ -284,31 +284,31 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
 fi
 grep -qF 'credentials.files.agent-chat.LLM_KEY: not a credential continuo reads' "${tmp}/credfiles.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/credfiles.err"; exit 1; }
-# A credentials.files key names an enabled services entry; a typo or a disabled
-# service would mount files no pod reads.
+# A credentials.files key names an enabled components entry; a typo or a disabled
+# component would mount files no pod reads.
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
      --set credentials.files.agent-chatt.LLM_API_KEY=/vault/secrets/llm > /dev/null 2> "${tmp}/credfiles.err"; then
-  echo "FAIL: a credentials.files key that names no services entry must fail the render"; exit 1
+  echo "FAIL: a credentials.files key that names no components entry must fail the render"; exit 1
 fi
-grep -qF 'credentials.files.agent-chatt: no enabled service named agent-chatt' "${tmp}/credfiles.err" \
+grep -qF 'credentials.files.agent-chatt: no enabled component named agent-chatt' "${tmp}/credfiles.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/credfiles.err"; exit 1; }
 python3 - "$CHART/values.yaml" "${tmp}/agent-chat-disabled.yaml" <<'PY'
 import sys, yaml
-services = yaml.safe_load(open(sys.argv[1]))["services"]
-for svc in services:
-    if svc["name"] == "agent-chat":
-        svc["enabled"] = False
-yaml.safe_dump({"services": services}, open(sys.argv[2], "w"))
+components = yaml.safe_load(open(sys.argv[1]))["components"]
+for component in components:
+    if component["name"] == "agent-chat":
+        component["enabled"] = False
+yaml.safe_dump({"components": components}, open(sys.argv[2], "w"))
 PY
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/agent-chat-disabled.yaml" \
      --set credentials.files.agent-chat.LLM_API_KEY=/vault/secrets/llm > /dev/null 2> "${tmp}/credfiles.err"; then
-  echo "FAIL: a credentials.files key that names a disabled service must fail the render"; exit 1
+  echo "FAIL: a credentials.files key that names a disabled component must fail the render"; exit 1
 fi
-grep -qF 'credentials.files.agent-chat: no enabled service named agent-chat' "${tmp}/credfiles.err" \
+grep -qF 'credentials.files.agent-chat: no enabled component named agent-chat' "${tmp}/credfiles.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/credfiles.err"; exit 1; }
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set credentials.files.agent-chat.LLM_API_KEY=/vault/secrets/llm > /dev/null \
-  || { echo "FAIL: a credentials.files key that names an enabled service must render"; exit 1; }
+  || { echo "FAIL: a credentials.files key that names an enabled component must render"; exit 1; }
 # Job pods take the S3 key pair only from a Kubernetes Secret, so S3 keys that
 # reach execution-controller as company files need execution.jobS3Secret.name.
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-company-files.yaml \
@@ -339,15 +339,15 @@ for bad in 'credentials.delivery=vault' 'credentials.delivery='; do
 done
 # ui and topology-controller read the Redis password as REDIS_PASSWORD, so the
 # REDIS_URL the chart gives them carries none.
-for svc in ui topology-controller; do
-  deployment_env "$svc" "${tmp}/defaults.yaml" | grep -qx 'REDIS_URL=redis://continuo-redis:6379' \
-    || { echo "FAIL: ${svc}'s REDIS_URL must be redis://continuo-redis:6379"; deployment_env "$svc" "${tmp}/defaults.yaml"; exit 1; }
+for component in ui topology-controller; do
+  deployment_env "$component" "${tmp}/defaults.yaml" | grep -qx 'REDIS_URL=redis://continuo-redis:6379' \
+    || { echo "FAIL: ${component}'s REDIS_URL must be redis://continuo-redis:6379"; deployment_env "$component" "${tmp}/defaults.yaml"; exit 1; }
 done
-# Each service's pods pull with the image pull secrets of its own
+# Each component's pods pull with the image pull secrets of its own
 # ServiceAccount: none by default, the top-level imagePullSecrets on every
-# ServiceAccount, and a service's serviceAccount.imagePullSecrets in place of
-# them for that service.
-echo "--- imagePullSecrets on every ServiceAccount, replaced per service"
+# ServiceAccount, and a component's serviceAccount.imagePullSecrets in place of
+# them for that component.
+echo "--- imagePullSecrets on every ServiceAccount, replaced per component"
 # pull_secrets RENDER: one `<ServiceAccount> <secret,...>` line per
 # ServiceAccount, `-` for none.
 pull_secrets() {
@@ -365,13 +365,13 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json 'image
 pull_global="$(pull_secrets "${tmp}/pull-global.yaml")"
 [ "$(grep -c ' registry-cred$' <<<"$pull_global")" = 10 ] && [ "$(wc -l <<<"$pull_global" | tr -d ' ')" = 10 ] \
   || { echo "FAIL: imagePullSecrets must reach all ten ServiceAccounts:"; echo "$pull_global"; exit 1; }
-# `services` is a list Helm replaces whole, so the override goes into a copy of
+# `components` is a list Helm replaces whole, so the override goes into a copy of
 # the company fixture's list, whose first entry is agent-chat.
 python3 - "${tmp}/company-pull.yaml" <<'PY'
 import sys, yaml
 values = yaml.safe_load(open("scripts/install-test/values-company-files.yaml"))
 values["imagePullSecrets"] = [{"name": "registry-cred"}]
-values["services"][0]["serviceAccount"]["imagePullSecrets"] = [{"name": "agent-chat-cred"}]
+values["components"][0]["serviceAccount"]["imagePullSecrets"] = [{"name": "agent-chat-cred"}]
 yaml.safe_dump(values, open(sys.argv[1], "w"))
 PY
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/company-pull.yaml" > "${tmp}/pull-override.yaml"
@@ -383,7 +383,7 @@ grep -qx 'agent-chat agent-chat-cred' <<<"$pull_override" \
 # A datastore password every consumer reads from a company file needs no key in
 # the chart's credentials Secret, so an external Neo4j with catalog's password
 # as a file renders without externalNeo4j.password, and still demands one when
-# a service reads it from the Secret.
+# a component reads it from the Secret.
 echo "--- company-file datastore password needs no inline Secret value"
 cat > "${tmp}/neo4j-company.yaml" <<'YAML'
 neo4j:
@@ -407,10 +407,10 @@ fi
 grep -qF 'set externalNeo4j.password or externalNeo4j.existingSecret' "${tmp}/neo4j-required.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/neo4j-required.err"; exit 1; }
 
-# The wait init containers read a password file as the services do: exactly one
+# The wait init containers read a password file as the components do: exactly one
 # trailing LF or CRLF dropped. Runs the rendered shell on files that end each
 # way.
-echo "--- wait gates read credential files like the services"
+echo "--- wait gates read credential files like the components"
 python3 - "${tmp}/credential-files.yaml" <<'PY'
 import subprocess, sys, tempfile, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d and d.get("kind") == "Deployment"]
@@ -436,7 +436,7 @@ for name, script in scripts.items():
         sys.exit(f"FAIL: {name} must stop when its credential file is missing")
 PY
 
-# Services read the shared ConfigMap through envFrom, and Kubernetes never
+# Components read the shared ConfigMap through envFrom, and Kubernetes never
 # refreshes environment variables in a running pod when that ConfigMap changes.
 # The pod template therefore carries a checksum of it, so `helm upgrade` rolls
 # the pods whose configuration actually changed. Two properties have to hold,
@@ -471,7 +471,7 @@ loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 [ "$loglevel_changed" != "$base" ] || { echo "FAIL: changing a shared ConfigMap value leaves the pod template identical"; exit 1; }
 
 # execution-controller and agent-remediation read their mounted chart
-# ConfigMap (dbt commands, service repos) only at startup, so each pod template
+# ConfigMap (dbt commands, project repositories) only at startup, so each pod template
 # carries a digest of it. For every chart-managed ConfigMap, a
 # change must roll exactly the workloads that read it at startup and no others;
 # with the volume pointed at an operator-owned ConfigMap it must roll nothing;
@@ -479,20 +479,20 @@ loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 echo "--- chart ConfigMap changes roll exactly the pods that read them at startup"
 python3 scripts/install-test/assert-config-rollout.py "$CHART" "$KUBE_VERSION"
 
-# A services[].volumes entry with an empty configMap.name resolves to the chart's
-# own ConfigMap only on a service the chart mounts one into (execution-controller,
-# agent-remediation, ui). On any other service it would render a volume the API
+# A components[].volumes entry with an empty configMap.name resolves to the chart's
+# own ConfigMap only on a component the chart mounts one into (execution-controller,
+# agent-remediation, ui). On any other component it would render a volume the API
 # server refuses at apply time, so the render fails and names the entry instead.
-echo "--- an empty configMap.name on a service with no chart ConfigMap fails the render"
+echo "--- an empty configMap.name on a component with no chart ConfigMap fails the render"
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
      -f scripts/install-test/values-empty-configmap-volume.yaml > /dev/null 2> "${tmp}/emptyvolume.err"; then
   echo "FAIL: a run-controller volume with an empty configMap.name rendered; the API server would refuse the Deployment"; exit 1
 fi
-grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empty' "${tmp}/emptyvolume.err" \
+grep -qF 'components[run-controller].volumes[extra-config]: configMap.name is empty' "${tmp}/emptyvolume.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/emptyvolume.err"; exit 1; }
 # agent-remediation mounts two chart ConfigMaps, each through the volume of its
 # own name. An empty configMap.name on a volume of another name mounts the first
-# of them, project-repos, with its digest on the pod template, so a services
+# of them, project-repos, with its digest on the pod template, so a components
 # list written for a single agent-remediation ConfigMap keeps working.
 echo "--- an empty configMap.name on an agent-remediation volume of another name mounts project-repos"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
@@ -512,27 +512,27 @@ PY
 # files only while it is mounted at the folder agent-remediation reads them
 # from (AGENT_REMEDIATION_WORKFLOWS_DIR, else /etc/continuo-workflows, compared
 # without a trailing slash). Mounted anywhere else, or nowhere, it mounts
-# project-repos like a volume of any other name, so a services entry whose
-# volume of that name holds the service repository map at /etc/continuo keeps
+# project-repos like a volume of any other name, so a components entry whose
+# volume of that name holds the project repository map at /etc/continuo keeps
 # it.
 echo "--- an empty-named remediation-workflows volume mounts the remediation files only at the folder agent-remediation reads"
-# single_volume_services <volumeMounts JSON> [<env JSON>] prints a services
+# single_volume_components <volumeMounts JSON> [<env JSON>] prints a components
 # list of one agent-remediation entry whose one volume is an empty-named
 # ConfigMap volume called remediation-workflows.
-single_volume_services() {
+single_volume_components() {
   local env="${2-}"
   [ -n "$env" ] || env='{}'
   printf '[{"name":"agent-remediation","enabled":true,"httpPort":8092,"grpcPort":50054,"env":%s,"volumeMounts":%s,"volumes":[{"name":"remediation-workflows","configMap":{"name":""}}]}]' \
     "$env" "$1"
 }
 for placement in \
-  "at /etc/continuo, the project-repos folder|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo","readOnly":true}]')" \
-  "with no volumeMounts entry|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_services '[]')" \
-  "at the default folder of the remediation files|continuo-agent-remediation-workflows|agent-remediation-workflows|project-repos|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows/","readOnly":true}]')" \
-  "at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names|continuo-agent-remediation-workflows|agent-remediation-workflows|project-repos|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')" \
-  "at /etc/continuo-workflows while AGENT_REMEDIATION_WORKFLOWS_DIR names another folder|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files"}')"; do
-  IFS='|' read -r label configmap hashed unhashed services <<< "$placement"
-  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "services=${services}" > "${tmp}/placement.yaml" 2> "${tmp}/placement.err" \
+  "at /etc/continuo, the project-repos folder|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_components '[{"name":"remediation-workflows","mountPath":"/etc/continuo","readOnly":true}]')" \
+  "with no volumeMounts entry|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_components '[]')" \
+  "at the default folder of the remediation files|continuo-agent-remediation-workflows|agent-remediation-workflows|project-repos|$(single_volume_components '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows/","readOnly":true}]')" \
+  "at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names|continuo-agent-remediation-workflows|agent-remediation-workflows|project-repos|$(single_volume_components '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')" \
+  "at /etc/continuo-workflows while AGENT_REMEDIATION_WORKFLOWS_DIR names another folder|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_components '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files"}')"; do
+  IFS='|' read -r label configmap hashed unhashed components <<< "$placement"
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${components}" > "${tmp}/placement.yaml" 2> "${tmp}/placement.err" \
     || { echo "FAIL: a remediation-workflows volume ${label} failed the render:"; cat "${tmp}/placement.err"; exit 1; }
   python3 - "${tmp}/placement.yaml" "$configmap" "$hashed" "$unhashed" <<'PY' \
     || { echo "FAIL: a remediation-workflows volume ${label} does not mount ${configmap} with checksum/${hashed} alone"; exit 1; }
@@ -781,7 +781,7 @@ done
 for path in "${duplicate_docs}"/refused-*.yaml; do
   grep -qF "'$(basename "$path")|" scripts/install-test/lint.sh || { echo "FAIL: ${path} has no case in lint.sh"; exit 1; }
 done
-# The company-files topology brings its own services list, whose
+# The company-files topology brings its own components list, whose
 # agent-remediation entry mounts no workflows volume: files set there would
 # reach no pod.
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-company-files.yaml \
@@ -789,8 +789,8 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/ins
   echo "FAIL: remediation files rendered with no agent-remediation volume to mount them"; exit 1
 fi
 for want in \
-  'agentRemediation.workflows.files is set, but services[agent-remediation] has no volume remediation-workflows, so' \
-  "a release upgraded with --reuse-values keeps an older chart's services list, so upgrade once with your values file or --reset-then-reuse-values"; do
+  'agentRemediation.workflows.files is set, but components[agent-remediation] has no volume remediation-workflows, so' \
+  "a release upgraded with --reuse-values keeps an older chart's components list, so upgrade once with your values file or --reset-then-reuse-values"; do
   grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
 done
 # With files set, an operator's own agent-remediation entry must mount the
@@ -808,53 +808,53 @@ default_workflows_dir="$(sed -nE 's/^const defaultWorkflowsDir = "([^"]+)"$/\1/p
 [ -n "$default_workflows_dir" ] || { echo "FAIL: agent-remediation/config/config.go declares no const defaultWorkflowsDir"; exit 1; }
 chart_workflows_volume='[{"name":"remediation-workflows","configMap":{"name":""}}]'
 default_workflows_mount='[{"name":"remediation-workflows","mountPath":"'"${default_workflows_dir}"'","readOnly":true}]'
-# workflows_services <volumeMounts JSON> <volumes JSON> [<env JSON>] prints a
-# services list of one agent-remediation entry.
-workflows_services() {
+# workflows_components <volumeMounts JSON> <volumes JSON> [<env JSON>] prints a
+# components list of one agent-remediation entry.
+workflows_components() {
   local env="${3-}"
   [ -n "$env" ] || env='{}'
   printf '[{"name":"agent-remediation","enabled":true,"httpPort":8092,"grpcPort":50054,"env":%s,"volumeMounts":%s,"volumes":%s}]' \
     "$env" "$1" "$2"
 }
 mount_problems=(
-  "no volumeMount|services[agent-remediation] has no volumeMounts entry for the volume remediation-workflows, so the files reach no container; mount it at ${default_workflows_dir}|$(workflows_services '[]' "$chart_workflows_volume")"
-  "a mount at another path|services[agent-remediation] mounts the volume remediation-workflows at /etc/elsewhere, and AGENT_REMEDIATION_WORKFLOWS_DIR is ${default_workflows_dir}, so|$(workflows_services '[{"name":"remediation-workflows","mountPath":"/etc/elsewhere"}]' "$chart_workflows_volume")"
-  "an operator-owned ConfigMap|services[agent-remediation].volumes[remediation-workflows] names the ConfigMap my-own-cm, your own, so the files reach no pod; leave its configMap.name empty|$(workflows_services "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"my-own-cm"}}]')"
-  "the chart's ConfigMap named explicitly|services[agent-remediation].volumes[remediation-workflows] names the chart's ConfigMap continuo-agent-remediation-workflows, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty|$(workflows_services "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"continuo-agent-remediation-workflows"}}]')"
-  "an emptyDir volume|services[agent-remediation].volumes[remediation-workflows] is not a ConfigMap volume, so the files reach no pod|$(workflows_services "$default_workflows_mount" '[{"name":"remediation-workflows","emptyDir":{}}]')"
-  "a variable naming another folder than the mount|services[agent-remediation] mounts the volume remediation-workflows at ${default_workflows_dir}, and AGENT_REMEDIATION_WORKFLOWS_DIR is /etc/other, so|$(workflows_services "$default_workflows_mount" "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/etc/other"}')"
+  "no volumeMount|components[agent-remediation] has no volumeMounts entry for the volume remediation-workflows, so the files reach no container; mount it at ${default_workflows_dir}|$(workflows_components '[]' "$chart_workflows_volume")"
+  "a mount at another path|components[agent-remediation] mounts the volume remediation-workflows at /etc/elsewhere, and AGENT_REMEDIATION_WORKFLOWS_DIR is ${default_workflows_dir}, so|$(workflows_components '[{"name":"remediation-workflows","mountPath":"/etc/elsewhere"}]' "$chart_workflows_volume")"
+  "an operator-owned ConfigMap|components[agent-remediation].volumes[remediation-workflows] names the ConfigMap my-own-cm, your own, so the files reach no pod; leave its configMap.name empty|$(workflows_components "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"my-own-cm"}}]')"
+  "the chart's ConfigMap named explicitly|components[agent-remediation].volumes[remediation-workflows] names the chart's ConfigMap continuo-agent-remediation-workflows, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty|$(workflows_components "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"continuo-agent-remediation-workflows"}}]')"
+  "an emptyDir volume|components[agent-remediation].volumes[remediation-workflows] is not a ConfigMap volume, so the files reach no pod|$(workflows_components "$default_workflows_mount" '[{"name":"remediation-workflows","emptyDir":{}}]')"
+  "a variable naming another folder than the mount|components[agent-remediation] mounts the volume remediation-workflows at ${default_workflows_dir}, and AGENT_REMEDIATION_WORKFLOWS_DIR is /etc/other, so|$(workflows_components "$default_workflows_mount" "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/etc/other"}')"
 )
 for problem in "${mount_problems[@]}"; do
   label="${problem%%|*}"
   rest="${problem#*|}"
   want="agentRemediation.workflows.files is set, but ${rest%%|*}"
-  services="${rest#*|}"
-  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "services=${services}" \
+  components="${rest#*|}"
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${components}" \
        --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
     echo "FAIL: remediation files rendered with ${label}; they would reach no agent-remediation pod"; exit 1
   fi
   grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL (${label}): want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
-  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "services=${services}" > /dev/null 2> "${tmp}/workflows.err" \
-    || { echo "FAIL: with no remediation files, a services list with ${label} failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${components}" > /dev/null 2> "${tmp}/workflows.err" \
+    || { echo "FAIL: with no remediation files, a components list with ${label} failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
 done
 # The schema refuses a subPath on any volumeMounts entry. The template refuses
 # one on the files' mount as well, for a render that skips the schema: a
 # subPath mounts one entry of the ConfigMap, never the folder of files.
-subpath_services="$(workflows_services '[{"name":"remediation-workflows","mountPath":"'"${default_workflows_dir}"'","subPath":"valid.yaml"}]' "$chart_workflows_volume")"
+subpath_components="$(workflows_components '[{"name":"remediation-workflows","mountPath":"'"${default_workflows_dir}"'","subPath":"valid.yaml"}]' "$chart_workflows_volume")"
 for check in \
   "|additional properties 'subPath' not allowed" \
-  "--skip-schema-validation|agentRemediation.workflows.files is set, but services[agent-remediation] mounts the volume remediation-workflows at ${default_workflows_dir} with subPath valid.yaml, which mounts one entry"; do
+  "--skip-schema-validation|agentRemediation.workflows.files is set, but components[agent-remediation] mounts the volume remediation-workflows at ${default_workflows_dir} with subPath valid.yaml, which mounts one entry"; do
   flags=()
   [ -z "${check%%|*}" ] || flags=("${check%%|*}")
   want="${check#*|}"
-  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" ${flags[@]+"${flags[@]}"} --set-json "services=${subpath_services}" \
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" ${flags[@]+"${flags[@]}"} --set-json "components=${subpath_components}" \
        --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
     echo "FAIL: remediation files rendered with a subPath mount ${flags[*]-}; the files would reach no agent-remediation pod"; exit 1
   fi
   grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL (a subPath mount ${flags[*]-}): want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
 done
-helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation --set-json "services=${subpath_services}" > /dev/null 2> "${tmp}/workflows.err" \
-  || { echo "FAIL: with no remediation files, a services list with a subPath mount failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation --set-json "components=${subpath_components}" > /dev/null 2> "${tmp}/workflows.err" \
+  || { echo "FAIL: with no remediation files, a components list with a subPath mount failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
 # mounted_at <rendered manifest> <folder> checks that agent-remediation mounts
 # continuo-agent-remediation-workflows at the folder, with no subPath, reads
 # AGENT_REMEDIATION_WORKFLOWS_DIR from there (or from the default), and carries
@@ -877,10 +877,10 @@ sys.exit(0 if volumes["remediation-workflows"].get("configMap") == {"name": "con
 PY
 }
 for good in \
-  "${default_workflows_dir}|$(workflows_services "$default_workflows_mount" "$chart_workflows_volume")" \
-  "/opt/remediation-files|$(workflows_services '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files"}]' "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')"; do
+  "${default_workflows_dir}|$(workflows_components "$default_workflows_mount" "$chart_workflows_volume")" \
+  "/opt/remediation-files|$(workflows_components '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files"}]' "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')"; do
   folder="${good%%|*}"
-  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "services=${good#*|}" \
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${good#*|}" \
     --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > "${tmp}/workflows-mount.yaml" 2> "${tmp}/workflows.err" \
     || { echo "FAIL: remediation files mounted at ${folder} failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
   mounted_at "${tmp}/workflows-mount.yaml" "$folder" \
@@ -989,20 +989,20 @@ fi
 if grep -qF "$contracts_s3_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the contract bundle S3 note"; exit 1
 fi
-# An upgrading operator is told once that catalog's services entry carries no
+# An upgrading operator is told once that catalog's components entry carries no
 # Postgres keys, since a POSTGRES_DB left there renders an init container that
 # can keep catalog from starting; an installing one renders the chart's own
 # entry and is told nothing.
 catalog_postgres_note='entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.'
 [ "$(grep -cF "$catalog_postgres_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
-  || { echo "FAIL: the upgrade notes do not say exactly once to delete catalog's Postgres keys from a services override"; exit 1; }
+  || { echo "FAIL: the upgrade notes do not say exactly once to delete catalog's Postgres keys from a components override"; exit 1; }
 if grep -qF "$catalog_postgres_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the catalog Postgres upgrade note"; exit 1
 fi
 # An operator upgrading with an external Postgres is told once which logins to
 # create; one with the bundled Postgres, whose logins the chart creates, and
 # an installing one are told nothing.
-logins_note='BREAKING: every service signs in to Postgres as its own login.'
+logins_note='BREAKING: every component signs in to Postgres as its own login.'
 helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade \
   -f scripts/install-test/values-byo-secret.yaml --show-only templates/probe.yaml > "${tmp}/notes-upgrade-byo.txt" \
   || { echo "FAIL: rendering NOTES.txt as an upgrade with an external Postgres failed"; exit 1; }
@@ -1014,9 +1014,9 @@ for notes in upgrade install; do
     echo "FAIL: the bundled ${notes} notes carry the Postgres logins note"; exit 1
   fi
 done
-# The same for an external Redis in perService mode, which lists the Redis
+# The same for an external Redis in perComponent mode, which lists the Redis
 # logins; a shared-mode Redis has none to create.
-redis_logins_note='BREAKING: every service signs in to Redis as its own login.'
+redis_logins_note='BREAKING: every component signs in to Redis as its own login.'
 [ "$(grep -cF "$redis_logins_note" "${tmp}/notes-upgrade-byo.txt")" = 1 ] \
   && grep -qE '^ +continuo_redis_migrate \(streams-init\)$' "${tmp}/notes-upgrade-byo.txt" \
   || { echo "FAIL: the external-Redis upgrade notes do not list the Redis logins to create once"; exit 1; }
@@ -1029,11 +1029,11 @@ for notes in upgrade install upgrade-byo-shared; do
     echo "FAIL: the ${notes} notes carry the Redis logins note"; exit 1
   fi
 done
-# An upgrading operator is told once that the services left the namespace's
+# An upgrading operator is told once that the components left the namespace's
 # default ServiceAccount, and what stops applying; an installing one is not.
-service_account_note='Every service now runs under its own ServiceAccount, named after it'
+service_account_note='Every component now runs under its own ServiceAccount, named after it'
 [ "$(grep -cF "$service_account_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
-  || { echo "FAIL: the upgrade notes do not say exactly once that every service has its own ServiceAccount"; exit 1; }
+  || { echo "FAIL: the upgrade notes do not say exactly once that every component has its own ServiceAccount"; exit 1; }
 grep -qF 'set imagePullSecrets' "${tmp}/notes-upgrade.txt" \
   || { echo "FAIL: the ServiceAccount upgrade note does not name imagePullSecrets"; exit 1; }
 if grep -qF "$service_account_note" "${tmp}/notes-install.txt"; then
@@ -1124,20 +1124,20 @@ if grep -qF 'AGENT_REMEDIATION_ENGINE' "${tmp}/defaults.yaml"; then
   echo "FAIL: the default render still publishes AGENT_REMEDIATION_ENGINE"; exit 1
 fi
 
-# global.logLevel reaches every service as LOG_LEVEL, and a service refuses to
+# global.logLevel reaches every component as LOG_LEVEL, and a component refuses to
 # start on a level it does not know, so the chart (continuo.logLevel in
-# _helpers.tpl) refuses such a level at render time instead. The services
+# _helpers.tpl) refuses such a level at render time instead. The components
 # match the level in any case, so a mixed-case level must still render.
-echo "--- global.logLevel: a level the services do not accept fails the render"
+echo "--- global.logLevel: a level the components do not accept fails the render"
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
      --set global.logLevel=verbose > /dev/null 2> "${tmp}/loglevel.err"; then
-  echo "FAIL: global.logLevel=verbose rendered; every service would refuse to start"; exit 1
+  echo "FAIL: global.logLevel=verbose rendered; every component would refuse to start"; exit 1
 fi
 grep -q 'logLevel' "${tmp}/loglevel.err" || { echo "FAIL: unexpected error:"; cat "${tmp}/loglevel.err"; exit 1; }
 echo "--- global.logLevel: a mixed-case level renders as given"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set global.logLevel=Info > "${tmp}/loglevel-mixed.yaml" \
-  || { echo "FAIL: global.logLevel=Info did not render; the services accept it"; exit 1; }
+  || { echo "FAIL: global.logLevel=Info did not render; the components accept it"; exit 1; }
 grep -q 'LOG_LEVEL: "Info"' "${tmp}/loglevel-mixed.yaml" \
   || { echo "FAIL: LOG_LEVEL did not render as Info"; exit 1; }
 
@@ -1170,15 +1170,15 @@ grep -q '\\"repositoryId\\":\\"812345678\\"' "${tmp}/ciauth-probe.yaml" || { ech
 grep -q '\\"audience\\":\\"http://localhost:8090\\"' "${tmp}/ciauth-probe.yaml" || { echo "FAIL: audience did not default to the origin of auth.publicUrl"; exit 1; }
 
 # The ui's CI-auth env, mount and volume come from the template, not from its
-# `services` entry: Helm replaces lists wholesale, so an operator's own
-# `services` list must not silently disable CI auth. ciAuth itself is optional:
+# `components` entry: Helm replaces lists wholesale, so an operator's own
+# `components` list must not silently disable CI auth. ciAuth itself is optional:
 # values without it (as `helm upgrade --reuse-values` can produce) render with
 # the GitHub issuer and no bindings (no CI access).
 echo "--- ciAuth: the ui gets CI auth from the template"
 python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/defaults.yaml" continuo
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  -f scripts/install-test/values-ui-minimal-services.yaml > "${tmp}/ui-minimal-services.yaml"
-python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ui-minimal-services.yaml" continuo
+  -f scripts/install-test/values-ui-minimal-components.yaml > "${tmp}/ui-minimal-components.yaml"
+python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ui-minimal-components.yaml" continuo
 echo "--- ciAuth: a release without ciAuth values renders the defaults"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set ciAuth=null > "${tmp}/ciauth-null.yaml" \
   || { echo "FAIL: rendering with ciAuth=null failed; values without a ciAuth block must render"; exit 1; }
@@ -1207,14 +1207,14 @@ refuse_reserved continuo --set validation.createWarehouseSecret=false --set vali
 helm template continuo-apis "$CHART" --kube-version "$KUBE_VERSION" > /dev/null \
   || { echo "FAIL: release continuo-apis is outside the reserved prefix and must render"; exit 1; }
 
-# database.pool reaches every Go service through the shared ConfigMap only when
-# set (0 keeps each service's default). An idle limit above the open limit, or
+# database.pool reaches every Go component through the shared ConfigMap only when
+# set (0 keeps each component's default). An idle limit above the open limit, or
 # an idle limit with no open limit, fails the render instead of producing a
-# release a service would refuse to boot with. Values without a database block
+# release a component would refuse to boot with. Values without a database block
 # (as `helm upgrade --reuse-values` can produce) render the defaults.
 echo "--- database.pool reaches the ConfigMap only when set; idle above open and idle alone are refused"
 if grep -q 'DB_MAX_OPEN_CONNS\|DB_MAX_IDLE_CONNS\|DB_POOL_SIZE\|DB_MAX_OVERFLOW' "${tmp}/defaults.yaml"; then
-  echo "FAIL: the default render sets a pool limit; every service must keep its own default"; exit 1
+  echo "FAIL: the default render sets a pool limit; every component must keep its own default"; exit 1
 fi
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set database.pool.maxOpenConns=40 --set database.pool.maxIdleConns=8 > "${tmp}/pool-set.yaml"
@@ -1231,7 +1231,7 @@ fi
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set database=null > "${tmp}/database-null.yaml" \
   || { echo "FAIL: rendering with database=null failed; values without a database block must render"; exit 1; }
 if grep -q 'DB_MAX_OPEN_CONNS\|DB_MAX_IDLE_CONNS' "${tmp}/database-null.yaml"; then
-  echo "FAIL: a release without database values must leave every service on its default pool"; exit 1
+  echo "FAIL: a release without database values must leave every component on its default pool"; exit 1
 fi
 
 # execution.maxConcurrentJobs reaches execution-controller through the shared
@@ -1351,11 +1351,11 @@ deployment_env_entries() {
     $0 ~ ("^ +- name: (" pattern ")$") { hits = hits $0 "\n" }
     END { flush(); if (!found) exit 3 }' "$2"
 }
-for svc in run-controller execution-controller; do
-  shadows="$(deployment_env_entries "$svc" "${tmp}/defaults.yaml" 'TASK_MAX_RETRIES|TASK_TIMEOUT_SECONDS')" \
-    || { echo "FAIL: the default render has no Deployment named ${svc}"; exit 1; }
+for component in run-controller execution-controller; do
+  shadows="$(deployment_env_entries "$component" "${tmp}/defaults.yaml" 'TASK_MAX_RETRIES|TASK_TIMEOUT_SECONDS')" \
+    || { echo "FAIL: the default render has no Deployment named ${component}"; exit 1; }
   if [ -n "$shadows" ]; then
-    echo "FAIL: ${svc}'s own env must not shadow the ConfigMap's TASK_MAX_RETRIES or TASK_TIMEOUT_SECONDS:"; echo "$shadows"; exit 1
+    echo "FAIL: ${component}'s own env must not shadow the ConfigMap's TASK_MAX_RETRIES or TASK_TIMEOUT_SECONDS:"; echo "$shadows"; exit 1
   fi
 done
 
@@ -1556,15 +1556,15 @@ if [ -n "$shadows" ]; then
   echo "FAIL: catalog's own env must not shadow the ConfigMap's CONTRACTS_* keys:"; echo "$shadows"; exit 1
 fi
 
-# contracts.ontology.enabled and contracts.ontology.baseUrl reach every service
+# contracts.ontology.enabled and contracts.ontology.baseUrl reach every component
 # through the shared ConfigMap as ONTOLOGY_ENABLED, exactly "true" or "false",
 # and ONTOLOGY_BASE_URL. The schema refuses a non-boolean switch, a key it does
 # not name and a base URL that catalog refuses at startup (a value that is not
 # empty and not an absolute http or https URL with a host name, no credentials,
 # no query, no fragment and no whitespace), and a few more. Values without a
 # contracts.ontology block (as `helm upgrade --reuse-values` can produce) render
-# the defaults, and no service's own env shadows the two keys.
-echo "--- contracts.ontology reaches the ConfigMap; a switch or a base URL a service cannot honour is refused"
+# the defaults, and no component's own env shadows the two keys.
+echo "--- contracts.ontology reaches the ConfigMap; a switch or a base URL a component cannot honour is refused"
 grep -qF 'ONTOLOGY_ENABLED: "false"' "${tmp}/defaults.yaml" \
   || { echo "FAIL: the default render does not set ONTOLOGY_ENABLED to false"; exit 1; }
 grep -qF 'ONTOLOGY_BASE_URL: ""' "${tmp}/defaults.yaml" \
@@ -1611,15 +1611,15 @@ for absent in contracts=null contracts.ontology=null; do
     && grep -qF 'ONTOLOGY_BASE_URL: ""' "${tmp}/ontology-absent.yaml" \
     || { echo "FAIL: a release with ${absent} must get the default ontology settings"; exit 1; }
 done
-for svc in topology-controller release-controller catalog; do
-  shadows="$(deployment_env_entries "$svc" "${tmp}/defaults.yaml" 'ONTOLOGY_ENABLED|ONTOLOGY_BASE_URL')" \
-    || { echo "FAIL: the default render has no Deployment named ${svc}"; exit 1; }
+for component in topology-controller release-controller catalog; do
+  shadows="$(deployment_env_entries "$component" "${tmp}/defaults.yaml" 'ONTOLOGY_ENABLED|ONTOLOGY_BASE_URL')" \
+    || { echo "FAIL: the default render has no Deployment named ${component}"; exit 1; }
   if [ -n "$shadows" ]; then
-    echo "FAIL: ${svc}'s own env must not shadow the ConfigMap's ONTOLOGY_* keys:"; echo "$shadows"; exit 1
+    echo "FAIL: ${component}'s own env must not shadow the ConfigMap's ONTOLOGY_* keys:"; echo "$shadows"; exit 1
   fi
 done
 
-# maintenance.enabled reaches every service through the shared ConfigMap as
+# maintenance.enabled reaches every component through the shared ConfigMap as
 # exactly "true" or "false"; a non-boolean value fails the render, and values
 # without a maintenance block (as `helm upgrade --reuse-values` can produce)
 # render "false".
@@ -1637,25 +1637,25 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set maintenance
 grep -q 'MAINTENANCE_ENABLED: "false"' "${tmp}/maintenance-null.yaml" \
   || { echo "FAIL: a release without maintenance values must render MAINTENANCE_ENABLED false"; exit 1; }
 
-# Every service in continuo.metrics.services serves /metrics on the one port the
-# ConfigMap names. The chart must expose and annotate exactly those services,
+# Every component in continuo.metrics.components serves /metrics on the one port the
+# ConfigMap names. The chart must expose and annotate exactly those components,
 # admit scrapers only when asked and only to that port, and refuse a port
 # another listener uses.
-echo "--- metrics port, annotations and scrape rule cover exactly the services that serve /metrics"
+echo "--- metrics port, annotations and scrape rule cover exactly the components that serve /metrics"
 python3 scripts/install-test/test-assert-metrics.py -v
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set-json 'metrics.scrapeNamespaceSelector={"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}' \
   > "${tmp}/metrics-scrape.yaml"
 python3 scripts/install-test/assert-metrics.py . "${tmp}/defaults.yaml" "${tmp}/metrics-scrape.yaml"
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set metrics.port=8082 > /dev/null 2>&1; then
-  echo "FAIL: metrics.port equal to a service's httpPort must fail the render"; exit 1
+  echo "FAIL: metrics.port equal to a component's httpPort must fail the render"; exit 1
 fi
 
 # llm.baseUrl reaches both agents as LLM_BASE_URL from the template, so an
-# operator's own `services` list cannot drop it. openai-compatible has no
+# operator's own `components` list cannot drop it. openai-compatible has no
 # public address and needs it; a root ending in /v1 would make every request
 # /v1/v1/...; a provider outside the three the agents accept fails the schema;
-# and a services entry setting LLM_BASE_URL itself, through env or secretEnv, is
+# and a components entry setting LLM_BASE_URL itself, through env or secretEnv, is
 # refused. Values without llm.baseUrl (as `helm upgrade --reuse-values` can
 # produce) render.
 echo "--- llm: baseUrl reaches both agents; invalid LLM settings fail the render"
@@ -1682,8 +1682,8 @@ refuse_render 'with a host' --set llm.baseUrl=https://
 refuse_render 'bare server root' --set 'llm.baseUrl=https://h/api?x=1'
 refuse_render 'bare server root' --set 'llm.baseUrl=https://u:p@h'
 refuse_render 'provider' --set llm.provider=grok
-refuse_render 'LLM_BASE_URL' --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
-refuse_render 'secretEnv sets LLM_BASE_URL' --set-json 'services=[{"name":"agent-chat","enabled":true,"secretEnv":[{"name":"LLM_BASE_URL","ref":"llm"}]}]'
+refuse_render 'LLM_BASE_URL' --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
+refuse_render 'secretEnv sets LLM_BASE_URL' --set-json 'components=[{"name":"agent-chat","enabled":true,"secretEnv":[{"name":"LLM_BASE_URL","ref":"llm"}]}]'
 if ! helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set llm.baseUrl=null > /dev/null; then
   echo "FAIL: a release without llm.baseUrl must render"; exit 1
 fi
@@ -1762,7 +1762,7 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-off.ya
 # Their egress policy still renders, admitting those addresses directly, and
 # neither egress-proxy policy does: with no proxy pod they would select nothing.
 egress_all_ip=(--set llm.provider=openai-compatible --set llm.baseUrl=http://10.0.0.7:8000
-  --set-json 'services=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://10.0.0.8:8080"}}]')
+  --set-json 'components=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://10.0.0.8:8080"}}]')
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_all_ip[@]}" > "${tmp}/egress-no-proxy.yaml"
 if grep -q '^  name: continuo-egress-proxy$' "${tmp}/egress-no-proxy.yaml"; then
   echo "FAIL: an install whose every destination is an IP address must render no egress-proxy"; exit 1
@@ -1852,11 +1852,11 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set global.runControllerGrpcAddr=run-controller.other.svc:50051 > "${tmp}/egress-np-global.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-global.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80","FOO_ALT_URL":"http://foo.tools.svc:08080","TRAILING_DOT_ADDR":"run-controller.:50051"}},{"name":"foo","enabled":true,"httpPort":80},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://foo.tools.svc/api/v3"}}]' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80","FOO_ALT_URL":"http://foo.tools.svc:08080","TRAILING_DOT_ADDR":"run-controller.:50051"}},{"name":"foo","enabled":true,"httpPort":80},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://foo.tools.svc/api/v3"}}]' \
   > "${tmp}/egress-np-env.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-env.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller.default:50051","CONTINUO_CATALOG_ADDR":"catalog.default.svc.cluster.local:50052"}},{"name":"run-controller","enabled":true,"httpPort":8082},{"name":"catalog","enabled":true,"httpPort":8087},{"name":"agent-remediation","enabled":true}]' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller.default:50051","CONTINUO_CATALOG_ADDR":"catalog.default.svc.cluster.local:50052"}},{"name":"run-controller","enabled":true,"httpPort":8082},{"name":"catalog","enabled":true,"httpPort":8087},{"name":"agent-remediation","enabled":true}]' \
   > "${tmp}/egress-np-forms.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-forms.yaml"
 # An in-cluster address the allowlist admits on the port the agents use is left
@@ -1866,12 +1866,12 @@ python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-forms.
 # a wildcard allowlist entry over the cluster domain matches them on another
 # port; an llm.baseUrl on localhost needs no allowlist entry.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller:50051"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://ghe:8080/api/v3","CONTINUO_CATALOG_ADDR":"catalog:50052"}}]' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller:50051"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://ghe:8080/api/v3","CONTINUO_CATALOG_ADDR":"catalog:50052"}}]' \
   > "${tmp}/egress-allowlisted-local.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-local.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set-json 'egress.privateDomains=["*.svc.cluster.local"]' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller.default.svc.cluster.local:50051"}},{"name":"run-controller","enabled":true,"httpPort":8082},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://ghe.tools.svc/api/v3"}}]' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller.default.svc.cluster.local:50051"}},{"name":"run-controller","enabled":true,"httpPort":8082},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://ghe.tools.svc/api/v3"}}]' \
   > "${tmp}/egress-allowlisted-wildcard.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-wildcard.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
@@ -1885,7 +1885,7 @@ python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-llm-local
 # stays in NO_PROXY.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set-json 'egress.allowedDomains=["foo.tools.svc:80"]' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80"}},{"name":"agent-remediation","enabled":true}]' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80"}},{"name":"agent-remediation","enabled":true}]' \
   > "${tmp}/egress-allowlisted-public.yaml"
 [ "$(grep -A1 'name: NO_PROXY' "${tmp}/egress-allowlisted-public.yaml" | grep -cF ',foo.tools.svc:80')" = 2 ] \
   || { echo "FAIL: an in-cluster address on an allowlist entry without allowPrivate must stay in NO_PROXY"; exit 1; }
@@ -1927,7 +1927,7 @@ done
 # valid address and a port outside 1-65535 fail the render naming the key.
 echo "--- egress: an IP address in the agents' env or a global.*GrpcAddr is a direct destination"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set global.runControllerGrpcAddr=10.0.0.5:50051 \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://10.0.0.9:8080/v1","LOCAL_ADDR":"127.0.0.1:9000","LISTEN_ADDR":"0.0.0.0:8081"}},{"name":"agent-remediation","enabled":true,"env":{"BAR_ADDR":"[fd00::9]:50051"}}]' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://10.0.0.9:8080/v1","LOCAL_ADDR":"127.0.0.1:9000","LISTEN_ADDR":"0.0.0.0:8081"}},{"name":"agent-remediation","enabled":true,"env":{"BAR_ADDR":"[fd00::9]:50051"}}]' \
   > "${tmp}/egress-np-ip.yaml"
 for cidr in 10.0.0.5/32 10.0.0.9/32 '"fd00::9/128"'; do
   grep -qF "cidr: ${cidr}" "${tmp}/egress-np-ip.yaml" \
@@ -1939,14 +1939,14 @@ fi
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-ip.yaml"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-np-ip.yaml" continuo \
   --direct 10.0.0.5/32=50051 --direct 10.0.0.9/32=8080 --direct fd00::9/128=50051
-refuse_render 'services[name=agent-chat].env.META_URL="http://169.254.169.254/latest": its host 169.254.169.254 lies in' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"META_URL":"http://169.254.169.254/latest"}}]'
+refuse_render 'components[name=agent-chat].env.META_URL="http://169.254.169.254/latest": its host 169.254.169.254 lies in' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"META_URL":"http://169.254.169.254/latest"}}]'
 refuse_render 'global.runControllerGrpcAddr="[fd00:ec2::254]:50051": its host fd00:ec2::254 lies in' \
   --set 'global.runControllerGrpcAddr=[fd00:ec2::254]:50051'
-refuse_render 'services[name=agent-remediation].env.BAD_ADDR="999.0.0.1:80": its host 999.0.0.1 has the octet "999"' \
-  --set-json 'services=[{"name":"agent-remediation","enabled":true,"env":{"BAD_ADDR":"999.0.0.1:80"}}]'
-refuse_render 'services[name=agent-chat].env.FOO_ADDR="10.0.0.9:70000" has a port outside 1-65535' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_ADDR":"10.0.0.9:70000"}}]'
+refuse_render 'components[name=agent-remediation].env.BAD_ADDR="999.0.0.1:80": its host 999.0.0.1 has the octet "999"' \
+  --set-json 'components=[{"name":"agent-remediation","enabled":true,"env":{"BAD_ADDR":"999.0.0.1:80"}}]'
+refuse_render 'components[name=agent-chat].env.FOO_ADDR="10.0.0.9:70000" has a port outside 1-65535' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"FOO_ADDR":"10.0.0.9:70000"}}]'
 
 # While egress is on, an agent's own proxy variable, through env or secretEnv,
 # fails the render, as do an S3_ENDPOINT_URL of its own, which would replace the
@@ -1959,35 +1959,35 @@ i=0
 for var in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
   agents=(agent-chat agent-remediation)
   a="${agents[$((i % 2))]}"; b="${agents[$(((i + 1) % 2))]}"; i=$((i + 1))
-  refuse_render "services[name=${a}].env sets ${var}" \
-    --set-json "services=[{\"name\":\"${a}\",\"enabled\":true,\"env\":{\"${var}\":\"http://corp-proxy:8080\"}}]"
-  refuse_render "services[name=${b}].secretEnv sets ${var}" \
-    --set-json "services=[{\"name\":\"${b}\",\"enabled\":true,\"secretEnv\":[{\"name\":\"${var}\",\"ref\":\"llm\"}]}]"
+  refuse_render "components[name=${a}].env sets ${var}" \
+    --set-json "components=[{\"name\":\"${a}\",\"enabled\":true,\"env\":{\"${var}\":\"http://corp-proxy:8080\"}}]"
+  refuse_render "components[name=${b}].secretEnv sets ${var}" \
+    --set-json "components=[{\"name\":\"${b}\",\"enabled\":true,\"secretEnv\":[{\"name\":\"${var}\",\"ref\":\"llm\"}]}]"
 done
-refuse_render 'services[name=agent-chat].env sets HTTPS_PROXY' "${egress_all_ip[@]:0:4}" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"HTTPS_PROXY":"http://corp-proxy:8080"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://10.0.0.8:8080"}}]'
-refuse_render 'services[name=agent-remediation].secretEnv sets GITHUB_BASE_URL' \
-  --set-json 'services=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]'
+refuse_render 'components[name=agent-chat].env sets HTTPS_PROXY' "${egress_all_ip[@]:0:4}" \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"HTTPS_PROXY":"http://corp-proxy:8080"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://10.0.0.8:8080"}}]'
+refuse_render 'components[name=agent-remediation].secretEnv sets GITHUB_BASE_URL' \
+  --set-json 'components=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]'
 # The allowlist admits the provider of llm.provider, so an agent's LLM_PROVIDER
 # other than the __LLM_PROVIDER__ placeholder fails the render, as does one in
 # secretEnv; the placeholder renders.
-refuse_render 'services[name=agent-chat].env sets LLM_PROVIDER="openai": ' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_PROVIDER":"openai"}},{"name":"agent-remediation","enabled":true}]'
-refuse_render 'services[name=agent-remediation].secretEnv sets LLM_PROVIDER: ' \
-  --set-json 'services=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"LLM_PROVIDER","ref":"llm"}]}]'
+refuse_render 'components[name=agent-chat].env sets LLM_PROVIDER="openai": ' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"LLM_PROVIDER":"openai"}},{"name":"agent-remediation","enabled":true}]'
+refuse_render 'components[name=agent-remediation].secretEnv sets LLM_PROVIDER: ' \
+  --set-json 'components=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"LLM_PROVIDER","ref":"llm"}]}]'
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_PROVIDER":"__LLM_PROVIDER__"}},{"name":"agent-remediation","enabled":true}]' > /dev/null \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"LLM_PROVIDER":"__LLM_PROVIDER__"}},{"name":"agent-remediation","enabled":true}]' > /dev/null \
   || { echo "FAIL: an agent env LLM_PROVIDER of __LLM_PROVIDER__ must render"; exit 1; }
-refuse_render 'services[name=agent-remediation].env sets S3_ENDPOINT_URL: ' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"S3_ENDPOINT_URL":"https://my_store.example.com"}}]'
-refuse_render 'services[name=agent-chat].secretEnv sets S3_ENDPOINT_URL: ' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"secretEnv":[{"name":"S3_ENDPOINT_URL","ref":"llm"}]}]'
-refuse_render 'services[name=agent-chat].env sets LLM_BASE_URL' --set egress.enabled=false \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
-refuse_render 'services[name=agent-remediation].secretEnv sets LLM_BASE_URL' --set egress.enabled=false \
-  --set-json 'services=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"LLM_BASE_URL","ref":"llm"}]}]'
+refuse_render 'components[name=agent-remediation].env sets S3_ENDPOINT_URL: ' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"S3_ENDPOINT_URL":"https://my_store.example.com"}}]'
+refuse_render 'components[name=agent-chat].secretEnv sets S3_ENDPOINT_URL: ' \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"secretEnv":[{"name":"S3_ENDPOINT_URL","ref":"llm"}]}]'
+refuse_render 'components[name=agent-chat].env sets LLM_BASE_URL' --set egress.enabled=false \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
+refuse_render 'components[name=agent-remediation].secretEnv sets LLM_BASE_URL' --set egress.enabled=false \
+  --set-json 'components=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"LLM_BASE_URL","ref":"llm"}]}]'
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress.enabled=false \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"HTTP_PROXY":"http://corp-proxy:8080","no_proxy":"internal"},"secretEnv":[{"name":"HTTPS_PROXY","ref":"llm"}]},{"name":"agent-remediation","enabled":true,"env":{"NO_PROXY":"internal","https_proxy":"http://corp-proxy:8080","S3_ENDPOINT_URL":"https://store.example.com","LLM_PROVIDER":"openai"},"secretEnv":[{"name":"http_proxy","ref":"llm"},{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]' > /dev/null \
+  --set-json 'components=[{"name":"agent-chat","enabled":true,"env":{"HTTP_PROXY":"http://corp-proxy:8080","no_proxy":"internal"},"secretEnv":[{"name":"HTTPS_PROXY","ref":"llm"}]},{"name":"agent-remediation","enabled":true,"env":{"NO_PROXY":"internal","https_proxy":"http://corp-proxy:8080","S3_ENDPOINT_URL":"https://store.example.com","LLM_PROVIDER":"openai"},"secretEnv":[{"name":"http_proxy","ref":"llm"},{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]' > /dev/null \
   || { echo "FAIL: with egress off, an agent's own proxy variables, S3_ENDPOINT_URL and a GITHUB_BASE_URL in secretEnv must render"; exit 1; }
 
 # A URL the agents call (llm.baseUrl, agent-remediation's GITHUB_BASE_URL,
@@ -1999,8 +1999,8 @@ echo "--- egress: a URL host the proxy cannot admit fails the render"
 egress_s3=(--set minio.enabled=false --set s3.bucket=continuo --set s3.region=eu-central-1
   --set s3.accessKeyId=probe --set s3.secretKey=probe)
 refuse_render 'llm.baseUrl="http://vllm_x:8000"' --set llm.provider=openai-compatible --set llm.baseUrl=http://vllm_x:8000
-refuse_render 'services[name=agent-remediation].env.GITHUB_BASE_URL="https://gh_e.example/api/v3"' \
-  --set-json 'services=[{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://gh_e.example/api/v3"}}]'
+refuse_render 'components[name=agent-remediation].env.GITHUB_BASE_URL="https://gh_e.example/api/v3"' \
+  --set-json 'components=[{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://gh_e.example/api/v3"}}]'
 refuse_render 's3.endpointUrl="http://my_minio:9000"' "${egress_s3[@]}" --set s3.endpointUrl=http://my_minio:9000
 refuse_render 'llm.baseUrl="http://gpu:70000" has a port outside 1-65535' --set llm.baseUrl=http://gpu:70000
 refuse_render 's3.endpointUrl="http://10.0.0.9:0" has a port outside 1-65535' "${egress_s3[@]}" --set s3.endpointUrl=http://10.0.0.9:0
@@ -2036,8 +2036,8 @@ refuse_render 'llm.baseUrl="http://169.254.169.254"' --set llm.baseUrl=http://16
 refuse_render 'llm.baseUrl="http://[fd00:ec2::254]:80"' --set 'llm.baseUrl=http://[fd00:ec2::254]:80'
 refuse_render 'llm.baseUrl="http://999.0.0.1:8000"' --set llm.baseUrl=http://999.0.0.1:8000
 refuse_render 'llm.baseUrl="http://010.0.0.7:8000"' --set llm.baseUrl=http://010.0.0.7:8000
-refuse_render 'services[name=agent-remediation].env.GITHUB_BASE_URL="https://[fe80::1]/api/v3"' \
-  --set-json 'services=[{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://[fe80::1]/api/v3"}}]'
+refuse_render 'components[name=agent-remediation].env.GITHUB_BASE_URL="https://[fe80::1]/api/v3"' \
+  --set-json 'components=[{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://[fe80::1]/api/v3"}}]'
 
 # egress.directDestinations is checked as written: an object with exactly cidr
 # (an IPv4 or IPv6 CIDR with a prefix length of at least 1, no bit set past it,

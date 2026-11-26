@@ -53,7 +53,7 @@ databaseInit:
   enabled: true    # set false if your DBA pre-creates the 7 databases (owned by the migration login)
 
 credentials:
-  # Each service signs in to Postgres as its own login: create each with LOGIN
+  # Each component signs in to Postgres as its own login: create each with LOGIN
   # and a password and nothing else, and a Secret holding its password under
   # `password` (deploy/CREDENTIALS.md). The migrate job grants each login its
   # rights on every deploy.
@@ -65,11 +65,11 @@ credentials:
     agent-remediation: {existingSecret: continuo-pg-agent-remediation}
     agent-chat: {existingSecret: continuo-pg-agent-chat}
     dead-letter-controller: {existingSecret: continuo-pg-dead-letter-controller}
-  # Each service signs in to Redis as its own login: create each with its rule
+  # Each component signs in to Redis as its own login: create each with its rule
   # from deploy/redis-acl-rules.acl and a password, and a Secret holding the
   # password under `password` (deploy/CREDENTIALS.md).
   redis:
-    mode: perService
+    mode: perComponent
     logins:
       streams-init: {existingSecret: continuo-redis-streams-init}
       run-controller: {existingSecret: continuo-redis-run-controller}

@@ -23,21 +23,21 @@ import (
 // hold the same names.
 func TestCredentialVarsMatchTheChart(t *testing.T) {
 	var values struct {
-		Services []struct {
+		Components []struct {
 			Name      string `yaml:"name"`
 			SecretEnv []struct {
 				Name string `yaml:"name"`
 			} `yaml:"secretEnv"`
-		} `yaml:"services"`
+		} `yaml:"components"`
 	}
 	if err := yaml.Unmarshal([]byte(readRepoFile(t, "deploy", "continuo", "values.yaml")), &values); err != nil {
 		t.Fatalf("parse values.yaml: %v", err)
 	}
-	if len(values.Services) == 0 {
+	if len(values.Components) == 0 {
 		t.Fatal("values.yaml lists no services")
 	}
 	chart := []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
-	for _, svc := range values.Services {
+	for _, svc := range values.Components {
 		for _, env := range svc.SecretEnv {
 			chart = append(chart, env.Name)
 		}

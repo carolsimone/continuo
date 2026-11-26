@@ -38,7 +38,7 @@ func TestRedisACLModesMatchTheChart(t *testing.T) {
 		t.Fatalf("parse values.schema.json: %v", err)
 	}
 	got := slices.Sorted(slices.Values(schema.Properties.Credentials.Properties.Redis.Properties.Mode.Enum))
-	want := slices.Sorted(slices.Values([]string{pkgconfig.RedisACLModeShared, pkgconfig.RedisACLModePerService}))
+	want := slices.Sorted(slices.Values([]string{pkgconfig.RedisACLModeShared, pkgconfig.RedisACLModePerComponent}))
 	if !slices.Equal(got, want) {
 		t.Fatalf("values.schema.json credentials.redis.mode enum = %v, pkg/config accepts %v", got, want)
 	}
@@ -84,14 +84,14 @@ func quotedValues(t *testing.T, pattern string, path ...string) []string {
 // The check reads their sources here because their own test suites run in
 // images that hold no chart.
 func TestRedisACLModesMatchThePythonAndNodeLists(t *testing.T) {
-	want := slices.Sorted(slices.Values([]string{pkgconfig.RedisACLModeShared, pkgconfig.RedisACLModePerService}))
+	want := slices.Sorted(slices.Values([]string{pkgconfig.RedisACLModeShared, pkgconfig.RedisACLModePerComponent}))
 	for _, side := range []struct {
 		where   string
 		pattern string
 		path    []string
 	}{
-		{"topology-controller config", `(?s)(REDIS_ACL_MODE_SHARED = "[^"]*"\s*REDIS_ACL_MODE_PER_SERVICE = "[^"]*")`, []string{"topology-controller", "config", "config.py"}},
-		{"topology-controller fence", `(?s)(SHARED = "[^"]*"\s*PER_SERVICE = "[^"]*")`, []string{"topology-controller", "adapters", "redis", "fence.py"}},
+		{"topology-controller config", `(?s)(REDIS_ACL_MODE_SHARED = "[^"]*"\s*REDIS_ACL_MODE_PER_COMPONENT = "[^"]*")`, []string{"topology-controller", "config", "config.py"}},
+		{"topology-controller fence", `(?s)(SHARED = "[^"]*"\s*PER_COMPONENT = "[^"]*")`, []string{"topology-controller", "adapters", "redis", "fence.py"}},
 		{"ui", `REDIS_ACL_MODES = \[([^\]]*)\]`, []string{"ui", "src", "server", "auth", "redis-fence.ts"}},
 	} {
 		if got := quotedValues(t, side.pattern, side.path...); !slices.Equal(got, want) {

@@ -143,19 +143,19 @@ func fenceClient(t *testing.T, user string) *goredis.Client {
 
 func TestFencePassesForAFencedLogin(t *testing.T) {
 	client := fenceClient(t, "fenced")
-	require.NoError(t, pkgredis.CheckPermissionFence(context.Background(), client, pkgconfig.RedisACLModePerService))
+	require.NoError(t, pkgredis.CheckPermissionFence(context.Background(), client, pkgconfig.RedisACLModePerComponent))
 }
 
 // A login limited to the continuo: prefix, as dead-letter-controller's and
 // streams-init's are, passes: the probe key lies outside that prefix.
 func TestFencePassesForAPrefixWideLogin(t *testing.T) {
 	client := fenceClient(t, "prefixwide")
-	require.NoError(t, pkgredis.CheckPermissionFence(context.Background(), client, pkgconfig.RedisACLModePerService))
+	require.NoError(t, pkgredis.CheckPermissionFence(context.Background(), client, pkgconfig.RedisACLModePerComponent))
 }
 
 func TestFenceFailsForAKeyWideLogin(t *testing.T) {
 	client := fenceClient(t, "keywide")
-	err := pkgredis.CheckPermissionFence(context.Background(), client, pkgconfig.RedisACLModePerService)
+	err := pkgredis.CheckPermissionFence(context.Background(), client, pkgconfig.RedisACLModePerComponent)
 	require.Error(t, err)
 	assert.Equal(t,
 		"redis login keywide can read keys outside its own: apply the rules in deploy/redis-acl-rules.acl",
@@ -164,7 +164,7 @@ func TestFenceFailsForAKeyWideLogin(t *testing.T) {
 
 func TestFenceFailsForAnOpenLogin(t *testing.T) {
 	client := fenceClient(t, "open")
-	err := pkgredis.CheckPermissionFence(context.Background(), client, pkgconfig.RedisACLModePerService)
+	err := pkgredis.CheckPermissionFence(context.Background(), client, pkgconfig.RedisACLModePerComponent)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redis login open can read keys outside its own")
 }
@@ -207,22 +207,22 @@ func TestFencePassesForEveryGeneratedLogin(t *testing.T) {
 			t.Cleanup(func() { _ = admin.Do(context.Background(), "ACL", "DELUSER", login.Username).Err() })
 
 			client := fenceClient(t, login.Username)
-			require.NoError(t, pkgredis.CheckPermissionFence(ctx, client, pkgconfig.RedisACLModePerService))
+			require.NoError(t, pkgredis.CheckPermissionFence(ctx, client, pkgconfig.RedisACLModePerComponent))
 		})
 	}
 }
 
 // Connect runs the fence once Redis answers PING, so a key-wide login in
-// perService mode never reaches the component.
-func TestConnectRefusesAKeyWideLoginInPerServiceMode(t *testing.T) {
+// perComponent mode never reaches the component.
+func TestConnectRefusesAKeyWideLoginInPerComponentMode(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg := fenceConfig(t, "keywide", pkgconfig.RedisACLModePerService)
+	cfg := fenceConfig(t, "keywide", pkgconfig.RedisACLModePerComponent)
 	client, err := pkgredis.Connect(context.Background(), cfg, pkgredis.DefaultStartupPolicy(), logger)
 	require.Error(t, err)
 	assert.Nil(t, client)
 	assert.Contains(t, err.Error(), "redis login keywide can read keys outside its own")
 
-	cfg = fenceConfig(t, "fenced", pkgconfig.RedisACLModePerService)
+	cfg = fenceConfig(t, "fenced", pkgconfig.RedisACLModePerComponent)
 	client, err = pkgredis.Connect(context.Background(), cfg, pkgredis.DefaultStartupPolicy(), logger)
 	require.NoError(t, err)
 	_ = client.Close()

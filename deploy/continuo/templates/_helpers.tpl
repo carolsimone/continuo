@@ -64,7 +64,7 @@ app.kubernetes.io/part-of: {{ include "continuo.name" . }}
 
 {{- define "continuo.selectorLabels" -}}
 app.kubernetes.io/instance: {{ .root.Release.Name }}
-app.kubernetes.io/name: {{ .service }}
+app.kubernetes.io/name: {{ .name }}
 {{- end -}}
 
 {{/* Continuo-owned image ref. Call: include "continuo.image" (dict "root" $ "name" "run-controller") */}}
@@ -217,7 +217,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 
 {{/* The folder agent-remediation reads the install's remediation files from,
-     for its services entry (the argument): the entry's
+     for its components entry (the argument): the entry's
      AGENT_REMEDIATION_WORKFLOWS_DIR, else agent-remediation's
      defaultWorkflowsDir (lint.sh reads it from config.go and renders a mount
      there with no variable set), without a trailing slash, so that a
@@ -228,8 +228,8 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 
 {{/* Fails the render when agentRemediation.workflows.files is set and the
-     agent-remediation services entry svc would not show the files to the
-     service, naming the entry and what is wrong. The files reach the service
+     agent-remediation components entry svc would not show the files to the
+     component, naming the entry and what is wrong. The files reach the component
      only when the entry has a volume remediation-workflows that is a
      ConfigMap volume with an empty configMap.name, which mounts the chart's
      own ConfigMap and is the only form that puts the ConfigMap's digest
@@ -238,7 +238,7 @@ app.kubernetes.io/name: {{ .service }}
      which would keep serving the files it read at startup. It also needs a
      volumeMounts entry of that volume with no subPath at the folder
      agent-remediation reads ("continuo.agentRemediation.workflowsDir"). An
-     operator's own services list, or an older chart's list that `helm upgrade
+     operator's own components list, or an older chart's list that `helm upgrade
      --reuse-values` keeps, may miss any of these; without files set nothing is
      checked, so such a list still renders.
      Call: include "continuo.agentRemediation.assertWorkflowsMount" (dict "root" $ "svc" $svc) */}}
@@ -252,24 +252,24 @@ app.kubernetes.io/name: {{ .service }}
 {{- $found := false -}}
 {{- range $svc.volumes }}{{ if eq .name $volumeName }}{{ $volume = . }}{{ $found = true }}{{ end }}{{ end }}
 {{- if not $found -}}
-{{- fail (printf "%s services[%s] has no volume %s, so agent-remediation would never read the files; a release upgraded with --reuse-values keeps an older chart's services list, so upgrade once with your values file or --reset-then-reuse-values; with your own services list, add that volume, its volumeMounts entry and AGENT_REMEDIATION_WORKFLOWS_DIR as the chart's values.yaml has them" $set $svc.name $volumeName) -}}
+{{- fail (printf "%s components[%s] has no volume %s, so agent-remediation would never read the files; a release upgraded with --reuse-values keeps an older chart's components list, so upgrade once with your values file or --reset-then-reuse-values; with your own components list, add that volume, its volumeMounts entry and AGENT_REMEDIATION_WORKFLOWS_DIR as the chart's values.yaml has them" $set $svc.name $volumeName) -}}
 {{- end -}}
 {{- if not (hasKey $volume "configMap") -}}
-{{- fail (printf "%s services[%s].volumes[%s] is not a ConfigMap volume, so the files reach no pod; make it configMap: {name: \"\"}, which mounts the chart's ConfigMap of the files" $set $svc.name $volumeName) -}}
+{{- fail (printf "%s components[%s].volumes[%s] is not a ConfigMap volume, so the files reach no pod; make it configMap: {name: \"\"}, which mounts the chart's ConfigMap of the files" $set $svc.name $volumeName) -}}
 {{- end -}}
 {{- $chartConfigMap := include "continuo.agentRemediationWorkflowsConfigMapName" $root -}}
 {{- $configMap := toString (get ($volume.configMap | default dict) "name") -}}
 {{- if eq $configMap $chartConfigMap -}}
-{{- fail (printf "%s services[%s].volumes[%s] names the chart's ConfigMap %s, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty, which mounts the same ConfigMap with its digest" $set $svc.name $volumeName $configMap) -}}
+{{- fail (printf "%s components[%s].volumes[%s] names the chart's ConfigMap %s, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty, which mounts the same ConfigMap with its digest" $set $svc.name $volumeName $configMap) -}}
 {{- end -}}
 {{- if $configMap -}}
-{{- fail (printf "%s services[%s].volumes[%s] names the ConfigMap %s, your own, so the files reach no pod; leave its configMap.name empty to mount the chart's ConfigMap of the files, or keep your files in %s and leave agentRemediation.workflows.files empty" $set $svc.name $volumeName $configMap $configMap) -}}
+{{- fail (printf "%s components[%s].volumes[%s] names the ConfigMap %s, your own, so the files reach no pod; leave its configMap.name empty to mount the chart's ConfigMap of the files, or keep your files in %s and leave agentRemediation.workflows.files empty" $set $svc.name $volumeName $configMap $configMap) -}}
 {{- end -}}
 {{- $dir := include "continuo.agentRemediation.workflowsDir" $svc -}}
 {{- $mounts := list -}}
 {{- range $svc.volumeMounts }}{{ if eq .name $volumeName }}{{ $mounts = append $mounts . }}{{ end }}{{ end }}
 {{- if not $mounts -}}
-{{- fail (printf "%s services[%s] has no volumeMounts entry for the volume %s, so the files reach no container; mount it at %s, the folder AGENT_REMEDIATION_WORKFLOWS_DIR names" $set $svc.name $volumeName $dir) -}}
+{{- fail (printf "%s components[%s] has no volumeMounts entry for the volume %s, so the files reach no container; mount it at %s, the folder AGENT_REMEDIATION_WORKFLOWS_DIR names" $set $svc.name $volumeName $dir) -}}
 {{- end -}}
 {{- $mounted := false -}}
 {{- $subPath := "" -}}
@@ -286,9 +286,9 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 {{- if not $mounted -}}
 {{- if $subPath -}}
-{{- fail (printf "%s services[%s] mounts the volume %s at %s with subPath %s, which mounts one entry of the ConfigMap rather than the folder of files; remove the subPath" $set $svc.name $volumeName $dir $subPath) -}}
+{{- fail (printf "%s components[%s] mounts the volume %s at %s with subPath %s, which mounts one entry of the ConfigMap rather than the folder of files; remove the subPath" $set $svc.name $volumeName $dir $subPath) -}}
 {{- end -}}
-{{- fail (printf "%s services[%s] mounts the volume %s at %s, and AGENT_REMEDIATION_WORKFLOWS_DIR is %s, so agent-remediation would never read the files; mount the volume at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names, or set the variable to the mount's path" $set $svc.name $volumeName (join ", " $paths) $dir) -}}
+{{- fail (printf "%s components[%s] mounts the volume %s at %s, and AGENT_REMEDIATION_WORKFLOWS_DIR is %s, so agent-remediation would never read the files; mount the volume at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names, or set the variable to the mount's path" $set $svc.name $volumeName (join ", " $paths) $dir) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -546,12 +546,12 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 
 {{/*
-Install-wide Postgres pool limits for the Go services. 0, and an absent
-database block (an upgrade with --reuse-values), leave every service on its own
+Install-wide Postgres pool limits for the Go components. 0, and an absent
+database block (an upgrade with --reuse-values), leave every component on its own
 default, so the ConfigMap omits the key. Rendering fails when the idle limit
 exceeds the open limit, and when an idle limit is set without an open limit: the
-chart cannot know each service's own default open limit, and an idle limit
-above it would stop that service from starting.
+chart cannot know each component's own default open limit, and an idle limit
+above it would stop that component from starting.
 */}}
 {{- define "continuo.db.pool" -}}
 {{- $db := .Values.database | default dict -}}
@@ -567,9 +567,9 @@ above it would stop that service from starting.
 {{- dict "open" $open "idle" $idle | toJson -}}
 {{- end -}}
 
-{{/* LOG_LEVEL for every service, from global.logLevel, rendered as given. The
-     services match the level without regard to case and treat an unset or
-     empty one as info; any other name stops every service at startup, so the
+{{/* LOG_LEVEL for every component, from global.logLevel, rendered as given. The
+     components match the level without regard to case and treat an unset or
+     empty one as info; any other name stops every component at startup, so the
      render fails on it first. $accepted is pkg/config.AcceptedLogLevels, and
      pkg/streams' TestChartLogLevelsMatchTheComponents pins the two lists to each
      other. The shared ConfigMap includes this helper, so every install runs the
@@ -578,7 +578,7 @@ above it would stop that service from starting.
 {{- $level := .Values.global.logLevel | default "info" -}}
 {{- $accepted := list "debug" "info" "warn" "warning" "error" -}}
 {{- if not (has (lower $level) $accepted) -}}
-{{- fail (printf "global.logLevel=%q is not a log level the services accept: use one of %s, in any case (INFO, Info and info all work). A service given another level refuses to start." $level (join ", " $accepted)) -}}
+{{- fail (printf "global.logLevel=%q is not a log level the components accept: use one of %s, in any case (INFO, Info and info all work). A component given another level refuses to start." $level (join ", " $accepted)) -}}
 {{- end -}}
 {{- $level -}}
 {{- end -}}
@@ -614,8 +614,8 @@ Tolerates a release whose values hold no llm block or no llm.baseUrl. */}}
 {{- end -}}
 
 {{/* Environment the chart sets on agent-chat and agent-remediation from values.
-It is injected by deployment.yaml rather than carried by the `services` entries,
-so an overridden or reused `services` list cannot drop it: LLM_BASE_URL from
+It is injected by deployment.yaml rather than carried by the `components` entries,
+so an overridden or reused `components` list cannot drop it: LLM_BASE_URL from
 llm.baseUrl and, while egress-proxy renders ("continuo.egress.proxyEnabled"),
 HTTP_PROXY and HTTPS_PROXY naming it and the NO_PROXY of
 "continuo.egress.noProxy", which send the agents' outbound HTTP and gRPC calls
@@ -638,7 +638,7 @@ no indentation; empty when nothing is set. */}}
 {{- end }}
 {{- end -}}
 
-{{/* Fails the render when an agent's `services[].env` or `services[].secretEnv`
+{{/* Fails the render when an agent's `components[].env` or `components[].secretEnv`
 names a variable the chart manages for it, which would render a second entry for
 the same variable or route the agent around the chart's settings: LLM_BASE_URL
 always; while egress.enabled is true the proxy variables HTTP_PROXY,
@@ -659,25 +659,25 @@ Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- range (list "HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY" "http_proxy" "https_proxy" "no_proxy") -}}
 {{- $_ := set $reserved . "while egress.enabled is true the chart manages the agents' proxy variables and their outbound traffic goes through egress-proxy; remove it, or set egress.enabled=false to manage their proxy yourself" -}}
 {{- end -}}
-{{- $_ := set $reserved "S3_ENDPOINT_URL" "while egress.enabled is true the chart sets it for every service from s3.endpointUrl (or the bundled MinIO), and egress-proxy's allowlist is built from that value; set s3.endpointUrl instead" -}}
-{{- $_ := set $secretReserved "GITHUB_BASE_URL" "the egress-proxy allowlist is built from services[name=agent-remediation].env.GITHUB_BASE_URL and cannot read a Secret; set it in env instead, or set egress.enabled=false" -}}
+{{- $_ := set $reserved "S3_ENDPOINT_URL" "while egress.enabled is true the chart sets it for every component from s3.endpointUrl (or the bundled MinIO), and egress-proxy's allowlist is built from that value; set s3.endpointUrl instead" -}}
+{{- $_ := set $secretReserved "GITHUB_BASE_URL" "the egress-proxy allowlist is built from components[name=agent-remediation].env.GITHUB_BASE_URL and cannot read a Secret; set it in env instead, or set egress.enabled=false" -}}
 {{- $_ := set $secretReserved "LLM_PROVIDER" "while egress.enabled is true the egress-proxy allowlist admits the provider of llm.provider; set llm.provider instead" -}}
 {{- $env := $svc.env | default dict -}}
 {{- $llmProvider := get $env "LLM_PROVIDER" | toString -}}
 {{- if and (hasKey $env "LLM_PROVIDER") (ne $llmProvider "__LLM_PROVIDER__") -}}
-{{- fail (printf "services[name=%s].env sets LLM_PROVIDER=%q: while egress.enabled is true the egress-proxy allowlist admits the provider of llm.provider; set llm.provider instead, and leave LLM_PROVIDER at __LLM_PROVIDER__" $svc.name $llmProvider) -}}
+{{- fail (printf "components[name=%s].env sets LLM_PROVIDER=%q: while egress.enabled is true the egress-proxy allowlist admits the provider of llm.provider; set llm.provider instead, and leave LLM_PROVIDER at __LLM_PROVIDER__" $svc.name $llmProvider) -}}
 {{- end -}}
 {{- end -}}
 {{- range $key, $_ := ($svc.env | default dict) -}}
 {{- if hasKey $reserved $key -}}
-{{- fail (printf "services[name=%s].env sets %s: %s" $svc.name $key (get $reserved $key)) -}}
+{{- fail (printf "components[name=%s].env sets %s: %s" $svc.name $key (get $reserved $key)) -}}
 {{- end -}}
 {{- end -}}
 {{- range $secret := ($svc.secretEnv | default (list)) -}}
 {{- $name := $secret.name | toString -}}
 {{- $why := get $reserved $name | default (get $secretReserved $name) -}}
 {{- if $why -}}
-{{- fail (printf "services[name=%s].secretEnv sets %s: %s" $svc.name $name $why) -}}
+{{- fail (printf "components[name=%s].secretEnv sets %s: %s" $svc.name $name $why) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -712,13 +712,13 @@ Otherwise empty. Call: include "continuo.egress.numericHost" $host */}}
 {{- if or (regexMatch "^[0-9]+$" $last) (regexMatch "^0x[0-9a-f]*$" $last) -}}true{{- end -}}
 {{- end -}}
 
-{{/* The GITHUB_BASE_URL of the agent-remediation entry in `services`, or the
+{{/* The GITHUB_BASE_URL of the agent-remediation entry in `components`, or the
 public GitHub API when there is none. It reads the entry's `env` only: while
 egress is on, a GITHUB_BASE_URL in `secretEnv` fails the render
 ("continuo.agent.assertEnv"). */}}
 {{- define "continuo.egress.githubBaseUrl" -}}
 {{- $url := "https://api.github.com" -}}
-{{- range .Values.services -}}
+{{- range .Values.components -}}
 {{- if and (eq .name "agent-remediation") .env .env.GITHUB_BASE_URL -}}
 {{- $url = .env.GITHUB_BASE_URL | toString -}}
 {{- end -}}
@@ -795,14 +795,14 @@ Call: include "continuo.egress.urlEntry" (dict "url" $u "allowPrivate" true) | f
 
 {{/* The URLs the agents call whose address comes from values, as a JSON list of
 {key, url}: llm.baseUrl when set, the GITHUB_BASE_URL of agent-remediation's
-`services` entry (the public GitHub API when it has none), and s3.endpointUrl
+`components` entry (the public GitHub API when it has none), and s3.endpointUrl
 when minio.enabled=false. "key" names the setting in error messages. The
 allowlist admits the host of each one that is a host name; each one whose host
 is an IP address is a direct destination. */}}
 {{- define "continuo.egress.urlSources" -}}
 {{- $out := list -}}
 {{- with include "continuo.llm.baseUrl" . }}{{ $out = append $out (dict "key" "llm.baseUrl" "url" .) }}{{ end -}}
-{{- $out = append $out (dict "key" "services[name=agent-remediation].env.GITHUB_BASE_URL" "url" (include "continuo.egress.githubBaseUrl" .)) -}}
+{{- $out = append $out (dict "key" "components[name=agent-remediation].env.GITHUB_BASE_URL" "url" (include "continuo.egress.githubBaseUrl" .)) -}}
 {{- if not .Values.minio.enabled }}{{ $out = append $out (dict "key" "s3.endpointUrl" "url" (include "continuo.s3.endpointUrl" .)) }}{{ end -}}
 {{- $out | toJson -}}
 {{- end -}}
@@ -892,7 +892,7 @@ Call: include "continuo.egress.domainEntry" (dict "value" . "key" "allowedDomain
 ordered by host and then port (the order of the key "<host>:<port, zero-padded
 to five digits>"), so that equal settings render equal lists. It holds what the
 agents call: the LLM (llm.baseUrl, else the provider's public API), the
-GITHUB_BASE_URL of agent-remediation's `services` entry with the codeload host
+GITHUB_BASE_URL of agent-remediation's `components` entry with the codeload host
 archive downloads redirect to, s3.endpointUrl when the bundled MinIO is off, and
 the entries of egress.allowedDomains and egress.privateDomains. The hosts an
 operator configured (llm.baseUrl, a GitHub Enterprise host, s3.endpointUrl) and
@@ -1238,17 +1238,17 @@ Call: include "continuo.egress.directDestinations" $ | fromJsonArray */}}
 
 {{/* The addresses the agents are given through values, as a JSON list of
 {key, value}, "key" the setting that gave it: the global.*GrpcAddr values, and
-every value in the `services` env of agent-chat and agent-remediation. */}}
+every value in the `components` env of agent-chat and agent-remediation. */}}
 {{- define "continuo.egress.givenAddresses" -}}
 {{- $given := list -}}
 {{- $g := .Values.global | default dict -}}
 {{- range $key := list "runControllerGrpcAddr" "catalogGrpcAddr" "agentRemediationGrpcAddr" "agentChatGrpcAddr" "deadLetterControllerGrpcAddr" "releaseControllerGrpcAddr" -}}
 {{- $given = append $given (dict "key" (printf "global.%s" $key) "value" (get $g $key)) -}}
 {{- end -}}
-{{- range $svc := .Values.services -}}
+{{- range $svc := .Values.components -}}
 {{- if has $svc.name (list "agent-chat" "agent-remediation") -}}
 {{- range $key, $val := ($svc.env | default dict) -}}
-{{- $given = append $given (dict "key" (printf "services[name=%s].env.%s" $svc.name $key) "value" $val) -}}
+{{- $given = append $given (dict "key" (printf "components[name=%s].env.%s" $svc.name $key) "value" $val) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -1324,14 +1324,14 @@ Call: include "continuo.egress.allowlistAdmits" (dict "host" $h "port" $p "allow
 {{- end -}}
 
 {{/* The names of every Service the chart can render for a workload (each
-`services` entry, egress-proxy, and the bundled Postgres, Redis, Neo4j, MinIO
+`components` entry, egress-proxy, and the bundled Postgres, Redis, Neo4j, MinIO
 and Dex) in the forms a client may use: <name>, <name>.<namespace>,
 <name>.<namespace>.svc and <name>.<namespace>.svc.cluster.local, as a JSON list.
 They are pods of the release's namespace. */}}
 {{- define "continuo.egress.releaseServiceHosts" -}}
 {{- $ns := .Release.Namespace -}}
 {{- $services := list "egress-proxy" -}}
-{{- range .Values.services }}{{ $services = append $services (.name | toString | lower) }}{{ end -}}
+{{- range .Values.components }}{{ $services = append $services (.name | toString | lower) }}{{ end -}}
 {{- $services = concat $services (list (include "continuo.postgresql.fullname" .) (include "continuo.redis.fullname" .) (include "continuo.neo4j.fullname" .) (include "continuo.minio.fullname" .) (include "continuo.dex.fullname" .)) -}}
 {{- $local := list -}}
 {{- range uniq $services -}}
@@ -1345,7 +1345,7 @@ than the release's own Services ("continuo.egress.releaseServiceHosts"), as a
 JSON list of {key, host, port}, "port" the digits as written and "key" the
 setting that gave it. An address is in-cluster when its host has no dot or ends
 in .svc or .svc.cluster.local; it comes from a global.*GrpcAddr value, or from an
-http(s) URL or host:port value in the `services` env of agent-chat or
+http(s) URL or host:port value in the `components` env of agent-chat or
 agent-remediation. One the allowlist admits on that port
 ("continuo.egress.allowlistAdmits") is left out: the proxy carries it. An
 address with another host goes through the proxy, which admits it only when the
@@ -1500,8 +1500,8 @@ render fails on a port that is not one by "continuo.egress.isPort". */}}
 {{- if .Values.redis.enabled -}}6379{{- else -}}{{ .Values.externalRedis.port }}{{- end -}}
 {{- end -}}
 
-{{/* The REDIS_URL that replaces __REDIS_URL__ in a service's env. It carries
-     no password: the services that read it (ui, topology-controller) read the
+{{/* The REDIS_URL that replaces __REDIS_URL__ in a component's env. It carries
+     no password: the components that read it (ui, topology-controller) read the
      password from REDIS_PASSWORD or REDIS_PASSWORD_FILE. */}}
 {{- define "continuo.redis.url" -}}
 {{- printf "redis://%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) -}}
@@ -1538,28 +1538,28 @@ render fails on a port that is not one by "continuo.egress.isPort". */}}
 {{- define "continuo.s3.env" -}}{{ .Values.s3.env }}{{- end -}}
 
 {{/*
-Services whose process reads or writes object storage and therefore needs the S3
+Components whose process reads or writes object storage and therefore needs the S3
 credentials. The deployment template injects AWS_ACCESS_KEY_ID /
-AWS_SECRET_ACCESS_KEY for these from here, not from each service's `secretEnv`
-entry: `services` is a list, Helm replaces lists wholesale, and an operator
+AWS_SECRET_ACCESS_KEY for these from here, not from each component's `secretEnv`
+entry: `components` is a list, Helm replaces lists wholesale, and an operator
 upgrading with their own copy of values.yaml would otherwise carry an older entry
 that silently lacks the refs. Endpoint, bucket and region reach every pod through
-the shared ConfigMap and need no per-service wiring.
+the shared ConfigMap and need no per-component wiring.
 */}}
 {{- /*
-Services whose code connects to Redis at boot: the seven Go services read
+Components whose code connects to Redis at boot: the seven Go components read
 REDIS_HOST/REDIS_PORT or REDIS_ADDR from the shared ConfigMap, while ui and
-topology-controller read the REDIS_URL their `services` entry carries. In
+topology-controller read the REDIS_URL their `components` entry carries. In
 bundled mode each of them is gated on Redis answering PING. Listed here rather
-than inferred from a service's `env`, which only names the URL-reading half and
-lives in the replaceable `services` list. scripts/install-test/assert-redis-gate.py
-pins this list to the services whose source imports a Redis client.
+than inferred from a component's `env`, which only names the URL-reading half and
+lives in the replaceable `components` list. scripts/install-test/assert-redis-gate.py
+pins this list to the components whose source imports a Redis client.
 */ -}}
-{{- define "continuo.redis.clientServices" -}}
+{{- define "continuo.redis.clientComponents" -}}
 ["run-controller","catalog","agent-chat","execution-controller","ui","topology-controller","release-controller","remediation","agent-remediation","dead-letter-controller"]
 {{- end -}}
 
-{{- define "continuo.s3.credentialServices" -}}
+{{- define "continuo.s3.credentialComponents" -}}
 ["run-controller","catalog","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
 {{- end -}}
 
@@ -1738,7 +1738,7 @@ capabilities:
 
 {{/* ------- credential delivery ------- */}}
 
-{{/* The variables continuo's services read as credentials, each also as
+{{/* The variables continuo's components read as credentials, each also as
      <VAR>_FILE (a path to a file holding the value). JSON list. */}}
 {{- define "continuo.credentialVariables" -}}
 ["POSTGRES_PASSWORD","REDIS_PASSWORD","NEO4J_PASSWORD","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","LLM_API_KEY","GITHUB_TOKEN","GITHUB_APP_PRIVATE_KEY","AUTH_OIDC_CLIENT_SECRET"]
@@ -1748,22 +1748,22 @@ capabilities:
      per variable, named after it. */}}
 {{- define "continuo.credentialDir" -}}/var/run/secrets/continuo{{- end -}}
 
-{{/* The continuo database each Postgres-backed service keeps, by its short
+{{/* The continuo database each Postgres-backed component keeps, by its short
      name in db/migrate-all.sh's DATABASES. Owned by the chart rather than read
-     from a service's env.POSTGRES_DB, which lives in the replaceable `services`
+     from a component's env.POSTGRES_DB, which lives in the replaceable `components`
      list: the migrate Job migrates, and grants on, every database, whether its
-     service is enabled or not. pkg/deploycheck pins it to DATABASES. JSON
+     component is enabled or not. pkg/deploycheck pins it to DATABASES. JSON
      object. */}}
-{{- define "continuo.postgres.serviceDatabases" -}}
+{{- define "continuo.postgres.componentDatabases" -}}
 {"run-controller":"run_controller","execution-controller":"execution","release-controller":"release","remediation":"remediation","agent-remediation":"agent_remediation","agent-chat":"agent_chat","dead-letter-controller":"dead_letter"}
 {{- end -}}
 
-{{/* A service's Postgres login, credentials.postgres.<svc> over its defaults
+{{/* A component's Postgres login, credentials.postgres.<svc> over its defaults
      (username continuo_<svc with - as _>, no existingSecret, key password),
      which also cover a release with no credentials.postgres block (helm
      upgrade --reuse-values from an older chart). JSON object {username,
      existingSecret, key}.
-     Call: include "continuo.postgres.login" (dict "root" $ "svc" "<service>") */}}
+     Call: include "continuo.postgres.login" (dict "root" $ "svc" "<component>") */}}
 {{- define "continuo.postgres.login" -}}
 {{- $defaults := dict "username" (printf "continuo_%s" (.svc | replace "-" "_")) "existingSecret" "" "key" "password" -}}
 {{- $given := dig "postgres" .svc dict (.root.Values.credentials | default dict) | default dict -}}
@@ -1775,7 +1775,7 @@ capabilities:
 {{- define "continuo.postgres.loginsEnv" -}}
 {{- $root := . -}}
 {{- $pairs := list -}}
-{{- range $svc, $db := (include "continuo.postgres.serviceDatabases" . | fromJson) -}}
+{{- range $svc, $db := (include "continuo.postgres.componentDatabases" . | fromJson) -}}
 {{- $pairs = append $pairs (printf "%s=%s" $db (include "continuo.postgres.login" (dict "root" $root "svc" $svc) | fromJson).username) -}}
 {{- end -}}
 {{- join " " $pairs -}}
@@ -1787,22 +1787,22 @@ capabilities:
 {{- dig "postgres" "warehouse" "username" "continuo_warehouse" (.Values.credentials | default dict) -}}
 {{- end -}}
 
-{{/* How services sign in to Redis: "perService" (each its own login) or
+{{/* How components sign in to Redis: "perComponent" (each its own login) or
      "shared" (the one Redis password), from credentials.redis.mode;
-     perService for a release with no such key. Fails the render on any other
+     perComponent for a release with no such key. Fails the render on any other
      value. */}}
 {{- define "continuo.redis.mode" -}}
-{{- $mode := dig "redis" "mode" "perService" (.Values.credentials | default dict) -}}
-{{- if not (has $mode (list "perService" "shared")) -}}
-{{- fail (printf "credentials.redis.mode is %q: it must be perService or shared" (toString $mode)) -}}
+{{- $mode := dig "redis" "mode" "perComponent" (.Values.credentials | default dict) -}}
+{{- if not (has $mode (list "perComponent" "shared")) -}}
+{{- fail (printf "credentials.redis.mode is %q: it must be perComponent or shared" (toString $mode)) -}}
 {{- end -}}
 {{- $mode -}}
 {{- end -}}
 
-{{/* The Redis logins in perService mode: streams-init and every service in
-     "continuo.redis.clientServices". JSON list of names. */}}
+{{/* The Redis logins in perComponent mode: streams-init and every component in
+     "continuo.redis.clientComponents". JSON list of names. */}}
 {{- define "continuo.redis.loginNames" -}}
-{{- toJson (prepend (include "continuo.redis.clientServices" . | fromJsonArray) "streams-init") -}}
+{{- toJson (prepend (include "continuo.redis.clientComponents" . | fromJsonArray) "streams-init") -}}
 {{- end -}}
 
 {{/* A Redis login, credentials.redis.logins.<name> over its defaults
@@ -1825,7 +1825,7 @@ capabilities:
 {{- define "continuo.redis.aclFile" -}}
 {{- $rules := dict -}}
 {{- range $l := (.root.Files.Get "files/redis-acl-rules.json" | fromJson).logins -}}
-{{- $_ := set $rules $l.service $l.rule -}}
+{{- $_ := set $rules $l.component $l.rule -}}
 {{- end -}}
 user default off
 {{- range $name := (include "continuo.redis.loginNames" .root | fromJsonArray) }}
@@ -1849,7 +1849,7 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- include "continuo.redis.aclFile" (dict "root" . "passwords" $passwords) | sha256sum -}}
 {{- end -}}
 
-{{/* The Secret holding the bundled Redis's ACL file (perService mode). */}}
+{{/* The Secret holding the bundled Redis's ACL file (perComponent mode). */}}
 {{- define "continuo.redis.aclSecretName" -}}
 {{- printf "%s-redis-acl" (include "continuo.fullname" .) -}}
 {{- end -}}
@@ -1860,7 +1860,7 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- printf "%s-logins" (include "continuo.fullname" .) -}}
 {{- end -}}
 
-{{/* credentials.files with an empty map for a service given none, or an
+{{/* credentials.files with an empty map for a component given none, or an
      empty map for a release without a credentials block (helm upgrade
      --reuse-values from an older chart). JSON object. */}}
 {{- define "continuo.credentialFiles" -}}
@@ -1871,21 +1871,21 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- toJson $files -}}
 {{- end -}}
 
-{{/* Fails the render on a credentials.files service that has no enabled
-     services entry, and on a key under it that is not a credential variable:
+{{/* Fails the render on a credentials.files component that has no enabled
+     components entry, and on a key under it that is not a credential variable:
      no pod would read either.
      Call: include "continuo.credentials.assertFiles" $ */}}
 {{- define "continuo.credentials.assertFiles" -}}
 {{- $known := include "continuo.credentialVariables" . | fromJsonArray -}}
 {{- $enabled := list -}}
-{{- range $s := .Values.services -}}
+{{- range $s := .Values.components -}}
 {{- if $s.enabled -}}
 {{- $enabled = append $enabled $s.name -}}
 {{- end -}}
 {{- end -}}
 {{- range $svc, $vars := (include "continuo.credentialFiles" . | fromJson) -}}
 {{- if not (has $svc $enabled) -}}
-{{- fail (printf "credentials.files.%s: no enabled service named %s" $svc $svc) -}}
+{{- fail (printf "credentials.files.%s: no enabled component named %s" $svc $svc) -}}
 {{- end -}}
 {{- range $name, $_ := ($vars | default dict) -}}
 {{- if not (has $name $known) -}}
@@ -1895,7 +1895,7 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- end -}}
 {{- end -}}
 
-{{/* "env" or "file": how a service gets its credentials, its
+{{/* "env" or "file": how a component gets its credentials, its
      credentialDelivery or else credentials.delivery (env when the release has
      no credentials block). Fails the render on any other value.
      Call: include "continuo.credentialDelivery" (dict "root" $ "svc" $svc) */}}
@@ -1904,7 +1904,7 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- $where := "credentials.delivery" -}}
 {{- if .svc.credentialDelivery -}}
 {{- $mode = .svc.credentialDelivery -}}
-{{- $where = printf "services[name=%s].credentialDelivery" .svc.name -}}
+{{- $where = printf "components[name=%s].credentialDelivery" .svc.name -}}
 {{- end -}}
 {{- if not (has $mode (list "env" "file")) -}}
 {{- fail (printf "%s is %q: it must be env or file" $where (toString $mode)) -}}
@@ -1915,7 +1915,7 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{/* "true" when the chart's own credentials Secret holds the key of ref with
      an empty value: llm.apiKey, github.token or github.appPrivateKey left
      unset with no existingSecret. File delivery leaves such a credential out,
-     since an empty file fails a service's start where an empty variable reads
+     since an empty file fails a component's start where an empty variable reads
      as unset. */}}
 {{- define "continuo.credentialKnownEmpty" -}}
 {{- $v := .root.Values -}}
@@ -1925,12 +1925,12 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- end -}}
 {{- end -}}
 
-{{/* Where one credential of a service comes from:
+{{/* Where one credential of a component comes from:
        company  credentials.files gives a path for it
        file     file delivery, projected from its Secret
        none     file delivery of a key the chart knows is empty
        env      a secretKeyRef variable (env delivery, or a name that is not a
-                credential variable, which no service reads as a file)
+                credential variable, which no component reads as a file)
      Call: include "continuo.credentialSource" (dict "root" $ "svc" $svc "name" "<VAR>" "ref" "<ref>") */}}
 {{- define "continuo.credentialSource" -}}
 {{- $files := include "continuo.credentialFiles" .root | fromJson -}}
@@ -1942,7 +1942,7 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- end -}}
 {{- end -}}
 
-{{/* "true" when some enabled service still reads the credential group ref
+{{/* "true" when some enabled component still reads the credential group ref
      (redis, neo4j, authClientSecret...) from its Secret, as a secretKeyRef
      variable or a projected file. A group every consumer reads from a
      company-provided file needs no Secret key, so the chart's credentials
@@ -1952,7 +1952,7 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- $root := .root -}}
 {{- $ref := .ref -}}
 {{- $needed := false -}}
-{{- range $svc := $root.Values.services -}}
+{{- range $svc := $root.Values.components -}}
 {{- if $svc.enabled -}}
 {{- range $c := (include "continuo.credentialList" (dict "root" $root "svc" $svc) | fromJsonArray) -}}
 {{- if eq $c.ref $ref -}}
@@ -1993,7 +1993,7 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- end -}}
 
 {{/* POSIX shell for a wait init container that reads a credential file the
-     way the services do: drop exactly one trailing LF or CRLF, nothing else
+     way the components do: drop exactly one trailing LF or CRLF, nothing else
      ($(cat ...) alone drops every trailing LF and keeps a CR). After
      `read_credential <file>` the value is in $credential. A missing file
      stops the script (the command substitution fails under `set -e`).
@@ -2011,7 +2011,7 @@ read_credential() {
 
 {{/* The volumeMounts of a wait init container that reads one credential: the
      continuo-credentials volume when it reads the file projected from its
-     Secret, the service's own volumeMounts when it reads a company file, and
+     Secret, the component's own volumeMounts when it reads a company file, and
      nothing (empty output) when it reads a variable.
      Call: include "continuo.credentialInitMounts" (dict "root" $ "svc" $svc "name" "<VAR>" "ref" "<ref>") */}}
 {{- define "continuo.credentialInitMounts" -}}
@@ -2027,16 +2027,16 @@ volumeMounts:
 {{- end }}
 {{- end -}}
 
-{{/* The credentials a service's main container gets, as a JSON list of
-     {name, ref}: the S3 key pair for the services in
-     "continuo.s3.credentialServices", the Postgres login's password for the
-     services in "continuo.postgres.serviceDatabases", the Redis password (its
-     own login's in perService mode) for the services in
-     "continuo.redis.clientServices", then its secretEnv entries less those,
+{{/* The credentials a component's main container gets, as a JSON list of
+     {name, ref}: the S3 key pair for the components in
+     "continuo.s3.credentialComponents", the Postgres login's password for the
+     components in "continuo.postgres.componentDatabases", the Redis password (its
+     own login's in perComponent mode) for the components in
+     "continuo.redis.clientComponents", then its secretEnv entries less those,
      which the template injects instead. */}}
 {{- define "continuo.credentialList" -}}
-{{- $needsS3 := has .svc.name (include "continuo.s3.credentialServices" .root | fromJsonArray) -}}
-{{- $needsPostgres := hasKey (include "continuo.postgres.serviceDatabases" .root | fromJson) .svc.name -}}
+{{- $needsS3 := has .svc.name (include "continuo.s3.credentialComponents" .root | fromJsonArray) -}}
+{{- $needsPostgres := hasKey (include "continuo.postgres.componentDatabases" .root | fromJson) .svc.name -}}
 {{- $list := list -}}
 {{- if $needsS3 -}}
 {{- $list = append $list (dict "name" "AWS_ACCESS_KEY_ID" "ref" "s3AccessKeyId") -}}
@@ -2045,9 +2045,9 @@ volumeMounts:
 {{- if $needsPostgres -}}
 {{- $list = append $list (dict "name" "POSTGRES_PASSWORD" "ref" "postgresLogin") -}}
 {{- end -}}
-{{- $needsRedis := has .svc.name (include "continuo.redis.clientServices" .root | fromJsonArray) -}}
+{{- $needsRedis := has .svc.name (include "continuo.redis.clientComponents" .root | fromJsonArray) -}}
 {{- if $needsRedis -}}
-{{- $list = append $list (dict "name" "REDIS_PASSWORD" "ref" (ternary "redisLogin" "redis" (eq (include "continuo.redis.mode" .root) "perService"))) -}}
+{{- $list = append $list (dict "name" "REDIS_PASSWORD" "ref" (ternary "redisLogin" "redis" (eq (include "continuo.redis.mode" .root) "perComponent"))) -}}
 {{- end -}}
 {{- range $secret := (.svc.secretEnv | default (list)) -}}
 {{- if not (or (and $needsS3 (has $secret.name (list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY"))) (and $needsPostgres (eq $secret.name "POSTGRES_PASSWORD")) (and $needsRedis (eq $secret.name "REDIS_PASSWORD"))) -}}
@@ -2057,8 +2057,8 @@ volumeMounts:
 {{- toJson $list -}}
 {{- end -}}
 
-{{/* The company-file credentials of a service that "continuo.credentialList"
-     does not name, sorted: each still reaches the service as <VAR>_FILE.
+{{/* The company-file credentials of a component that "continuo.credentialList"
+     does not name, sorted: each still reaches the component as <VAR>_FILE.
      JSON list of variable names. */}}
 {{- define "continuo.credentialExtraFiles" -}}
 {{- $listed := list -}}
@@ -2164,28 +2164,28 @@ staticPasswords:
 {{- end -}}
 
 {{/*
-The services that serve /metrics on the metrics port: every Go service and
+The components that serve /metrics on the metrics port: every Go component and
 topology-controller. scripts/install-test/assert-metrics.py pins this list to
-the services whose source imports pkg/metrics (Go) or prometheus_client
+the components whose source imports pkg/metrics (Go) or prometheus_client
 (Python).
 */ -}}
-{{- define "continuo.metrics.services" -}}
+{{- define "continuo.metrics.components" -}}
 ["run-controller","catalog","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller","egress-proxy","topology-controller"]
 {{- end -}}
 
 {{/*
-The port every service in continuo.metrics.services serves /metrics on (default
+The port every component in continuo.metrics.components serves /metrics on (default
 9464, also when the metrics block is absent from stored values). Rendering fails
-when it equals a service's httpPort or grpcPort, which that service could then
+when it equals a component's httpPort or grpcPort, which that component could then
 not bind, or, with the egress proxy rendered, the proxy's listen port (3128) or
 health port (8093).
 */ -}}
 {{- define "continuo.metrics.port" -}}
 {{- $m := .Values.metrics | default dict -}}
 {{- $port := $m.port | default 9464 | int -}}
-{{- range $svc := .Values.services -}}
+{{- range $svc := .Values.components -}}
 {{- if or (eq (int (default 0 $svc.httpPort)) $port) (eq (int (default 0 $svc.grpcPort)) $port) -}}
-{{- fail (printf "metrics.port %d is service %s's httpPort or grpcPort; choose a free port" $port $svc.name) -}}
+{{- fail (printf "metrics.port %d is component %s's httpPort or grpcPort; choose a free port" $port $svc.name) -}}
 {{- end -}}
 {{- end -}}
 {{- if and (eq (include "continuo.egress.proxyEnabled" .) "true") (has $port (list 3128 8093)) -}}

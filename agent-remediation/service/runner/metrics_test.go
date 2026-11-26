@@ -741,6 +741,6 @@ func TestRemediationMetrics_TypeLabelComesFromTheLoadedFiles(t *testing.T) {
 	assert.True(t, seen["dbt-compile"], "a cluster's steps are under its type")
 	assert.True(t, seen["none"], "a node no type matched is none")
 	assert.True(t, seen[""], "a step of the flow itself has no type")
-	assert.Contains(t, body, `continuo_remediation_outcomes_total{flow="rejected-release",outcome="handed_over",reason="no_type",service="agent-remediation",type="none"} 1`)
-	assert.Contains(t, body, `continuo_remediation_outcomes_total{flow="rejected-release",outcome="fixed",reason="",service="agent-remediation",type="dbt-compile"} 2`)
+	assert.Contains(t, body, `continuo_remediation_outcomes_total{component="agent-remediation",flow="rejected-release",outcome="handed_over",reason="no_type",type="none"} 1`)
+	assert.Contains(t, body, `continuo_remediation_outcomes_total{component="agent-remediation",flow="rejected-release",outcome="fixed",reason="",type="dbt-compile"} 2`)
 }

@@ -28,7 +28,7 @@ then apply to the host itself.
 
 | Tool | Why | Install (macOS, Homebrew) |
 |---|---|---|
-| Docker Desktop, or [colima](https://github.com/abiosoft/colima) | Runs the cluster and builds the service images | `brew install colima && colima start` |
+| Docker Desktop, or [colima](https://github.com/abiosoft/colima) | Runs the cluster and builds the component images | `brew install colima && colima start` |
 | [kind](https://kind.sigs.k8s.io/) | The local Kubernetes cluster | `brew install kind` |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Talking to that cluster | `brew install kubectl` |
 | [Helm](https://helm.sh/) 3.14+ | Installing continuo | `brew install helm` |
@@ -37,7 +37,7 @@ then apply to the host itself.
 | [uv](https://docs.astral.sh/uv/) | Installing the runtime CLI that builds the python project's contract (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install uv` |
 
 **Room to run it.** continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
-identity provider in this mode, plus its own services, and then runs your
+identity provider in this mode, plus its own components, and then runs your
 nodes as Kubernetes Jobs alongside all of that. Give the container runtime
 **6 CPUs, 16 GiB of memory and a 60 GB disk**. Close other heavy containers,
 and a second local cluster especially, before you start. On colima that is:
@@ -60,7 +60,7 @@ fork.
 **Credentials: none to install.** The install itself needs no secrets, and so
 does every step of the walkthrough except the LLM-backed extras below. The
 chart generates every datastore password itself, including a Postgres and a
-Redis login of its own for each continuo service; against your own datastores,
+Redis login of its own for each continuo component; against your own datastores,
 your team creates those logins instead ([deploy/CREDENTIALS.md](../deploy/CREDENTIALS.md)). An LLM API
 key unlocks two optional things: the in-UI **assistant** (section 3) and
 **chapter 8 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md)
@@ -83,7 +83,7 @@ walks through the App).
 
 **Where they go.** All three are Helm chart values, not local environment
 variables — the chart stores them in a Kubernetes Secret and injects them as
-env vars into the services that use them. Set them the way section 3 sets
+env vars into the components that use them. Set them the way section 3 sets
 `llm.apiKey`: `helm upgrade ... --reuse-values --set github.token=...` (plus
 `github.installationId` and `github.appPrivateKey` for the App), then
 `kubectl -n continuo rollout restart` the affected deployment so it picks up
@@ -115,14 +115,14 @@ kubectl -n continuo get pods -w
 ```
 
 That single `helm install` brings up PostgreSQL, Redis, Neo4j, MinIO, an
-identity provider, and continuo's services. It is a quickstart layout meant
+identity provider, and continuo's components. It is a quickstart layout meant
 for evaluation — one static login, no backups, no high availability. Production
 installs bring their own datastores; see
 [deploy/README.md](../deploy/README.md).
 
-While you wait, most service pods sit in `Init:0/2` or `Init:0/1`: each one
+While you wait, most component pods sit in `Init:0/2` or `Init:0/1`: each one
 gates on init containers that wait for Redis to answer and for its database
-migrations to finish, so services start in dependency order rather than
+migrations to finish, so components start in dependency order rather than
 crash-looping.
 The wait is image pulls plus that gate — on a first install expect several
 quiet minutes with no restarts. Wait until every pod is `Running` or
@@ -141,7 +141,7 @@ open http://localhost:8090
 Log in with `admin@example.com` / `password`.
 
 The `/etc/hosts` line exists because logging in uses OIDC, which requires that
-your browser and the `ui` service agree on one issuer hostname. `ui` reaches
+your browser and the `ui` component agree on one issuer hostname. `ui` reaches
 the identity provider over in-cluster DNS at `continuo-dex`; your browser cannot
 resolve that name at all. One loopback line bridges the two. If you cannot use
 `sudo`, [the chart's README](../deploy/continuo/README.md) shows how to do it
@@ -159,7 +159,7 @@ platform in plain language (it has more to say once you load real projects into 
 It needs an LLM API key; until one is set the panel answers with a
 provider error (`x-api-key header is required`).
 
-Set the key and restart the chat service:
+Set the key and restart agent-chat:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
@@ -190,7 +190,7 @@ how to reach a model you host and how to add a host.
 
 ## Troubleshooting
 
-**A pod is in `CrashLoopBackOff` during install.** Not expected: services gate
+**A pod is in `CrashLoopBackOff` during install.** Not expected: components gate
 on init containers (`wait-for-redis`, `wait-for-migrations`) and start in
 dependency order, so a healthy install comes up with zero restarts. A pod
 stuck in `Init:` (for example `Init:0/2`) is still waiting on its gates — look

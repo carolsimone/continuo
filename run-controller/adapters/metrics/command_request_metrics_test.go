@@ -23,10 +23,10 @@ func TestRunMetrics_CountsCommandRequestOutcomes(t *testing.T) {
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{
-		`continuo_command_requests_total{command="start_run",outcome="created",service="run-controller"} 2`,
-		`continuo_command_requests_total{command="start_run",outcome="replayed",service="run-controller"} 1`,
-		`continuo_command_requests_total{command="start_run",outcome="conflict",service="run-controller"} 1`,
-		`continuo_command_requests_total{command="cancel_active_run",outcome="no_run",service="run-controller"} 1`,
+		`continuo_command_requests_total{command="start_run",component="run-controller",outcome="created"} 2`,
+		`continuo_command_requests_total{command="start_run",component="run-controller",outcome="replayed"} 1`,
+		`continuo_command_requests_total{command="start_run",component="run-controller",outcome="conflict"} 1`,
+		`continuo_command_requests_total{command="cancel_active_run",component="run-controller",outcome="no_run"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q\n%s", want, body)

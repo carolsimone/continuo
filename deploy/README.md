@@ -1,7 +1,7 @@
 # Deploying continuo
 
 continuo ships as a single Helm chart, [`deploy/continuo`](continuo/), that
-installs every backend service plus optional bundled quickstart datastores
+installs every backend component plus optional bundled quickstart datastores
 (PostgreSQL, Redis, Neo4j, MinIO, Dex). This page is the entry point; the
 chart's own [README](continuo/README.md) is the authoritative install
 reference.
@@ -309,7 +309,7 @@ version.
   allow it. While the issuer is unreachable, bearer calls answer `503`
   `auth_unavailable` and the browser login is unaffected.
 - Where egress must go through a proxy, add `HTTPS_PROXY` together with
-  `NODE_USE_ENV_PROXY=1` to the `ui` entry's `env` in `services`, plus
+  `NODE_USE_ENV_PROXY=1` to the `ui` entry's `env` in `components`, plus
   `NO_PROXY` covering the in-cluster service names the `ui` calls
   (`release-controller`, `run-controller`, `catalog`, `agent-chat`,
   `agent-remediation`, and your IdP when it is in-cluster). The `ui` runs on
@@ -354,9 +354,9 @@ With your own IdP, the token is an ID token it issues for the `ui`'s client id;
 how a script obtains one depends on the IdP. An operator token may also
 bootstrap a project (`"bootstrap": true`).
 
-## Service deployment controls
+## Component deployment controls
 
-Each `services` entry requires `name` and `enabled`. Setting `enabled: false`
+Each `components` entry requires `name` and `enabled`. Setting `enabled: false`
 omits that entry's Deployment, Service, ServiceAccount, Role and RoleBinding.
 An enabled entry defaults to one replica when `replicas` is omitted; an explicit
 `replicas: 0` keeps its resources and scales its Deployment to zero.
@@ -368,10 +368,10 @@ port still creates its Deployment and requested RBAC, without a Service.
 Readiness and liveness probes follow the ports: an entry with `httpPort` is
 probed over HTTP on it (`readinessPath`, `livenessPath`, `probePath`), a
 gRPC-only entry by a TCP connect to its `grpcPort`, which works in the Go
-service images, and an entry with neither port by a Python process check, so
+component images, and an entry with neither port by a Python process check, so
 its image must include Python.
 
-Every enabled entry runs under its own ServiceAccount, named after the service,
+Every enabled entry runs under its own ServiceAccount, named after the component,
 which carries the entry's `serviceAccount.annotations` (a cloud role, or the
 identity a Vault role is bound to) and the top-level `imagePullSecrets` (or the
 entry's own `serviceAccount.imagePullSecrets`). Only an entry with
@@ -383,11 +383,11 @@ the namespace's `default` ServiceAccount. An entry also takes `podAnnotations`,
 `credentials.delivery` and `credentials.files`, which hand the credentials to
 the pods as environment variables or as files.
 
-### Validating service controls
+### Validating component controls
 
 The standard `bash scripts/install-test/lint.sh` gate includes render regressions
 for enablement, replica counts, ports and RBAC. The optional live test uses the
-production service templates in an isolated Helm release, without starting the
+production component templates in an isolated Helm release, without starting the
 full continuo dependency stack. Its workload is a Go TCP echo on alpine
 without Python, as the shipped Go images are. It checks scale-to-zero, that a
 gRPC-only entry becomes ready, TCP routing through its Service, and resource
@@ -398,13 +398,13 @@ and make the image available to the cluster (for kind, load it with `kind load
 docker-image continuo-chart-echo:test --name <cluster>`), then run:
 
 ```bash
-docker build -t continuo-chart-echo:test scripts/install-test/fixtures/service-controls
-python3 scripts/install-test/test-service-controls-live.py continuo-chart-echo:test
+docker build -t continuo-chart-echo:test scripts/install-test/fixtures/component-controls
+python3 scripts/install-test/test-component-controls-live.py continuo-chart-echo:test
 ```
 
 ## Outbound traffic
 
-agent-chat and agent-remediation are the two services where a language model
+agent-chat and agent-remediation are the two components where a language model
 decides what happens next, so they reach the outside world only through
 **egress-proxy** (`egress.enabled`, on by default). The proxy admits a
 connection only to a host and port on its allowlist, resolves the name itself,
@@ -421,7 +421,7 @@ every other outbound connection.
 | `llm.baseUrl` empty, `llm.provider: anthropic` | `api.anthropic.com:443` |
 | `llm.baseUrl` empty, `llm.provider: openai` | `api.openai.com:443` |
 | `llm.baseUrl` set | its host and port, which may resolve to a private address |
-| `GITHUB_BASE_URL` in the `env` of agent-remediation's `services` entry (default `https://api.github.com`) | `api.github.com:443` and `codeload.github.com:443` |
+| `GITHUB_BASE_URL` in the `env` of agent-remediation's `components` entry (default `https://api.github.com`) | `api.github.com:443` and `codeload.github.com:443` |
 | a GitHub Enterprise `GITHUB_BASE_URL` | its host and `codeload.<host>` on its port, which may resolve to private addresses |
 | `s3.endpointUrl` (with `minio.enabled: false`) | its host and port, which may resolve to a private address |
 | `egress.allowedDomains` / `egress.privateDomains` | the entries listed |
@@ -524,7 +524,7 @@ allowlist names them. Write `<name>.<namespace>.svc`.
 With `networkPolicy.enabled`, the agents may reach:
 
 - DNS (port 53);
-- every pod of the release namespace on any port: the proxy, the services and the
+- every pod of the release namespace on any port: the proxy, the components and the
   bundled datastores;
 - an external Postgres or Redis on its configured port, on the private ranges and
   on pods of any namespace;
@@ -593,9 +593,9 @@ the agents' `env`.
 - PostgreSQL only, today. The `externalDatabase.*` keys are deliberately
   engine-agnostic, but every migration and query assumes Postgres; MySQL is
   a roadmap item, not a supported option.
-- One Postgres login per service plus a migration login that owns every
+- One Postgres login per component plus a migration login that owns every
   continuo database (no superuser, no `CREATEROLE`), and one Redis ACL user per
-  service plus one for `streams-init` (Redis 7 or later; a Redis with no ACL
+  component plus one for `streams-init` (Redis 7 or later; a Redis with no ACL
   users runs `credentials.redis.mode: shared`). See
   [CREDENTIALS.md](CREDENTIALS.md).
 - In-cluster encryption is the operator's: the chart configures no mTLS; run

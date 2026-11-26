@@ -3,7 +3,7 @@
 # own static pods — apiserver, etcd, controller-manager, scheduler, kube-proxy,
 # coredns, kindnet — already claim roughly half of that before the chart's
 # pods are even considered). deploy/continuo's shipped defaults are sized for
-# real capacity planning and sum to ~2.1 CPU requests across 10 services + 4
+# real capacity planning and sum to ~2.1 CPU requests across 10 components + 4
 # bundled datastores, so the scheduler rejects them outright ("Insufficient
 # cpu") before the release ever comes up. Applied on every mode (bundled and
 # BYO alike): it's the request budget, not the datastore topology, that blocks

@@ -48,10 +48,10 @@ func TestRunMetrics_CancellingGaugesAndCancelDuration(t *testing.T) {
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{
-		`continuo_runs_cancelling{service="run-controller"} 5`,
-		`continuo_runs_cancelling_overdue{service="run-controller"} 4`,
-		`continuo_run_cancel_seconds_count{service="run-controller"} 2`,
-		`continuo_run_cancel_seconds_sum{service="run-controller"} 690`,
+		`continuo_runs_cancelling{component="run-controller"} 5`,
+		`continuo_runs_cancelling_overdue{component="run-controller"} 4`,
+		`continuo_run_cancel_seconds_count{component="run-controller"} 2`,
+		`continuo_run_cancel_seconds_sum{component="run-controller"} 690`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)
@@ -82,10 +82,10 @@ func TestRunMetrics_LeaseSeries(t *testing.T) {
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{
-		`continuo_node_lease_waiters{service="run-controller"} 3`,
-		`continuo_node_lease_wait_seconds_count{service="run-controller"} 2`,
-		`continuo_node_lease_wait_seconds_sum{service="run-controller"} 150`,
-		`continuo_node_leases_repaired_total{service="run-controller"} 1`,
+		`continuo_node_lease_waiters{component="run-controller"} 3`,
+		`continuo_node_lease_wait_seconds_count{component="run-controller"} 2`,
+		`continuo_node_lease_wait_seconds_sum{component="run-controller"} 150`,
+		`continuo_node_leases_repaired_total{component="run-controller"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)
@@ -113,15 +113,15 @@ func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{
-		`continuo_cron_fires_total{outcome="started",service="run-controller"} 1`,
-		`continuo_cron_fires_total{outcome="missed",service="run-controller"} 1002`,
-		`continuo_cron_fires_total{outcome="skipped_active",service="run-controller"} 1`,
-		`continuo_cron_fires_total{outcome="invalid_node_type",service="run-controller"} 1`,
-		`continuo_cron_fires_total{outcome="failed",service="run-controller"} 2`,
+		`continuo_cron_fires_total{component="run-controller",outcome="started"} 1`,
+		`continuo_cron_fires_total{component="run-controller",outcome="missed"} 1002`,
+		`continuo_cron_fires_total{component="run-controller",outcome="skipped_active"} 1`,
+		`continuo_cron_fires_total{component="run-controller",outcome="invalid_node_type"} 1`,
+		`continuo_cron_fires_total{component="run-controller",outcome="failed"} 2`,
 		"or failed (a fire that returned an error or did not end within 30 seconds",
-		`continuo_schedules{service="run-controller",state="scheduled"} 3`,
-		`continuo_schedules{service="run-controller",state="paused"} 1`,
-		`continuo_schedules{service="run-controller",state="unparsable"} 2`,
+		`continuo_schedules{component="run-controller",state="scheduled"} 3`,
+		`continuo_schedules{component="run-controller",state="paused"} 1`,
+		`continuo_schedules{component="run-controller",state="unparsable"} 2`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)
@@ -159,14 +159,14 @@ func TestRunMetrics_SeedReloadSeriesStartAtZero(t *testing.T) {
 	body := scrape(reg)
 	for _, action := range []string{"load", "full_refresh"} {
 		for _, outcome := range []string{"loaded", "stopped", "refused", "failed"} {
-			want := fmt.Sprintf(`continuo_seed_reloads_total{action=%q,outcome=%q,service="run-controller"} 0`, action, outcome)
+			want := fmt.Sprintf(`continuo_seed_reloads_total{action=%q,component="run-controller",outcome=%q} 0`, action, outcome)
 			if !strings.Contains(body, want) {
 				t.Errorf("metrics output lacks %q", want)
 			}
 		}
 	}
 	for _, reason := range []string{"unowned_dependents", "engine_mismatch", "seed_full_refresh_disabled", "seed_full_refresh_undefined", "full_refresh_undefined"} {
-		want := fmt.Sprintf(`continuo_seed_reload_stops_total{reason=%q,service="run-controller"} 0`, reason)
+		want := fmt.Sprintf(`continuo_seed_reload_stops_total{component="run-controller",reason=%q} 0`, reason)
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)
 		}
@@ -176,9 +176,9 @@ func TestRunMetrics_SeedReloadSeriesStartAtZero(t *testing.T) {
 	m.SeedReloadStopped("unowned_dependents")
 	body = scrape(reg)
 	for _, want := range []string{
-		`continuo_seed_reloads_total{action="load",outcome="loaded",service="run-controller"} 1`,
-		`continuo_seed_reloads_total{action="full_refresh",outcome="loaded",service="run-controller"} 0`,
-		`continuo_seed_reload_stops_total{reason="unowned_dependents",service="run-controller"} 1`,
+		`continuo_seed_reloads_total{action="load",component="run-controller",outcome="loaded"} 1`,
+		`continuo_seed_reloads_total{action="full_refresh",component="run-controller",outcome="loaded"} 0`,
+		`continuo_seed_reload_stops_total{component="run-controller",reason="unowned_dependents"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)
@@ -195,11 +195,11 @@ func TestRunMetrics_ViewRebuiltObservesTheOutage(t *testing.T) {
 
 	body := scrape(reg)
 	for _, want := range []string{
-		`continuo_view_outage_seconds_bucket{service="run-controller",le="60"} 0`,
-		`continuo_view_outage_seconds_bucket{service="run-controller",le="120"} 1`,
-		`continuo_view_outage_seconds_bucket{service="run-controller",le="86400"} 1`,
-		`continuo_view_outage_seconds_count{service="run-controller"} 1`,
-		`continuo_view_outage_seconds_sum{service="run-controller"} 90`,
+		`continuo_view_outage_seconds_bucket{component="run-controller",le="60"} 0`,
+		`continuo_view_outage_seconds_bucket{component="run-controller",le="120"} 1`,
+		`continuo_view_outage_seconds_bucket{component="run-controller",le="86400"} 1`,
+		`continuo_view_outage_seconds_count{component="run-controller"} 1`,
+		`continuo_view_outage_seconds_sum{component="run-controller"} 90`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)

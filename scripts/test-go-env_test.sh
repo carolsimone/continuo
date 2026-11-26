@@ -34,7 +34,7 @@ run(){
 }
 logged(){ grep -qxF "$1" "$tmp/log"; }
 
-run test-go SERVICE=pkg
+run test-go COMPONENT=pkg
 assert "test-go passes" "[ $rc -eq 0 ]"
 assert "the default Postgres port reaches the tests" "logged POSTGRES_PORT=5432"
 assert "the default Redis port reaches the tests" "logged REDIS_ADDR=testhost:6379"
@@ -42,7 +42,7 @@ assert "the default Neo4j port reaches the tests" "logged NEO4J_URI=bolt://testh
 assert "compose gets the default host ports" "logged 'ports 5432 6379 7687 7474'"
 
 ports=(PG_HOST_PORT=25432 REDIS_HOST_PORT=26379 NEO4J_HOST_PORT=27687 NEO4J_HTTP_HOST_PORT=27474)
-run test-go SERVICE=pkg "${ports[@]}"
+run test-go COMPONENT=pkg "${ports[@]}"
 assert "test-go passes on other ports" "[ $rc -eq 0 ]"
 assert "another Postgres port reaches the tests" "logged POSTGRES_PORT=25432"
 assert "another Redis port reaches the tests" "logged REDIS_ADDR=testhost:26379"
@@ -50,12 +50,12 @@ assert "another Neo4j port reaches the tests" "logged NEO4J_URI=bolt://testhost:
 assert "compose gets every other host port" "logged 'ports 25432 26379 27687 27474'"
 assert "no compose call keeps the default ports" "! logged 'ports 5432 6379 7687 7474'"
 
-run test-go SERVICE=release-controller "${ports[@]}"
+run test-go COMPONENT=release-controller "${ports[@]}"
 assert "release-controller's own DSN follows the Postgres port" \
   "grep -q '^RELEASE_TEST_PG_DSN=postgres://[^@]*@testhost:25432/' \"$tmp/log\""
-run test-go SERVICE=run-controller "${ports[@]}"
+run test-go COMPONENT=run-controller "${ports[@]}"
 assert "run-controller's Redis address follows the Redis port" "logged REDIS_ADDR=testhost:26379"
-run test-go SERVICE=dead-letter-controller "${ports[@]}"
+run test-go COMPONENT=dead-letter-controller "${ports[@]}"
 assert "dead-letter-controller's Redis address follows the Redis port" "logged REDIS_ADDR=testhost:26379"
 
 run test-deps-up

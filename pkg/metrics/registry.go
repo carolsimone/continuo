@@ -1,5 +1,5 @@
 // Package metrics serves a process's Prometheus metrics on a listener of its
-// own. Every series carries the label service. Consumer lag is read from
+// own. Every series carries the label component. Consumer lag is read from
 // Redis inside each scrape, as is any collector a process registers (the
 // outbox backlog of pkg/outbox, for one), so a process nobody scrapes does no
 // metrics I/O.
@@ -23,11 +23,11 @@ type Registry struct {
 	consumers *consumerMetrics
 }
 
-// New returns a registry whose series carry service=<component>, with Go
+// New returns a registry whose series carry component=<component>, with Go
 // runtime and process metrics registered.
 func New(component string) *Registry {
 	reg := prometheus.NewRegistry()
-	r := &Registry{reg: reg, labelled: prometheus.WrapRegistererWith(prometheus.Labels{"service": component}, reg)}
+	r := &Registry{reg: reg, labelled: prometheus.WrapRegistererWith(prometheus.Labels{"component": component}, reg)}
 	r.labelled.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	return r
 }
@@ -44,5 +44,5 @@ func (r *Registry) WatchDB(db *sql.DB, name string) {
 	r.labelled.MustRegister(collectors.NewDBStatsCollector(db, name))
 }
 
-// Register adds component-specific collectors; their series carry the service label.
+// Register adds component-specific collectors; their series carry the component label.
 func (r *Registry) Register(cs ...prometheus.Collector) { r.labelled.MustRegister(cs...) }

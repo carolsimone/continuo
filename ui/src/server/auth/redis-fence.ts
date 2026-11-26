@@ -1,9 +1,9 @@
 import { ReplyError } from 'ioredis';
 
-// The REDIS_ACL_MODE values. In perService mode each component signs in as its
+// The REDIS_ACL_MODE values. In perComponent mode each component signs in as its
 // own Redis login, whose rule fences it to its own keys; in shared mode every
 // component signs in with the same password and nothing is checked.
-export const REDIS_ACL_MODES = ['shared', 'perService'] as const;
+export const REDIS_ACL_MODES = ['shared', 'perComponent'] as const;
 export type RedisAclMode = (typeof REDIS_ACL_MODES)[number];
 
 // The key the fence asks Redis about. It lies outside every key pattern of the
@@ -44,7 +44,7 @@ const realTiming: FenceTiming = {
   log: console,
 };
 
-// Makes sure, in perService mode, that the login redis signs in as cannot
+// Makes sure, in perComponent mode, that the login redis signs in as cannot
 // reach keys outside its own. It runs XINFO GROUPS on PERMISSION_PROBE_KEY:
 // every generated rule allows that command, so a NOPERM answer can only mean
 // the key is outside the login's patterns, and any other answer (the key's
@@ -60,8 +60,8 @@ export async function checkPermissionFence(
   timing: FenceTiming = realTiming,
 ): Promise<void> {
   if (mode === 'shared') return;
-  if (mode !== 'perService') {
-    throw new Error(`unknown REDIS_ACL_MODE "${mode}": expected shared or perService`);
+  if (mode !== 'perComponent') {
+    throw new Error(`unknown REDIS_ACL_MODE "${mode}": expected shared or perComponent`);
   }
   const login = redis.options.username || 'default';
   const deadline = timing.now() + STARTUP_TIMEOUT_MS;

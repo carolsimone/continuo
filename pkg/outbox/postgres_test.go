@@ -43,7 +43,7 @@ func testPostgresConfig() pkgconfig.PostgresConfig {
 }
 
 // dbForTest connects to testDatabase with the POSTGRES_* host and credentials
-// `make test-go SERVICE=pkg` sets, and never changes its schema. The processor
+// `make test-go COMPONENT=pkg` sets, and never changes its schema. The processor
 // under test claims every row in the table, so the suite empties execution_outbox
 // before and after each test; make test-go runs one suite at a time, and no
 // outbox relay (for example an execution-controller) may run against
@@ -52,7 +52,7 @@ func dbForTest(t *testing.T) *sqlx.DB {
 	t.Helper()
 	cfg := testPostgresConfig()
 	if cfg.Host == "" {
-		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go SERVICE=pkg`")
+		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go COMPONENT=pkg`")
 	}
 	dsn, err := cfg.DSN()
 	require.NoError(t, err)

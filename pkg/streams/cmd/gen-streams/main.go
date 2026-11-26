@@ -60,9 +60,9 @@ type Stream struct {
 }
 
 type Consumer struct {
-	Service string `yaml:"service"`
-	Group   string `yaml:"group"`
-	Const   string `yaml:"const"`
+	Component string `yaml:"component"`
+	Group     string `yaml:"group"`
+	Const     string `yaml:"const"`
 }
 
 // Vocabulary is a closed set of string values two or more components agree on,
@@ -261,7 +261,7 @@ func loadAndValidate(r io.Reader) (*Contract, error) {
 
 func emitGo(c *Contract) (string, error) {
 	type groupRow struct {
-		Const, Group, Service, Stream string
+		Const, Group, Component, Stream string
 	}
 	var streamRows []struct {
 		Const, Name, Description string
@@ -276,7 +276,7 @@ func emitGo(c *Contract) (string, error) {
 		streamRows = append(streamRows, struct{ Const, Name, Description string }{s.Const, s.Name, s.Description})
 		row := streamGroupsRow{Const: s.Const}
 		for _, cons := range s.Consumers {
-			groupRows = append(groupRows, groupRow{cons.Const, cons.Group, cons.Service, s.Name})
+			groupRows = append(groupRows, groupRow{cons.Const, cons.Group, cons.Component, s.Name})
 			row.Groups = append(row.Groups, cons.Const)
 		}
 		streamGroups = append(streamGroups, row)
@@ -305,7 +305,7 @@ const (
 // Consumer groups.
 const (
 {{- range .Groups }}
-	// {{ .Const }} — {{ .Service }} consumer group on {{ .Stream }}.
+	// {{ .Const }} — {{ .Component }} consumer group on {{ .Stream }}.
 	{{ .Const }} = "{{ .Group }}"
 {{- end }}
 )
@@ -743,7 +743,7 @@ func emitPythonStreams(c *Contract, component string) (string, error) {
 		}
 		if !involves {
 			for _, cons := range s.Consumers {
-				if cons.Service == component {
+				if cons.Component == component {
 					involves = true
 					break
 				}
@@ -758,7 +758,7 @@ func emitPythonStreams(c *Contract, component string) (string, error) {
 			Description: s.Description,
 		})
 		for _, cons := range s.Consumers {
-			if cons.Service != component {
+			if cons.Component != component {
 				continue
 			}
 			groups = append(groups, groupRow{
