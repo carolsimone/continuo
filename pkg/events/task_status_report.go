@@ -7,10 +7,10 @@ import (
 )
 
 // TaskStatusReportSchemaVersion is the schema_version of
-// task.status.updated:v2 entries.
+// task.status.updated:v1 entries.
 const TaskStatusReportSchemaVersion = 1
 
-// TaskStatusReport is the payload of a task.status.updated:v2 entry: what
+// TaskStatusReport is the payload of a task.status.updated:v1 entry: what
 // execution-controller knows of one attempt. A report is cumulative: it
 // carries every fact known of the attempt so far, so a final report holds the
 // queue and start times even when the reports before it were lost. Status is
@@ -44,7 +44,7 @@ type TaskStatusReport struct {
 }
 
 // TaskStatusReportFields renders p as the Redis fields of one
-// task.status.updated:v2 entry, its times in UTC. eventID is the id of the
+// task.status.updated:v1 entry, its times in UTC. eventID is the id of the
 // outbox row that carries the entry.
 func TaskStatusReportFields(eventID, tenantID, producer string, occurredAt time.Time, p TaskStatusReport) (map[string]any, error) {
 	p.QueuedAt, p.StartedAt, p.FinishedAt = utc(p.QueuedAt), utc(p.StartedAt), utc(p.FinishedAt)

@@ -155,7 +155,7 @@ func TestFiles_AnUnknownStepExitsOne(t *testing.T) {
 	flow := `kind: flow
 version: 1
 name: broken
-trigger: remediation.requested
+trigger: heal.triggered
 types: [only-type]
 context: []
 across_clusters: []
@@ -315,7 +315,7 @@ func TestFiles_AGateOfTwoStepsExitsOne(t *testing.T) {
 func TestFiles_AReplacementOfTheTriggerFlowThatCannotRunExitsOne(t *testing.T) {
 	for name, tc := range map[string]struct{ from, to, want string }{
 		"an unsupported trigger": {
-			from: "trigger: remediation.requested", to: "trigger: release.rejected",
+			from: "trigger: heal.triggered", to: "trigger: release.rejected",
 			want: `flow "rejected-release" has trigger "release.rejected"`,
 		},
 		"no gate": {

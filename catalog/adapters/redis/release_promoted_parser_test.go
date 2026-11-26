@@ -10,14 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func releasePromotedV2Message(t *testing.T, p events.ReleasePromoted) goredis.XMessage {
+func releasePromotedMessage(t *testing.T, p events.ReleasePromoted) goredis.XMessage {
 	t.Helper()
-	return releasePromotedV2MessageOf(t, "default", p)
+	return releasePromotedMessageOf(t, "default", p)
 }
 
-// releasePromotedV2MessageOf builds the entry release-controller publishes for
+// releasePromotedMessageOf builds the entry release-controller publishes for
 // tenantID.
-func releasePromotedV2MessageOf(t *testing.T, tenantID string, p events.ReleasePromoted) goredis.XMessage {
+func releasePromotedMessageOf(t *testing.T, tenantID string, p events.ReleasePromoted) goredis.XMessage {
 	t.Helper()
 	fields, err := events.ReleasePromotedFields(tenantID, "release-controller", time.Now().UTC(), p)
 	require.NoError(t, err)
@@ -27,17 +27,17 @@ func releasePromotedV2MessageOf(t *testing.T, tenantID string, p events.ReleaseP
 
 // A promotion whose envelope names no tenant has nowhere to be written: it is
 // dead-lettered, never written under no tenant.
-func TestParseReleasePromotedV2_NoTenantIsPermanent(t *testing.T) {
-	_, err := ParseReleasePromotedV2(releasePromotedV2MessageOf(t, "", events.ReleasePromoted{
+func TestParseReleasePromoted_NoTenantIsPermanent(t *testing.T) {
+	_, err := ParseReleasePromoted(releasePromotedMessageOf(t, "", events.ReleasePromoted{
 		ReleaseID: "rel-7", PromotionSeq: 7, TopologyURI: "s3://b/k", TopologySHA256: "ab",
 	}))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
-func TestParseReleasePromotedV2_MapsThePayload(t *testing.T) {
+func TestParseReleasePromoted_MapsThePayload(t *testing.T) {
 	promotedAt := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
-	in, err := ParseReleasePromotedV2(releasePromotedV2MessageOf(t, "tenant-7", events.ReleasePromoted{
+	in, err := ParseReleasePromoted(releasePromotedMessageOf(t, "tenant-7", events.ReleasePromoted{
 		ReleaseID: "rel-7", PromotedAt: promotedAt, PromotionSeq: 7,
 		TopologyURI:    "s3://continuo/tenants/default/topologies/rel-7/topology.json.gz",
 		TopologySHA256: "ab12", ChangedNodeIDs: []string{"analytics.orders"},
@@ -60,8 +60,8 @@ func TestParseReleasePromotedV2_MapsThePayload(t *testing.T) {
 	assert.Empty(t, in.ContractBundleSHA256)
 }
 
-func TestReleasePromotedV2Parser_ReadsTheContractBundle(t *testing.T) {
-	in, err := ParseReleasePromotedV2(releasePromotedV2Message(t, events.ReleasePromoted{
+func TestReleasePromotedParser_ReadsTheContractBundle(t *testing.T) {
+	in, err := ParseReleasePromoted(releasePromotedMessage(t, events.ReleasePromoted{
 		ReleaseID: "rel-7", PromotionSeq: 7,
 		TopologyURI: "s3://continuo/tenants/default/topologies/rel-7/topology.json.gz", TopologySHA256: "ab12",
 		ContractBundleURI:    "s3://continuo/tenants/default/topologies/rel-7/contracts.json.gz",
@@ -73,24 +73,24 @@ func TestReleasePromotedV2Parser_ReadsTheContractBundle(t *testing.T) {
 	assert.Equal(t, "ab12", in.TopologySHA256, "the topology's checksum stays its own")
 }
 
-func TestParseReleasePromotedV2_MissingPayloadIsPermanent(t *testing.T) {
-	_, err := ParseReleasePromotedV2(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"schema_version": "1"}})
+func TestParseReleasePromoted_MissingPayloadIsPermanent(t *testing.T) {
+	_, err := ParseReleasePromoted(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"schema_version": "1"}})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
-func TestParseReleasePromotedV2_UnknownSchemaVersionIsPermanent(t *testing.T) {
-	msg := releasePromotedV2Message(t, events.ReleasePromoted{
+func TestParseReleasePromoted_UnknownSchemaVersionIsPermanent(t *testing.T) {
+	msg := releasePromotedMessage(t, events.ReleasePromoted{
 		ReleaseID: "rel-7", PromotionSeq: 7, TopologyURI: "s3://b/k", TopologySHA256: "ab",
 	})
 	msg.Values["schema_version"] = "99"
-	_, err := ParseReleasePromotedV2(msg)
+	_, err := ParseReleasePromoted(msg)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
-func TestParseReleasePromotedV2_SeqBelowOneIsPermanent(t *testing.T) {
-	_, err := ParseReleasePromotedV2(releasePromotedV2Message(t, events.ReleasePromoted{
+func TestParseReleasePromoted_SeqBelowOneIsPermanent(t *testing.T) {
+	_, err := ParseReleasePromoted(releasePromotedMessage(t, events.ReleasePromoted{
 		ReleaseID: "rel-7", PromotionSeq: 0, TopologyURI: "s3://b/k", TopologySHA256: "ab",
 	}))
 	require.Error(t, err)

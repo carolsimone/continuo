@@ -1,20 +1,20 @@
 package event
 
-// RemediationRequested mirrors the remediation.requested:v3 payload the
+// HealTriggered mirrors the heal.triggered:v1 payload the
 // remediation classifier produces: one message per rejected release and
 // remediation round, carrying every failing node the classifier recorded,
 // the ones no fix can reach included. Only the fields the case base records
 // are mapped; the heal agent's routing fields are not this consumer's concern.
-type RemediationRequested struct {
+type HealTriggered struct {
 	Source        string
 	ReleaseID     string
 	CodeBundleURI string
 	ClassifiedAt  string // RFC3339
-	Nodes         []RemediationRequestedNode
+	Nodes         []HealTriggeredNode
 }
 
-// RemediationRequestedNode is one classified failure inside the batch.
-type RemediationRequestedNode struct {
+// HealTriggeredNode is one classified failure inside the batch.
+type HealTriggeredNode struct {
 	NodeID         string
 	Category       string
 	ErrorSignature string

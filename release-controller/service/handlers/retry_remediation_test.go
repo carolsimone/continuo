@@ -50,12 +50,12 @@ func TestRetryRemediation_DeadEndStartsRoundTwo(t *testing.T) {
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
-	require.Equal(t, streams.RemediationRetryRequestedV2, entries[0].StreamName)
+	require.Equal(t, streams.RemediationRetryRequestedV1, entries[0].StreamName)
 	require.Equal(t, "remediation_retry_requested", entries[0].EventType)
 }
 
 // TestRetryRemediation_WritesTheTypedRetry pins the row the retry stores: the
-// typed remediation.retry_requested:v2 payload, wrapped under the default
+// typed remediation.retry_requested:v1 payload, wrapped under the default
 // tenant, carrying the later round and the release's stored rejection
 // unchanged.
 func TestRetryRemediation_WritesTheTypedRetry(t *testing.T) {
@@ -71,7 +71,7 @@ func TestRetryRemediation_WritesTheTypedRetry(t *testing.T) {
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	e := entries[0]
-	require.Equal(t, streams.RemediationRetryRequestedV2, e.StreamName)
+	require.Equal(t, streams.RemediationRetryRequestedV1, e.StreamName)
 	require.Equal(t, "remediation_retry_requested", e.EventType)
 	require.Equal(t, "release-controller", e.AggregateType)
 	require.Equal(t, handlers.AggregateIDForRelease("rel-1"), e.AggregateID)

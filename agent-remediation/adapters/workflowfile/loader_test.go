@@ -20,7 +20,7 @@ import (
 const flowYAML = `kind: flow
 version: 1
 name: rejected-release
-trigger: remediation.requested
+trigger: heal.triggered
 types: [dbt-compile, dbt-parse]
 context: [failing_node_source]
 across_clusters: [edits_map_to_a_project]
@@ -55,7 +55,7 @@ func TestLoad_ReadsAFlowAndATypeFromOneFolder(t *testing.T) {
 	flow, ok := set.Flows["rejected-release"]
 	require.True(t, ok)
 	assert.Equal(t, 1, flow.Version)
-	assert.Equal(t, "remediation.requested", flow.Trigger)
+	assert.Equal(t, "heal.triggered", flow.Trigger)
 	assert.Equal(t, []string{"dbt-compile", "dbt-parse"}, flow.Types)
 	assert.Equal(t, 3, flow.Tries)
 	assert.Equal(t, "flows/rejected-release.yaml", flow.File)

@@ -320,7 +320,7 @@ func (v ApproverSource) IsValid() bool {
 	return false
 }
 
-// ContractFamily — Which producer wrote a node's ODCS contract. It travels on manifest.loaded.candidate:v2 (the count of contracts by family), is stored on each contract of a release's contract bundle and on each contract version in catalog, and the release page shows the count.
+// ContractFamily — Which producer wrote a node's ODCS contract. It travels on release.parsed:v1 (the count of contracts by family), is stored on each contract of a release's contract bundle and on each contract version in catalog, and the release page shows the count.
 // Values come from the vocabulary "contract_family" in contract.yaml, in
 // declaration order.
 type ContractFamily string
@@ -766,7 +766,7 @@ func ParseOperation(s string) (Operation, error) {
 	return "", fmt.Errorf("unknown operation %q", s)
 }
 
-// AttemptStatus — Where one attempt of a task stands, on the two task streams. run-controller sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v2.
+// AttemptStatus — Where one attempt of a task stands, on the two task streams. run-controller sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v1.
 // Values come from the vocabulary "attempt_status" in contract.yaml, in
 // declaration order.
 type AttemptStatus string

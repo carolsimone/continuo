@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// A report is emitted, and kept, as its task.status.updated:v2 payload; a
+// A report is emitted, and kept, as its task.status.updated:v1 payload; a
 // failure names its reason's class, and the payload reads back as the report.
 func TestReport_IsEmittedAsItsPayloadAndReadsBack(t *testing.T) {
 	queued := time.Date(2026, 10, 20, 23, 1, 20, 0, time.UTC)

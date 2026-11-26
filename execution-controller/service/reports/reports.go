@@ -1,4 +1,4 @@
-// Package reports writes execution-controller's task.status.updated:v2
+// Package reports writes execution-controller's task.status.updated:v1
 // reports of production attempts to the outbox, in the caller's transaction.
 package reports
 
@@ -61,7 +61,7 @@ func write(ctx context.Context, repo outbox.Repository, d *model.Deployment, r m
 	}
 	if err := repo.Create(ctx, &outbox.Entry{MessageProcessingID: d.MessageProcessingID(), AggregateType: "task",
 		AggregateID: taskID, EventType: event.EventTypeTaskStatusReport, Payload: stored,
-		StreamName: streams.TaskStatusUpdatedV2}); err != nil {
+		StreamName: streams.TaskStatusUpdatedV1}); err != nil {
 		return fmt.Errorf("write the %s report of attempt %d of task %s: %w", r.Status, cmd.Attempt, cmd.TaskID, err)
 	}
 	return nil

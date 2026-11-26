@@ -53,7 +53,7 @@ func BenchmarkStartRun(b *testing.B) {
 	}
 }
 
-// BenchmarkTaskSucceeded measures the whole task.status.updated:v2
+// BenchmarkTaskSucceeded measures the whole task.status.updated:v1
 // transaction for a task's success, as AttemptReportHandler runs it: lock the
 // run, the task and the attempt, apply the report, save the run, write its
 // dispatches, commit. Tasks succeed in key order, which is level order; once

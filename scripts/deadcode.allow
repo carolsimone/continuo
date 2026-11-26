@@ -18,7 +18,7 @@
 ^remediation/domain/failure/classify\.go: Classify$
 ^execution-controller/service/validation/aggregate\.go: Emit(Validation|SeedBuild)AggregateIfComplete$
 ^catalog/adapters/neo4j/client\.go: NewNeo4jClient$
-^pkg/events/manifest_loaded_candidate\.go: ManifestLoaded
+^pkg/events/release_parsed\.go: ReleaseParsed
 ^pkg/redis/streamconsumer\.go: With(ReclaimMinIdle|WorkerPool)$
 ^pkg/config/(llm|loglevel)\.go: Accepted
 ^run-controller/domain/aggregate/run/status\.go: RunStatuses$

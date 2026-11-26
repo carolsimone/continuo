@@ -730,12 +730,12 @@ func outcomeOf(t *testing.T, e *pkgoutbox.Entry) string {
 	return p.Outcome
 }
 
-// promotedEvent decodes the payload of a release.promoted:v2 outbox row.
+// promotedEvent decodes the payload of a release.promoted:v1 outbox row.
 func promotedEvent(t *testing.T, e *pkgoutbox.Entry) events.ReleasePromoted {
 	t.Helper()
-	require.NotNil(t, e, "expected a release.promoted:v2 outbox entry")
-	require.Equal(t, streams.ReleasePromotedV2, e.StreamName)
-	require.Equal(t, ports.ReleasePromotedV2EventType, e.EventType)
+	require.NotNil(t, e, "expected a release.promoted:v1 outbox entry")
+	require.Equal(t, streams.ReleasePromotedV1, e.StreamName)
+	require.Equal(t, ports.ReleasePromotedEventType, e.EventType)
 	var p events.ReleasePromoted
 	require.NoError(t, json.Unmarshal(e.Payload, &p))
 	return p

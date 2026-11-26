@@ -43,7 +43,7 @@ func TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	cases := []struct{ producer, stream, group string }{
-		{"run-controller", streams.TaskStatusUpdatedV2, streams.RunControllerTaskStatusUpdated},
+		{"run-controller", streams.TaskStatusUpdatedV1, streams.RunControllerTaskStatusUpdated},
 		{"topology-controller", streams.ReleaseRequestedV1, streams.TopologyControllerReleaseRequested},
 	}
 	for _, tc := range cases {
@@ -76,13 +76,13 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	defer cancel()
 	clients := setupClients(t, ctx)
 
-	// release.promoted:v2 has four consumer groups. Both catalog groups and
+	// release.promoted:v1 has four consumer groups. Both catalog groups and
 	// run-controller's reject an entry without an envelope as a permanent failure (their
 	// bindings wrap events.DecodeReleasePromoted's error in events.ErrPermanent),
 	// so each dead-letters the original; execution-controller's teardown is
 	// best-effort and acknowledges it. group is the one the redrive addresses;
 	// the others must acknowledge the redriven entry without a handler.
-	const stream = streams.ReleasePromotedV2
+	const stream = streams.ReleasePromotedV1
 	const group = streams.CatalogReleaseTopology
 	otherGroups := []string{streams.CatalogReleaseVersions, streams.RunControllerReleasePromoted, streams.ExecutionControllerReleasePromoted}
 
@@ -179,7 +179,7 @@ func TestDeadLetter_CLIListsAndRedrives(t *testing.T) {
 	defer cancel()
 	clients := setupClients(t, ctx)
 
-	const stream = streams.ReleasePromotedV2
+	const stream = streams.ReleasePromotedV1
 	const group = streams.CatalogReleaseTopology
 	bin := buildCLI(t, ctx)
 	env := []string{
@@ -246,8 +246,8 @@ func TestDeadLetter_BacklogMetricIsExposed(t *testing.T) {
 	defer cancel()
 	clients := setupClients(t, ctx)
 
-	id := publishMalformed(ctx, t, clients, streams.TaskStatusUpdatedV2)
-	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.TaskStatusUpdatedV2, streams.RunControllerTaskStatusUpdated, id, "open")
+	id := publishMalformed(ctx, t, clients, streams.TaskStatusUpdatedV1)
+	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.TaskStatusUpdatedV1, streams.RunControllerTaskStatusUpdated, id, "open")
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, dl.GetId()) })
 
 	body := scrapeMetrics(t, getEnv("DEAD_LETTER_HOST", "dead-letter-controller"))

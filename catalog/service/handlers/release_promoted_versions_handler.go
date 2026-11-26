@@ -28,7 +28,7 @@ func firstIDs(ids []string, n int) []string {
 	return append([]string{}, ids[:min(len(ids), n)]...)
 }
 
-// ReleasePromotedVersionsHandler consumes release.promoted:v2 on its own
+// ReleasePromotedVersionsHandler consumes release.promoted:v1 on its own
 // consumer group and records the release's code versions in the tenant's
 // graph.
 //
@@ -79,7 +79,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 	outboxEntryID *uuid.UUID,
 	in domainModel.PromoteReleaseInput,
 ) error {
-	h.logger.Info("Processing release.promoted:v2 (versions group)",
+	h.logger.Info("Processing release.promoted:v1 (versions group)",
 		"message_id", messageID,
 		"tenant_id", in.TenantID,
 		"release_id", in.ReleaseID,

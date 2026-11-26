@@ -5,7 +5,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// AttemptReported is the typed form of one task.status.updated:v2 report: the
+// AttemptReported is the typed form of one task.status.updated:v1 report: the
 // tenant its envelope names, the run it belongs to and what
 // execution-controller reported of the attempt. The run is that tenant's.
 type AttemptReported struct {

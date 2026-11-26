@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// AttemptReportHandler applies one task.status.updated:v2 report in its run's
+// AttemptReportHandler applies one task.status.updated:v1 report in its run's
 // transaction: it locks the run, lets the run record the report
 // (Run.RecordAttemptReport: the attempt by rank, the task, the next attempt
 // of a retryable failure, the dispatch of the tasks a success makes ready, the

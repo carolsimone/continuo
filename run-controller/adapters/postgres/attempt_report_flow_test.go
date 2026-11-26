@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// report delivers one task.status.updated:v2 report of attempt n of the run's
+// report delivers one task.status.updated:v1 report of attempt n of the run's
 // task at key through AttemptReportHandler and a real unit of work, in one
 // transaction.
 func (f statusFlow) report(t *testing.T, key string, n int32, status run.AttemptStatus, reason model.FailureReason) {

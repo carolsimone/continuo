@@ -30,7 +30,7 @@ func assertOntologyRunRejectedWhileSwitchIsOff(t *testing.T, store *fakeStore, r
 	assert.Nil(t, store.GetServiceProd(project), "no service_prod row is written for the ontology file")
 	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
 	for _, e := range store.OutboxEntries() {
-		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "nothing is promoted")
+		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "nothing is promoted")
 	}
 
 	var rejected struct {

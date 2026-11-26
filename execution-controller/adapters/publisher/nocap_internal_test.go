@@ -24,14 +24,14 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := &outbox.Entry{ID: uuid.New(), StreamName: streams.TaskStatusUpdatedV2, EventType: event.EventTypeTaskStatusReport, Payload: stored}
+	entry := &outbox.Entry{ID: uuid.New(), StreamName: streams.TaskStatusUpdatedV1, EventType: event.EventTypeTaskStatusReport, Payload: stored}
 	values, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != pkgredis.Key(streams.TaskStatusUpdatedV2) {
-		t.Fatalf("stream = %q, want %q", args.Stream, pkgredis.Key(streams.TaskStatusUpdatedV2))
+	if args.Stream != pkgredis.Key(streams.TaskStatusUpdatedV1) {
+		t.Fatalf("stream = %q, want %q", args.Stream, pkgredis.Key(streams.TaskStatusUpdatedV1))
 	}
 	if !args.NoMkStream {
 		t.Fatal("the publisher must not create a stream: NOMKSTREAM is unset")

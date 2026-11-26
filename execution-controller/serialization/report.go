@@ -9,7 +9,7 @@ import (
 )
 
 // ReportFromDomain renders the report of the attempt cmd runs as its
-// task.status.updated:v2 payload, which is also what deployments.last_report
+// task.status.updated:v1 payload, which is also what deployments.last_report
 // keeps. A failure names its reason's class.
 func ReportFromDomain(cmd command.DeployTask, r model.Report) pkgevents.TaskStatusReport {
 	p := pkgevents.TaskStatusReport{

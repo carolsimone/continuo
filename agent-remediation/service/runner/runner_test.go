@@ -52,7 +52,7 @@ func TestRunner_AcceptTwiceCreatesOneRemediation(t *testing.T) {
 	msgs := h.store.ProcessedMessages()
 	require.Len(t, msgs, 1)
 	assert.Equal(t, messageprocessing.StateCompleted, msgs[0].State)
-	assert.Equal(t, streams.RemediationRequestedV3, msgs[0].StreamName, "the message is claimed on the stream it was read from")
+	assert.Equal(t, streams.HealTriggeredV1, msgs[0].StreamName, "the message is claimed on the stream it was read from")
 }
 
 // Accept is the one place a trigger with no tenant gets the default tenant: the

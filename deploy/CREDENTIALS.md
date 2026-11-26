@@ -213,7 +213,7 @@ chart, in two forms:
 
   ```json
   {"key_prefix": "continuo:",
-   "logins": [{"component": "run-controller", "username": "continuo_run_controller", "rule": "~continuo:release.promoted:v2 ... -@all +ping ..."}]}
+   "logins": [{"component": "run-controller", "username": "continuo_run_controller", "rule": "~continuo:release.promoted:v1 ... -@all +ping ..."}]}
   ```
 
 Create each login with its rule and a password. With `redis-cli`, as a login

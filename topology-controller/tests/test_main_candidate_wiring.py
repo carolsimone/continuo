@@ -20,7 +20,7 @@ from service.contracts_library import LIBRARY_VERSION
 from service.errors import PermanentMessageError
 from streams_contract import (
     RELEASE_REQUESTED_V1,
-    MANIFEST_LOADED_CANDIDATE_V2,
+    RELEASE_PARSED_V1,
     TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
 )
 
@@ -64,7 +64,7 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setattr(main, "REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setattr(main, "RELEASE_REQUESTED_STREAM", RELEASE_REQUESTED_V1)
     monkeypatch.setattr(main, "RELEASE_REQUESTED_GROUP", TOPOLOGY_CONTROLLER_RELEASE_REQUESTED)
-    monkeypatch.setattr(main, "MANIFEST_LOADED_CANDIDATE_STREAM", MANIFEST_LOADED_CANDIDATE_V2)
+    monkeypatch.setattr(main, "RELEASE_PARSED_STREAM", RELEASE_PARSED_V1)
     monkeypatch.setattr(main, "CandidateManifestPublisher", lambda *a, **kw: object())
     monkeypatch.setattr(main, "CandidateSqlUploader", lambda *a, **kw: object())
     monkeypatch.setattr(main, "CodeBundleUploader", lambda *a, **kw: object())
@@ -485,12 +485,12 @@ def test_main_publishes_parse_results_on_the_v2_stream_as_this_component(monkeyp
     main.main()
 
     ((args, kwargs),) = built
-    assert args[1] == MANIFEST_LOADED_CANDIDATE_V2
+    assert args[1] == RELEASE_PARSED_V1
     assert kwargs["producer"] == COMPONENT_NAME
 
 
 def test_main_announces_the_library_version_the_handler_writes_its_bundle_with(monkeypatch):
-    """The version on manifest.loaded.candidate:v2 is the installed one, the same
+    """The version on release.parsed:v1 is the installed one, the same
     the contract bundle's `continuo_contracts` and the producer check use."""
     _common_monkeypatches(monkeypatch)
     built = []

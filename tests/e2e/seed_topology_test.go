@@ -123,7 +123,7 @@ func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]top
 
 // seedTopology installs the full e2e topology through release-controller's
 // announce-topology: release-controller writes the artifact, takes the next
-// promotion seq and queues release.promoted:v2, which both readers apply on the
+// promotion seq and queues release.promoted:v1, which both readers apply on the
 // path a promoted release takes — catalog's Neo4j :Node/:DEPENDS_ON and the
 // default tenant's :Meta, and run-controller's topology_nodes and live_release, from
 // which run-controller reads each schedule's models. It returns once both have applied

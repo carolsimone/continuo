@@ -78,7 +78,7 @@ func (e *edgeTenant) cleanup(db *sqlx.DB) {
 	ctx := context.Background()
 	_, _ = db.ExecContext(ctx, `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, e.runID)
 	_, _ = db.ExecContext(ctx, `DELETE FROM message_processing WHERE message_id = ANY($1) AND stream_name = $2`,
-		pq.Array(e.messages), streams.TaskStatusUpdatedV2)
+		pq.Array(e.messages), streams.TaskStatusUpdatedV1)
 	for _, table := range []string{
 		"runs", "node_leases", "node_materializations", "schedules",
 		"live_release", "topology_releases",
@@ -108,7 +108,7 @@ func (e *edgeTenant) runStatus(t *testing.T, db *sqlx.DB) string {
 }
 
 // report is a queued report of attempt 0 of the tenant's task whose envelope
-// names envelopeTenant, as a task.status.updated:v2 entry with a stream id of
+// names envelopeTenant, as a task.status.updated:v1 entry with a stream id of
 // its own.
 func (e *edgeTenant) report(t *testing.T, envelopeTenant string) goredis.XMessage {
 	t.Helper()
@@ -134,7 +134,7 @@ func requireCode(t *testing.T, err error, code codes.Code, what string) {
 // TestTenantEdges drives the places where work enters run-controller against a run of
 // a tenant other than the one the gRPC edge resolves, default. Every gRPC read
 // and command reads that tenant's run, task, schedule and node as ones that do
-// not exist and leaves the run as it was. A task.status.updated:v2 report
+// not exist and leaves the run as it was. A task.status.updated:v1 report
 // finds the run only under the tenant its envelope names: under another it is
 // permanent, so the consumer dead-letters it, and under the run's own it is
 // applied.
@@ -218,7 +218,7 @@ func TestTenantEdges(t *testing.T) {
 		assert.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, runControllerDB), "the report changed nothing")
 		var dedup int
 		require.NoError(t, runControllerDB.Get(&dedup, `SELECT count(*) FROM message_processing WHERE stream_name = $1 AND message_id = $2`,
-			streams.TaskStatusUpdatedV2, e.messages[0]))
+			streams.TaskStatusUpdatedV1, e.messages[0]))
 		assert.Zero(t, dedup, "the refused report's transaction rolled back")
 
 		require.NoError(t, binding(ctx, e.report(t, e.id)))

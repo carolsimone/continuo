@@ -143,8 +143,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 
 	var promotedEventType string
 	require.NoError(t, db.Get(&promotedEventType,
-		`SELECT event_type FROM release_controller_outbox WHERE stream_name = $1`, streams.ReleasePromotedV2))
-	assert.Equal(t, "release_promoted_v2", promotedEventType)
+		`SELECT event_type FROM release_controller_outbox WHERE stream_name = $1`, streams.ReleasePromotedV1))
+	assert.Equal(t, "release_promoted", promotedEventType)
 
 	var seq int64
 	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM current_prod WHERE id = 1`))

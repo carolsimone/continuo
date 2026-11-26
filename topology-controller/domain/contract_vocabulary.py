@@ -72,7 +72,7 @@ class ApproverSource(StrEnum):
 
 
 class ContractFamily(StrEnum):
-    """Which producer wrote a node's ODCS contract. It travels on manifest.loaded.candidate:v2 (the count of contracts by family), is stored on each contract of a release's contract bundle and on each contract version in catalog, and the release page shows the count."""
+    """Which producer wrote a node's ODCS contract. It travels on release.parsed:v1 (the count of contracts by family), is stored on each contract of a release's contract bundle and on each contract version in catalog, and the release page shows the count."""
     DBT = "dbt"
     PYTHON = "python"
 
@@ -157,7 +157,7 @@ class Operation(StrEnum):
 
 
 class AttemptStatus(StrEnum):
-    """Where one attempt of a task stands, on the two task streams. run-controller sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v2."""
+    """Where one attempt of a task stands, on the two task streams. run-controller sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v1."""
     DISPATCHED = "dispatched"
     QUEUED = "queued"
     RUNNING = "running"

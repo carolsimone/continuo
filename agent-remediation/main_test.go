@@ -61,8 +61,8 @@ func code(h http.HandlerFunc) int {
 // readiness and liveness answer 200.
 func TestHealthyRegistryPassesBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("remediation_requested")
-	reg.AddWorkerProbe("remediation_requested_heartbeat", 0, func(context.Context) error { return nil })
+	reg.RegisterWorker("heal_triggered")
+	reg.AddWorkerProbe("heal_triggered_heartbeat", 0, func(context.Context) error { return nil })
 
 	if c := code(readiness(reg)); c != http.StatusOK {
 		t.Fatalf("readiness: expected 200, got %d", c)
@@ -76,7 +76,7 @@ func TestHealthyRegistryPassesBothProbes(t *testing.T) {
 // failing dependency probe fails readiness but NOT liveness.
 func TestDependencyOutageFailsReadinessNotLiveness(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("remediation_requested")
+	reg.RegisterWorker("heal_triggered")
 	reg.AddDependencyProbe("postgres", 0, func(context.Context) error { return errors.New("down") })
 
 	if c := code(readiness(reg)); c != http.StatusServiceUnavailable {
@@ -91,8 +91,8 @@ func TestDependencyOutageFailsReadinessNotLiveness(t *testing.T) {
 // both readiness and liveness.
 func TestConsumerExitFailsBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("remediation_requested")
-	reg.WorkerExited("remediation_requested", errors.New("permanent bootstrap failure: WRONGTYPE"))
+	reg.RegisterWorker("heal_triggered")
+	reg.WorkerExited("heal_triggered", errors.New("permanent bootstrap failure: WRONGTYPE"))
 
 	if c := code(readiness(reg)); c != http.StatusServiceUnavailable {
 		t.Fatalf("readiness after consumer exit: expected 503, got %d", c)
@@ -106,8 +106,8 @@ func TestConsumerExitFailsBothProbes(t *testing.T) {
 // both probes.
 func TestStaleHeartbeatFailsBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("remediation_requested")
-	reg.AddWorkerProbe("remediation_requested_heartbeat", 0, func(context.Context) error {
+	reg.RegisterWorker("heal_triggered")
+	reg.AddWorkerProbe("heal_triggered_heartbeat", 0, func(context.Context) error {
 		return errors.New("read loop stalled — no activity for 5m0s")
 	})
 
@@ -407,7 +407,7 @@ func TestMain_RefusedFilesStopStartupAndEveryRefusalIsLogged(t *testing.T) {
 		"flows/bad.yaml": {Data: []byte(`kind: flow
 version: 1
 name: bad
-trigger: remediation.requested
+trigger: heal.triggered
 types: [nope]
 across_clusters: [no_such_check]
 gate: [no_such_gate]

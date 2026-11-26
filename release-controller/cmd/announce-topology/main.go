@@ -1,5 +1,5 @@
 // announce-topology announces a topology to the rest of continuo on
-// release.promoted:v2 under a fresh promotion seq, without a release and
+// release.promoted:v1 under a fresh promotion seq, without a release and
 // without moving current_prod. The benchmark and e2e harnesses use it to load
 // a topology, and to restore the live one afterwards.
 //

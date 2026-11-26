@@ -114,7 +114,7 @@ func validFlow() workflow.Flow {
 	return workflow.Flow{
 		Version:        1,
 		Name:           "f",
-		Trigger:        "remediation.requested",
+		Trigger:        "heal.triggered",
 		Types:          []string{"t"},
 		TypesPos:       pos(flowFile, 5),
 		Context:        []workflow.StepRef{ref(flowFile, 6, "failing_node_source")},

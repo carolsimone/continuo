@@ -1,6 +1,6 @@
 // Package serialization holds the wire-facing DTOs for agent-remediation's
 // json-tagged domain events (remediation.proposed:v1, remediation.pr_opened:v1,
-// remediation.pr_closed:v1), the mapping between the remediation.requested:v3
+// remediation.pr_closed:v1), the mapping between the heal.triggered:v1
 // heal trigger it consumes (pkg/events) and the domain trigger, and the records
 // the runner's journal stores as each step's output, keeping the domain
 // packages free of struct tags. It sits outside adapters/ so the services

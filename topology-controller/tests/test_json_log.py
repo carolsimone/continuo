@@ -46,7 +46,7 @@ def test_an_extra_never_replaces_a_core_key():
 
 def test_a_detail_with_newlines_escapes_and_unencodable_values_stays_one_line():
     detail = "Invalid expression\n  select fro\x1b[4mm\x1b[0m x é"
-    text = JsonFormatter().format(_record(msg="Published manifest.loaded.candidate failed", args=(),
+    text = JsonFormatter().format(_record(msg="Published release.parsed failed", args=(),
                                           detail=detail, raw=b"\xff", ids={"a"}, path=Path("/tmp/x")))
     assert "\n" not in text
     line = json.loads(text)

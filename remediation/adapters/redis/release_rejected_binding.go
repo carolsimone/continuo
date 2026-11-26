@@ -227,7 +227,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 
 // classifyRejectionBody classifies the failed-node set of one rejection with
 // one call to handlers.ClassifyRejection, so one rejected release yields one
-// batched remediation.requested:v3 trigger. A rejection that cannot be decoded
+// batched heal.triggered:v1 trigger. A rejection that cannot be decoded
 // is a permanent failure: the error wraps events.ErrPermanent, so the consumer
 // dead-letters it. A rejection that yields no failed node to classify (a reason
 // the contract marks not healable, a shadow rejection, a stage this build does

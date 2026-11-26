@@ -98,10 +98,10 @@ func (s *streamTap) Dispatches(t *testing.T) []tappedDispatch {
 	return out
 }
 
-// tappedTrigger is one remediation.requested:v3 entry a tap recorded: its
+// tappedTrigger is one heal.triggered:v1 entry a tap recorded: its
 // payload, the tenant its envelope names and the outbox row that carried it.
 type tappedTrigger struct {
-	pkgevents.RemediationRequested
+	pkgevents.HealTriggered
 	TenantID      string
 	OutboxEntryID string
 }
@@ -109,16 +109,16 @@ type tappedTrigger struct {
 // findNode returns the trigger's entry for a node id, and whether it is
 // present. Callers assert on the entry rather than on the trigger as a whole,
 // because one batched trigger can carry several failing nodes.
-func (p tappedTrigger) findNode(nodeID string) (pkgevents.RemediationRequestedNode, bool) {
+func (p tappedTrigger) findNode(nodeID string) (pkgevents.HealTriggeredNode, bool) {
 	for _, n := range p.Nodes {
 		if n.NodeID == nodeID {
 			return n, true
 		}
 	}
-	return pkgevents.RemediationRequestedNode{}, false
+	return pkgevents.HealTriggeredNode{}, false
 }
 
-// Triggers decodes the remediation.requested:v3 entries recorded so far, in
+// Triggers decodes the heal.triggered:v1 entries recorded so far, in
 // stream order. An entry that does not decode fails the test.
 func (s *streamTap) Triggers(t *testing.T) []tappedTrigger {
 	t.Helper()
@@ -126,9 +126,9 @@ func (s *streamTap) Triggers(t *testing.T) []tappedTrigger {
 	out := make([]tappedTrigger, 0, len(entries))
 	for _, msg := range entries {
 		fields := entryFields(msg)
-		env, p, err := pkgevents.DecodeRemediationRequested(fields)
-		require.NoError(t, err, "entry %s is not a remediation.requested:v3 entry", msg.ID)
-		out = append(out, tappedTrigger{RemediationRequested: p, TenantID: env.TenantID, OutboxEntryID: fields["outbox_entry_id"]})
+		env, p, err := pkgevents.DecodeHealTriggered(fields)
+		require.NoError(t, err, "entry %s is not a heal.triggered:v1 entry", msg.ID)
+		out = append(out, tappedTrigger{HealTriggered: p, TenantID: env.TenantID, OutboxEntryID: fields["outbox_entry_id"]})
 	}
 	return out
 }

@@ -25,7 +25,7 @@ import (
 
 // triggerKey is the Redis key the runner's consumer reads heal triggers from,
 // which the dedup id of every message it reads ends with.
-var triggerKey = pkgredis.Key(streams.RemediationRequestedV3)
+var triggerKey = pkgredis.Key(streams.HealTriggeredV1)
 
 // deadLetters is every outbox entry on consumer.dead_letter:v1, in the order
 // it was written.
@@ -145,8 +145,8 @@ func TestSweeper_ASystemFailureWritesOneDeadLetter(t *testing.T) {
 	assert.Equal(t, "acme", tenantID, "the dead letter is stored under the remediation's tenant")
 
 	env, dl := deadLetterOf(t, dls[0])
-	assert.Equal(t, streams.RemediationRequestedV3, dl.OriginalStream)
-	assert.Equal(t, streams.AgentRemediationRemediationRequested, dl.OriginalGroup)
+	assert.Equal(t, streams.HealTriggeredV1, dl.OriginalStream)
+	assert.Equal(t, streams.AgentRemediationHealTriggered, dl.OriginalGroup)
 	assert.Equal(t, "1700000000000-0", dl.OriginalMessageID)
 	assert.Equal(t, messageID, dl.DedupMessageID(), "the dead letter names the message the remediation was created from")
 	want := maps.Clone(fields)
@@ -159,8 +159,8 @@ func TestSweeper_ASystemFailureWritesOneDeadLetter(t *testing.T) {
 	assert.Contains(t, dl.Error, `step "dbt_log"`)
 	assert.Contains(t, dl.Error, rem.Failure)
 	assert.Equal(t, "acme", env.TenantID)
-	assert.Equal(t, events.ConsumerDeadLetterEventID("acme", streams.AgentRemediationRemediationRequested,
-		streams.RemediationRequestedV3, messageID), env.EventID)
+	assert.Equal(t, events.ConsumerDeadLetterEventID("acme", streams.AgentRemediationHealTriggered,
+		streams.HealTriggeredV1, messageID), env.EventID)
 	assert.True(t, t0.Add(time.Minute).Equal(env.OccurredAt), "the dead letter occurs when the remediation ends")
 
 	assert.Contains(t, h.inFlightRow().Rationale, rem.Failure)

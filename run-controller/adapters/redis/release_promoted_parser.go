@@ -8,7 +8,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParseReleasePromoted decodes one release.promoted:v2 entry, envelope fields
+// ParseReleasePromoted decodes one release.promoted:v1 entry, envelope fields
 // plus a typed payload, into the event run-controller handles. A decode failure (no
 // envelope, an unknown schema_version, no release_id, a promotion_seq below 1,
 // no topology URI or checksum) or an envelope without a tenant_id is

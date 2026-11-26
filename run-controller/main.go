@@ -53,7 +53,7 @@ import (
 // minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
 
-// releasePromotedHandlerTimeout bounds one release.promoted:v2 delivery: the
+// releasePromotedHandlerTimeout bounds one release.promoted:v1 delivery: the
 // artifact read from object storage, then the load of a whole topology, every
 // node and edge, in one transaction.
 const releasePromotedHandlerTimeout = 5 * time.Minute
@@ -340,7 +340,7 @@ func main() {
 	)
 	go retentionSweeper.Run(ctx)
 
-	// release.promoted:v2 stores each promoted release's topology in Postgres
+	// release.promoted:v1 stores each promoted release's topology in Postgres
 	// and moves run-controller's live-release pointer. The handler reads the release's
 	// topology artifact from object storage before its transaction opens.
 	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
@@ -363,7 +363,7 @@ func main() {
 		Tasks: taskDefaults, Family: cfg.WarehouseFamily, Engine: cfg.WarehouseEngine, Metrics: runMetrics, Logger: logger,
 	}
 	// The seed reconcile loads the dbt seeds whose live content the warehouse
-	// does not hold. It runs inside every release.promoted:v2 transaction that
+	// does not hold. It runs inside every release.promoted:v1 transaction that
 	// moves a tenant's live release, for that tenant, and every
 	// seedReconcileInterval from the loop started below, once per tenant with
 	// a live release; maintenance mode stops it creating runs.
@@ -386,13 +386,13 @@ func main() {
 	}{
 		{
 			name:    "task_status_updated",
-			stream:  streams.TaskStatusUpdatedV2,
+			stream:  streams.TaskStatusUpdatedV1,
 			group:   streams.RunControllerTaskStatusUpdated,
 			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(taskDefaults, runMetrics, runMetrics, cfg.WarehouseFamily, logger), logger),
 		},
 		{
 			name:    "release_promoted",
-			stream:  streams.ReleasePromotedV2,
+			stream:  streams.ReleasePromotedV1,
 			group:   streams.RunControllerReleasePromoted,
 			binding: redis.NewReleasePromotedBinding(uowFactory, releasePromotedHandler, logger),
 			timeout: releasePromotedHandlerTimeout,

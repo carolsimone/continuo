@@ -76,10 +76,10 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	defer mr.Close()
 	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
-	require.NoError(t, rdb.XGroupCreateMkStream(context.Background(), pkgredis.Key(streams.TaskStatusUpdatedV2), "test-group", "$").Err())
+	require.NoError(t, rdb.XGroupCreateMkStream(context.Background(), pkgredis.Key(streams.TaskStatusUpdatedV1), "test-group", "$").Err())
 	p := NewOutboxPublisher(rdb, nil)
 	entry := &outbox.Entry{
-		ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2,
+		ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV1,
 		Payload: storedRow(t, `{"run_id":"s1","task_id":"t1","attempt":2,"status":"running"}`),
 	}
 	rendered, err := p.Render(entry)
@@ -89,7 +89,7 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	want["outbox_entry_id"] = entry.ID.String()
 
 	require.NoError(t, p.Publish(context.Background(), entry))
-	res, err := rdb.XRange(context.Background(), pkgredis.Key(streams.TaskStatusUpdatedV2), "-", "+").Result()
+	res, err := rdb.XRange(context.Background(), pkgredis.Key(streams.TaskStatusUpdatedV1), "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	got := map[string]string{}
@@ -99,12 +99,12 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-// A report row renders as the golden task.status.updated:v2 entry: the row's
+// A report row renders as the golden task.status.updated:v1 entry: the row's
 // id is the event id, its creation the event's time.
 func TestRender_ATaskStatusReportIsTheGoldenEntry(t *testing.T) {
 	for _, name := range []string{"queued", "running", "succeeded", "failed"} {
 		t.Run(name, func(t *testing.T) {
-			raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "task_status_updated_v2_"+name+".json")) //nolint:gosec // G304: a fixed fixture path
+			raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "task_status_updated_v1_"+name+".json")) //nolint:gosec // G304: a fixed fixture path
 			require.NoError(t, err)
 			var fx struct {
 				Input struct {

@@ -22,7 +22,7 @@ func benchTopology() release.Topology {
 }
 
 // An announcement writes the artifact, takes the next seq and queues
-// release.promoted:v2 — and leaves current_prod alone, even when none exists.
+// release.promoted:v1 — and leaves current_prod alone, even when none exists.
 func TestAnnounceTopology_AnnouncesWithoutMovingCurrentProd(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 
@@ -39,7 +39,7 @@ func TestAnnounceTopology_AnnouncesWithoutMovingCurrentProd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, benchTopology(), got)
 
-	p := promotedEvent(t, lastEntryOn(store, streams.ReleasePromotedV2))
+	p := promotedEvent(t, lastEntryOn(store, streams.ReleasePromotedV1))
 	assert.Equal(t, "bench-2", p.ReleaseID)
 	assert.Equal(t, int64(2), p.PromotionSeq)
 	assert.Empty(t, p.ChangedNodeIDs)
@@ -133,7 +133,7 @@ func TestReannounceCurrentProd(t *testing.T) {
 		assert.Equal(t, int64(2), res.PromotionSeq)
 		assert.Equal(t, cp.Topology().URI, res.TopologyURI)
 		assert.Equal(t, int64(2), cp.PromotionSeq())
-		p := promotedEvent(t, lastEntryOn(store, streams.ReleasePromotedV2))
+		p := promotedEvent(t, lastEntryOn(store, streams.ReleasePromotedV1))
 		assert.Equal(t, "rLive", p.ReleaseID)
 		assert.Equal(t, int64(2), p.PromotionSeq)
 	})

@@ -26,7 +26,7 @@ type LiveContractsRewriter interface {
 	Rewrite(ctx context.Context, in domainModel.PromoteReleaseInput) (string, error)
 }
 
-// ReleasePromotedContractsHandler consumes release.promoted:v2 on its own
+// ReleasePromotedContractsHandler consumes release.promoted:v1 on its own
 // consumer group and records the release's contract versions in the tenant's
 // graph: one stored contract per (node, contract hash), a promotion edge for
 // each node whose contract the promotion changes, and the node's pointer to
@@ -91,7 +91,7 @@ func (h *ReleasePromotedContractsHandler) Handle(
 	outboxEntryID *uuid.UUID,
 	in domainModel.PromoteReleaseInput,
 ) error {
-	h.logger.Info("Processing release.promoted:v2 (contracts group)",
+	h.logger.Info("Processing release.promoted:v1 (contracts group)",
 		"message_id", messageID,
 		"tenant_id", in.TenantID,
 		"release_id", in.ReleaseID,

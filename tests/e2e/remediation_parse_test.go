@@ -46,11 +46,11 @@ const parseFixBrokenProject = "service-2"
 //	ftable_e's compiled_code replaced by SQL that does not parse
 //	→ POST /releases (service-1) → compile service-1 → release.requested:v1
 //	→ topology-controller resolves the whole assembled set and sqlglot rejects
-//	  ftable_e → manifest.loaded.candidate:v2
+//	  ftable_e → release.parsed:v1
 //	  {status: failed, failure_kind: invalid_sql, failed_nodes: [ftable_e]}
 //	→ release-controller: Fail(invalid_sql), RecordStageResults("parse")
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path, project}]}
-//	→ remediation: ClassifyParse → remediation.requested:v3 (source=parse)
+//	→ remediation: ClassifyParse → heal.triggered:v1 (source=parse)
 //	→ agent-remediation's dbt-parse type: its failing_node_source step reads
 //	  the model from stub-github under service-2's repo prefix, its prompt asks
 //	  stub-llm → proposal row (source=parse)
@@ -125,7 +125,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
@@ -196,7 +196,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// 2. release.rejected:v1 carries stage=parse and the per-node kind/detail.
 	assertRejectedParseStage(t, ctx, rejectedTap, releaseID, filePath)
 
-	// 3. remediation.requested:v3 carries source=parse with the parser detail.
+	// 3. heal.triggered:v1 carries source=parse with the parser detail.
 	//    invalid_sql is a parse kind a source change fixes, so the node is
 	//    not marked unfixable.
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ftableEUniqueID}, 4*time.Minute)

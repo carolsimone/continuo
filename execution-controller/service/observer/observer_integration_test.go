@@ -140,7 +140,7 @@ func (h *harness) outbox(t *testing.T, eventType string) []map[string]any {
 	return out
 }
 
-// reports returns the task.status.updated:v2 reports written so far, oldest
+// reports returns the task.status.updated:v1 reports written so far, oldest
 // first.
 func (h *harness) reports(t *testing.T) []map[string]any {
 	t.Helper()

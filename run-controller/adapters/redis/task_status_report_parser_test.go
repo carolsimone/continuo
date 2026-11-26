@@ -17,11 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// reportEntry reads the golden task.status.updated:v2 entry of status as the
+// reportEntry reads the golden task.status.updated:v1 entry of status as the
 // Redis message run-controller receives: every field a string, the payload JSON.
 func reportEntry(t *testing.T, status string) goredis.XMessage {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "task_status_updated_v2_"+status+".json")) //nolint:gosec // G304: a fixed fixture path
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "task_status_updated_v1_"+status+".json")) //nolint:gosec // G304: a fixed fixture path
 	require.NoError(t, err)
 	var fx struct {
 		Fields map[string]json.RawMessage `json:"fields"`

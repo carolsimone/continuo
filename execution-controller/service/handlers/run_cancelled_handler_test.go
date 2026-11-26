@@ -183,12 +183,12 @@ func (f *fenceFlow) reload(taskID string, attempt int) *model.Deployment {
 	return d
 }
 
-// reports are the task.status.updated:v2 payloads written for taskID, oldest first.
+// reports are the task.status.updated:v1 payloads written for taskID, oldest first.
 func (f *fenceFlow) reports(taskID string) []pkgevents.TaskStatusReport {
 	f.t.Helper()
 	var payloads [][]byte
 	require.NoError(f.t, f.db.Select(&payloads, `SELECT payload FROM execution_outbox
-		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY created_at, id`, taskID, streams.TaskStatusUpdatedV2))
+		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY created_at, id`, taskID, streams.TaskStatusUpdatedV1))
 	out := make([]pkgevents.TaskStatusReport, 0, len(payloads))
 	for _, stored := range payloads {
 		_, p, err := outbox.UnwrapTenant(stored)
@@ -459,7 +459,7 @@ func TestRunCancelled_AStoppedReportForANamedAttemptCarriesTheCancelsTenant(t *t
 	assert.Equal(t, "acme", column)
 	var stored []byte
 	require.NoError(t, f.db.Get(&stored, `SELECT payload FROM execution_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
-		cmd.TaskID, streams.TaskStatusUpdatedV2))
+		cmd.TaskID, streams.TaskStatusUpdatedV1))
 	tenantID, payload, err := outbox.UnwrapTenant(stored)
 	require.NoError(t, err)
 	assert.Equal(t, "acme", tenantID)

@@ -11,7 +11,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParseTaskStatusReport decodes one task.status.updated:v2 entry, envelope
+// ParseTaskStatusReport decodes one task.status.updated:v1 entry, envelope
 // fields plus a typed payload, into the report run-controller applies, with the tenant
 // its envelope names. A decode failure (no envelope, an unknown
 // schema_version, a run or task id that is not a UUID, a missing or negative

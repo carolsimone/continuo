@@ -16,10 +16,10 @@ import (
 //
 // run-controller has one consumer group on this stream, so its dedup rows are scoped by
 // the stream name rather than by a group name.
-const releasePromotedStreamName = streams.ReleasePromotedV2
+const releasePromotedStreamName = streams.ReleasePromotedV1
 
 // NewReleasePromotedBinding returns a pkg/redis.MessageHandler that parses each
-// release.promoted:v2 entry, reads the release's topology artifact through
+// release.promoted:v1 entry, reads the release's topology artifact through
 // handler.Load before any transaction opens, then runs dedup and handler.Handle
 // in one Unit-of-Work transaction. See bindStreamHandler for the shared
 // pipeline and ACK-policy semantics.

@@ -18,7 +18,7 @@ import (
 )
 
 // NewTaskStatusReportBinding returns a pkg/redis.MessageHandler that turns
-// each task.status.updated:v2 entry into a report carrying its envelope's
+// each task.status.updated:v1 entry into a report carrying its envelope's
 // tenant, runs dedup, and invokes AttemptReportHandler inside a single
 // Unit-of-Work transaction. The dedup row's payload is the entry's payload
 // field, and its id is threaded to the handler so the task.dispatch:v1 rows
@@ -37,7 +37,7 @@ func NewTaskStatusReportBinding(
 ) pkgredis.MessageHandler {
 	return bindStreamHandler(uowFactory, logger, streamBinding[events.AttemptReported]{
 		label:      "task.status.updated",
-		streamName: streams.TaskStatusUpdatedV2,
+		streamName: streams.TaskStatusUpdatedV1,
 		parse:      ParseTaskStatusReport,
 		payload:    defaultPayload,
 		handle:     permanentWhenNeverValid(handler.Handle),

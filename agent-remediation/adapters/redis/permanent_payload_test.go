@@ -13,11 +13,11 @@ import (
 // A payload no redelivery can decode must reach the consumer as a permanent
 // error, so it is dead-lettered instead of silently acknowledged.
 func TestHandlers_UndecodablePayloadIsPermanent(t *testing.T) {
-	h := newRemediationRequestedHandler(func(context.Context, runner.Accepted) error {
+	h := newHealTriggeredHandler(func(context.Context, runner.Accepted) error {
 		t.Fatal("a payload that cannot be decoded must not be accepted")
 		return nil
 	})
-	valid, _ := requestedMessageOf(t, "3-0", "acme", requestedFixture(), nil)
+	valid, _ := healTriggeredMessageOf(t, "3-0", "acme", healTriggeredFixture(), nil)
 	withField := func(field string, value any) goredis.XMessage {
 		values := map[string]any{}
 		for k, v := range valid.Values {

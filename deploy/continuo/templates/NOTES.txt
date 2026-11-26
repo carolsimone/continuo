@@ -94,19 +94,21 @@ UPGRADE NOTES
 
 {{- if .Release.IsUpgrade }}
 
-BREAKING: remediation.requested is now v3 and remediation.retry_requested is now v2.
-Upgrade when no rejected release is being remediated and the outboxes of
-remediation, release-controller and agent-remediation hold no pending row
-(remediation_outbox, release_controller_outbox, agent_remediation_outbox). A
-row stored before the upgrade for remediation.requested:v2,
-remediation.retry_requested:v1 or remediation.proposed:v1 is never delivered
-after it, and Try again cannot start a remediation whose trigger was lost.
-dead-letter-controller deletes the retired streams remediation.requested:v2
-and remediation.retry_requested:v1 with their consumer groups. With
-streamReaper.enabled=false, delete the drained consumer groups after upgrading:
-  XGROUP DESTROY continuo:remediation.requested:v2 agent-remediation-remediation-requested
-  XGROUP DESTROY continuo:remediation.requested:v2 catalog-remediation-requested-rejections
-  XGROUP DESTROY continuo:remediation.retry_requested:v1 remediation-retry-requested
+BREAKING: every Redis stream starts again at :v1. The heal trigger is
+heal.triggered:v1 and the result of a release's parse is release.parsed:v1,
+and no stream is retired, so dead-letter-controller deletes no stream key.
+Upgrade with an empty Redis, as with the empty databases: before the upgrade,
+delete every key under the prefix continuo: (FLUSHDB on a Redis database that
+only continuo uses). With your own Redis, apply the new rules from
+deploy/redis-acl-rules.acl with the upgrade. Turn stream trimming off
+(streamReaper.enabled=false) on the version you run now before the upgrade,
+and back on after it, whatever version you run: each time it trims while it
+still runs during the upgrade, that version's dead-letter-controller deletes
+every stream it holds as retired that this version uses again (on 0.24.0,
+task.status.updated:v1 and release.promoted:v1), with its consumer groups.
+If agentRemediation.workflows.files holds a flow file, set its trigger to
+heal.triggered before the upgrade: agent-remediation refuses to start on a
+flow with any other trigger.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}
@@ -252,9 +254,7 @@ global.agentChatGrpcAddr.
 
 BREAKING: "remediation-agent" is now "agent-remediation". Before upgrading,
 rename its database: ALTER DATABASE continuo_remediation_agent RENAME TO
-continuo_agent_remediation; after upgrading, delete the drained consumer
-group: XGROUP DESTROY remediation.requested:v1
-remediation-agent-remediation-requested.
+continuo_agent_remediation.
 
 BREAKING: "manifest-controller" is now "topology-controller". It has no
 database of its own, so no rename is needed there. After upgrading, delete

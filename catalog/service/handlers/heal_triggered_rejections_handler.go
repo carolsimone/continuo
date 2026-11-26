@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// RemediationRequestedRejectionsHandler consumes remediation.requested:v3 on
+// HealTriggeredRejectionsHandler consumes heal.triggered:v1 on
 // the rejections group and records each fixable node of the batch as a
 // :Rejection of the message's tenant. A node the classifier marked unfixable
 // is no precedent a fix can learn from and is left out of the case base; a
@@ -32,22 +32,22 @@ import (
 // rejected release; the bundle is fetched once, and every fixable node's
 // :Rejection is recorded in one write transaction with the message's
 // processed-message marker.
-type RemediationRequestedRejectionsHandler struct {
+type HealTriggeredRejectionsHandler struct {
 	uow     uow.UnitOfWork
 	bundles ports.CodeBundleReader
 	logger  *slog.Logger
 }
 
-// NewRemediationRequestedRejectionsHandler creates the handler.
-func NewRemediationRequestedRejectionsHandler(
+// NewHealTriggeredRejectionsHandler creates the handler.
+func NewHealTriggeredRejectionsHandler(
 	u uow.UnitOfWork,
 	bundles ports.CodeBundleReader,
 	logger *slog.Logger,
-) *RemediationRequestedRejectionsHandler {
-	return &RemediationRequestedRejectionsHandler{uow: u, bundles: bundles, logger: logger}
+) *HealTriggeredRejectionsHandler {
+	return &HealTriggeredRejectionsHandler{uow: u, bundles: bundles, logger: logger}
 }
 
-// Handle processes one remediation.requested:v3 message of tenantID on the
+// Handle processes one heal.triggered:v1 message of tenantID on the
 // rejections group, recording one :Rejection per node the classifier did not
 // mark unfixable. Steps:
 //  1. Refuse as permanent a message lacking its release, its nodes, a node's
@@ -61,32 +61,32 @@ func NewRemediationRequestedRejectionsHandler(
 //     node is unfixable.
 //  4. In one write transaction, record every fixable node's rejection and the
 //     marker. A message with no fixable node writes the marker alone.
-func (h *RemediationRequestedRejectionsHandler) Handle(
+func (h *HealTriggeredRejectionsHandler) Handle(
 	ctx context.Context,
 	tenantID string,
 	messageID string,
 	outboxEntryID *uuid.UUID,
-	in event.RemediationRequested,
+	in event.HealTriggered,
 ) error {
 	if in.ReleaseID == "" || len(in.Nodes) == 0 {
-		return fmt.Errorf("%w: remediation.requested message %s lacks release_id/nodes",
+		return fmt.Errorf("%w: heal.triggered message %s lacks release_id/nodes",
 			pkgevents.ErrPermanent, messageID)
 	}
 	for _, n := range in.Nodes {
 		if n.NodeID == "" || n.ErrorSignature == "" {
-			return fmt.Errorf("%w: remediation.requested message %s has a node lacking node_id/error_signature",
+			return fmt.Errorf("%w: heal.triggered message %s has a node lacking node_id/error_signature",
 				pkgevents.ErrPermanent, messageID)
 		}
 	}
 	at, err := time.Parse(time.RFC3339, in.ClassifiedAt)
 	if err != nil {
-		return fmt.Errorf("%w: remediation.requested message %s has unparseable classified_at %q: %v",
+		return fmt.Errorf("%w: heal.triggered message %s has unparseable classified_at %q: %v",
 			pkgevents.ErrPermanent, messageID, in.ClassifiedAt, err)
 	}
 
 	marker := uow.Marker{
 		TenantID:      tenantID,
-		Group:         streams.CatalogRemediationRequestedRejections,
+		Group:         streams.CatalogHealTriggeredRejections,
 		MessageID:     messageID,
 		OutboxEntryID: outboxEntryID,
 	}
@@ -95,12 +95,12 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 		return fmt.Errorf("look up the processed-message marker: %w", err)
 	}
 	if processed {
-		h.logger.Info("remediation.requested already processed by the rejections group; acknowledged",
+		h.logger.Info("heal.triggered already processed by the rejections group; acknowledged",
 			"message_id", messageID, "tenant_id", tenantID, "release_id", in.ReleaseID)
 		return nil
 	}
 
-	fixable := make([]event.RemediationRequestedNode, 0, len(in.Nodes))
+	fixable := make([]event.HealTriggeredNode, 0, len(in.Nodes))
 	for _, n := range in.Nodes {
 		if n.Unfixable {
 			h.logger.Info("unfixable node left out of the case base",
@@ -150,15 +150,15 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 	if err != nil {
 		// The rejections and the marker roll back together, so the message
 		// replays.
-		return fmt.Errorf("remediation.requested of release %s: %w", in.ReleaseID, err)
+		return fmt.Errorf("heal.triggered of release %s: %w", in.ReleaseID, err)
 	}
 	if !wrote {
-		h.logger.Info("remediation.requested processed by another delivery of the rejections group meanwhile; acknowledged",
+		h.logger.Info("heal.triggered processed by another delivery of the rejections group meanwhile; acknowledged",
 			"message_id", messageID, "tenant_id", tenantID, "release_id", in.ReleaseID)
 		return nil
 	}
 	if len(rejections) == 0 {
-		h.logger.Info("remediation.requested carries no fixable node; recorded as processed",
+		h.logger.Info("heal.triggered carries no fixable node; recorded as processed",
 			"message_id", messageID, "tenant_id", tenantID, "release_id", in.ReleaseID)
 		return nil
 	}
@@ -175,8 +175,8 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 // unreadable bundle, bundle for another release); returns a non-nil error
 // ONLY for a bundle that is absent from object storage and may still land
 // (transient, retry).
-func (h *RemediationRequestedRejectionsHandler) releaseBundle(
-	ctx context.Context, tenantID string, in event.RemediationRequested,
+func (h *HealTriggeredRejectionsHandler) releaseBundle(
+	ctx context.Context, tenantID string, in event.HealTriggered,
 ) (*codebundle.Bundle, error) {
 	if in.CodeBundleURI == "" {
 		// A parse- or compile-stage failure: both precede the parse that
@@ -214,7 +214,7 @@ func (h *RemediationRequestedRejectionsHandler) releaseBundle(
 // this particular node (it never reached parse) is new information worth its
 // own warning.
 func codeFor(
-	bundle *codebundle.Bundle, tenantID string, in event.RemediationRequested, nodeID string, logger *slog.Logger,
+	bundle *codebundle.Bundle, tenantID string, in event.HealTriggered, nodeID string, logger *slog.Logger,
 ) (rawCode, contentHash string) {
 	if bundle == nil {
 		return "", ""

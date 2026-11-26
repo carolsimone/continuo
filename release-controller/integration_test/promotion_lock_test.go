@@ -169,6 +169,6 @@ func TestIntegration_PromoteToProduction_SerializesUnderTheReleaseQueueLock(t *t
 	assert.Equal(t, seqBefore+1, lastSeq(t, db), "the promotion took exactly one seq once the lock was free")
 	var promoted int
 	require.NoError(t, db.Get(&promoted,
-		`SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1`, streams.ReleasePromotedV2))
+		`SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1`, streams.ReleasePromotedV1))
 	assert.Equal(t, 1, promoted)
 }

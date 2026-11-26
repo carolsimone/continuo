@@ -7,10 +7,10 @@ import (
 )
 
 // RemediationRetryRequestedSchemaVersion is the schema_version of
-// remediation.retry_requested:v2 entries.
+// remediation.retry_requested:v1 entries.
 const RemediationRetryRequestedSchemaVersion = 1
 
-// RemediationRetryRequested is the payload of a remediation.retry_requested:v2
+// RemediationRetryRequested is the payload of a remediation.retry_requested:v1
 // entry: an operator's request to remediate a rejected release again. The
 // remediation_round names the later round, and Rejection is the release's
 // stored release.rejected:v1 payload, unchanged.
@@ -21,7 +21,7 @@ type RemediationRetryRequested struct {
 }
 
 // RemediationRetryRequestedFields renders p as the Redis fields of one
-// remediation.retry_requested:v2 entry. eventID is the id of the outbox row
+// remediation.retry_requested:v1 entry. eventID is the id of the outbox row
 // that carries the entry.
 func RemediationRetryRequestedFields(eventID, tenantID, producer string, occurredAt time.Time, p RemediationRetryRequested) (map[string]any, error) {
 	env := Envelope{
@@ -34,7 +34,7 @@ func RemediationRetryRequestedFields(eventID, tenantID, producer string, occurre
 	return env.Fields(p)
 }
 
-// DecodeRemediationRetryRequested reads one remediation.retry_requested:v2
+// DecodeRemediationRetryRequested reads one remediation.retry_requested:v1
 // entry. Every error wraps ErrMalformedEnvelope: an unreadable envelope,
 // another schema_version, a payload that is not JSON, an empty release_id, a
 // remediation_round below 2 (round 1 is the rejection itself, so a retry

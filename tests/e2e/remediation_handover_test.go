@@ -59,7 +59,7 @@ const (
 //	→ validation fails: column "connection refused" does not exist
 //	→ release.rejected:v1 → the remediation classifier drops the node
 //	  (infra_transient, rule infra:connection_refused)
-//	→ ONE remediation.requested:v3 forwarding the node, marked unfixable
+//	→ ONE heal.triggered:v1 forwarding the node, marked unfixable
 //	  {reason: classifier_infra, detail: the failure's key error line}
 //	→ catalog records the message and no :Rejection for the node
 //	→ agent-remediation's runner settles the remediation with no step but the
@@ -117,7 +117,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 	handedOverTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationHandedOverV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
@@ -148,7 +148,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	detail := node.Unfixable.Detail
 	requireErrorLine(t, detail)
 	require.Equal(t, node.ErrorExcerpt, detail, "the detail is the excerpt: the failure's key error line")
-	t.Logf("✅ %s forwards %s marked unfixable: %+v", streams.RemediationRequestedV3, node.NodeID, *node.Unfixable)
+	t.Logf("✅ %s forwards %s marked unfixable: %+v", streams.HealTriggeredV1, node.NodeID, *node.Unfixable)
 
 	// 4. The classifier recorded the drop.
 	assertDecision(t, ctx, clients, releaseID, 1)
@@ -166,11 +166,11 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 		rows := queryNeo4jRows(t, ctx, clients, `
 			MATCH (p:ProcessedMessage {tenant_id: 'default', group: $group, outbox_entry_id: $outbox_entry_id})
 			RETURN count(p) AS n`,
-			map[string]any{"group": streams.CatalogRemediationRequestedRejections, "outbox_entry_id": trigger.OutboxEntryID})
+			map[string]any{"group": streams.CatalogHealTriggeredRejections, "outbox_entry_id": trigger.OutboxEntryID})
 		n, _ := rows[0]["n"].(int64)
 		return n == 1, nil
 	}, fmt.Sprintf("timeout waiting for catalog's %s marker of the trigger of release %s",
-		streams.CatalogRemediationRequestedRejections, releaseID))
+		streams.CatalogHealTriggeredRejections, releaseID))
 	rejections := queryNeo4jRows(t, ctx, clients, `
 		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})
 		RETURN r.node_id AS node_id`,
@@ -194,7 +194,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for the round-2 %s of release %s", streams.RemediationRequestedV3, releaseID))
+	}, fmt.Sprintf("timeout waiting for the round-2 %s of release %s", streams.HealTriggeredV1, releaseID))
 	again, ok := round2.findNode(unfixableInfraUniqueID)
 	require.True(t, ok, "the round-2 trigger carries the node; got %v", triggerNodeIDs(round2))
 	require.NotNil(t, again.Unfixable, "the round-2 trigger marks the node unfixable again")

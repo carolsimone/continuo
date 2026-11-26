@@ -81,7 +81,7 @@ func (u *UnitOfWork) OutboxRepo() outbox.Repository {
 }
 
 // MessageProcessingRepo returns the messageprocessing.Repository bound to the
-// current transaction, used for inbound dedup of remediation.requested:v1.
+// current transaction, used for inbound dedup of heal.triggered:v1.
 func (u *UnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	return messageprocessing.NewPostgresRepository(u.tx, u.logger)
 }

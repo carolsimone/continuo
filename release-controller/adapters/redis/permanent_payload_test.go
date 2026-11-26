@@ -17,7 +17,7 @@ import (
 func TestHandlers_UndecodablePayloadIsPermanent(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handlers := map[string]pkgredis.MessageHandler{
-		"manifest_loaded_candidate": newManifestLoadedCandidateHandler(nil, logger),
+		"release_parsed": newReleaseParsedHandler(nil, logger),
 		"validation_result":         newValidationResultHandler(nil, logger),
 		"seed_build_completed":      newSeedBuildCompletedHandler(nil, logger),
 		"compile_completed":         newCompileCompletedHandler(nil, logger),

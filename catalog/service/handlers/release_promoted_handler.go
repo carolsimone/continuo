@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// ReleasePromotedHandler consumes release.promoted:v2 on the topology group.
+// ReleasePromotedHandler consumes release.promoted:v1 on the topology group.
 // It reads the promoted release's topology from its artifact and swaps the
 // tenant's live Neo4j topology when the promotion is newer than the live one,
 // recording the message's processed-message marker in the swap's transaction.
@@ -57,7 +57,7 @@ func (h *ReleasePromotedHandler) Handle(
 	outboxEntryID *uuid.UUID,
 	in domainModel.PromoteReleaseInput,
 ) error {
-	h.logger.Info("Processing release.promoted:v2",
+	h.logger.Info("Processing release.promoted:v1",
 		"message_id", messageID,
 		"tenant_id", in.TenantID,
 		"release_id", in.ReleaseID,

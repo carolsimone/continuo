@@ -81,7 +81,7 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 
 	// Get, not Load (no FOR UPDATE): the parse leg has a single writer of this
 	// row. Only one run is active at a time — AdvanceQueue promotes the next
-	// queued run to a leg only when none is active — and manifest.loaded.candidate
+	// queued run to a leg only when none is active — and release.parsed
 	// is that run's single terminal parse message, the same single-transition
 	// shape as the compile- and seed-build-result legs, which also Get. The only
 	// concurrent writers of a run row are the per-node validation upserts a later
@@ -601,7 +601,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 // promoteBootstrap promotes a bootstrap release without validation: it records
 // the reference to the candidate topology (TransitionToValidating with no validation nodes) and
 // runs the shared promoteToProduction path, which seeds current_prod and emits
-// release.promoted:v2. It calls Telemetry for the parse, a zero-node validation
+// release.promoted:v1. It calls Telemetry for the parse, a zero-node validation
 // and the promotion, as any other promotion does (the adapter observes no
 // validating sample for a zero-node validation).
 func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, ref release.TopologyRef, topo release.Topology, now time.Time) error {

@@ -13,7 +13,7 @@ import (
 )
 
 // dropCandidateSchema drops a release's candidate schema from the dbt warehouse
-// once a terminal release stream (release.rejected:v1 or release.promoted:v2)
+// once a terminal release stream (release.rejected:v1 or release.promoted:v1)
 // names it.
 //
 // These consumers back up the kind-neutral pipeline.run.finished:v1 teardown:
@@ -82,7 +82,7 @@ func NewReleaseRejectedTeardownBinding(cleaner ports.CandidateSchemaCleaner, log
 }
 
 // NewReleasePromotedTeardownBinding returns a pkg/redis.MessageHandler that
-// consumes release.promoted:v2 and drops the release's candidate schema. It
+// consumes release.promoted:v1 and drops the release's candidate schema. It
 // reads release_id and candidate_schema from the envelope payload and nothing
 // else. A real promotion names its candidate schema: the drop is a no-op for a
 // normal validation release (already torn down by the validation.result:v1

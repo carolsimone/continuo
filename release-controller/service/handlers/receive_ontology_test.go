@@ -261,7 +261,7 @@ func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *
 	var promoted struct {
 		ReleaseID string `json:"release_id"`
 	}
-	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV2).Payload, &promoted))
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV1).Payload, &promoted))
 	assert.Equal(t, "rOnt", promoted.ReleaseID)
 	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }

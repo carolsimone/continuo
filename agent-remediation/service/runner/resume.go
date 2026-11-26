@@ -32,7 +32,7 @@ func (r *Runner) acceptExisting(ctx context.Context, u uow.UnitOfWork, t remedia
 	}
 	rem := snap.Remediation
 	if rem.Status != remediation.StatusSystemFailure {
-		r.logger.Info("remediation.requested trigger for a release round that already has a remediation — nothing to start",
+		r.logger.Info("heal.triggered trigger for a release round that already has a remediation — nothing to start",
 			"message_id", a.MessageID, "remediation", rem.ID, "release", t.ReleaseID, "round", t.Round, "status", rem.Status)
 		return false, nil
 	}
@@ -41,7 +41,7 @@ func (r *Runner) acceptExisting(ctx context.Context, u uow.UnitOfWork, t remedia
 		return false, fmt.Errorf("look for a later round of release %s: %w", t.ReleaseID, err)
 	}
 	if later {
-		r.logger.Info("redriven remediation.requested trigger for a round a later round replaced — nothing resumed",
+		r.logger.Info("redriven heal.triggered trigger for a round a later round replaced — nothing resumed",
 			"message_id", a.MessageID, "remediation", rem.ID, "release", t.ReleaseID, "round", t.Round)
 		return false, nil
 	}

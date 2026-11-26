@@ -128,7 +128,7 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 			})
 		case t.Repo == "":
 			reason := fmt.Sprintf("the trigger carried no repository for %s", t.ReleaseID)
-			r.logger.Warn("remediation.requested trigger names no repository; recording the attempt failed",
+			r.logger.Warn("heal.triggered trigger names no repository; recording the attempt failed",
 				"remediation", rem.ID, "release", t.ReleaseID, "attempt", attempt)
 			return r.endWithAttempt(ctx, u, run, attempt, proposal.Proposal{
 				Status: proposal.StatusFailed,

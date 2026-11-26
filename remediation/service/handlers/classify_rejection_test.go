@@ -139,12 +139,12 @@ const testTenant = "acme"
 // triggerOf returns the payload of a trigger's outbox row, which the handler
 // stores under the tenant of the message it classified. It fails the test when
 // the row is not stored under testTenant.
-func triggerOf(t *testing.T, e *outbox.Entry) pkgevents.RemediationRequested {
+func triggerOf(t *testing.T, e *outbox.Entry) pkgevents.HealTriggered {
 	t.Helper()
 	tenantID, payload, err := outbox.UnwrapTenant(e.Payload)
 	require.NoError(t, err, "the trigger row is stored under a tenant")
 	require.Equal(t, testTenant, tenantID)
-	var p pkgevents.RemediationRequested
+	var p pkgevents.HealTriggered
 	require.NoError(t, json.Unmarshal(payload, &p))
 	return p
 }
@@ -324,7 +324,7 @@ func TestClassifyFailure_InfraIsForwardedUnfixable(t *testing.T) {
 		t.Fatalf("infra failure must still be recorded as drop: %+v", u.dec.saved)
 	}
 	require.Len(t, u.ob.entries, 1, "a dropped failure is forwarded, not withheld")
-	assert.Equal(t, streams.RemediationRequestedV3, u.ob.entries[0].StreamName)
+	assert.Equal(t, streams.HealTriggeredV1, u.ob.entries[0].StreamName)
 	p := triggerOf(t, u.ob.entries[0])
 	require.Len(t, p.Nodes, 1)
 	n := p.Nodes[0]
@@ -413,7 +413,7 @@ func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 
 func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
 	// A seed_build failure whose dbt log names a seeds/...csv path must NOT
-	// have file_path populated in the RemediationRequested trigger. Seed
+	// have file_path populated in the HealTriggered trigger. Seed
 	// failures carry a real dbt node unique_id, so the remediation agent
 	// resolves the source file via catalog's GetNodeLocation.
 	// Populating file_path for seeds would send a project-name-like NodeID
@@ -452,7 +452,7 @@ func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
 func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
 	// A compile-stage failure with a Jinja syntax error must be classified as
 	// logic (healable), emitted, and the file path extracted from the log must
-	// appear in the RemediationRequested trigger payload.
+	// appear in the HealTriggered trigger payload.
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	logText := "Compilation Error in model daily_transactions (models/daily_transactions.sql)\n  got '='"
 	ev := failure.FailureEvidence{
@@ -586,7 +586,7 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("one rejected release emits ONE trigger, got %d", len(u.ob.entries))
 	}
-	if u.ob.entries[0].StreamName != streams.RemediationRequestedV3 {
+	if u.ob.entries[0].StreamName != streams.HealTriggeredV1 {
 		t.Fatalf("stream = %q", u.ob.entries[0].StreamName)
 	}
 	p := triggerOf(t, u.ob.entries[0])
@@ -821,7 +821,7 @@ func TestClassifyRejection_StoresTheTriggerUnderTheMessagesTenant(t *testing.T) 
 		tenantID, payload, err := outbox.UnwrapTenant(u.ob.entries[0].Payload)
 		require.NoError(t, err)
 		assert.Equal(t, "globex", tenantID)
-		var p pkgevents.RemediationRequested
+		var p pkgevents.HealTriggered
 		require.NoError(t, json.Unmarshal(payload, &p), "the wrapped payload is the typed trigger")
 		assert.Equal(t, "r1", p.ReleaseID)
 	})
@@ -837,7 +837,7 @@ func TestClassifyRejection_StoresTheTriggerUnderTheMessagesTenant(t *testing.T) 
 
 // TestClassifyRejection_NoEvidenceRecordsAndEmitsNothing pins what a dropped
 // rejection (no failed node left to fix) reaches: no unit of work, no recorded
-// decision, no remediation.requested.
+// decision, no heal.triggered.
 func TestClassifyRejection_NoEvidenceRecordsAndEmitsNothing(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{}, ob: &fakeOutbox{}}
 	deps := depsWith(u, "", nil)
@@ -848,7 +848,7 @@ func TestClassifyRejection_NoEvidenceRecordsAndEmitsNothing(t *testing.T) {
 
 	assert.False(t, begun, "a rejection with no evidence opens no transaction")
 	assert.Empty(t, u.dec.saved, "no decision is recorded")
-	assert.Empty(t, u.ob.entries, "no remediation.requested is enqueued")
+	assert.Empty(t, u.ob.entries, "no heal.triggered is enqueued")
 	assert.False(t, u.committed)
 }
 

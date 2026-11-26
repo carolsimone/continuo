@@ -72,7 +72,7 @@ func retryDeps(r *retryRecorder, log string) handlers.Deps {
 	}
 }
 
-// retryMessage renders a remediation.retry_requested:v2 entry as the stream
+// retryMessage renders a remediation.retry_requested:v1 entry as the stream
 // holds it, under tenantID.
 func retryMessage(t *testing.T, tenantID string, p pkgevents.RemediationRetryRequested) goredis.XMessage {
 	t.Helper()
@@ -103,11 +103,11 @@ func TestRetryBinding_DecodesTheTypedRetry(t *testing.T) {
 	assert.Equal(t, 3, r.decisions[0].RemediationRound, "the round is the retry's")
 
 	require.Len(t, r.entries, 1)
-	assert.Equal(t, streams.RemediationRequestedV3, r.entries[0].StreamName)
+	assert.Equal(t, streams.HealTriggeredV1, r.entries[0].StreamName)
 	tenantID, payload, err := outbox.UnwrapTenant(r.entries[0].Payload)
 	require.NoError(t, err)
 	assert.Equal(t, "globex", tenantID, "the retry's tenant is its envelope's")
-	var trigger pkgevents.RemediationRequested
+	var trigger pkgevents.HealTriggered
 	require.NoError(t, json.Unmarshal(payload, &trigger))
 	assert.Equal(t, "rel-1", trigger.ReleaseID)
 	assert.Equal(t, 3, trigger.RemediationRound)

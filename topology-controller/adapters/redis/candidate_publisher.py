@@ -1,4 +1,4 @@
-"""Publishes manifest.loaded.candidate:v2 entries back to release-controller.
+"""Publishes release.parsed:v1 entries back to release-controller.
 
 Each entry carries the envelope (see adapters/redis/envelope.py) and a payload:
 publish_ok the references to the release's topology artifact (its URI, the
@@ -9,8 +9,8 @@ kind, a summary detail and the per-node failures. Both carry
 `continuo_contracts`, the version of the continuo-contracts library this process
 checks and hashes contracts with, and the parse's two durations in milliseconds:
 `parse_ms` and `contracts_ms`. release-controller decodes both
-with pkg/events.DecodeManifestLoadedCandidate, and
-tests/fixtures/manifest_loaded_candidate_v2_{ok,failed}.json pin the two sides
+with pkg/events.DecodeReleaseParsed, and
+tests/fixtures/release_parsed_v1_{ok,failed}.json pin the two sides
 to the same entries.
 """
 import logging
@@ -37,10 +37,10 @@ def _plain(text: str) -> str:
     return _ANSI_ESCAPE.sub("", text)
 
 
-def manifest_loaded_candidate_event_id(tenant_id: str, release_id: str) -> str:
+def release_parsed_event_id(tenant_id: str, release_id: str) -> str:
     """Deterministic id of one release's parse result: a redelivered
     release.requested re-publishes its result under the same id."""
-    name = "|".join(["manifest.loaded.candidate", tenant_id, release_id])
+    name = "|".join(["release.parsed", tenant_id, release_id])
     return str(uuid.uuid5(EVENT_ID_NAMESPACE, name))
 
 
@@ -86,7 +86,7 @@ class CandidateManifestPublisher:
             "contracts_by_family": dict(contracts_by_family),
         })
         logger.info(
-            "Published manifest.loaded.candidate ok",
+            "Published release.parsed ok",
             extra={
                 "release_id": release_id,
                 "node_count": artifact.node_count,
@@ -127,7 +127,7 @@ class CandidateManifestPublisher:
         }
         self._xadd(release_id, body)
         logger.error(
-            "Published manifest.loaded.candidate failed",
+            "Published release.parsed failed",
             extra={
                 "release_id": release_id,
                 "failure_kind": failure_kind.value,
@@ -138,7 +138,7 @@ class CandidateManifestPublisher:
 
     def _xadd(self, release_id: str, payload: dict) -> None:
         fields = envelope_fields(
-            event_id=manifest_loaded_candidate_event_id(DEFAULT_TENANT_ID, release_id),
+            event_id=release_parsed_event_id(DEFAULT_TENANT_ID, release_id),
             tenant_id=DEFAULT_TENANT_ID,
             occurred_at=self._clock(),
             producer=self._producer,

@@ -532,7 +532,7 @@ func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releas
 	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleaseRequestedV1, e.StreamName, "a refused kind change requests no parse")
-		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a refused kind change is not promoted")
+		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a refused kind change is not promoted")
 	}
 
 	var rejected struct {

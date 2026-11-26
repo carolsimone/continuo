@@ -34,7 +34,7 @@ func (f *swapFixture) writeCaseBase(group string, fn func(ctx context.Context, c
 // group does.
 func (f *swapFixture) recordRejection(rej casebase.Rejection) {
 	f.t.Helper()
-	f.writeCaseBase(streams.CatalogRemediationRequestedRejections, func(ctx context.Context, cb repository.CaseBaseRepository) error {
+	f.writeCaseBase(streams.CatalogHealTriggeredRejections, func(ctx context.Context, cb repository.CaseBaseRepository) error {
 		return cb.RecordRejection(ctx, f.tenant, rej)
 	})
 }

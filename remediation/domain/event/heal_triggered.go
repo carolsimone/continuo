@@ -11,7 +11,7 @@ import (
 )
 
 // EventType is the outbox event_type discriminator for remediation triggers.
-const EventType = "remediation_requested"
+const EventType = "heal_triggered"
 
 // remediationEventNamespace seeds deterministic, content-addressable event ids
 // so a redelivered failure does not produce a distinct downstream trigger.
@@ -38,14 +38,14 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 	return uuid.NewSHA1(remediationEventNamespace, []byte("release:"+releaseID))
 }
 
-// RemediationRequested is the batched trigger emitted once per rejected
+// HealTriggered is the batched trigger emitted once per rejected
 // release and remediation round: the release-level facts every fix needs, and
 // one FailingNode per failure the classifier recorded in this batch, the
 // unfixable ones included. It is pointer-first: logs stay behind each node's
 // DBTLogURI and code behind CodeBundleURI; the only inline error text is each
 // node's ErrorExcerpt (capped at 4 KiB). Its identity is RemediationEventID of
 // its release and round.
-type RemediationRequested struct {
+type HealTriggered struct {
 	Source    model.RemediationSource
 	ReleaseID string
 	// RemediationRound is the release's remediation round this trigger belongs

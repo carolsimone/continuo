@@ -119,7 +119,7 @@ func deadLetteredReason(reason string, id uuid.UUID) string {
 
 // deadLetterEntry is the outbox row that dead-letters the heal trigger the
 // remediation answers to: the message the runner's consumer read from
-// remediation.requested:v3 in its group, named by its entry id and key, with
+// heal.triggered:v1 in its group, named by its entry id and key, with
 // its stream fields and its payload, so a redrive republishes the trigger as
 // it was; why the remediation stopped, with the remediation, its try and the
 // step that stopped it; and how many times that failed. The row is stored
@@ -137,8 +137,8 @@ func deadLetterEntry(snap remediation.Snapshot, why stuck, now time.Time) (*outb
 	body, err := json.Marshal(events.DeadLetteredMessage{
 		TenantID:      rem.TenantID,
 		OccurredAt:    now,
-		Stream:        streams.RemediationRequestedV3,
-		Group:         streams.AgentRemediationRemediationRequested,
+		Stream:        streams.HealTriggeredV1,
+		Group:         streams.AgentRemediationHealTriggered,
 		MessageID:     messageID,
 		Key:           key,
 		Fields:        fields,

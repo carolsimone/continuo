@@ -10,8 +10,8 @@ const KeyPrefix = "continuo:"
 const (
 	// TaskDispatchV1 — One attempt of a task, from run-controller to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever run-controller asks about an attempt that has gone quiet, with run-controller's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
 	TaskDispatchV1 = "task.dispatch:v1"
-	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. run-controller applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
-	TaskStatusUpdatedV2 = "task.status.updated:v2"
+	// TaskStatusUpdatedV1 — What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. run-controller applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
+	TaskStatusUpdatedV1 = "task.status.updated:v1"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each component that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
@@ -20,8 +20,8 @@ const (
 	RunCancelledV1 = "run.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
-	// ManifestLoadedCandidateV2 — How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream.
-	ManifestLoadedCandidateV2 = "manifest.loaded.candidate:v2"
+	// ReleaseParsedV1 — How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream.
+	ReleaseParsedV1 = "release.parsed:v1"
 	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; execution-controller dispatches per-node jobs.
 	ValidationRequestedV1 = "validation.requested:v1"
 	// ValidationResultV1 — Unified validation-leg stream from execution-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. execution-controller drops the candidate schema on complete.
@@ -34,16 +34,16 @@ const (
 	CompileRequestedV1 = "compile.requested:v1"
 	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
-	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
-	ReleasePromotedV2 = "release.promoted:v2"
+	// ReleasePromotedV1 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
+	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
 	// PipelineRunFinishedV1 — A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
 	PipelineRunFinishedV1 = "pipeline.run.finished:v1"
-	// RemediationRetryRequestedV2 — An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
-	RemediationRetryRequestedV2 = "remediation.retry_requested:v2"
-	// RemediationRequestedV3 — One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
-	RemediationRequestedV3 = "remediation.requested:v3"
+	// RemediationRetryRequestedV1 — An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
+	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
+	// HealTriggeredV1 — One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
+	HealTriggeredV1 = "heal.triggered:v1"
 	// RemediationProposedV1 — One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	RemediationProposedV1 = "remediation.proposed:v1"
 	// RemediationHandedOverV1 — One event when a remediation ends with nodes a human must fix, each with its reason code and its owner; emitted by the remediation agent, read by people and not consumed by any component.
@@ -58,7 +58,7 @@ const (
 const (
 	// ExecutionControllerTaskDispatch — execution-controller consumer group on task.dispatch:v1.
 	ExecutionControllerTaskDispatch = "execution-controller-task-dispatch"
-	// RunControllerTaskStatusUpdated — run-controller consumer group on task.status.updated:v2.
+	// RunControllerTaskStatusUpdated — run-controller consumer group on task.status.updated:v1.
 	RunControllerTaskStatusUpdated = "run-controller-task-status-updated"
 	// DeadLetterControllerOutboxDeadLetters — dead-letter-controller consumer group on outbox.dead_letter:v1.
 	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
@@ -68,8 +68,8 @@ const (
 	ExecutionControllerRunCancelled = "execution-controller-run-cancelled"
 	// TopologyControllerReleaseRequested — topology-controller consumer group on release.requested:v1.
 	TopologyControllerReleaseRequested = "topology-controller-release-requested"
-	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v2.
-	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
+	// ReleaseControllerReleaseParsed — release-controller consumer group on release.parsed:v1.
+	ReleaseControllerReleaseParsed = "release-controller-release-parsed"
 	// ExecutionControllerValidationRequested — execution-controller consumer group on validation.requested:v1.
 	ExecutionControllerValidationRequested = "execution-controller-validation-requested"
 	// ReleaseControllerValidationResult — release-controller consumer group on validation.result:v1.
@@ -84,15 +84,15 @@ const (
 	ExecutionControllerCompileRequested = "execution-controller-compile-requested"
 	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
 	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
-	// CatalogReleaseTopology — catalog consumer group on release.promoted:v2.
+	// CatalogReleaseTopology — catalog consumer group on release.promoted:v1.
 	CatalogReleaseTopology = "catalog-release-topology"
-	// CatalogReleaseVersions — catalog consumer group on release.promoted:v2.
+	// CatalogReleaseVersions — catalog consumer group on release.promoted:v1.
 	CatalogReleaseVersions = "catalog-release-versions"
-	// CatalogReleaseContracts — catalog consumer group on release.promoted:v2.
+	// CatalogReleaseContracts — catalog consumer group on release.promoted:v1.
 	CatalogReleaseContracts = "catalog-release-contracts"
-	// ExecutionControllerReleasePromoted — execution-controller consumer group on release.promoted:v2.
+	// ExecutionControllerReleasePromoted — execution-controller consumer group on release.promoted:v1.
 	ExecutionControllerReleasePromoted = "execution-controller-release-promoted"
-	// RunControllerReleasePromoted — run-controller consumer group on release.promoted:v2.
+	// RunControllerReleasePromoted — run-controller consumer group on release.promoted:v1.
 	RunControllerReleasePromoted = "run-controller-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
@@ -100,12 +100,12 @@ const (
 	ExecutionControllerReleaseRejected = "execution-controller-release-rejected"
 	// ExecutionControllerPipelineRunFinished — execution-controller consumer group on pipeline.run.finished:v1.
 	ExecutionControllerPipelineRunFinished = "execution-controller-pipeline-run-finished"
-	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v2.
+	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.
 	RemediationRetryRequested = "remediation-retry-requested"
-	// AgentRemediationRemediationRequested — agent-remediation consumer group on remediation.requested:v3.
-	AgentRemediationRemediationRequested = "agent-remediation-remediation-requested"
-	// CatalogRemediationRequestedRejections — catalog consumer group on remediation.requested:v3.
-	CatalogRemediationRequestedRejections = "catalog-remediation-requested-rejections"
+	// AgentRemediationHealTriggered — agent-remediation consumer group on heal.triggered:v1.
+	AgentRemediationHealTriggered = "agent-remediation-heal-triggered"
+	// CatalogHealTriggeredRejections — catalog consumer group on heal.triggered:v1.
+	CatalogHealTriggeredRejections = "catalog-heal-triggered-rejections"
 	// CatalogRemediationPrOpenedProposals — catalog consumer group on remediation.pr_opened:v1.
 	CatalogRemediationPrOpenedProposals = "catalog-remediation-pr-opened-proposals"
 	// CatalogRemediationPrClosedProvenance — catalog consumer group on remediation.pr_closed:v1.
@@ -116,23 +116,23 @@ const (
 // that must operate over all streams (e.g. dead-letter-controller's trim loop).
 var All = []string{
 	TaskDispatchV1,
-	TaskStatusUpdatedV2,
+	TaskStatusUpdatedV1,
 	OutboxDeadLetterV1,
 	ConsumerDeadLetterV1,
 	RunCancelledV1,
 	ReleaseRequestedV1,
-	ManifestLoadedCandidateV2,
+	ReleaseParsedV1,
 	ValidationRequestedV1,
 	ValidationResultV1,
 	SeedBuildRequestedV1,
 	SeedBuildCompletedV1,
 	CompileRequestedV1,
 	CompileCompletedV1,
-	ReleasePromotedV2,
+	ReleasePromotedV1,
 	ReleaseRejectedV1,
 	PipelineRunFinishedV1,
-	RemediationRetryRequestedV2,
-	RemediationRequestedV3,
+	RemediationRetryRequestedV1,
+	HealTriggeredV1,
 	RemediationProposedV1,
 	RemediationHandedOverV1,
 	RemediationPrOpenedV1,
@@ -144,23 +144,23 @@ var All = []string{
 // (dead-letter-controller's trim loop and the contract it redrives under).
 var Groups = map[string][]string{
 	TaskDispatchV1:              {ExecutionControllerTaskDispatch},
-	TaskStatusUpdatedV2:         {RunControllerTaskStatusUpdated},
+	TaskStatusUpdatedV1:         {RunControllerTaskStatusUpdated},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
 	RunCancelledV1:              {ExecutionControllerRunCancelled},
 	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
-	ManifestLoadedCandidateV2:   {ReleaseControllerManifestLoadedCandidate},
+	ReleaseParsedV1:             {ReleaseControllerReleaseParsed},
 	ValidationRequestedV1:       {ExecutionControllerValidationRequested},
 	ValidationResultV1:          {ReleaseControllerValidationResult, ExecutionControllerValidationResultTeardown},
 	SeedBuildRequestedV1:        {ExecutionControllerSeedBuildRequested},
 	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
 	CompileRequestedV1:          {ExecutionControllerCompileRequested},
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV2:           {CatalogReleaseTopology, CatalogReleaseVersions, CatalogReleaseContracts, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
+	ReleasePromotedV1:           {CatalogReleaseTopology, CatalogReleaseVersions, CatalogReleaseContracts, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
 	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
 	PipelineRunFinishedV1:       {ExecutionControllerPipelineRunFinished},
-	RemediationRetryRequestedV2: {RemediationRetryRequested},
-	RemediationRequestedV3:      {AgentRemediationRemediationRequested, CatalogRemediationRequestedRejections},
+	RemediationRetryRequestedV1: {RemediationRetryRequested},
+	HealTriggeredV1:             {AgentRemediationHealTriggered, CatalogHealTriggeredRejections},
 	RemediationProposedV1:       {},
 	RemediationHandedOverV1:     {},
 	RemediationPrOpenedV1:       {CatalogRemediationPrOpenedProposals},
@@ -169,38 +169,4 @@ var Groups = map[string][]string{
 
 // Retired lists the streams removed from the contract; their keys are deleted
 // from Redis.
-var Retired = []string{
-	"check.k8s:v1",
-	"compile.node.completed:v1",
-	"initialize.run:v1",
-	"manifest.loaded.candidate:v1",
-	"manifest.loaded:v1",
-	"node.deployed:v1",
-	"node.updated:v1",
-	"query.model:v1",
-	"release.promoted:v1",
-	"release.seeds.pending:v1",
-	"remediation.requested:v1",
-	"remediation.requested:v2",
-	"remediation.retry_requested:v1",
-	"rerun.ready:v1",
-	"retry.task:v1",
-	"run.entries.dispatch_failed:v1",
-	"run.entries.dispatched:v1",
-	"run.finalized:v1",
-	"run.initialized:v1",
-	"schedule.cancelled:v1",
-	"scheduler.started:v1",
-	"schedules.loaded:v1",
-	"seed.build.node.completed:v1",
-	"task.execution.recorded:v1",
-	"task.failed:v1",
-	"task.status.updated:v1",
-	"trigger.promoted_seeds:v1",
-	"trigger.rebase:v1",
-	"trigger.rerun:v1",
-	"trigger.single_node_run:v1",
-	"update.graph:v1",
-	"validation.completed:v1",
-	"validation.node.completed:v1",
-}
+var Retired = []string{}

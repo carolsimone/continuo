@@ -1079,21 +1079,15 @@ if grep -qF "$redis_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the Redis prefix upgrade note"; exit 1
 fi
 
-# An upgrading operator is told once that the remediation streams change
-# version, when to upgrade, and the consumer groups to delete when the stream
-# reaper is off; an installing one is told nothing.
-remediation_streams_note='BREAKING: remediation.requested is now v3 and remediation.retry_requested is now v2.'
-[ "$(grep -cF "$remediation_streams_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
-  || { echo "FAIL: the upgrade notes do not say exactly once that the remediation streams change version"; exit 1; }
-for group in 'continuo:remediation.requested:v2 agent-remediation-remediation-requested' \
-             'continuo:remediation.requested:v2 catalog-remediation-requested-rejections' \
-             'continuo:remediation.retry_requested:v1 remediation-retry-requested'; do
-  [ "$(grep -cF "XGROUP DESTROY ${group}" "${tmp}/notes-upgrade.txt")" = 1 ] \
-    || { echo "FAIL: the upgrade notes do not name XGROUP DESTROY ${group} exactly once"; exit 1; }
-done
-if grep -qF "$remediation_streams_note" "${tmp}/notes-install.txt" \
-   || grep -qF 'XGROUP DESTROY' "${tmp}/notes-install.txt"; then
-  echo "FAIL: the install notes carry the remediation streams upgrade note"; exit 1
+# An upgrading operator is told once that every stream starts again at :v1 and
+# to upgrade with an empty Redis; an installing one is told nothing.
+streams_v1_note='BREAKING: every Redis stream starts again at :v1.'
+[ "$(grep -cF "$streams_v1_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once that every stream starts again at :v1"; exit 1; }
+grep -qF 'Upgrade with an empty Redis' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the streams upgrade note does not say to upgrade with an empty Redis"; exit 1; }
+if grep -qF "$streams_v1_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the streams upgrade note"; exit 1
 fi
 
 # An upgrading operator is told once that agent-remediation has one engine, that

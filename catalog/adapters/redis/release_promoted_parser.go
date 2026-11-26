@@ -8,13 +8,13 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParseReleasePromotedV2 decodes one release.promoted:v2 entry — envelope fields
+// ParseReleasePromoted decodes one release.promoted:v1 entry — envelope fields
 // plus a typed payload — into the handler input, under the envelope's tenant.
 // Any decode failure (missing or malformed envelope, unknown schema_version,
 // empty release_id, a seq below 1, no topology URI or checksum) and an envelope
 // without a tenant_id are permanent: the consumer dead-letters the entry, so
 // nothing is ever written under no tenant.
-func ParseReleasePromotedV2(msg goredis.XMessage) (model.PromoteReleaseInput, error) {
+func ParseReleasePromoted(msg goredis.XMessage) (model.PromoteReleaseInput, error) {
 	env, p, err := events.DecodeReleasePromoted(stringFields(msg.Values))
 	if err != nil {
 		return model.PromoteReleaseInput{}, fmt.Errorf("%w: decode release promotion (message %s): %v",

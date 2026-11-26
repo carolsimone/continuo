@@ -7,11 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from adapters.json_log import JsonFormatter
-from adapters.redis.candidate_publisher import CandidateManifestPublisher, manifest_loaded_candidate_event_id
+from adapters.redis.candidate_publisher import CandidateManifestPublisher, release_parsed_event_id
 from adapters.redis.keys import MissingStreamError, key
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import DEFAULT_TENANT_ID, ContractBundleRef, FailedNode, NodeType, TopologyArtifactRef
-from streams_contract import MANIFEST_LOADED_CANDIDATE_V2
+from streams_contract import RELEASE_PARSED_V1
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _AT = datetime(2026, 10, 8, 12, 0, 0, 123456, tzinfo=timezone.utc)
@@ -35,7 +35,7 @@ _OK_TIMINGS = {**_DURATIONS, "contracts_by_family": {"dbt": 3, "python": 2}}
 def _make(producer="topology-controller", at=_AT, continuo_contracts="0.2.0"):
     redis_mock = MagicMock()
     pub = CandidateManifestPublisher(
-        redis_mock, MANIFEST_LOADED_CANDIDATE_V2, producer=producer, continuo_contracts=continuo_contracts,
+        redis_mock, RELEASE_PARSED_V1, producer=producer, continuo_contracts=continuo_contracts,
         clock=lambda: at,
     )
     return pub, redis_mock
@@ -44,7 +44,7 @@ def _make(producer="topology-controller", at=_AT, continuo_contracts="0.2.0"):
 def _fields(redis_mock) -> dict:
     redis_mock.xadd.assert_called_once()
     stream, fields = redis_mock.xadd.call_args.args
-    assert stream == key(MANIFEST_LOADED_CANDIDATE_V2)
+    assert stream == key(RELEASE_PARSED_V1)
     return fields
 
 
@@ -70,7 +70,7 @@ def _assert_matches(got: dict, want: dict) -> None:
 def test_publish_ok_matches_the_shared_ok_fixture():
     """release-controller decodes this entry with pkg/events; the Go test reads
     the same fixture, so both sides agree on every field, the event id included."""
-    given, at, want = _fixture("manifest_loaded_candidate_v2_ok.json")
+    given, at, want = _fixture("release_parsed_v1_ok.json")
     payload = given["payload"]
     pub, redis_mock = _make(producer=given["producer"], at=at)
 
@@ -93,7 +93,7 @@ def test_publish_ok_matches_the_shared_ok_fixture():
 
 
 def test_publish_failed_matches_the_shared_failed_fixture():
-    given, at, want = _fixture("manifest_loaded_candidate_v2_failed.json")
+    given, at, want = _fixture("release_parsed_v1_failed.json")
     payload = given["payload"]
     pub, redis_mock = _make(producer=given["producer"], at=at)
 
@@ -138,7 +138,7 @@ def test_publish_ok_carries_the_artifact_reference_and_no_nodes():
         "contracts_ms": 1260,
         "contracts_by_family": {"dbt": 3, "python": 2},
     }
-    assert fields["event_id"] == manifest_loaded_candidate_event_id("default", "rel-1")
+    assert fields["event_id"] == release_parsed_event_id("default", "rel-1")
     assert fields["tenant_id"] == "default"
     assert fields["producer"] == "topology-controller"
     assert fields["schema_version"] == "1"
@@ -147,10 +147,10 @@ def test_publish_ok_carries_the_artifact_reference_and_no_nodes():
 
 def test_the_event_id_is_stable_per_release_and_includes_the_tenant():
     """A redelivered release.requested re-publishes its result under the same id."""
-    one = manifest_loaded_candidate_event_id("default", "rel-1")
-    assert one == manifest_loaded_candidate_event_id("default", "rel-1")
-    assert one != manifest_loaded_candidate_event_id("default", "rel-2")
-    assert one != manifest_loaded_candidate_event_id("acme", "rel-1")
+    one = release_parsed_event_id("default", "rel-1")
+    assert one == release_parsed_event_id("default", "rel-1")
+    assert one != release_parsed_event_id("default", "rel-2")
+    assert one != release_parsed_event_id("acme", "rel-1")
 
 
 def test_publish_failed_serialises_kind_and_failed_nodes():
@@ -285,7 +285,7 @@ def test_publish_does_not_cap_the_stream():
     # publish path passes a MAXLEN/MINID cap to XADD.
     redis_mock = MagicMock()
     pub = CandidateManifestPublisher(
-        redis_mock, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts="0.2.0",
+        redis_mock, RELEASE_PARSED_V1, producer="topology-controller", continuo_contracts="0.2.0",
     )
     pub.publish_ok(
         release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
@@ -312,7 +312,7 @@ def test_publisher_writes_the_prefixed_key_without_creating_it():
 
     assert redis_mock.xadd.call_count == 2
     for call in redis_mock.xadd.call_args_list:
-        assert call.args[0] == "continuo:" + MANIFEST_LOADED_CANDIDATE_V2
+        assert call.args[0] == "continuo:" + RELEASE_PARSED_V1
         assert call.kwargs["nomkstream"] is True
 
 
@@ -328,7 +328,7 @@ def test_publisher_raises_when_the_stream_is_missing():
             release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
             **_OK_TIMINGS,
         )
-    assert str(err.value) == f"stream continuo:{MANIFEST_LOADED_CANDIDATE_V2} does not exist; the streams-init step creates it"
+    assert str(err.value) == f"stream continuo:{RELEASE_PARSED_V1} does not exist; the streams-init step creates it"
 
     with pytest.raises(MissingStreamError):
         pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INTERNAL, detail="x", **_DURATIONS)
@@ -340,7 +340,7 @@ def test_the_parse_failed_line_prints_its_release_kind_detail_and_failed_node_co
     with caplog.at_level(logging.ERROR, logger="adapters.redis.candidate_publisher"):
         pub.publish_failed("rel-9", ParseFailureKind.INVALID_SQL, "1 node failed to parse: a.b", [node], **_DURATIONS)
     line = json.loads(JsonFormatter().format(caplog.records[-1]))
-    assert (line["level"], line["msg"]) == ("ERROR", "Published manifest.loaded.candidate failed")
+    assert (line["level"], line["msg"]) == ("ERROR", "Published release.parsed failed")
     assert (line["release_id"], line["failure_kind"], line["detail"], line["failed_nodes"]) == (
         "rel-9", "invalid_sql", "1 node failed to parse: a.b", 1)
 

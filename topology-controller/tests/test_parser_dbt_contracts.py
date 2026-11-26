@@ -26,7 +26,7 @@ from service.release_timings import (
     ReleaseTimings,
     Stage,
 )
-from streams_contract import MANIFEST_LOADED_CANDIDATE_V2
+from streams_contract import RELEASE_PARSED_V1
 from tests.fakes import (
     FakeClock,
     RecordingArtifactWriter,
@@ -1124,7 +1124,7 @@ def test_a_release_whose_seeds_all_have_a_known_header_logs_no_unchecked_seeds(t
 def _publishing(redis):
     """The real publisher over a recording redis client."""
     return CandidateManifestPublisher(
-        redis, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts="0.3.1")
+        redis, RELEASE_PARSED_V1, producer="topology-controller", continuo_contracts="0.3.1")
 
 
 def _published_rejection(redis) -> dict:

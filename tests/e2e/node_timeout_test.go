@@ -49,7 +49,7 @@ const (
 //	→ release-controller: every content_hash equals current_prod's, so no node
 //	  is changed and the release promotes with no validation.requested:v1 and
 //	  no validation Job
-//	→ release.promoted:v2 → run-controller stores the release's nodes, ftable_e carrying
+//	→ release.promoted:v1 → run-controller stores the release's nodes, ftable_e carrying
 //	  28800 and every other node NULL but service-1's ftable_deadline, which
 //	  declares its own 60 seconds.
 //

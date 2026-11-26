@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// SeedReconciler runs the seed reconcile inside a release.promoted:v2
+// SeedReconciler runs the seed reconcile inside a release.promoted:v1
 // transaction, after the live-release pointer step and under the same topology
 // lock. It receives the handler's unit of work, so what it writes commits with
 // the promotion.
@@ -23,7 +23,7 @@ type SeedReconciler interface {
 	AfterPromotion(ctx context.Context, u uow.UnitOfWork, t ports.PromotionTrigger) error
 }
 
-// ReleasePromotedInput is one release.promoted:v2 entry with the topology its
+// ReleasePromotedInput is one release.promoted:v1 entry with the topology its
 // artifact holds. The binding parses Promotion from the entry; Load fills Nodes
 // before the transaction opens.
 type ReleasePromotedInput struct {

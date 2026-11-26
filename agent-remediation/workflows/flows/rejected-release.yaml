@@ -5,7 +5,7 @@
 kind: flow
 version: 1
 name: rejected-release
-trigger: remediation.requested
+trigger: heal.triggered
 types:
   - dbt-compile
   - dbt-parse

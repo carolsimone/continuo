@@ -13,19 +13,19 @@ import (
 	"github.com/carolsimone/continuo/remediation/service/handlers"
 )
 
-// NewRemediationRetryConsumer consumes remediation.retry_requested:v2: a
+// NewRemediationRetryConsumer consumes remediation.retry_requested:v1: a
 // rejected release's stored rejection replayed with a remediation_round. It
 // classifies the rejection's whole failed-node set exactly as the original
 // rejection was, emitting one batched trigger for the round under the retry's
 // tenant, so a "try again" walks the same path as the rejection itself, one
 // round later.
 func NewRemediationRetryConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	return pkgredis.NewStreamConsumer(rc, streams.RemediationRetryRequestedV2, streams.RemediationRetryRequested,
+	return pkgredis.NewStreamConsumer(rc, streams.RemediationRetryRequestedV1, streams.RemediationRetryRequested,
 		newRetryHandler(deps, logger), logger)
 }
 
 // newRetryHandler returns the MessageHandler that classifies the stored
-// rejection of one remediation.retry_requested:v2 message, stamping the
+// rejection of one remediation.retry_requested:v1 message, stamping the
 // retry's own round on its evidence and storing the trigger under the tenant of
 // the message's envelope. An entry that cannot be read, one that names no
 // tenant and one whose rejection cannot be decoded are permanent failures: the
@@ -35,12 +35,12 @@ func newRetryHandler(deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHa
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		env, retry, err := pkgevents.DecodeRemediationRetryRequested(stringFields(msg.Values))
 		if err != nil {
-			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV2, err)
+			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV1, err)
 		}
 		if env.TenantID == "" {
-			return fmt.Errorf("%w: %s entry of release %s names no tenant", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV2, retry.ReleaseID)
+			return fmt.Errorf("%w: %s entry of release %s names no tenant", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV1, retry.ReleaseID)
 		}
-		return classifyRejectionBody(ctx, deps, logger, streams.RemediationRetryRequestedV2, env.TenantID, retry.Rejection, retry.RemediationRound)
+		return classifyRejectionBody(ctx, deps, logger, streams.RemediationRetryRequestedV1, env.TenantID, retry.Rejection, retry.RemediationRound)
 	}
 }
 

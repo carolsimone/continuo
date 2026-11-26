@@ -18,7 +18,7 @@ var _ pkgoutbox.Renderer = (*releaseOutboxPublisher)(nil)
 
 func TestRender_PayloadFieldWithoutOutboxEntryID(t *testing.T) {
 	p := &releaseOutboxPublisher{}
-	values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", Payload: []byte(`{"release_id":"r1"}`)})
+	values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: "release_requested", Payload: []byte(`{"release_id":"r1"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestRender_DeadLetterRowOmitsOutboxEntryID(t *testing.T) {
 
 func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 	p := &releaseOutboxPublisher{}
-	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", Payload: []byte(`{}`)}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_requested", Payload: []byte(`{}`)}
 	first, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 // dead-letter-controller's trim loop is the only thing that bounds them.
 func TestXAddArgs_DoNotTrim(t *testing.T) {
 	p := &releaseOutboxPublisher{}
-	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: "some.stream:v1", Payload: []byte(`{}`)}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_requested", StreamName: "some.stream:v1", Payload: []byte(`{}`)}
 	values, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)
@@ -85,10 +85,10 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 	}
 }
 
-// A release.promoted:v2 row's payload is the typed event; Render wraps it in
+// A release.promoted:v1 row's payload is the typed event; Render wraps it in
 // the envelope, deriving the event id from the seq and occurred_at from the
 // row's creation, so every retry publishes identical fields.
-func TestRender_ReleasePromotedV2RowCarriesTheEnvelope(t *testing.T) {
+func TestRender_ReleasePromotedRowCarriesTheEnvelope(t *testing.T) {
 	created := time.Date(2026, 10, 8, 12, 0, 0, 123456000, time.UTC)
 	want := pkgevents.ReleasePromoted{
 		ReleaseID:       "r7",
@@ -107,7 +107,7 @@ func TestRender_ReleasePromotedV2RowCarriesTheEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &releaseOutboxPublisher{}
-	values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: ports.ReleasePromotedV2EventType, Payload: payload, CreatedAt: created})
+	values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: ports.ReleasePromotedEventType, Payload: payload, CreatedAt: created})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,9 +133,9 @@ func TestRender_ReleasePromotedV2RowCarriesTheEnvelope(t *testing.T) {
 	}
 }
 
-func TestRender_MalformedReleasePromotedV2RowIsPermanent(t *testing.T) {
+func TestRender_MalformedReleasePromotedRowIsPermanent(t *testing.T) {
 	p := &releaseOutboxPublisher{}
-	_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: ports.ReleasePromotedV2EventType, Payload: []byte(`{`)})
+	_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: ports.ReleasePromotedEventType, Payload: []byte(`{`)})
 	if !errors.Is(err, pkgevents.ErrPermanent) {
 		t.Fatalf("err = %v, want ErrPermanent", err)
 	}
@@ -157,7 +157,7 @@ func retryRow(t *testing.T, tenantID string, created time.Time, p pkgevents.Reme
 		ID:         uuid.New(),
 		EventType:  "remediation_retry_requested",
 		Payload:    stored,
-		StreamName: streams.RemediationRetryRequestedV2,
+		StreamName: streams.RemediationRetryRequestedV1,
 		CreatedAt:  created,
 	}
 }
@@ -205,7 +205,7 @@ func TestRender_RetryRowThatCannotBeRenderedIsPermanent(t *testing.T) {
 	cases := map[string]*pkgoutbox.Entry{
 		"a payload with no tenant":         unwrapped,
 		"a payload that is no retry":       notJSON,
-		"a stored payload that is no JSON": {ID: uuid.New(), Payload: []byte(`{`), StreamName: streams.RemediationRetryRequestedV2, CreatedAt: created},
+		"a stored payload that is no JSON": {ID: uuid.New(), Payload: []byte(`{`), StreamName: streams.RemediationRetryRequestedV1, CreatedAt: created},
 	}
 	for name, entry := range cases {
 		t.Run(name, func(t *testing.T) {

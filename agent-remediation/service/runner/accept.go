@@ -83,7 +83,7 @@ func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 		t.TenantID = events.DefaultTenantID
 	}
 	if len(t.Nodes) == 0 {
-		r.logger.Info("remediation.requested trigger carries no failing nodes — nothing to fix",
+		r.logger.Info("heal.triggered trigger carries no failing nodes — nothing to fix",
 			"release", t.ReleaseID, "message_id", a.MessageID)
 		return nil
 	}
@@ -96,13 +96,13 @@ func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 
 	msgID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, u.MessageProcessingRepo(), r.logger,
-		a.MessageID, streams.RemediationRequestedV3, a.Payload, a.OutboxEntryID,
+		a.MessageID, streams.HealTriggeredV1, a.Payload, a.OutboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
 	}
 	if dup {
-		r.logger.Info("duplicate remediation.requested trigger — skipping",
+		r.logger.Info("duplicate heal.triggered trigger — skipping",
 			"message_id", a.MessageID, "release", t.ReleaseID)
 		return nil
 	}

@@ -3,7 +3,7 @@ package ports
 import "context"
 
 // LLMResponseCache is a best-effort, idempotency-keyed store for LLM propose
-// results. It lets a redelivered remediation.requested trigger reuse the prior
+// results. It lets a redelivered heal.triggered trigger reuse the prior
 // completion instead of re-paying the expensive LLM call. It is a technical
 // collaborator (not a domain concept), so it lives in service/ports and is
 // implemented by an adapter.

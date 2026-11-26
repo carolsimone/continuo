@@ -14,7 +14,7 @@ import (
 
 // A payload no redelivery can decode must reach the consumer as a permanent
 // error, so it is dead-lettered instead of silently acknowledged. The
-// release.rejected:v1 handler and the remediation.retry_requested:v2 handler
+// release.rejected:v1 handler and the remediation.retry_requested:v1 handler
 // both read a payload field.
 func TestHandlers_UndecodablePayloadIsPermanent(t *testing.T) {
 	messages := map[string]goredis.XMessage{
@@ -24,7 +24,7 @@ func TestHandlers_UndecodablePayloadIsPermanent(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 	handlersByStream := map[string]func(context.Context, goredis.XMessage) error{
 		streams.ReleaseRejectedV1:           newRejectionHandler(streams.ReleaseRejectedV1, handlers.Deps{}, logger),
-		streams.RemediationRetryRequestedV2: newRetryHandler(handlers.Deps{}, logger),
+		streams.RemediationRetryRequestedV1: newRetryHandler(handlers.Deps{}, logger),
 	}
 	for stream, h := range handlersByStream {
 		for mname, m := range messages {

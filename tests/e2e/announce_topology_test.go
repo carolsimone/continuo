@@ -38,7 +38,7 @@ type announceResult struct {
 
 // announceTopology publishes nodes as the topology of releaseID through
 // release-controller's announce-topology: release-controller writes the artifact
-// to MinIO, takes the next promotion seq and queues release.promoted:v2, which
+// to MinIO, takes the next promotion seq and queues release.promoted:v1, which
 // catalog applies as it applies a promoted release. The command runs
 // inside the release-controller container, which carries the component's
 // Postgres and S3 settings.
@@ -189,7 +189,7 @@ func waitForAnnouncedTopology(t *testing.T, ctx context.Context, clients *testCl
 	})
 }
 
-// findPromotionEntry returns the release.promoted:v2 entry the tap recorded for
+// findPromotionEntry returns the release.promoted:v1 entry the tap recorded for
 // releaseID.
 func findPromotionEntry(t *testing.T, ctx context.Context, tap *streamTap, releaseID string) goredis.XMessage {
 	t.Helper()
@@ -202,7 +202,7 @@ func findPromotionEntry(t *testing.T, ctx context.Context, tap *streamTap, relea
 			}
 		}
 		return false, nil
-	}, "no release.promoted:v2 entry recorded for "+releaseID)
+	}, "no release.promoted:v1 entry recorded for "+releaseID)
 	return found
 }
 

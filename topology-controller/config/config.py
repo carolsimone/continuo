@@ -7,7 +7,7 @@ from config.secrets import read_secret
 from domain.external import SystemRelations
 from streams_contract import (
     RELEASE_REQUESTED_V1,
-    MANIFEST_LOADED_CANDIDATE_V2,
+    RELEASE_PARSED_V1,
     TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
 )
 
@@ -218,10 +218,10 @@ def ontology_enabled() -> bool:
         raise RuntimeError(f"unsupported ONTOLOGY_ENABLED {raw!r}: expected true or false") from None
 
 
-# Candidate-parse flow: release.requested:v1 → manifest.loaded.candidate:v2.
+# Candidate-parse flow: release.requested:v1 → release.parsed:v1.
 RELEASE_REQUESTED_STREAM         = RELEASE_REQUESTED_V1
 RELEASE_REQUESTED_GROUP          = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
-MANIFEST_LOADED_CANDIDATE_STREAM = MANIFEST_LOADED_CANDIDATE_V2
+RELEASE_PARSED_STREAM            = RELEASE_PARSED_V1
 
 _REQUIRED = [
     "REDIS_URL",

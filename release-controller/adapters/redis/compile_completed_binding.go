@@ -52,7 +52,7 @@ func newCompileCompletedHandler(deps *handlers.Deps, logger *slog.Logger) pkgred
 			return err
 		}
 		// Advance the queue after every compile result. On the success path the
-		// release stays active (Parsing → will receive manifest.loaded.candidate),
+		// release stays active (Parsing → will receive release.parsed),
 		// so this is a no-op. On the failure path the release was just Rejected,
 		// so this unblocks the next queued candidate.
 		if err := handlers.AdvanceQueue(ctx, deps); err != nil {

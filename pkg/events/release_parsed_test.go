@@ -13,26 +13,26 @@ import (
 	"github.com/carolsimone/continuo/pkg/events"
 )
 
-type manifestLoadedCandidateFixture struct {
+type releaseParsedFixture struct {
 	Input struct {
-		TenantID   string                         `json:"tenant_id"`
-		Producer   string                         `json:"producer"`
-		OccurredAt time.Time                      `json:"occurred_at"`
-		Payload    events.ManifestLoadedCandidate `json:"payload"`
+		TenantID   string               `json:"tenant_id"`
+		Producer   string               `json:"producer"`
+		OccurredAt time.Time            `json:"occurred_at"`
+		Payload    events.ReleaseParsed `json:"payload"`
 	} `json:"input"`
 	Fields map[string]json.RawMessage `json:"fields"`
 }
 
-var manifestLoadedCandidateFixtures = []string{
-	"testdata/manifest_loaded_candidate_v2_ok.json",
-	"testdata/manifest_loaded_candidate_v2_failed.json",
+var releaseParsedFixtures = []string{
+	"testdata/release_parsed_v1_ok.json",
+	"testdata/release_parsed_v1_failed.json",
 }
 
-func loadManifestLoadedCandidateFixture(t *testing.T, path string) manifestLoadedCandidateFixture {
+func loadReleaseParsedFixture(t *testing.T, path string) releaseParsedFixture {
 	t.Helper()
 	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is one of the fixed fixture paths above
 	require.NoError(t, err)
-	var fx manifestLoadedCandidateFixture
+	var fx releaseParsedFixture
 	require.NoError(t, json.Unmarshal(raw, &fx))
 	return fx
 }
@@ -69,55 +69,55 @@ func assertFieldsMatchFixture(t *testing.T, want map[string]json.RawMessage, got
 	assert.Equal(t, wantPayload, gotPayload)
 }
 
-func TestManifestLoadedCandidateFields_MatchGoldenFixtures(t *testing.T) {
-	for _, path := range manifestLoadedCandidateFixtures {
+func TestReleaseParsedFields_MatchGoldenFixtures(t *testing.T) {
+	for _, path := range releaseParsedFixtures {
 		t.Run(path, func(t *testing.T) {
-			fx := loadManifestLoadedCandidateFixture(t, path)
-			got, err := events.ManifestLoadedCandidateFields(fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, fx.Input.Payload)
+			fx := loadReleaseParsedFixture(t, path)
+			got, err := events.ReleaseParsedFields(fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, fx.Input.Payload)
 			require.NoError(t, err)
 			assertFieldsMatchFixture(t, fx.Fields, got)
 		})
 	}
 }
 
-func TestDecodeManifestLoadedCandidate_ReadsGoldenFixtures(t *testing.T) {
-	for _, path := range manifestLoadedCandidateFixtures {
+func TestDecodeReleaseParsed_ReadsGoldenFixtures(t *testing.T) {
+	for _, path := range releaseParsedFixtures {
 		t.Run(path, func(t *testing.T) {
-			fx := loadManifestLoadedCandidateFixture(t, path)
-			env, p, err := events.DecodeManifestLoadedCandidate(fixtureFields(t, fx.Fields))
+			fx := loadReleaseParsedFixture(t, path)
+			env, p, err := events.DecodeReleaseParsed(fixtureFields(t, fx.Fields))
 			require.NoError(t, err)
 			assert.Equal(t, fx.Input.Payload, p)
 			assert.Equal(t, fx.Input.TenantID, env.TenantID)
 			assert.Equal(t, fx.Input.Producer, env.Producer)
 			assert.True(t, fx.Input.OccurredAt.Equal(env.OccurredAt))
-			assert.Equal(t, events.ManifestLoadedCandidateEventID(fx.Input.TenantID, fx.Input.Payload.ReleaseID), env.EventID)
+			assert.Equal(t, events.ReleaseParsedEventID(fx.Input.TenantID, fx.Input.Payload.ReleaseID), env.EventID)
 		})
 	}
 }
 
-func TestManifestLoadedCandidateEventID_IsStablePerRelease(t *testing.T) {
-	a := events.ManifestLoadedCandidateEventID("default", "rel-1")
-	assert.Equal(t, a, events.ManifestLoadedCandidateEventID("default", "rel-1"))
-	assert.NotEqual(t, a, events.ManifestLoadedCandidateEventID("default", "rel-2"))
-	assert.NotEqual(t, a, events.ManifestLoadedCandidateEventID("acme", "rel-1"), "the tenant is part of the natural key")
+func TestReleaseParsedEventID_IsStablePerRelease(t *testing.T) {
+	a := events.ReleaseParsedEventID("default", "rel-1")
+	assert.Equal(t, a, events.ReleaseParsedEventID("default", "rel-1"))
+	assert.NotEqual(t, a, events.ReleaseParsedEventID("default", "rel-2"))
+	assert.NotEqual(t, a, events.ReleaseParsedEventID("acme", "rel-1"), "the tenant is part of the natural key")
 }
 
-func TestManifestLoadedCandidateFields_AFailureWithoutNodesCarriesAnEmptyList(t *testing.T) {
-	got, err := events.ManifestLoadedCandidateFields("default", "topology-controller", time.Unix(0, 0), events.ManifestLoadedCandidate{
+func TestReleaseParsedFields_AFailureWithoutNodesCarriesAnEmptyList(t *testing.T) {
+	got, err := events.ReleaseParsedFields("default", "topology-controller", time.Unix(0, 0), events.ReleaseParsed{
 		ReleaseID: "rel-1", Status: events.ManifestStatusFailed, FailureKind: "invalid_artifact", Detail: "empty manifest",
 	})
 	require.NoError(t, err)
 	assert.Contains(t, got["payload"], `"failed_nodes":[]`)
 }
 
-func TestManifestLoadedCandidateFields_OKCarriesTheContractBundleAndTheLibraryVersion(t *testing.T) {
-	fx := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_ok.json")
+func TestReleaseParsedFields_OKCarriesTheContractBundleAndTheLibraryVersion(t *testing.T) {
+	fx := loadReleaseParsedFixture(t, "testdata/release_parsed_v1_ok.json")
 	p := fx.Input.Payload
 	require.Equal(t, "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz", p.ContractBundleURI)
 	require.Equal(t, "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a", p.ContractBundleSHA256)
 	require.Equal(t, "0.2.0", p.ContinuoContracts)
 
-	got, err := events.ManifestLoadedCandidateFields(fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, p)
+	got, err := events.ReleaseParsedFields(fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, p)
 	require.NoError(t, err)
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(got["payload"].(string)), &payload))
@@ -126,15 +126,15 @@ func TestManifestLoadedCandidateFields_OKCarriesTheContractBundleAndTheLibraryVe
 	assert.Equal(t, p.ContinuoContracts, payload["continuo_contracts"])
 }
 
-func TestManifestLoadedCandidateFields_FailedCarriesTheLibraryVersion(t *testing.T) {
-	fx := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_failed.json")
+func TestReleaseParsedFields_FailedCarriesTheLibraryVersion(t *testing.T) {
+	fx := loadReleaseParsedFixture(t, "testdata/release_parsed_v1_failed.json")
 	p := fx.Input.Payload
 	require.Equal(t, "invalid_contract", p.FailureKind)
 	require.Equal(t, "0.2.0", p.ContinuoContracts)
 	require.Len(t, p.FailedNodes, 1)
 	require.Equal(t, "analytics.py_daily_kpis", p.FailedNodes[0].NodeID)
 
-	got, err := events.ManifestLoadedCandidateFields(fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, p)
+	got, err := events.ReleaseParsedFields(fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, p)
 	require.NoError(t, err)
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(got["payload"].(string)), &payload))
@@ -143,33 +143,33 @@ func TestManifestLoadedCandidateFields_FailedCarriesTheLibraryVersion(t *testing
 	assert.NotContains(t, payload, "contract_bundle_sha256", "a failed release writes no contract bundle")
 }
 
-func TestManifestLoadedCandidate_DecodesTheParseTimings(t *testing.T) {
-	ok := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_ok.json")
-	_, p, err := events.DecodeManifestLoadedCandidate(fixtureFields(t, ok.Fields))
+func TestReleaseParsed_DecodesTheParseTimings(t *testing.T) {
+	ok := loadReleaseParsedFixture(t, "testdata/release_parsed_v1_ok.json")
+	_, p, err := events.DecodeReleaseParsed(fixtureFields(t, ok.Fields))
 	require.NoError(t, err)
 	assert.Equal(t, int64(4180), p.ParseMs)
 	assert.Equal(t, int64(1260), p.ContractsMs)
 	assert.Equal(t, map[model.ContractFamily]int{"dbt": 3, "python": 2}, p.ContractsByFamily)
 
-	failed := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_failed.json")
-	_, p, err = events.DecodeManifestLoadedCandidate(fixtureFields(t, failed.Fields))
+	failed := loadReleaseParsedFixture(t, "testdata/release_parsed_v1_failed.json")
+	_, p, err = events.DecodeReleaseParsed(fixtureFields(t, failed.Fields))
 	require.NoError(t, err)
 	assert.Equal(t, int64(310), p.ParseMs)
 	assert.Equal(t, int64(45), p.ContractsMs)
 	assert.Nil(t, p.ContractsByFamily, "a failed parse counts no contracts by family")
 }
 
-func TestManifestLoadedCandidateFields_BothOutcomesCarryTheDurationsAndOnlyOKTheCounts(t *testing.T) {
-	render := func(p events.ManifestLoadedCandidate) map[string]any {
+func TestReleaseParsedFields_BothOutcomesCarryTheDurationsAndOnlyOKTheCounts(t *testing.T) {
+	render := func(p events.ReleaseParsed) map[string]any {
 		t.Helper()
-		got, err := events.ManifestLoadedCandidateFields("default", "topology-controller", time.Unix(0, 0), p)
+		got, err := events.ReleaseParsedFields("default", "topology-controller", time.Unix(0, 0), p)
 		require.NoError(t, err)
 		var payload map[string]any
 		require.NoError(t, json.Unmarshal([]byte(got["payload"].(string)), &payload))
 		return payload
 	}
 
-	ok := render(events.ManifestLoadedCandidate{
+	ok := render(events.ReleaseParsed{
 		ReleaseID: "rel-1", Status: events.ManifestStatusOK, TopologyURI: "s3://b/k", TopologySHA256: "abc",
 		ParseMs: 7, ContractsMs: 3, ContractsByFamily: map[model.ContractFamily]int{"dbt": 2},
 	})
@@ -177,7 +177,7 @@ func TestManifestLoadedCandidateFields_BothOutcomesCarryTheDurationsAndOnlyOKThe
 	assert.EqualValues(t, 3, ok["contracts_ms"])
 	assert.Equal(t, map[string]any{"dbt": float64(2)}, ok["contracts_by_family"])
 
-	failed := render(events.ManifestLoadedCandidate{
+	failed := render(events.ReleaseParsed{
 		ReleaseID: "rel-2", Status: events.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "d",
 		ParseMs: 9, ContractsMs: 4, ContractsByFamily: map[model.ContractFamily]int{"dbt": 2},
 	})
@@ -186,21 +186,21 @@ func TestManifestLoadedCandidateFields_BothOutcomesCarryTheDurationsAndOnlyOKThe
 	assert.NotContains(t, failed, "contracts_by_family", "only an ok parse counts the contracts it wrote")
 }
 
-func TestManifestLoadedCandidateFields_AnOKReleaseWithNoContractsCarriesAnEmptyCount(t *testing.T) {
-	got, err := events.ManifestLoadedCandidateFields("default", "topology-controller", time.Unix(0, 0), events.ManifestLoadedCandidate{
+func TestReleaseParsedFields_AnOKReleaseWithNoContractsCarriesAnEmptyCount(t *testing.T) {
+	got, err := events.ReleaseParsedFields("default", "topology-controller", time.Unix(0, 0), events.ReleaseParsed{
 		ReleaseID: "rel-1", Status: events.ManifestStatusOK, TopologyURI: "s3://b/k", TopologySHA256: "abc",
 	})
 	require.NoError(t, err)
 	assert.Contains(t, got["payload"], `"contracts_by_family":{}`)
 }
 
-func TestDecodeManifestLoadedCandidate_AnEntryWithoutTheNewFieldsDecodes(t *testing.T) {
+func TestDecodeReleaseParsed_AnEntryWithoutTheNewFieldsDecodes(t *testing.T) {
 	for name, payload := range map[string]string{
 		"ok":     `{"release_id":"rel-1","status":"ok","topology_uri":"s3://b/k","topology_sha256":"abc","node_count":1,"code_bundle_uri":"s3://b/c"}`,
 		"failed": `{"release_id":"rel-1","status":"failed","failure_kind":"invalid_sql","detail":"d","failed_nodes":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, p, err := events.DecodeManifestLoadedCandidate(map[string]string{
+			_, p, err := events.DecodeReleaseParsed(map[string]string{
 				"event_id":       "e",
 				"tenant_id":      "default",
 				"occurred_at":    "2026-10-08T09:30:00.000000Z",
@@ -220,11 +220,11 @@ func TestDecodeManifestLoadedCandidate_AnEntryWithoutTheNewFieldsDecodes(t *test
 	}
 }
 
-// TestDecodeManifestLoadedCandidate_AnEmptyCountByFamilyIsNotNil pins the other
+// TestDecodeReleaseParsed_AnEmptyCountByFamilyIsNotNil pins the other
 // half of that rule: a producer that reports the count writes {} for a release
 // with no contract, which decodes as an empty map that is not nil.
-func TestDecodeManifestLoadedCandidate_AnEmptyCountByFamilyIsNotNil(t *testing.T) {
-	_, p, err := events.DecodeManifestLoadedCandidate(map[string]string{
+func TestDecodeReleaseParsed_AnEmptyCountByFamilyIsNotNil(t *testing.T) {
+	_, p, err := events.DecodeReleaseParsed(map[string]string{
 		"event_id":       "e",
 		"tenant_id":      "default",
 		"occurred_at":    "2026-10-08T09:30:00.000000Z",
@@ -238,7 +238,7 @@ func TestDecodeManifestLoadedCandidate_AnEmptyCountByFamilyIsNotNil(t *testing.T
 	assert.Empty(t, p.ContractsByFamily)
 }
 
-func TestDecodeManifestLoadedCandidate_RejectsMalformedEntries(t *testing.T) {
+func TestDecodeReleaseParsed_RejectsMalformedEntries(t *testing.T) {
 	valid := func() map[string]string {
 		return map[string]string{
 			"event_id":       "e",
@@ -249,7 +249,7 @@ func TestDecodeManifestLoadedCandidate_RejectsMalformedEntries(t *testing.T) {
 			"payload":        `{"release_id":"rel-1","status":"ok","topology_uri":"s3://b/k","topology_sha256":"abc","node_count":1}`,
 		}
 	}
-	_, _, err := events.DecodeManifestLoadedCandidate(valid())
+	_, _, err := events.DecodeReleaseParsed(valid())
 	require.NoError(t, err, "the base case must decode")
 
 	for name, mutate := range map[string]func(map[string]string){
@@ -271,7 +271,7 @@ func TestDecodeManifestLoadedCandidate_RejectsMalformedEntries(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := valid()
 			mutate(f)
-			_, _, err := events.DecodeManifestLoadedCandidate(f)
+			_, _, err := events.DecodeReleaseParsed(f)
 			assert.ErrorIs(t, err, events.ErrMalformedEnvelope)
 		})
 	}

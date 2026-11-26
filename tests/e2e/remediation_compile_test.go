@@ -42,7 +42,7 @@ import (
 //	→ release-controller TransitionToRejected("compile_failed"), RecordStageResults("compile")
 //	→ release.rejected:v1 {stage:"compile", per_node:[{node_id:<project>, status:"failed", dbt_log_uri}]}
 //	→ remediation classifier maps stage→SourceCompile, ExtractDbtFilePath(log)→file_path,
-//	  classifies the parse/compilation error as healable → remediation.requested:v3 (source="compile")
+//	  classifies the parse/compilation error as healable → heal.triggered:v1 (source="compile")
 //	→ agent-remediation proposeFromSource: reads model source from GitHub (stub-github),
 //	  asks stub-llm to fix it → proposal row (source="compile", file_path)
 //	→ a verification run lays the corrected file over the fixture project's dbt
@@ -100,7 +100,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	// Clear any mid-flight release so AdvanceQueue can activate this one.
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
 
@@ -124,7 +124,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	//    discriminator the remediation classifier maps to SourceCompile.
 	assertRejectedStageCompile(t, ctx, rejectedTap, releaseID)
 
-	// 4. remediation.requested:v3 must be emitted with source=="compile" and an
+	// 4. heal.triggered:v1 must be emitted with source=="compile" and an
 	//    entry carrying a non-empty file_path (derived by the classifier via
 	//    ExtractDbtFilePath on the dbt compile log). The compile node_id is the
 	//    project name.
@@ -144,7 +144,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	// of a project the same signature.
 	require.Contains(t, node.ErrorExcerpt, "Compilation Error in model daily_transactions",
 		"compile trigger error_excerpt must carry the compilation message, got %q", node.ErrorExcerpt)
-	t.Logf("✅ %s (compile): file_path=%s signature=%s excerpt=%q", streams.RemediationRequestedV3, node.FilePath, node.ErrorSignature, node.ErrorExcerpt)
+	t.Logf("✅ %s (compile): file_path=%s signature=%s excerpt=%q", streams.HealTriggeredV1, node.FilePath, node.ErrorSignature, node.ErrorExcerpt)
 
 	// 5. classification_decision row must record source=='compile'.
 	var decision classificationDecisionRow

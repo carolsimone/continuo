@@ -39,7 +39,7 @@ func payloadOf(t *testing.T, e *outbox.Entry) pkgevents.TaskStatusReport {
 }
 
 // A report is kept as the attempt's last report and written to
-// task.status.updated:v2 as its payload.
+// task.status.updated:v1 as its payload.
 func TestWrite_KeepsTheReportAndWritesItsPayload(t *testing.T) {
 	cmd := command.DeployTask{TenantID: "acme", TaskID: uuid.NewString(), RunID: uuid.NewString(), Attempt: 1, JobName: "svc-sch-tbl-7f3e1a2b-r1"}
 	d := model.NewDeployment(cmd, nil, time.Now())
@@ -50,7 +50,7 @@ func TestWrite_KeepsTheReportAndWritesItsPayload(t *testing.T) {
 	require.Len(t, out.created, 1)
 	e := out.created[0]
 	assert.Equal(t, event.EventTypeTaskStatusReport, e.EventType)
-	assert.Equal(t, streams.TaskStatusUpdatedV2, e.StreamName)
+	assert.Equal(t, streams.TaskStatusUpdatedV1, e.StreamName)
 	assert.Equal(t, cmd.TaskID, e.AggregateID.String(), "a task's reports are published in the order they were written")
 	p := payloadOf(t, e)
 	assert.Equal(t, pkgmodel.AttemptStatusQueued, p.Status)

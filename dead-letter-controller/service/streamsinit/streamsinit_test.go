@@ -112,11 +112,6 @@ func TestRunCreatesEveryGroupOfTheContract(t *testing.T) {
 			t.Errorf("asked for %q, which is not a contract stream", name)
 		}
 	}
-	for _, retired := range streams.Retired {
-		if admin.groups[retired] != nil || admin.streams[retired] {
-			t.Errorf("created the retired stream %s", retired)
-		}
-	}
 }
 
 func TestRunCreatesAStreamThatHasNoGroup(t *testing.T) {
@@ -182,12 +177,12 @@ func TestRunLogsOneLinePerStreamWithTheGroupsCreated(t *testing.T) {
 	var out bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&out, nil))
 	plan := Plan{Groups: map[string][]string{
-		streams.ReleasePromotedV2: {streams.CatalogReleaseTopology, streams.RunControllerReleasePromoted},
+		streams.ReleasePromotedV1: {streams.CatalogReleaseTopology, streams.RunControllerReleasePromoted},
 	}, CreateStreams: true}
 	if err := Run(context.Background(), newFakeAdmin(), plan, logger); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"stream":"`+streams.ReleasePromotedV2+`"`) || !strings.Contains(out.String(), `"created":2`) {
+	if !strings.Contains(out.String(), `"stream":"`+streams.ReleasePromotedV1+`"`) || !strings.Contains(out.String(), `"created":2`) {
 		t.Fatalf("no line naming the stream and 2 created groups:\n%s", out.String())
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// DecodeReleasePromoted reads one release.promoted:v2 entry. Every error wraps
+// DecodeReleasePromoted reads one release.promoted:v1 entry. Every error wraps
 // ErrMalformedEnvelope: an unreadable envelope, another schema_version, a
 // payload that is not JSON, no release_id, a promotion_seq below 1, or no
 // topology_uri or topology_sha256. contract_bundle_uri and

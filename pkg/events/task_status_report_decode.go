@@ -7,14 +7,14 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// taskStatusReportWire reads a task.status.updated:v2 payload with the
+// taskStatusReportWire reads a task.status.updated:v1 payload with the
 // attempt as a pointer, so a payload without one is told apart from attempt 0.
 type taskStatusReportWire struct {
 	TaskStatusReport
 	Attempt *int32 `json:"attempt"`
 }
 
-// DecodeTaskStatusReport reads one task.status.updated:v2 entry. Every error
+// DecodeTaskStatusReport reads one task.status.updated:v1 entry. Every error
 // wraps ErrMalformedEnvelope: an unreadable envelope, another schema_version,
 // a payload that is not JSON, a run_id or task_id that is not a UUID, an
 // attempt that is missing, not an integer or negative, a status other than

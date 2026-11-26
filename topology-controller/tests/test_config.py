@@ -175,16 +175,16 @@ def test_release_requested_stream_constant_sourced_from_contract():
     from streams_contract import (
         RELEASE_REQUESTED_V1,
         TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
-        MANIFEST_LOADED_CANDIDATE_V2,
+        RELEASE_PARSED_V1,
     )
     from config.config import (
         RELEASE_REQUESTED_STREAM,
         RELEASE_REQUESTED_GROUP,
-        MANIFEST_LOADED_CANDIDATE_STREAM,
+        RELEASE_PARSED_STREAM,
     )
     assert RELEASE_REQUESTED_STREAM == RELEASE_REQUESTED_V1
     assert RELEASE_REQUESTED_GROUP == TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
-    assert MANIFEST_LOADED_CANDIDATE_STREAM == MANIFEST_LOADED_CANDIDATE_V2
+    assert RELEASE_PARSED_STREAM == RELEASE_PARSED_V1
 
 
 def test_every_failure_kind_the_handler_can_publish_is_in_the_contract():

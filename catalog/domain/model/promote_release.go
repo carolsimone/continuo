@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-// PromoteReleaseInput is the handler input for a release.promoted:v2 message:
+// PromoteReleaseInput is the handler input for a release.promoted:v1 message:
 // the promotion's tenant, identity and seq, the location and checksum of its
 // topology artifact and of its contract bundle, the nodes it changed, and the
 // provenance the versions group stamps.

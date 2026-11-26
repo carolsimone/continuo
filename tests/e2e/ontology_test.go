@@ -162,7 +162,7 @@ func TestE2E_Ontology(t *testing.T) {
 
 	bin, env := contractsCLI(t, ctx)
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	// The switch is off again, and neither project this test releases is left
 	// in service_prod, whatever happens below: a later release would
