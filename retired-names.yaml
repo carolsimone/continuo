@@ -274,7 +274,7 @@ names:
   # pipeline.run.finished, PipelineRunFinished..., fix-verification).
   - pattern: '(?i)\w*verification[ ._-]?runs?\w*'
     use: release check
-  - pattern: '(?i)\w*pipeline[ ._-]?runs?\w*'
+  - pattern: '(?i)\w*pipeline[._-]runs?\w*|\w*[pP]ipelineRuns?\w*|(?i)(a|an|the|each|every|one|no) pipeline runs?'
     use: release check (the stream is release_check.finished:v1)
   - pattern: '(?i)\w*release[ ._-]?pipelines?\w*'
     use: release check

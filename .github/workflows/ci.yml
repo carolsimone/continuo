@@ -402,9 +402,9 @@ jobs:
         #     retry tests, the five batched remediation tests, the two release
         #     validation tests-bind tests and the fix release check test — and
         #     they all wait on the same globally serialized release queue, so a
-        #     wedged queue stalls several of them one after another. Covering two is the minimum that still buys a named
-        #     assertion; covering all thirteen would put the ceiling past 9
-        #     hours.
+        #     wedged queue stalls several of them one after another. Covering
+        #     two is the minimum that still buys a named assertion; covering
+        #     all thirteen would put the ceiling past 9 hours.
         #   - 85m for the rest of the suite. A healthy run of every test but
         #     those two in this job, which starts the stack cold, takes at most
         #     about 70m, the two Python contract tests (28m and 6m

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Lay a release check's proposed source files over a Job's dbt project.
+"""Lay a fix's proposed source files over a Job's dbt project.
 
-Runs as the `overlay` initContainer (s3-sidecar image) of a release check's
-compile Job and seed-build Job. Downloads SOURCE_OVERLAY_URI — a gzip tarball
-whose member names are project-relative paths (e.g. models/orders.sql) — and
+Runs as the `overlay` initContainer (s3-sidecar image) of the compile Job and
+the seed-build Job of a fix's release check. Downloads SOURCE_OVERLAY_URI — a
+gzip tarball whose member names are project-relative paths (e.g. models/orders.sql) — and
 extracts it into OVERLAY_DEST; each team-image container of the Job then
 copies its project into a writable workdir, copies that tree over the copy and
 runs dbt there, so the run builds and validates the proposed fix rather than
@@ -21,9 +21,9 @@ OVERLAY_DEST; the team containers remove each of them from their copy after
 laying the overlay over it. A tarball without the member writes no list and
 needs no OVERLAY_DELETE_LIST.
 
-Every failure exits nonzero and fails the Job. A release check exists only
-to judge a fix; building the committed source instead would judge the wrong
-thing, so there is deliberately no degraded path here.
+Every failure exits nonzero and fails the Job. A fix's release check exists
+only to judge the fix; building the committed source instead would judge the
+wrong thing, so there is deliberately no degraded path here.
 """
 import io
 import logging

@@ -52,7 +52,7 @@ fi
 
 retired_state='continuo_state|state_outbox|STATE_GRPC_ADDR|CONTINUO_STATE_ADDR|STATE_HOST|stateGrpcAddr|state:50051|continuo/state|continuo-state|flyway-state|area/state|stateDB|stateDSN|StateEndpoint|EnvStateAddr|assert-state-recreate'
 retired_state_groups='state-(task-status-updated|release-promoted)'
-retired_executor_groups='(group|const): Executor|executor-(task-dispatch|run-cancelled|validation-requested|validation-result-teardown|seed-build-requested|compile-requested|release-promoted|release-rejected)'
+retired_executor_groups='(group|const): Executor|executor-(task-dispatch|run-cancelled|validation-requested|validation-result-teardown|seed-build-requested|compile-requested|release-promoted|release-rejected|release-check-finished)'
 retired_other='k8s-controllers|remediation_agent'
 
 if git grep -nE "${retired_state}|${retired_state_groups}|${retired_executor_groups}|${retired_other}" -- \

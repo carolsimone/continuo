@@ -96,8 +96,8 @@ type Config struct {
 	// duration at all fails start-up.
 	ReleaseCheckTimeout time.Duration
 
-	// ReleaseCheckPollInterval is how often the gate poller reads the runs of
-	// every remediation awaiting a verdict. Non-positive values fall
+	// ReleaseCheckPollInterval is how often the gate poller reads the release
+	// checks of every remediation awaiting a verdict. Non-positive values fall
 	// back to the default so a misconfigured interval can never produce a hot
 	// loop; a value that is not a Go duration at all fails start-up.
 	ReleaseCheckPollInterval time.Duration

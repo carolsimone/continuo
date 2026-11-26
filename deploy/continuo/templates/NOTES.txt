@@ -118,7 +118,9 @@ agent-remediation reads RELEASE_CHECK_TIMEOUT and RELEASE_CHECK_POLL_INTERVAL:
 a components entry whose env sets these two durations under their earlier
 names sets nothing, so rename them. The stream that says a release check ended
 is release_check.finished:v1; with your own Redis, apply the rules from
-deploy/redis-acl-rules.acl with the upgrade.
+deploy/redis-acl-rules.acl with the upgrade. A flow file of yours in
+agentRemediation.workflows.files names the gate step as release_check
+(gate: [release_check]), or agent-remediation refuses to start.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}

@@ -1,7 +1,7 @@
 // Package scripted is the world a conformance scenario runs in: every port a
 // remediation step reads through, answering from one fixture, the scripted
 // model behind the real response cache, release checks that pass or
-// fails as the scenario's script says, and a fixed clock, over a memory store.
+// fail as the scenario's script says, and a fixed clock, over a memory store.
 package scripted
 
 import (
@@ -162,7 +162,7 @@ func (w *World) Outbox() []outbox.Entry { return w.store.OutboxEntries() }
 // was about.
 func (w *World) ModelCalls() []conformance.ModelCall { return w.llm.recorded() }
 
-// Runs is every release check submitted.
+// Checks is every release check submitted.
 func (w *World) Checks() []ports.ReleaseCheckRequest { return w.checks.requests() }
 
 // fixedClock always reads the same time.
