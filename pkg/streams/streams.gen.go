@@ -38,7 +38,7 @@ const (
 	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A release check's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
-	// ReleaseCheckFinishedV1 — A release check of either kind (a candidate release or a fix's release check) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
+	// ReleaseCheckFinishedV1 — A release check of either kind (a candidate release or a fix's release check) reached a terminal status; carries the check's candidate schema so execution-controller can drop it whatever the outcome.
 	ReleaseCheckFinishedV1 = "release_check.finished:v1"
 	// RemediationRetryRequestedV1 — An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
 	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"

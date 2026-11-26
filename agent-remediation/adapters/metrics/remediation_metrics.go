@@ -37,7 +37,7 @@ func NewRemediationMetrics(reg *pkgmetrics.Registry) *RemediationMetrics {
 	m := &RemediationMetrics{
 		tries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_remediation_tries_total",
-			Help: "Clusters a remediation try worked, counted when the try ends, by flow, type and result: passed (the release checks passed), gate_failed (a run did not pass the fix or never answered), checks_failed (a cross-cluster check or the gate refused the try's drafts), preflight_spent (every pre-flight round refused the draft) or declined (a step declined, or the draft made no edit). A cluster no type matches and one handed over when the try opened count nothing, and so does a shared-upstream cluster that fell back to its members, which count their own result. A cross-project cluster that fell back counts declined or preflight_spent, the result of its own failure.",
+			Help: "Clusters a remediation try worked, counted when the try ends, by flow, type and result: passed (the release checks passed), gate_failed (a release check did not pass the fix or never answered), checks_failed (a cross-cluster check or the gate refused the try's drafts), preflight_spent (every pre-flight round refused the draft) or declined (a step declined, or the draft made no edit). A cluster no type matches and one handed over when the try opened count nothing, and so does a shared-upstream cluster that fell back to its members, which count their own result. A cross-project cluster that fell back counts declined or preflight_spent, the result of its own failure.",
 		}, []string{"flow", "type", "result"}),
 		rounds: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_remediation_rounds_total",

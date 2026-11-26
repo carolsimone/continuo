@@ -176,7 +176,7 @@ streams:
 
   - name: release_check.finished:v1
     const: ReleaseCheckFinishedV1
-    description: A release check of either kind (a candidate release or a fix's release check) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
+    description: A release check of either kind (a candidate release or a fix's release check) reached a terminal status; carries the check's candidate schema so execution-controller can drop it whatever the outcome.
     producers: [release-controller]
     consumers:
       - component: execution-controller

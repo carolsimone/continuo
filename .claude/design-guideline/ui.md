@@ -1156,7 +1156,7 @@ Rules:
   wrapped onto a second line), not a peer header. Inner rows keep the table row contract (hover, selected,
   static) and use `.pill-sm` for status.
 - Per-item detail lines under a row (a release check, say) are a
-  `.remediation-verif` sub-row: a 10px uppercase label followed by compact
+  `.remediation-subrow` sub-row: a 10px uppercase label followed by compact
   12px lines, each with its `.btn--secondary` link-out.
 - The expander is `.remediation-chevron` in the first cell — a 14px chevron
   that rotates to point down while the group is open and darkens on row

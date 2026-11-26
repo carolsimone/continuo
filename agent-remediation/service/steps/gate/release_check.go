@@ -222,7 +222,7 @@ func (g *ReleaseCheck) Submit(ctx context.Context, in step.GateInput) (step.Gate
 		}
 		g.logger.Info("release check submitted",
 			"release", t.ReleaseID, "attempt", attempt, "project", project,
-			"run", r.checkID, "kind", r.kind, "edits", len(r.edits.Edits))
+			"check", r.checkID, "kind", r.kind, "edits", len(r.edits.Edits))
 		releaseChecks = append(releaseChecks, proposal.ReleaseCheck{
 			Project: project, Kind: r.kind, CheckID: r.checkID, Phase: proposal.PhaseQueued,
 		})

@@ -283,7 +283,7 @@ func (p *Proposal) NormalizeSingleFileView() {
 
 // NormalizeRepresentativeViews derives the single-value views of the batched
 // fields: ResolvedNodeIDs is sorted, NodeID defaults to its first entry,
-// ReleaseCheckID defaults to the first release check's run id, and the
+// ReleaseCheckID defaults to the first release check's id, and the
 // single-file scalars follow edits[0]. Every writer calls it before the
 // aggregate is persisted or turned into an event, so the row and the event
 // cannot disagree about which node or run represents the attempt.
