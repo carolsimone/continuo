@@ -1674,6 +1674,12 @@ refuse_render 'llm.baseUrl' --set llm.provider=openai-compatible
 # login per component is perComponent: the schema refuses any other key or mode.
 refuse_render "additional properties 'services' not allowed" --set-json 'services=[{"name":"ui","enabled":true}]'
 refuse_render "value must be one of 'perComponent', 'shared'" --set credentials.redis.mode=perLogin
+# REDIS_ACL_MODE reaches every component from credentials.redis.mode on the
+# shared ConfigMap; an entry's own env or secretEnv would win over it, so the
+# render refuses one, on any component and in either mode.
+refuse_render 'components[name=run-controller].env sets REDIS_ACL_MODE: the chart sets it from credentials.redis.mode' --set-json 'components=[{"name":"run-controller","enabled":true,"httpPort":8082,"env":{"REDIS_ACL_MODE":"perComponent"}}]'
+refuse_render 'components[name=ui].secretEnv sets REDIS_ACL_MODE: the chart sets it from credentials.redis.mode' --set-json 'components=[{"name":"ui","enabled":true,"httpPort":3000,"secretEnv":[{"name":"REDIS_ACL_MODE","ref":"redis"}]}]'
+refuse_render 'components[name=topology-controller].env sets REDIS_ACL_MODE' --set credentials.redis.mode=shared --set-json 'components=[{"name":"topology-controller","enabled":true,"env":{"REDIS_ACL_MODE":"shared"}}]'
 refuse_render 'ends in /v1' --set llm.provider=openai-compatible --set llm.baseUrl=https://api.mistral.ai/v1
 refuse_render 'baseUrl' --set llm.baseUrl=api.mistral.ai
 refuse_render 'with a host' --set llm.baseUrl=https://

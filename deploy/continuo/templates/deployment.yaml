@@ -62,6 +62,7 @@
 {{- include "continuo.agentRemediation.assertWorkflowsMount" (dict "root" $ "svc" $svc) }}
 {{- end }}
 {{- $isAgent := has $svc.name (list "agent-chat" "agent-remediation") }}
+{{- include "continuo.component.assertEnv" (dict "root" $ "svc" $svc) }}
 {{- if $isAgent }}{{ include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) }}{{ end }}
 {{- /* How this component's credentials reach it ("continuo.credentialSource"):
        $fileDelivery when it reads them as files projected from their Secrets,
