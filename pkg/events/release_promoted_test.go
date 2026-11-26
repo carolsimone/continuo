@@ -25,7 +25,7 @@ type releasePromotedFixture struct {
 
 func loadReleasePromotedFixture(t *testing.T) releasePromotedFixture {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/release_promoted_v2.json")
+	raw, err := os.ReadFile("testdata/release_promoted_v1.json")
 	require.NoError(t, err)
 	var fx releasePromotedFixture
 	require.NoError(t, json.Unmarshal(raw, &fx))

@@ -275,7 +275,7 @@ func main() {
 		redis.NewValidationResultTeardownBinding(candidateSchemaCleaner, logger))
 	pipelineRunFinishedTeardownConsumer := newConsumer(streams.PipelineRunFinishedV1, streams.ExecutionControllerPipelineRunFinished,
 		redis.NewPipelineRunFinishedTeardownBinding(candidateSchemaCleaner, logger))
-	releasePromotedTeardownConsumer := newConsumer(streams.ReleasePromotedV2, streams.ExecutionControllerReleasePromoted,
+	releasePromotedTeardownConsumer := newConsumer(streams.ReleasePromotedV1, streams.ExecutionControllerReleasePromoted,
 		redis.NewReleasePromotedTeardownBinding(candidateSchemaCleaner, logger))
 	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutionControllerReleaseRejected,
 		redis.NewReleaseRejectedTeardownBinding(candidateSchemaCleaner, logger))

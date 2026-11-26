@@ -32,8 +32,8 @@ func TestIntegration_AnnounceTopology_WithoutCurrentProd(t *testing.T) {
 	require.NoError(t, db.Get(&rows, `SELECT count(*) FROM current_prod`))
 	assert.Equal(t, 0, rows)
 	require.NoError(t, db.Get(&rows,
-		`SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1 AND event_type = 'release_promoted_v2'`,
-		streams.ReleasePromotedV2))
+		`SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1 AND event_type = 'release_promoted'`,
+		streams.ReleasePromotedV1))
 	assert.Equal(t, 2, rows)
 
 	_, err = handlers.ReannounceCurrentProd(ctx, deps)

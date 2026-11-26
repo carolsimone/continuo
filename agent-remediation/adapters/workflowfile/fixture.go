@@ -19,7 +19,7 @@ import (
 )
 
 // fixtureFile is the shape of a `kind: fixture` document. The trigger uses the
-// field names of the remediation.requested payload.
+// field names of the heal.triggered payload.
 type fixtureFile struct {
 	Kind               string                 `yaml:"kind"`
 	Version            int                    `yaml:"version"`

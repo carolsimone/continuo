@@ -124,7 +124,7 @@ func acknowledgedDispatch() events.TaskDispatch {
 		JobName: "svc-sch-tbl-7f3e1a2b-r1", TimeoutSeconds: 3600}
 }
 
-// decodeReport decodes the task.status.updated:v2 payload of an outbox entry.
+// decodeReport decodes the task.status.updated:v1 payload of an outbox entry.
 func decodeReport(t *testing.T, e *outbox.Entry) map[string]any {
 	t.Helper()
 	_, payload, err := outbox.UnwrapTenant(e.Payload)

@@ -267,14 +267,14 @@ func main() {
 	// instance serves every consumer.
 	graphUnitOfWork := neo4jinfra.NewUnitOfWork(neo4jClient, logger)
 
-	// release.promoted:v2 swaps the tenant's live Neo4j topology when
+	// release.promoted:v1 swaps the tenant's live Neo4j topology when
 	// release-controller promotes a release, reading the topology from the
 	// release's artifact in object storage. The swap decides by promotion seq,
 	// so a late or redriven older promotion never reverts the live topology.
 	topologyArtifactReader := s3infra.NewTopologyArtifactReader(objectStore)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(graphUnitOfWork, topologyArtifactReader, logger)
 
-	// release.promoted:v2 (versions) — an independent consumer group. It reads
+	// release.promoted:v1 (versions) — an independent consumer group. It reads
 	// the release's code-bundle document and topology artifact from object
 	// storage and records the :NodeVersion / :CodeUnitVersion history behind the
 	// topology, in batches, through the Neo4j unit of work. Isolated from the
@@ -284,7 +284,7 @@ func main() {
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
 		graphUnitOfWork, codeBundleReader, topologyArtifactReader, logger)
 
-	// release.promoted:v2 (contracts) — a third independent consumer group. It
+	// release.promoted:v1 (contracts) — a third independent consumer group. It
 	// reads the release's contract bundle from object storage, verifies it
 	// against the promotion's SHA-256, records each node's contract versions,
 	// promotion edges and current-contract pointer through the Neo4j unit of
@@ -332,7 +332,7 @@ func main() {
 		}
 	})
 
-	// remediation.requested:v3 (rejections) + remediation.pr_opened:v1
+	// heal.triggered:v1 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the
 	// failure-precedent case base, written under the tenant each message names
 	// through the Neo4j unit of work. The rejections handler reuses the
@@ -340,7 +340,7 @@ func main() {
 	// and provenance handlers need no bundle. The provenance handler draws the
 	// RESOLVED_BY/EDITED case-base edges on a merged PR and stamps every PR's
 	// terminal state. The catalog component remains the sole Neo4j writer.
-	rejectionsHandler := handlers.NewRemediationRequestedRejectionsHandler(graphUnitOfWork, codeBundleReader, logger)
+	rejectionsHandler := handlers.NewHealTriggeredRejectionsHandler(graphUnitOfWork, codeBundleReader, logger)
 	proposalsHandler := handlers.NewPrOpenedProposalsHandler(graphUnitOfWork, logger)
 	provenanceHandler := handlers.NewPrClosedProvenanceHandler(graphUnitOfWork, logger)
 
@@ -356,10 +356,10 @@ func main() {
 		binding pkgredis.MessageHandler
 		timeout time.Duration
 	}{
-		{"release_promoted", streams.ReleasePromotedV2, streams.CatalogReleaseTopology, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
-		{"release_promoted_versions", streams.ReleasePromotedV2, streams.CatalogReleaseVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
-		{"release_promoted_contracts", streams.ReleasePromotedV2, streams.CatalogReleaseContracts, redis.NewReleasePromotedContractsBinding(releasePromotedContractsHandler, logger), topologyHandlerTimeout},
-		{"remediation_requested_rejections", streams.RemediationRequestedV3, streams.CatalogRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
+		{"release_promoted", streams.ReleasePromotedV1, streams.CatalogReleaseTopology, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
+		{"release_promoted_versions", streams.ReleasePromotedV1, streams.CatalogReleaseVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
+		{"release_promoted_contracts", streams.ReleasePromotedV1, streams.CatalogReleaseContracts, redis.NewReleasePromotedContractsBinding(releasePromotedContractsHandler, logger), topologyHandlerTimeout},
+		{"heal_triggered_rejections", streams.HealTriggeredV1, streams.CatalogHealTriggeredRejections, redis.NewHealTriggeredBinding(rejectionsHandler, logger), 0},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.CatalogRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
 		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.CatalogRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
 	}

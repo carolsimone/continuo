@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// enqueueReleasePromoted writes the release.promoted:v2 outbox row announcing
+// enqueueReleasePromoted writes the release.promoted:v1 outbox row announcing
 // p. The row's payload is p itself; the outbox relay wraps it in the event
 // envelope when it publishes the row.
 func enqueueReleasePromoted(ctx context.Context, u uow.UnitOfWork, p events.ReleasePromoted) error {
@@ -31,9 +31,9 @@ func enqueueReleasePromoted(ctx context.Context, u uow.UnitOfWork, p events.Rele
 		ID:            uuid.New(),
 		AggregateType: "release-controller",
 		AggregateID:   AggregateIDForRelease(p.ReleaseID),
-		EventType:     ports.ReleasePromotedV2EventType,
+		EventType:     ports.ReleasePromotedEventType,
 		Payload:       payload,
-		StreamName:    streams.ReleasePromotedV2,
+		StreamName:    streams.ReleasePromotedV1,
 		Status:        "pending",
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)

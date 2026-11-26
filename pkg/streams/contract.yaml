@@ -5,7 +5,7 @@
 #   - Stream name: lowercase, dot-separated, ends with `:vN`. Frozen contract.
 #   - Group name: lowercase kebab-case, no underscores, `<consuming component>-<purpose>`
 #     (TestConsumerGroupsStartWithTheirComponentName).
-#   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV2).
+#   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV1).
 #   - Consumer const: PascalCase, component-prefixed (RunControllerTaskStatusUpdated).
 
 # Every Redis key the system owns is named key_prefix + the contract name, so
@@ -24,8 +24,8 @@ streams:
         group: execution-controller-task-dispatch
         const: ExecutionControllerTaskDispatch
 
-  - name: task.status.updated:v2
-    const: TaskStatusUpdatedV2
+  - name: task.status.updated:v1
+    const: TaskStatusUpdatedV1
     description: What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. run-controller applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
     producers: [execution-controller]
     consumers:
@@ -75,14 +75,14 @@ streams:
         group: topology-controller-release-requested
         const: TopologyControllerReleaseRequested
 
-  - name: manifest.loaded.candidate:v2
-    const: ManifestLoadedCandidateV2
+  - name: release.parsed:v1
+    const: ReleaseParsedV1
     description: How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream.
     producers: [topology-controller]
     consumers:
       - component: release-controller
-        group: release-controller-manifest-loaded-candidate
-        const: ReleaseControllerManifestLoadedCandidate
+        group: release-controller-release-parsed
+        const: ReleaseControllerReleaseParsed
 
   - name: validation.requested:v1
     const: ValidationRequestedV1
@@ -141,8 +141,8 @@ streams:
         group: release-controller-compile-completed
         const: ReleaseControllerCompileCompleted
 
-  - name: release.promoted:v2
-    const: ReleasePromotedV2
+  - name: release.promoted:v1
+    const: ReleasePromotedV1
     description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
     producers: [release-controller]
     consumers:
@@ -183,8 +183,8 @@ streams:
         group: execution-controller-pipeline-run-finished
         const: ExecutionControllerPipelineRunFinished
 
-  - name: remediation.retry_requested:v2
-    const: RemediationRetryRequestedV2
+  - name: remediation.retry_requested:v1
+    const: RemediationRetryRequestedV1
     description: An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
     producers: [release-controller]
     consumers:
@@ -194,17 +194,17 @@ streams:
 
   # ---------------- remediation-classifier streams ----------------
 
-  - name: remediation.requested:v3
-    const: RemediationRequestedV3
+  - name: heal.triggered:v1
+    const: HealTriggeredV1
     description: One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
     producers: [remediation]
     consumers:
       - component: agent-remediation
-        group: agent-remediation-remediation-requested
-        const: AgentRemediationRemediationRequested
+        group: agent-remediation-heal-triggered
+        const: AgentRemediationHealTriggered
       - component: catalog
-        group: catalog-remediation-requested-rejections
-        const: CatalogRemediationRequestedRejections
+        group: catalog-heal-triggered-rejections
+        const: CatalogHealTriggeredRejections
 
   # ---------------- agent-remediation streams ----------------
 
@@ -260,40 +260,7 @@ redis_access:
 
 # Streams removed from the contract. dead-letter-controller deletes their keys
 # from Redis; nothing produces or consumes them.
-retired_streams:
-  - name: check.k8s:v1
-  - name: compile.node.completed:v1
-  - name: initialize.run:v1
-  - name: manifest.loaded.candidate:v1
-  - name: manifest.loaded:v1
-  - name: node.deployed:v1
-  - name: node.updated:v1
-  - name: query.model:v1
-  - name: release.promoted:v1
-  - name: release.seeds.pending:v1
-  - name: remediation.requested:v1
-  - name: remediation.requested:v2
-  - name: remediation.retry_requested:v1
-  - name: rerun.ready:v1
-  - name: retry.task:v1
-  - name: run.entries.dispatch_failed:v1
-  - name: run.entries.dispatched:v1
-  - name: run.finalized:v1
-  - name: run.initialized:v1
-  - name: schedule.cancelled:v1
-  - name: scheduler.started:v1
-  - name: schedules.loaded:v1
-  - name: seed.build.node.completed:v1
-  - name: task.execution.recorded:v1
-  - name: task.failed:v1
-  - name: task.status.updated:v1
-  - name: trigger.promoted_seeds:v1
-  - name: trigger.rebase:v1
-  - name: trigger.rerun:v1
-  - name: trigger.single_node_run:v1
-  - name: update.graph:v1
-  - name: validation.completed:v1
-  - name: validation.node.completed:v1
+retired_streams: []
 
 # Closed value sets shared across components. Each becomes a typed string in Go
 # (pkg/domain/model/vocabulary.gen.go) and a StrEnum in Python
@@ -465,7 +432,7 @@ vocabularies:
 
   - name: contract_family
     const: ContractFamily
-    description: Which producer wrote a node's ODCS contract. It travels on manifest.loaded.candidate:v2 (the count of contracts by family), is stored on each contract of a release's contract bundle and on each contract version in catalog, and the release page shows the count.
+    description: Which producer wrote a node's ODCS contract. It travels on release.parsed:v1 (the count of contracts by family), is stored on each contract of a release's contract bundle and on each contract version in catalog, and the release page shows the count.
     values:
       - value: dbt
         const: Dbt
@@ -669,7 +636,7 @@ vocabularies:
       dispatched, queued or running as a dispatch's known_status on
       task.dispatch:v1; execution-controller reports queued, running,
       succeeded, failed or stopped as a report's status on
-      task.status.updated:v2.
+      task.status.updated:v1.
     values:
       - value: dispatched
         const: Dispatched

@@ -17,16 +17,16 @@ import (
 )
 
 // v2Message renders p as the stream entry topology-controller publishes.
-func v2Message(t *testing.T, p pkgevents.ManifestLoadedCandidate) goredis.XMessage {
+func v2Message(t *testing.T, p pkgevents.ReleaseParsed) goredis.XMessage {
 	t.Helper()
-	fields, err := pkgevents.ManifestLoadedCandidateFields(pkgevents.DefaultTenantID, "topology-controller",
+	fields, err := pkgevents.ReleaseParsedFields(pkgevents.DefaultTenantID, "topology-controller",
 		time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC), p)
 	require.NoError(t, err)
 	return goredis.XMessage{ID: "1-0", Values: fields}
 }
 
 func TestParsedManifestInput_OKCarriesTheTopologyReference(t *testing.T) {
-	in := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+	in := parsedManifestInput(pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
 		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 3,
 		CodeBundleURI: "s3://continuo/code-bundles/r1/bundle.json",
@@ -37,7 +37,7 @@ func TestParsedManifestInput_OKCarriesTheTopologyReference(t *testing.T) {
 }
 
 func TestParsedManifestInput_CarriesTheContractBundleAndTheLibraryVersion(t *testing.T) {
-	ok := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+	ok := parsedManifestInput(pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
 		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 3,
 		ContractBundleURI:    "s3://continuo/tenants/default/topologies/r1/contracts.json.gz",
@@ -46,7 +46,7 @@ func TestParsedManifestInput_CarriesTheContractBundleAndTheLibraryVersion(t *tes
 	assert.Equal(t, release.ContractBundleRef{URI: "s3://continuo/tenants/default/topologies/r1/contracts.json.gz", SHA256: "cd"}, ok.ContractBundle)
 	assert.Equal(t, "0.2.0", ok.ContinuoContracts)
 
-	failed := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+	failed := parsedManifestInput(pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_contract", Detail: "x",
 		ContinuoContracts: "0.2.0",
 	}, slog.Default())
@@ -55,21 +55,21 @@ func TestParsedManifestInput_CarriesTheContractBundleAndTheLibraryVersion(t *tes
 }
 
 func TestParsedManifestInput_CarriesTheParseTimings(t *testing.T) {
-	ok := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+	ok := parsedManifestInput(pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
 		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 3,
 		ParseMs: 4180, ContractsMs: 1260, ContractsByFamily: map[pkg_model.ContractFamily]int{"dbt": 3, "python": 2},
 	}, slog.Default())
 	assert.Equal(t, release.NewParseTimings(4180, 1260, map[pkg_model.ContractFamily]int{"dbt": 3, "python": 2}), ok.ParseTimings)
 
-	failed := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+	failed := parsedManifestInput(pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "x",
 		ParseMs: 310, ContractsMs: 45,
 	}, slog.Default())
 	assert.Equal(t, release.NewParseTimings(310, 45, nil), failed.ParseTimings)
 	assert.Nil(t, failed.ParseTimings.ContractsByFamily, "a failed parse counts no contracts")
 
-	old := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+	old := parsedManifestInput(pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
 		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 3,
 	}, slog.Default())
@@ -77,7 +77,7 @@ func TestParsedManifestInput_CarriesTheParseTimings(t *testing.T) {
 }
 
 func TestParsedManifestInput_Failed(t *testing.T) {
-	in := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+	in := parsedManifestInput(pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "1 node failed to parse: a.b",
 		FailedNodes: []pkgevents.ManifestFailedNode{{NodeID: "a.b", Kind: "invalid_sql", Project: "s", FilePath: "models/b.sql", NodeType: "dbt-model", Detail: "Expecting )"}},
 	}, slog.Default())
@@ -90,7 +90,7 @@ func TestParsedManifestInput_Failed(t *testing.T) {
 }
 
 func TestParsedManifestInput_UnknownKindPassesThrough(t *testing.T) {
-	in := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+	in := parsedManifestInput(pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "from_the_future", Detail: "x",
 	}, slog.Default())
 	assert.False(t, in.FailureKind.IsValid())
@@ -99,11 +99,11 @@ func TestParsedManifestInput_UnknownKindPassesThrough(t *testing.T) {
 
 // A v2 entry decodes from its envelope fields and reaches HandleParsedManifest
 // (proven by the release id reaching Get); the queue then advances.
-func TestManifestLoadedCandidateHandler_DecodesTheV2Entry(t *testing.T) {
+func TestReleaseParsedHandler_DecodesTheV2Entry(t *testing.T) {
 	deps, repo := newValidationResultDeps()
-	h := newManifestLoadedCandidateHandler(deps, newDiscardLogger())
+	h := newReleaseParsedHandler(deps, newDiscardLogger())
 
-	err := h(context.Background(), v2Message(t, pkgevents.ManifestLoadedCandidate{
+	err := h(context.Background(), v2Message(t, pkgevents.ReleaseParsed{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
 		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 1,
 	}))
@@ -114,8 +114,8 @@ func TestManifestLoadedCandidateHandler_DecodesTheV2Entry(t *testing.T) {
 
 // An entry in the v1 shape (a bare payload field) carries no envelope; it is
 // dead-lettered rather than retried.
-func TestManifestLoadedCandidateHandler_V1ShapedEntryIsPermanent(t *testing.T) {
-	h := newManifestLoadedCandidateHandler(nil, newDiscardLogger())
+func TestReleaseParsedHandler_V1ShapedEntryIsPermanent(t *testing.T) {
+	h := newReleaseParsedHandler(nil, newDiscardLogger())
 	msg := goredis.XMessage{ID: "2-0", Values: map[string]any{
 		"payload": `{"release_id":"r1","status":"ok","topology":[]}`,
 	}}

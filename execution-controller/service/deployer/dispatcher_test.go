@@ -131,7 +131,7 @@ func seedJobNamed(t *testing.T, db *sqlx.DB, name string, maxRetries, retryCount
 	return id
 }
 
-// failedReport decodes the task.status.updated:v2 report the dispatcher wrote
+// failedReport decodes the task.status.updated:v1 report the dispatcher wrote
 // for an attempt whose Job could not be created.
 func failedReport(t *testing.T, db *sqlx.DB) pkgevents.TaskStatusReport {
 	t.Helper()

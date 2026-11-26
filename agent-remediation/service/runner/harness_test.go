@@ -448,7 +448,7 @@ func testFiles(tries int) workflow.Set {
 	flow := workflow.Flow{
 		Version:        workflow.SupportedVersion,
 		Name:           "rejected-release",
-		Trigger:        baseName(streams.RemediationRequestedV3),
+		Trigger:        baseName(streams.HealTriggeredV1),
 		Types:          []string{"dbt-compile", "dbt-validation", "shared-upstream", "cross-project-upstream"},
 		AcrossClusters: refs("edits_map_to_a_project", "no_path_edited_twice", "one_manifest_kind"),
 		Gate:           refs("verification_run"),
@@ -774,7 +774,7 @@ func trigger(source string, nodes ...remediation.TriggerNode) remediation.Trigge
 	}
 }
 
-// payloadOf is trig as a remediation.requested:v3 payload, in the wire field
+// payloadOf is trig as a heal.triggered:v1 payload, in the wire field
 // names.
 func payloadOf(t *testing.T, trig remediation.Trigger) []byte {
 	t.Helper()

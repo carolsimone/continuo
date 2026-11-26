@@ -118,13 +118,13 @@ func TestPublish_XAddCarriesTenantAndOutboxEntryID(t *testing.T) {
 	}, fields)
 }
 
-// remediationRequestedFixture is a trigger with a fixable node and an unfixable
+// healTriggeredFixture is a trigger with a fixable node and an unfixable
 // one, as the classifier stores it.
-func remediationRequestedFixture() pkgevents.RemediationRequested {
-	return pkgevents.RemediationRequested{
+func healTriggeredFixture() pkgevents.HealTriggered {
+	return pkgevents.HealTriggered{
 		Source: "validation", ReleaseID: "rel-1", RemediationRound: 2, Repo: "o/r", CommitSHA: "abc",
 		CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json", ClassifiedAt: "2026-06-23T00:00:00Z",
-		Nodes: []pkgevents.RemediationRequestedNode{
+		Nodes: []pkgevents.HealTriggeredNode{
 			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object", DBTLogURI: "s3://b/a.log"},
 			{
 				NodeID: "s.b", Category: "infra_transient", ErrorSignature: "sig-b", Reason: "infra:connection_refused", DBTLogURI: "s3://b/b.log",
@@ -134,32 +134,32 @@ func remediationRequestedFixture() pkgevents.RemediationRequested {
 	}
 }
 
-// remediationRequestedRow is the outbox row of a trigger stored under tenantID.
-func remediationRequestedRow(t *testing.T, tenantID string, p pkgevents.RemediationRequested) *pkgoutbox.Entry {
+// healTriggeredRow is the outbox row of a trigger stored under tenantID.
+func healTriggeredRow(t *testing.T, tenantID string, p pkgevents.HealTriggered) *pkgoutbox.Entry {
 	t.Helper()
 	body, err := json.Marshal(p)
 	require.NoError(t, err)
 	stored, err := pkgoutbox.WrapTenant(tenantID, body)
 	require.NoError(t, err)
 	return &pkgoutbox.Entry{
-		ID: uuid.New(), EventType: "remediation_requested", StreamName: streams.RemediationRequestedV3, Payload: stored,
+		ID: uuid.New(), EventType: "heal_triggered", StreamName: streams.HealTriggeredV1, Payload: stored,
 		CreatedAt: time.Date(2026, 6, 23, 1, 2, 3, 456789000, time.UTC),
 	}
 }
 
-// TestRender_RemediationRequestedV3CarriesTheRowsTenant holds that a
-// remediation.requested:v3 row renders under the envelope of the row: the row's
+// TestRender_HealTriggeredCarriesTheRowsTenant holds that a
+// heal.triggered:v1 row renders under the envelope of the row: the row's
 // id as the event, the tenant its payload is stored under, the component as the
 // producer and the time the row was written. The fields read back through the
 // typed decoder, and the rendered fields are what an outbox dead letter stores,
 // so a redrive keeps the tenant.
-func TestRender_RemediationRequestedV3CarriesTheRowsTenant(t *testing.T) {
+func TestRender_HealTriggeredCarriesTheRowsTenant(t *testing.T) {
 	p := &remediationOutboxPublisher{}
-	want := remediationRequestedFixture()
+	want := healTriggeredFixture()
 
 	for _, tenantID := range []string{"globex", pkgevents.DefaultTenantID} {
 		t.Run(tenantID, func(t *testing.T) {
-			entry := remediationRequestedRow(t, tenantID, want)
+			entry := healTriggeredRow(t, tenantID, want)
 
 			values, err := p.Render(entry)
 			require.NoError(t, err)
@@ -173,7 +173,7 @@ func TestRender_RemediationRequestedV3CarriesTheRowsTenant(t *testing.T) {
 
 			stored, err := pkgoutbox.StringifyFields(values)
 			require.NoError(t, err)
-			env, got, err := pkgevents.DecodeRemediationRequested(stored)
+			env, got, err := pkgevents.DecodeHealTriggered(stored)
 			require.NoError(t, err)
 			assert.Equal(t, tenantID, env.TenantID)
 			assert.Equal(t, entry.ID.String(), env.EventID)
@@ -182,13 +182,13 @@ func TestRender_RemediationRequestedV3CarriesTheRowsTenant(t *testing.T) {
 	}
 }
 
-// TestRender_RemediationRequestedV3RefusesARowItCannotRender holds that a
+// TestRender_HealTriggeredRefusesARowItCannotRender holds that a
 // trigger row stored without a tenant, or with a payload that is not a trigger,
 // is permanent: no retry makes it renderable.
-func TestRender_RemediationRequestedV3RefusesARowItCannotRender(t *testing.T) {
+func TestRender_HealTriggeredRefusesARowItCannotRender(t *testing.T) {
 	p := &remediationOutboxPublisher{}
 	row := func(payload string) *pkgoutbox.Entry {
-		return &pkgoutbox.Entry{ID: uuid.New(), EventType: "remediation_requested", StreamName: streams.RemediationRequestedV3, Payload: []byte(payload)}
+		return &pkgoutbox.Entry{ID: uuid.New(), EventType: "heal_triggered", StreamName: streams.HealTriggeredV1, Payload: []byte(payload)}
 	}
 	for name, payload := range map[string]string{
 		"a payload stored with no tenant":      `{"release_id":"rel-1","nodes":[]}`,
@@ -204,21 +204,21 @@ func TestRender_RemediationRequestedV3RefusesARowItCannotRender(t *testing.T) {
 	}
 }
 
-// TestPublish_RemediationRequestedV3XAddCarriesTheEnvelope holds that the XADD
+// TestPublish_HealTriggeredXAddCarriesTheEnvelope holds that the XADD
 // of a trigger row names the v3 stream and carries the envelope fields beside
 // the payload and the row's outbox_entry_id.
-func TestPublish_RemediationRequestedV3XAddCarriesTheEnvelope(t *testing.T) {
+func TestPublish_HealTriggeredXAddCarriesTheEnvelope(t *testing.T) {
 	capture := &captureXAdd{}
 	rc := goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:0"})
 	rc.AddHook(capture)
 	t.Cleanup(func() { _ = rc.Close() })
 
-	entry := remediationRequestedRow(t, "globex", remediationRequestedFixture())
+	entry := healTriggeredRow(t, "globex", healTriggeredFixture())
 	require.NoError(t, (&remediationOutboxPublisher{redis: rc}).Publish(context.Background(), entry))
 
 	require.Len(t, capture.cmds, 1)
 	args := capture.cmds[0].Args()
-	assert.Equal(t, pkgredis.Key(streams.RemediationRequestedV3), args[1])
+	assert.Equal(t, pkgredis.Key(streams.HealTriggeredV1), args[1])
 	fields := map[string]any{}
 	for i := 4; i+1 < len(args); i += 2 {
 		fields[args[i].(string)] = args[i+1]

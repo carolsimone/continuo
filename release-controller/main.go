@@ -281,7 +281,7 @@ func main() {
 	}
 
 	// Start stream consumers in goroutines; each blocks until ctx is cancelled.
-	runConsumer("manifest_loaded_candidate", redisadapter.NewManifestLoadedCandidateConsumer(rc, deps, logger))
+	runConsumer("release_parsed", redisadapter.NewReleaseParsedConsumer(rc, deps, logger))
 	runConsumer("validation_result", redisadapter.NewValidationResultConsumer(rc, deps, logger))
 	runConsumer("seed_build_completed", redisadapter.NewSeedBuildCompletedConsumer(rc, deps, logger))
 	runConsumer("compile_completed", redisadapter.NewCompileCompletedConsumer(rc, deps, logger))

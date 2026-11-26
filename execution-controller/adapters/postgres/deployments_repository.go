@@ -322,7 +322,7 @@ func (r *deploymentsRepository) decodeReport(row *deploymentRow) *model.Report {
 }
 
 // encodeReport renders d's last report for the last_report column: the
-// task.status.updated:v2 payload it was emitted as, NULL before any.
+// task.status.updated:v1 payload it was emitted as, NULL before any.
 func encodeReport(d *model.Deployment) (any, error) {
 	rep := d.LastReport()
 	if rep == nil {

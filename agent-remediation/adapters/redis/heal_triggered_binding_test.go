@@ -17,11 +17,11 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 )
 
-// requestedFixture is a remediation.requested:v3 payload with every
+// healTriggeredFixture is a heal.triggered:v1 payload with every
 // release-level and node-level field populated, and a second node the
 // classifier marked unfixable.
-func requestedFixture() pkgevents.RemediationRequested {
-	return pkgevents.RemediationRequested{
+func healTriggeredFixture() pkgevents.HealTriggered {
+	return pkgevents.HealTriggered{
 		Source:           "validation",
 		ReleaseID:        "rel-456",
 		RemediationRound: 2,
@@ -29,7 +29,7 @@ func requestedFixture() pkgevents.RemediationRequested {
 		CommitSHA:        "deadbeef1234",
 		CodeBundleURI:    "s3://bucket/code-bundles/rel-456/bundle.json",
 		ClassifiedAt:     "2026-08-28T00:00:00Z",
-		Nodes: []pkgevents.RemediationRequestedNode{
+		Nodes: []pkgevents.HealTriggeredNode{
 			{
 				NodeID:               "orders.model.orders_daily",
 				RelationID:           "analytics.orders_daily",
@@ -44,7 +44,7 @@ func requestedFixture() pkgevents.RemediationRequested {
 				NodeType:             "dbt-model",
 				OtherProject:         "svc-finance",
 				OtherFilePath:        "models/orders_legacy.sql",
-				ChangedAncestors: []pkgevents.RemediationRequestedAncestor{
+				ChangedAncestors: []pkgevents.HealTriggeredAncestor{
 					{NodeID: "orders.model.orders_base", FilePath: "models/orders_base.sql", Project: "svc-orders"}},
 			},
 			{
@@ -61,11 +61,11 @@ func requestedFixture() pkgevents.RemediationRequested {
 	}
 }
 
-// requestedMessageOf is the remediation.requested:v3 stream message carrying p
+// healTriggeredMessageOf is the heal.triggered:v1 stream message carrying p
 // for tenantID, with the payload bytes it carries.
-func requestedMessageOf(t *testing.T, id, tenantID string, p pkgevents.RemediationRequested, extra map[string]any) (goredis.XMessage, []byte) {
+func healTriggeredMessageOf(t *testing.T, id, tenantID string, p pkgevents.HealTriggered, extra map[string]any) (goredis.XMessage, []byte) {
 	t.Helper()
-	fields, err := pkgevents.RemediationRequestedFields("evt-1", tenantID, "remediation", time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), p)
+	fields, err := pkgevents.HealTriggeredFields("evt-1", tenantID, "remediation", time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), p)
 	require.NoError(t, err)
 	for k, v := range extra {
 		fields[k] = v
@@ -79,10 +79,10 @@ func requestedMessageOf(t *testing.T, id, tenantID string, p pkgevents.Remediati
 // stream's fields.
 func TestBinding_AcceptsTheTrigger(t *testing.T) {
 	entryID := uuid.New()
-	msg, payload := requestedMessageOf(t, "7-0", "acme", requestedFixture(), map[string]any{"outbox_entry_id": entryID.String()})
+	msg, payload := healTriggeredMessageOf(t, "7-0", "acme", healTriggeredFixture(), map[string]any{"outbox_entry_id": entryID.String()})
 
 	var got []runner.Accepted
-	h := newRemediationRequestedHandler(func(_ context.Context, a runner.Accepted) error {
+	h := newHealTriggeredHandler(func(_ context.Context, a runner.Accepted) error {
 		got = append(got, a)
 		return nil
 	})
@@ -113,9 +113,9 @@ func TestBinding_AcceptsTheTrigger(t *testing.T) {
 // unfixable stays on the trigger, with its reason and detail: the runner hands
 // it over itself.
 func TestBinding_KeepsUnfixableNodes(t *testing.T) {
-	msg, _ := requestedMessageOf(t, "7-0", "acme", requestedFixture(), nil)
+	msg, _ := healTriggeredMessageOf(t, "7-0", "acme", healTriggeredFixture(), nil)
 	var got runner.Accepted
-	h := newRemediationRequestedHandler(func(_ context.Context, a runner.Accepted) error {
+	h := newHealTriggeredHandler(func(_ context.Context, a runner.Accepted) error {
 		got = a
 		return nil
 	})
@@ -133,9 +133,9 @@ func TestBinding_KeepsUnfixableNodes(t *testing.T) {
 // whose envelope names no tenant reaches accept with an empty tenant: the
 // runner's Accept is the one place that gives it the default tenant.
 func TestBinding_LeavesAnAbsentTenantToAccept(t *testing.T) {
-	msg, _ := requestedMessageOf(t, "8-0", "", requestedFixture(), nil)
+	msg, _ := healTriggeredMessageOf(t, "8-0", "", healTriggeredFixture(), nil)
 	var got runner.Accepted
-	h := newRemediationRequestedHandler(func(_ context.Context, a runner.Accepted) error {
+	h := newHealTriggeredHandler(func(_ context.Context, a runner.Accepted) error {
 		got = a
 		return nil
 	})
@@ -147,9 +147,9 @@ func TestBinding_LeavesAnAbsentTenantToAccept(t *testing.T) {
 // TestBinding_RedeliversAnAcceptError verifies that an error from
 // accept reaches the consumer as it is, so the message is delivered again.
 func TestBinding_RedeliversAnAcceptError(t *testing.T) {
-	msg, _ := requestedMessageOf(t, "9-0", "acme", requestedFixture(), nil)
+	msg, _ := healTriggeredMessageOf(t, "9-0", "acme", healTriggeredFixture(), nil)
 	boom := errors.New("database down")
-	h := newRemediationRequestedHandler(func(context.Context, runner.Accepted) error { return boom })
+	h := newHealTriggeredHandler(func(context.Context, runner.Accepted) error { return boom })
 	err := h(context.Background(), msg)
 	require.ErrorIs(t, err, boom)
 	assert.NotErrorIs(t, err, pkgevents.ErrPermanent)

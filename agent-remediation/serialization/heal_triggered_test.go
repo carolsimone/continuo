@@ -10,9 +10,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/events"
 )
 
-// goldenStoredRequested is a heal trigger payload as a store holds one that was
-// published with an event_id of its own: every field, and no unfixable node.
-const goldenStoredRequested = `{"event_id":"e1","source":"validation","release_id":"rel-1","remediation_round":2,` +
+// goldenStored is a heal.triggered:v1 payload as a store holds it: every
+// field, and no unfixable node.
+const goldenStored = `{"source":"validation","release_id":"rel-1","remediation_round":2,` +
 	`"repo":"org/repo","commit_sha":"abc123","code_bundle_uri":"s3://bundle","classified_at":"2026-11-13T09:00:00Z","nodes":[` +
 	`{"node_id":"svc-a","relation_id":"rel","category":"compile","error_signature":"sig-svc-a","reason":"syntax",` +
 	`"error_excerpt":"syntax error near select","dbt_log_uri":"s3://log","candidate_artifact_uri":"s3://cand",` +
@@ -20,16 +20,16 @@ const goldenStoredRequested = `{"event_id":"e1","source":"validation","release_i
 	`"other_file_path":"models/other.sql","changed_ancestors":[{"node_id":"model.core.base","file_path":"models/base.sql","project":"core","depth":2}]},` +
 	`{"node_id":"svc-b","category":"compile","error_signature":"sig-svc-b","reason":"syntax","dbt_log_uri":""}]}`
 
-// goldenRequested is a remediation.requested:v3 payload whose second node the
+// goldenUnfixable is a heal.triggered:v1 payload whose second node the
 // classifier marked unfixable.
-const goldenRequested = `{"source":"validation","release_id":"rel-1","remediation_round":2,` +
+const goldenUnfixable = `{"source":"validation","release_id":"rel-1","remediation_round":2,` +
 	`"repo":"org/repo","commit_sha":"abc123","code_bundle_uri":"s3://bundle","classified_at":"2026-11-13T09:00:00Z","nodes":[` +
 	`{"node_id":"svc-a","category":"compile","error_signature":"sig-svc-a","reason":"syntax","dbt_log_uri":"s3://log"},` +
 	`{"node_id":"svc-b","category":"infra","error_signature":"sig-svc-b","reason":"timeout","dbt_log_uri":"s3://log-b",` +
 	`"unfixable":{"reason":"classifier_infra","detail":"the warehouse timed out"}}]}`
 
 func TestDecodeTrigger_ReadsEveryFieldOfAStoredPayload(t *testing.T) {
-	got, err := DecodeTrigger([]byte(goldenStoredRequested))
+	got, err := DecodeTrigger([]byte(goldenStored))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestDecodeTrigger_ReadsEveryFieldOfAStoredPayload(t *testing.T) {
 }
 
 func TestDecodeTrigger_KeepsTheUnfixableNodes(t *testing.T) {
-	got, err := DecodeTrigger([]byte(goldenRequested))
+	got, err := DecodeTrigger([]byte(goldenUnfixable))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -73,20 +73,15 @@ func TestDecodeTrigger_KeepsTheUnfixableNodes(t *testing.T) {
 	}
 }
 
-func TestDecodeTrigger_AMissingRoundIsRoundOne(t *testing.T) {
+// A stored payload carries its round, as the stream did: one with none, or a
+// 0, is refused.
+func TestDecodeTrigger_RefusesAMissingRound(t *testing.T) {
 	for _, payload := range []string{
 		`{"source":"validation","release_id":"rel-1","nodes":[]}`,
 		`{"source":"validation","release_id":"rel-1","remediation_round":0,"nodes":[]}`,
 	} {
-		got, err := DecodeTrigger([]byte(payload))
-		if err != nil {
-			t.Fatalf("decode %s: %v", payload, err)
-		}
-		if got.Round != 1 {
-			t.Fatalf("round of %s = %d, want 1", payload, got.Round)
-		}
-		if got.TenantID != "" {
-			t.Fatalf("the payload carries no tenant, got %q", got.TenantID)
+		if _, err := DecodeTrigger([]byte(payload)); err == nil {
+			t.Fatalf("decode %s: want an error", payload)
 		}
 	}
 }
@@ -105,7 +100,7 @@ func TestDecodeTrigger_RefusesAPayloadThatIsNotATrigger(t *testing.T) {
 }
 
 func TestEncodeTrigger_DecodesToTheSameTrigger(t *testing.T) {
-	for name, payload := range map[string]string{"stored": goldenStoredRequested, "v3 with an unfixable node": goldenRequested} {
+	for name, payload := range map[string]string{"stored": goldenStored, "with an unfixable node": goldenUnfixable} {
 		want, err := DecodeTrigger([]byte(payload))
 		if err != nil {
 			t.Fatalf("%s: decode: %v", name, err)

@@ -53,10 +53,10 @@ const probeUniqueID = "e2e_schema.rel_probe"
 // release pipeline end-to-end through the production cutover path:
 //
 //	POST /releases → release.requested:v1 → topology-controller candidate parse
-//	→ topology artifact in S3 + manifest.loaded.candidate:v2 → release-controller derives the changed-node
+//	→ topology artifact in S3 + release.parsed:v1 → release-controller derives the changed-node
 //	set → validation.requested:v1 → execution-controller runs a real dbt --empty job →
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
-//	→ release.promoted:v2 → catalog loads the artifact and swaps the Neo4j topology.
+//	→ release.promoted:v1 → catalog loads the artifact and swaps the Neo4j topology.
 //
 // The changed project is service-1 (which contains rel_probe). current_prod is
 // seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
@@ -991,7 +991,7 @@ func waitForReleasePromoted(t *testing.T, ctx context.Context, clients *testClie
 }
 
 // waitForTopologySwap polls Neo4j until catalog has applied the
-// release.promoted:v2 swap: the default tenant's :Meta points at releaseID and the
+// release.promoted:v1 swap: the default tenant's :Meta points at releaseID and the
 // promoted node is active and stamped with the new release_id. The swap is
 // asynchronous relative to the release reaching "promoted", so this must poll.
 func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients, releaseID, uniqueID string, timeout time.Duration) {

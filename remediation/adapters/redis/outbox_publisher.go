@@ -66,7 +66,7 @@ var _ pkgoutbox.Renderer = (*remediationOutboxPublisher)(nil)
 
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id. A dead-letter row's scalar fields come from
-// outbox.DeadLetterValues. A remediation.requested:v3 row stores its payload
+// outbox.DeadLetterValues. A heal.triggered:v1 row stores its payload
 // under its tenant (outbox.WrapTenant) and renders under an envelope that names
 // the row as the event, the tenant it stores and the time it was written. Any
 // other row's JSON body is the "payload" field beside the default tenant as
@@ -83,27 +83,27 @@ func (p *remediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]
 		delete(values, "outbox_entry_id")
 		return values, nil
 	}
-	if entry.StreamName == streams.RemediationRequestedV3 {
-		return renderRemediationRequested(entry)
+	if entry.StreamName == streams.HealTriggeredV1 {
+		return renderHealTriggered(entry)
 	}
 	return map[string]any{"payload": string(entry.Payload), "tenant_id": pkgevents.DefaultTenantID}, nil
 }
 
-// renderRemediationRequested renders a remediation.requested:v3 row. The row's
+// renderHealTriggered renders a heal.triggered:v1 row. The row's
 // stored payload is our own, so a row that is not stored under a tenant or does
 // not hold a trigger is permanent: no retry makes it renderable.
-func renderRemediationRequested(entry *pkgoutbox.Entry) (map[string]any, error) {
+func renderHealTriggered(entry *pkgoutbox.Entry) (map[string]any, error) {
 	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationRequestedV3, err)
+		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.HealTriggeredV1, err)
 	}
-	var trigger pkgevents.RemediationRequested
+	var trigger pkgevents.HealTriggered
 	if err := json.Unmarshal(payload, &trigger); err != nil {
-		return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.RemediationRequestedV3, err)
+		return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.HealTriggeredV1, err)
 	}
-	values, err := pkgevents.RemediationRequestedFields(entry.ID.String(), tenantID, producer, entry.CreatedAt, trigger)
+	values, err := pkgevents.HealTriggeredFields(entry.ID.String(), tenantID, producer, entry.CreatedAt, trigger)
 	if err != nil {
-		return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.RemediationRequestedV3, err)
+		return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.HealTriggeredV1, err)
 	}
 	return values, nil
 }

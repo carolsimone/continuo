@@ -304,7 +304,7 @@ func TestMessageProcessingAlreadyProcessed(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 
 	repo := messageprocessing.NewPostgresRepository(tx, slog.Default())
-	const stream = streams.RemediationRequestedV3
+	const stream = streams.HealTriggeredV1
 
 	// Axis 1: (message_id, stream_name).
 	_, inserted, err := repo.InsertIfNotExists(ctx, &messageprocessing.MessageProcessing{
@@ -355,7 +355,7 @@ func TestMessageProcessingAlreadyProcessedScopedByStream(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 
 	repo := messageprocessing.NewPostgresRepository(tx, slog.Default())
-	const streamA = streams.RemediationRequestedV3
+	const streamA = streams.HealTriggeredV1
 	const streamB = streams.RemediationProposedV1
 
 	// Group A processed outbox entry `oe` on streamA (message m-A).

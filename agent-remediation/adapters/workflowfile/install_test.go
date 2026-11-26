@@ -79,7 +79,7 @@ func TestLoadInstall_AnInstallFlowReplacesTheBuiltInFlow(t *testing.T) {
 	installed := `kind: flow
 version: 1
 name: rejected-release
-trigger: remediation.requested
+trigger: heal.triggered
 types: [dbt-compile]
 tries: 1
 `

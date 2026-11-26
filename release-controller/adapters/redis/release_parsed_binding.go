@@ -14,15 +14,15 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// parsedManifestInput maps a decoded manifest.loaded.candidate entry to the
+// parsedManifestInput maps a decoded release.parsed entry to the
 // handler's domain-typed input. A failure_kind this build does not declare is
 // passed through as is; the handler maps it to internal_error and names it in
 // the detail, so a release from a newer producer still rejects and the queue
 // still advances.
-func parsedManifestInput(p pkgevents.ManifestLoadedCandidate, logger *slog.Logger) handlers.HandleParsedManifestInput {
+func parsedManifestInput(p pkgevents.ReleaseParsed, logger *slog.Logger) handlers.HandleParsedManifestInput {
 	kind := pkg_model.ParseFailureKind(p.FailureKind)
 	if p.Status == pkgevents.ManifestStatusFailed && !kind.IsValid() {
-		logger.Error("manifest.loaded.candidate carries an undeclared failure_kind; rejecting as internal_error",
+		logger.Error("release.parsed carries an undeclared failure_kind; rejecting as internal_error",
 			"release_id", p.ReleaseID, "failure_kind", p.FailureKind)
 	}
 	failed := make([]handlers.ParsedFailedNode, 0, len(p.FailedNodes))
@@ -48,27 +48,27 @@ func parsedManifestInput(p pkgevents.ManifestLoadedCandidate, logger *slog.Logge
 	}
 }
 
-// NewManifestLoadedCandidateConsumer constructs a StreamConsumer that reads
-// manifest.loaded.candidate:v2 and dispatches each entry to
+// NewReleaseParsedConsumer constructs a StreamConsumer that reads
+// release.parsed:v1 and dispatches each entry to
 // handlers.HandleParsedManifest. The consumer group is created idempotently by
 // StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
-func NewManifestLoadedCandidateConsumer(
+func NewReleaseParsedConsumer(
 	rc *goredis.Client,
 	deps *handlers.Deps,
 	logger *slog.Logger,
 ) *pkgredis.StreamConsumer {
-	handler := newManifestLoadedCandidateHandler(deps, logger)
+	handler := newReleaseParsedHandler(deps, logger)
 	return pkgredis.NewStreamConsumer(
 		rc,
-		streams.ManifestLoadedCandidateV2,
-		streams.ReleaseControllerManifestLoadedCandidate,
+		streams.ReleaseParsedV1,
+		streams.ReleaseControllerReleaseParsed,
 		handler,
 		logger,
 	)
 }
 
-// newManifestLoadedCandidateHandler returns a MessageHandler that decodes each
-// manifest.loaded.candidate:v2 entry (envelope fields plus payload), calls
+// newReleaseParsedHandler returns a MessageHandler that decodes each
+// release.parsed:v1 entry (envelope fields plus payload), calls
 // handlers.HandleParsedManifest, and on success advances the release queue.
 // Advancing after a failed parse is essential: no kind:"complete" terminal
 // message on validation.result:v1 will arrive for a rejected release, so
@@ -76,11 +76,11 @@ func NewManifestLoadedCandidateConsumer(
 // indefinitely. An entry that does not decode is a permanent failure and is
 // dead-lettered. A missing or corrupt topology artifact is rejected by the
 // handler's intake with internal_error, so the queue still advances.
-func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
+func newReleaseParsedHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		_, p, err := pkgevents.DecodeManifestLoadedCandidate(stringFields(msg.Values))
+		_, p, err := pkgevents.DecodeReleaseParsed(stringFields(msg.Values))
 		if err != nil {
-			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.ManifestLoadedCandidateV2, err)
+			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.ReleaseParsedV1, err)
 		}
 		if err := handlers.HandleParsedManifest(ctx, deps, parsedManifestInput(p, logger)); err != nil {
 			return permanentOnCorruptTopology(err)
@@ -90,7 +90,7 @@ func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger)
 		// failure path the release was just Rejected, so this unblocks the next
 		// queued candidate.
 		if err := handlers.AdvanceQueue(ctx, deps); err != nil {
-			logger.Error("advance queue after manifest.loaded.candidate", "error", err)
+			logger.Error("advance queue after release.parsed", "error", err)
 			// Non-fatal: the next incoming message will trigger another advance.
 		}
 		return nil

@@ -87,7 +87,7 @@ func (w *caseBaseWriter) write(ctx context.Context, group string, fn func(ctx co
 }
 
 func (w *caseBaseWriter) RecordRejection(ctx context.Context, rej casebase.Rejection) error {
-	return w.write(ctx, streams.CatalogRemediationRequestedRejections, func(ctx context.Context, tx uow.Tx) error {
+	return w.write(ctx, streams.CatalogHealTriggeredRejections, func(ctx context.Context, tx uow.Tx) error {
 		return tx.CaseBase().RecordRejection(ctx, precedentFixtureTenant, rej)
 	})
 }

@@ -33,7 +33,7 @@ func parseFile(t *testing.T, path string) *ast.File {
 const backupCommandMain = "cmd/catalog-backup/main.go"
 
 // TestMain_ConsumesOnlyTopologyAndCaseBaseStreams pins the streams catalog
-// reads: the three release.promoted:v2 groups (topology swap, code versions,
+// reads: the three release.promoted:v1 groups (topology swap, code versions,
 // contract versions) and the three case-base groups. run-controller plans, dispatches, unblocks and finalizes
 // runs, so catalog consumes no run stream.
 func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
@@ -54,16 +54,16 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	}
 	slices.Sort(got)
 	want := []string{
+		"CatalogHealTriggeredRejections",
 		"CatalogReleaseContracts",
 		"CatalogReleaseTopology",
 		"CatalogReleaseVersions",
 		"CatalogRemediationPrClosedProvenance",
 		"CatalogRemediationPrOpenedProposals",
-		"CatalogRemediationRequestedRejections",
-		"ReleasePromotedV2",
+		"HealTriggeredV1",
+		"ReleasePromotedV1",
 		"RemediationPrClosedV1",
 		"RemediationPrOpenedV1",
-		"RemediationRequestedV3",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("main.go names streams %v, want %v", got, want)
@@ -71,7 +71,7 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 }
 
 // TestMainWiring_UsesTheContractsGroup pins how main.go consumes the contract
-// versions: a row of the consumers table on release.promoted:v2 under the
+// versions: a row of the consumers table on release.promoted:v1 under the
 // group catalog-release-contracts, with the contracts binding and the
 // timeout of the handlers that write a whole release; and the contract series
 // registered whatever the install enables, outside the backup block, so every
@@ -97,8 +97,8 @@ func TestMainWiring_UsesTheContractsGroup(t *testing.T) {
 	if lit, ok := row.Elts[0].(*ast.BasicLit); !ok || lit.Value != `"release_promoted_contracts"` {
 		t.Errorf("the row's name = %s, want \"release_promoted_contracts\"", exprText(row.Elts[0]))
 	}
-	if !isSelector(row.Elts[1], "streams", "ReleasePromotedV2") {
-		t.Errorf("the row's stream = %s, want streams.ReleasePromotedV2", exprText(row.Elts[1]))
+	if !isSelector(row.Elts[1], "streams", "ReleasePromotedV1") {
+		t.Errorf("the row's stream = %s, want streams.ReleasePromotedV1", exprText(row.Elts[1]))
 	}
 	binding, ok := row.Elts[3].(*ast.CallExpr)
 	if !ok || !isSelector(binding.Fun, "redis", "NewReleasePromotedContractsBinding") {

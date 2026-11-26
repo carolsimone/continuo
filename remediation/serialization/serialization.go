@@ -1,5 +1,5 @@
 // Package serialization maps remediation's domain trigger onto the wire payload
-// of remediation.requested:v3, keeping the domain event package free of json
+// of heal.triggered:v1, keeping the domain event package free of json
 // struct tags and of the shared event types. It sits outside adapters/ so the
 // classifier handler (which builds and marshals the trigger) may map through it
 // without importing an adapter, and outside domain/ so the tags live away from
@@ -11,13 +11,13 @@ import (
 	"github.com/carolsimone/continuo/remediation/domain/event"
 )
 
-func changedAncestorsFromDomain(in []event.ChangedAncestor) []pkgevents.RemediationRequestedAncestor {
+func changedAncestorsFromDomain(in []event.ChangedAncestor) []pkgevents.HealTriggeredAncestor {
 	if in == nil {
 		return nil
 	}
-	out := make([]pkgevents.RemediationRequestedAncestor, len(in))
+	out := make([]pkgevents.HealTriggeredAncestor, len(in))
 	for i, a := range in {
-		out[i] = pkgevents.RemediationRequestedAncestor(a)
+		out[i] = pkgevents.HealTriggeredAncestor(a)
 	}
 	return out
 }
@@ -29,13 +29,13 @@ func unfixableFromDomain(in *event.Unfixable) *pkgevents.Unfixable {
 	return &pkgevents.Unfixable{Reason: string(in.Reason), Detail: in.Detail}
 }
 
-func nodesFromDomain(in []event.FailingNode) []pkgevents.RemediationRequestedNode {
+func nodesFromDomain(in []event.FailingNode) []pkgevents.HealTriggeredNode {
 	if in == nil {
 		return nil
 	}
-	out := make([]pkgevents.RemediationRequestedNode, len(in))
+	out := make([]pkgevents.HealTriggeredNode, len(in))
 	for i, n := range in {
-		out[i] = pkgevents.RemediationRequestedNode{
+		out[i] = pkgevents.HealTriggeredNode{
 			NodeID:               n.NodeID,
 			RelationID:           n.RelationID,
 			Category:             n.Category,
@@ -56,10 +56,10 @@ func nodesFromDomain(in []event.FailingNode) []pkgevents.RemediationRequestedNod
 	return out
 }
 
-// RemediationRequestedFromDomain maps the domain trigger to the payload of a
-// remediation.requested:v3 entry.
-func RemediationRequestedFromDomain(e event.RemediationRequested) pkgevents.RemediationRequested {
-	return pkgevents.RemediationRequested{
+// HealTriggeredFromDomain maps the domain trigger to the payload of a
+// heal.triggered:v1 entry.
+func HealTriggeredFromDomain(e event.HealTriggered) pkgevents.HealTriggered {
+	return pkgevents.HealTriggered{
 		Source:           string(e.Source),
 		ReleaseID:        e.ReleaseID,
 		RemediationRound: e.RemediationRound,

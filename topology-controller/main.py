@@ -9,7 +9,7 @@ from config.config import (
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
     AWS_DEFAULT_REGION,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
-    MANIFEST_LOADED_CANDIDATE_STREAM,
+    RELEASE_PARSED_STREAM,
     log_level,
     metrics_port,
     ontology_enabled,
@@ -87,9 +87,9 @@ def main() -> None:
     # process before anything consumes.
     check_permission_fence(redis_client, redis_acl_mode())
 
-    # Candidate-parse flow (release.requested:v1 -> manifest.loaded.candidate:v2).
+    # Candidate-parse flow (release.requested:v1 -> release.parsed:v1).
     candidate_publisher = CandidateManifestPublisher(
-        redis_client, MANIFEST_LOADED_CANDIDATE_STREAM, producer=COMPONENT_NAME,
+        redis_client, RELEASE_PARSED_STREAM, producer=COMPONENT_NAME,
         continuo_contracts=LIBRARY_VERSION,
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)

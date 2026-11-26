@@ -55,9 +55,9 @@ func TestReleaseRejectedTeardownBinding_MissingPayloadIsNoop(t *testing.T) {
 	require.False(t, called)
 }
 
-// --- release.promoted:v2 teardown ---
+// --- release.promoted:v1 teardown ---
 
-// releasePromotedFields renders one release.promoted:v2 entry naming
+// releasePromotedFields renders one release.promoted:v1 entry naming
 // candidateSchema ("" for an announced topology, which has none).
 func releasePromotedFields(t *testing.T, candidateSchema string) map[string]any {
 	t.Helper()

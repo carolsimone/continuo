@@ -42,7 +42,7 @@ type AnnounceResult struct {
 
 // AnnounceTopology announces topo to the rest of continuo as release
 // releaseID: it writes the topology artifact, takes the next promotion seq and
-// queues release.promoted:v2. current_prod does not move, so the next real
+// queues release.promoted:v1. current_prod does not move, so the next real
 // promotion is still diffed against the production release; it takes a
 // higher seq and replaces the announced topology everywhere. The benchmark
 // and e2e harnesses use it to load a topology without a release.
@@ -160,7 +160,7 @@ func CurrentProdTopology(ctx context.Context, d *Deps) (release.Topology, error)
 }
 
 // reannounce takes the next promotion seq, records it on cp, persists cp and
-// queues release.promoted:v2 for cp's release and artifact. A re-announcement
+// queues release.promoted:v1 for cp's release and artifact. A re-announcement
 // changes nothing but the seq, so it names no changed node, no candidate
 // schema and no code bundle.
 func reannounce(ctx context.Context, u uow.UnitOfWork, cp *release.CurrentProd, now time.Time) (int64, error) {

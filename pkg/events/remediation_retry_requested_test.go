@@ -25,7 +25,7 @@ type remediationRetryRequestedFixture struct {
 
 func loadRemediationRetryRequestedFixture(t *testing.T) remediationRetryRequestedFixture {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/remediation_retry_requested_v2.json")
+	raw, err := os.ReadFile("testdata/remediation_retry_requested_v1.json")
 	require.NoError(t, err)
 	var fx remediationRetryRequestedFixture
 	require.NoError(t, json.Unmarshal(raw, &fx))

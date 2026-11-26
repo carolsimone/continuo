@@ -10,7 +10,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// NewReleasePromotedBinding wires ParseReleasePromotedV2 into the
+// NewReleasePromotedBinding wires ParseReleasePromoted into the
 // ReleasePromotedHandler. A decode failure or a message without a tenant is
 // permanent (events.ErrPermanent): the binding logs and returns the error so
 // the consumer dead-letters the entry.
@@ -23,7 +23,7 @@ func NewReleasePromotedBinding(
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		in, err := ParseReleasePromotedV2(msg)
+		in, err := ParseReleasePromoted(msg)
 		if err != nil {
 			logger.Error("release.promoted: decode failure — dead-lettering",
 				"message_id", msg.ID, "error", err)

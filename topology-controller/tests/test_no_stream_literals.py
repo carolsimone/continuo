@@ -77,7 +77,7 @@ def test_the_detector_flags_the_shapes_it_is_meant_to_reject():
         "release.requested:v1 payload missing"
     ]
     assert _stream_literals('msg = f"{x} on query.model:v2 failed"') == [" on query.model:v2 failed"]
-    assert _stream_literals('f(stream="manifest.loaded.candidate:v1")') == ["manifest.loaded.candidate:v1"]
+    assert _stream_literals('f(stream="release.parsed:v1")') == ["release.parsed:v1"]
 
 
 def test_the_detector_leaves_docstrings_and_unrelated_strings_alone():

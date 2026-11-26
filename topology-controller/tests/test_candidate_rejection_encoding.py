@@ -13,7 +13,7 @@ from domain.model import FailedNode, ManifestFile, ParsedArtifact
 from service import candidate_manifest_handler
 from service.contracts_library import LIBRARY_VERSION
 from service.manifest_parsers import ManifestParser
-from streams_contract import MANIFEST_LOADED_CANDIDATE_V2
+from streams_contract import RELEASE_PARSED_V1
 from tests.fakes import build_handler, make_uploader, source_of
 
 _LONE_SURROGATE = "\ud800"
@@ -22,7 +22,7 @@ _LONE_SURROGATE = "\ud800"
 def _publishing(redis):
     """The real publisher over a recording redis client."""
     return CandidateManifestPublisher(
-        redis, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts=LIBRARY_VERSION)
+        redis, RELEASE_PARSED_V1, producer="topology-controller", continuo_contracts=LIBRARY_VERSION)
 
 
 def _published(redis) -> dict:

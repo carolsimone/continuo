@@ -4,7 +4,7 @@
 // recorded as loaded for that tenant and, for the seeds that differ, creates
 // one promote-seed run of the tenant, which dispatches every one of them as it
 // is created, and records a build request per seed. A pass runs inside every
-// release.promoted:v2 transaction that moves a tenant's live release, for that
+// release.promoted:v1 transaction that moves a tenant's live release, for that
 // tenant, and on a fixed interval once per tenant with a live release; every
 // pass holds the topology lock, so two passes never plan the same seed twice.
 package seedreconcile
@@ -43,7 +43,7 @@ type Reconciler struct {
 }
 
 // Compile-time assertion that the reconciler is the seed step of the
-// release.promoted:v2 handler.
+// release.promoted:v1 handler.
 var _ handlers.SeedReconciler = (*Reconciler)(nil)
 
 // New builds the reconciler. RunOnce and Loop reconcile every tenant with a
@@ -55,7 +55,7 @@ func New(uowFactory func() uow.UnitOfWork, maintenance bool, planner runstart.Pl
 	return &Reconciler{uowFactory: uowFactory, maintenance: maintenance, planner: planner, logger: logger}
 }
 
-// AfterPromotion runs in the release.promoted:v2 transaction, after the
+// AfterPromotion runs in the release.promoted:v1 transaction, after the
 // live-release pointer step and under the topology lock the handler holds.
 //
 // It acts only on a promotion that moved the live release. A redelivered,

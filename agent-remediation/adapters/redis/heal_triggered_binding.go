@@ -15,50 +15,50 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// NewRemediationRequestedConsumer constructs the StreamConsumer of
-// remediation.requested:v3: each message is handed to accept, which records it
+// NewHealTriggeredConsumer constructs the StreamConsumer of
+// heal.triggered:v1: each message is handed to accept, which records it
 // as a remediation the worker drives. The consumer group is created
 // idempotently by StreamConsumer.Start; call Start(ctx) in a goroutine to begin
 // consuming.
-func NewRemediationRequestedConsumer(rc *goredis.Client, accept func(context.Context, runner.Accepted) error, logger *slog.Logger) *pkgredis.StreamConsumer {
+func NewHealTriggeredConsumer(rc *goredis.Client, accept func(context.Context, runner.Accepted) error, logger *slog.Logger) *pkgredis.StreamConsumer {
 	return pkgredis.NewStreamConsumer(
 		rc,
-		streams.RemediationRequestedV3,
-		streams.AgentRemediationRemediationRequested,
-		newRemediationRequestedHandler(accept),
+		streams.HealTriggeredV1,
+		streams.AgentRemediationHealTriggered,
+		newHealTriggeredHandler(accept),
 		logger,
 	)
 }
 
-// requestedMessage decodes one remediation.requested:v3 message: its envelope,
+// healTriggeredMessage decodes one heal.triggered:v1 message: its envelope,
 // the heal trigger its payload carries and the payload's bytes. A message that
 // does not decode is a permanent failure: the error wraps events.ErrPermanent,
 // so the consumer dead-letters it.
-func requestedMessage(msg goredis.XMessage) (pkgevents.Envelope, pkgevents.RemediationRequested, []byte, error) {
+func healTriggeredMessage(msg goredis.XMessage) (pkgevents.Envelope, pkgevents.HealTriggered, []byte, error) {
 	fields := messageFields(msg)
-	env, p, err := pkgevents.DecodeRemediationRequested(fields)
+	env, p, err := pkgevents.DecodeHealTriggered(fields)
 	if err != nil {
-		return pkgevents.Envelope{}, pkgevents.RemediationRequested{}, nil,
-			fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.RemediationRequestedV3, err)
+		return pkgevents.Envelope{}, pkgevents.HealTriggered{}, nil,
+			fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.HealTriggeredV1, err)
 	}
 	return env, p, []byte(fields["payload"]), nil
 }
 
-// newRemediationRequestedHandler returns the MessageHandler that accepts
-// each remediation.requested:v3 message's trigger as a remediation, unfixable
+// newHealTriggeredHandler returns the MessageHandler that accepts
+// each heal.triggered:v1 message's trigger as a remediation, unfixable
 // nodes included, with the tenant the envelope carries (empty when it names
 // none), the payload bytes, the message's dedup id, the producer's outbox entry
 // id and the stream's fields. A message that does not decode is a permanent
 // failure: the handler returns events.ErrPermanent, so the consumer
 // dead-letters it. Any other error is returned as is, so the consumer
 // redelivers it.
-func newRemediationRequestedHandler(accept func(context.Context, runner.Accepted) error) pkgredis.MessageHandler {
+func newHealTriggeredHandler(accept func(context.Context, runner.Accepted) error) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		env, p, payload, err := requestedMessage(msg)
+		env, p, payload, err := healTriggeredMessage(msg)
 		if err != nil {
 			return err
 		}
-		trigger := serialization.TriggerFromRequested(p)
+		trigger := serialization.TriggerFromHealTriggered(p)
 		trigger.TenantID = env.TenantID
 		return accept(ctx, runner.Accepted{
 			Trigger:       trigger,

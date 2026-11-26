@@ -59,7 +59,7 @@ type RetryRemediationResult struct {
 }
 
 // RetryRemediation starts another remediation round on a rejected candidate:
-// it writes an outbox row for remediation.retry_requested:v2 whose payload is
+// it writes an outbox row for remediation.retry_requested:v1 whose payload is
 // the typed retry (the release id, the new round and the stored rejection,
 // unchanged), stored under events.DefaultTenantID. It refuses when the id
 // names a verification run rather than a candidate (a verification is not a
@@ -142,7 +142,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 		AggregateID:   AggregateIDForRelease(releaseID),
 		EventType:     "remediation_retry_requested",
 		Payload:       payload,
-		StreamName:    streams.RemediationRetryRequestedV2,
+		StreamName:    streams.RemediationRetryRequestedV1,
 		Status:        "pending",
 	}); err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("outbox insert: %w", err)

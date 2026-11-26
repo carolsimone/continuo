@@ -74,15 +74,15 @@ func TestRejectionsHandler_MarkerAtomicWithRecord(t *testing.T) {
 		"svc.public.a": {RawCode: "select a", ContentHash: "ha"},
 		"svc.public.b": {RawCode: "select b", ContentHash: "hb"},
 	}}
-	in := domainEvent.RemediationRequested{
+	in := domainEvent.HealTriggered{
 		Source: "validation", ReleaseID: "r2", CodeBundleURI: uri, ClassifiedAt: "2026-10-30T09:00:00Z",
-		Nodes: []domainEvent.RemediationRequestedNode{
+		Nodes: []domainEvent.HealTriggeredNode{
 			{NodeID: "svc.public.a", Category: "logic", ErrorSignature: "sig", Reason: "logic:missing_object"},
 			{NodeID: "svc.public.b", Category: "logic", ErrorSignature: "sig", Reason: "logic:missing_object"},
 		},
 	}
-	rejections := func(u uow.UnitOfWork) *handlers.RemediationRequestedRejectionsHandler {
-		return handlers.NewRemediationRequestedRejectionsHandler(u, g.bundles, newTestLogger())
+	rejections := func(u uow.UnitOfWork) *handlers.HealTriggeredRejectionsHandler {
+		return handlers.NewHealTriggeredRejectionsHandler(u, g.bundles, newTestLogger())
 	}
 	const (
 		rejectionCount = `MATCH (r:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS v`
@@ -96,7 +96,7 @@ func TestRejectionsHandler_MarkerAtomicWithRecord(t *testing.T) {
 	assert.Zero(t, g.count(rejectionCount), "the crash rolls every rejection back")
 	assert.Zero(t, g.count(hubCount))
 	assert.Zero(t, g.count(failedCount))
-	assert.False(t, g.processedBy(streams.CatalogRemediationRequestedRejections, "rej-1"), "no marker without its rejections")
+	assert.False(t, g.processedBy(streams.CatalogHealTriggeredRejections, "rej-1"), "no marker without its rejections")
 
 	counted := &crashingUnitOfWork{UnitOfWork: g.uow}
 	require.NoError(t, rejections(counted).Handle(ctx, g.tenant, "rej-1", nil, in))
@@ -104,14 +104,14 @@ func TestRejectionsHandler_MarkerAtomicWithRecord(t *testing.T) {
 	assert.Equal(t, int64(2), g.count(rejectionCount))
 	assert.Equal(t, int64(1), g.count(hubCount), "one signature hub for the tenant")
 	assert.Equal(t, int64(2), g.count(failedCount))
-	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-1"),
+	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-1"),
 		"the marker commits with the rejections")
 
 	g.bundles.calls = nil
 	require.NoError(t, rejections(g.uow).Handle(ctx, g.tenant, "rej-1", nil, in))
 	assert.Empty(t, g.bundles.calls, "a processed message reads no bundle")
 	assert.Equal(t, int64(2), g.count(rejectionCount))
-	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-1"))
+	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-1"))
 }
 
 // A trigger carries every failing node, the unfixable ones included. On Neo4j
@@ -127,15 +127,15 @@ func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T
 		"svc.public.a": {RawCode: "select a", ContentHash: "ha"},
 		"svc.public.b": {RawCode: "select b", ContentHash: "hb"},
 	}}
-	handler := handlers.NewRemediationRequestedRejectionsHandler(g.uow, g.bundles, newTestLogger())
+	handler := handlers.NewHealTriggeredRejectionsHandler(g.uow, g.bundles, newTestLogger())
 	const (
 		rejectionNodes = `MATCH (:Node {tenant_id: $tenant_id})-[:FAILED]->(r:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS v`
 		rejectionCount = `MATCH (r:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS v`
 	)
 
-	mixed := domainEvent.RemediationRequested{
+	mixed := domainEvent.HealTriggered{
 		Source: "validation", ReleaseID: "r2", CodeBundleURI: uri, ClassifiedAt: "2026-10-30T09:00:00Z",
-		Nodes: []domainEvent.RemediationRequestedNode{
+		Nodes: []domainEvent.HealTriggeredNode{
 			{NodeID: "svc.public.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object"},
 			{NodeID: "svc.public.b", Category: "infra_transient", ErrorSignature: "sig-b", Reason: "infra:oomkilled", Unfixable: true},
 		},
@@ -143,12 +143,12 @@ func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T
 	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-mixed", nil, mixed))
 	assert.Equal(t, int64(1), g.count(rejectionCount), "only the fixable node is a precedent")
 	assert.Equal(t, int64(1), g.count(rejectionNodes))
-	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-mixed"))
+	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-mixed"))
 
 	g.bundles.calls = nil
-	onlyUnfixable := domainEvent.RemediationRequested{
+	onlyUnfixable := domainEvent.HealTriggered{
 		Source: "validation", ReleaseID: "r3", CodeBundleURI: uri, ClassifiedAt: "2026-10-30T10:00:00Z",
-		Nodes: []domainEvent.RemediationRequestedNode{
+		Nodes: []domainEvent.HealTriggeredNode{
 			{NodeID: "svc.public.a", Category: "infra_transient", ErrorSignature: "sig-c", Reason: "infra:connection_refused", Unfixable: true},
 			{NodeID: "svc.public.b", Category: "infra_transient", ErrorSignature: "sig-d", Reason: "infra:oomkilled", Unfixable: true},
 		},
@@ -156,12 +156,12 @@ func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T
 	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-unfixable", nil, onlyUnfixable))
 	assert.Equal(t, int64(1), g.count(rejectionCount), "an all-unfixable trigger adds no :Rejection")
 	assert.Empty(t, g.bundles.calls, "and reads no bundle")
-	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-unfixable"),
+	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-unfixable"),
 		"the marker commits alone")
 
 	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-unfixable", nil, onlyUnfixable))
 	assert.Equal(t, int64(1), g.count(rejectionCount))
-	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-unfixable"))
+	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-unfixable"))
 }
 
 // A crash after the proposals' statements ran rolls back every proposal, PR

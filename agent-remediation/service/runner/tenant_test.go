@@ -37,30 +37,3 @@ func TestRunner_RowsAndEventsCarryTheTriggersTenant(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &payload))
 	assert.Equal(t, releaseID, payload.ReleaseID)
 }
-
-// TestRunner_DrivesARemediationStoredFromAV2Payload verifies a remediation whose
-// stored trigger payload carries an event_id of its own, as a
-// remediation.requested:v2 payload does, is driven like any other: its trigger
-// decodes from the stored bytes.
-func TestRunner_DrivesARemediationStoredFromAV2Payload(t *testing.T) {
-	h := newHarness(t)
-	trig := trigger("compile", compileNode("svc-a"))
-	var stored map[string]any
-	require.NoError(t, json.Unmarshal(payloadOf(t, trig), &stored))
-	stored["event_id"] = "evt-v2"
-	stored["classified_at"] = "2026-08-28T00:00:00Z"
-	a := h.accepted(trig, "1-0")
-	var err error
-	a.Payload, err = json.Marshal(stored)
-	require.NoError(t, err)
-	require.NoError(t, h.runner.Accept(ctx, a))
-	rems := h.store.Remediations()
-	require.Len(t, rems, 1)
-	claimed, err := h.store.RemediationRepository().Claim(ctx, rems[0].ID, workerOwner, h.clock.Now(), lease)
-	require.NoError(t, err)
-	require.True(t, claimed)
-
-	require.NoError(t, h.runner.Drive(ctx, rems[0].ID))
-
-	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status, "the trigger's node was fixed and its edits sent to verification")
-}

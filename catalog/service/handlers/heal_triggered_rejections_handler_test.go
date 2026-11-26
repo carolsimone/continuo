@@ -72,7 +72,7 @@ func caseBaseMarker(group, messageID string, outboxEntryID *uuid.UUID) uow.Marke
 }
 
 func rejectionsMarker(messageID string, outboxEntryID *uuid.UUID) uow.Marker {
-	return caseBaseMarker(streams.CatalogRemediationRequestedRejections, messageID, outboxEntryID)
+	return caseBaseMarker(streams.CatalogHealTriggeredRejections, messageID, outboxEntryID)
 }
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
@@ -92,13 +92,13 @@ func rejectionsBundle() codebundle.Bundle {
 	}
 }
 
-func rejectionInput() domainEvent.RemediationRequested {
-	return domainEvent.RemediationRequested{
+func rejectionInput() domainEvent.HealTriggered {
+	return domainEvent.HealTriggered{
 		Source:        "validation",
 		ReleaseID:     "rel-1",
 		CodeBundleURI: rejectionsBundleURI,
 		ClassifiedAt:  "2026-08-12T09:00:00Z",
-		Nodes: []domainEvent.RemediationRequestedNode{
+		Nodes: []domainEvent.HealTriggeredNode{
 			{
 				NodeID:         "analytics.revenue",
 				Category:       "sql_syntax_error",
@@ -111,8 +111,8 @@ func rejectionInput() domainEvent.RemediationRequested {
 	}
 }
 
-func newRejectionsHandler(u uow.UnitOfWork, reader *fakeBundleReader) *handlers.RemediationRequestedRejectionsHandler {
-	return handlers.NewRemediationRequestedRejectionsHandler(u, reader, newTestLogger())
+func newRejectionsHandler(u uow.UnitOfWork, reader *fakeBundleReader) *handlers.HealTriggeredRejectionsHandler {
+	return handlers.NewHealTriggeredRejectionsHandler(u, reader, newTestLogger())
 }
 
 // ── the write ────────────────────────────────────────────────────────────────
@@ -196,10 +196,10 @@ func TestRejectionsHandler_RecordsOneRejectionPerNode(t *testing.T) {
 		},
 	}}
 
-	in := domainEvent.RemediationRequested{
+	in := domainEvent.HealTriggered{
 		Source: "validation", ReleaseID: "rel-1", CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json",
 		ClassifiedAt: "2026-08-28T10:00:00Z",
-		Nodes: []domainEvent.RemediationRequestedNode{
+		Nodes: []domainEvent.HealTriggeredNode{
 			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig", Reason: "logic:missing_object", DBTLogURI: "s3://l/a"},
 			{NodeID: "s.b", Category: "logic", ErrorSignature: "sig", Reason: "logic:missing_object", DBTLogURI: "s3://l/b"},
 		},
@@ -232,10 +232,10 @@ func TestRejectionsHandler_SkipsUnfixableNodes(t *testing.T) {
 		},
 	}}
 
-	in := domainEvent.RemediationRequested{
+	in := domainEvent.HealTriggered{
 		Source: "validation", ReleaseID: "rel-1", CodeBundleURI: rejectionsBundleURI,
 		ClassifiedAt: "2026-08-28T10:00:00Z",
-		Nodes: []domainEvent.RemediationRequestedNode{
+		Nodes: []domainEvent.HealTriggeredNode{
 			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object", DBTLogURI: "s3://l/a"},
 			{NodeID: "s.b", Category: "infra_transient", ErrorSignature: "sig-b", Reason: "infra:connection_refused", DBTLogURI: "s3://l/b", Unfixable: true},
 			{NodeID: "s.c", Category: "logic", ErrorSignature: "sig-c", Reason: "logic:syntax_error", DBTLogURI: "s3://l/c"},
@@ -266,7 +266,7 @@ func TestRejectionsHandler_AllUnfixableRecordsOnlyTheMarker(t *testing.T) {
 
 	in := rejectionInput()
 	in.Nodes[0].Unfixable = true
-	in.Nodes = append(in.Nodes, domainEvent.RemediationRequestedNode{
+	in.Nodes = append(in.Nodes, domainEvent.HealTriggeredNode{
 		NodeID: "analytics.orders", Category: "infra_transient", ErrorSignature: "sig-2",
 		Reason: "infra:oomkilled", Unfixable: true,
 	})
@@ -289,7 +289,7 @@ func TestRejectionsHandler_EmptyNodesIsPermanent(t *testing.T) {
 	reader := &fakeBundleReader{bundle: rejectionsBundle()}
 
 	err := newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil,
-		domainEvent.RemediationRequested{ReleaseID: "rel-1", ClassifiedAt: "2026-08-28T10:00:00Z"})
+		domainEvent.HealTriggered{ReleaseID: "rel-1", ClassifiedAt: "2026-08-28T10:00:00Z"})
 	require.ErrorIs(t, err, pkgevents.ErrPermanent)
 	assert.Empty(t, repo.recordRejectionCalls)
 }
@@ -370,21 +370,21 @@ func TestRejectionsHandler_NodeAbsentFromBundleRecordsWithoutCode(t *testing.T) 
 func TestRejectionsHandler_PoisonPayloadIsPermanent(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		mutate func(*domainEvent.RemediationRequested)
+		mutate func(*domainEvent.HealTriggered)
 	}{
-		{"empty release_id", func(in *domainEvent.RemediationRequested) { in.ReleaseID = "" }},
-		{"no nodes", func(in *domainEvent.RemediationRequested) { in.Nodes = nil }},
-		{"empty node_id", func(in *domainEvent.RemediationRequested) { in.Nodes[0].NodeID = "" }},
-		{"empty error_signature", func(in *domainEvent.RemediationRequested) { in.Nodes[0].ErrorSignature = "" }},
-		{"empty node_id on an unfixable node", func(in *domainEvent.RemediationRequested) {
+		{"empty release_id", func(in *domainEvent.HealTriggered) { in.ReleaseID = "" }},
+		{"no nodes", func(in *domainEvent.HealTriggered) { in.Nodes = nil }},
+		{"empty node_id", func(in *domainEvent.HealTriggered) { in.Nodes[0].NodeID = "" }},
+		{"empty error_signature", func(in *domainEvent.HealTriggered) { in.Nodes[0].ErrorSignature = "" }},
+		{"empty node_id on an unfixable node", func(in *domainEvent.HealTriggered) {
 			in.Nodes[0].Unfixable = true
 			in.Nodes[0].NodeID = ""
 		}},
-		{"empty error_signature on an unfixable node", func(in *domainEvent.RemediationRequested) {
+		{"empty error_signature on an unfixable node", func(in *domainEvent.HealTriggered) {
 			in.Nodes[0].Unfixable = true
 			in.Nodes[0].ErrorSignature = ""
 		}},
-		{"unparseable classified_at", func(in *domainEvent.RemediationRequested) { in.ClassifiedAt = "not-a-time" }},
+		{"unparseable classified_at", func(in *domainEvent.HealTriggered) { in.ClassifiedAt = "not-a-time" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeCaseBaseRepository{}

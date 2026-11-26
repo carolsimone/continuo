@@ -65,8 +65,8 @@ var _ pkgoutbox.Renderer = (*releaseOutboxPublisher)(nil)
 const envelopeProducer = "release-controller"
 
 // Render returns the field map Publish XADDs for entry, without
-// outbox_entry_id: a dead-letter row's scalar fields, a release.promoted:v2
-// row's envelope fields, a remediation.retry_requested:v2 row's envelope
+// outbox_entry_id: a dead-letter row's scalar fields, a release.promoted:v1
+// row's envelope fields, a remediation.retry_requested:v1 row's envelope
 // fields, or the row's JSON body as the single "payload" field. Every call
 // returns a fresh map.
 func (p *releaseOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
@@ -79,20 +79,20 @@ func (p *releaseOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any,
 		}
 		delete(values, "outbox_entry_id")
 		return values, nil
-	case ports.ReleasePromotedV2EventType:
+	case ports.ReleasePromotedEventType:
 		var promoted pkgevents.ReleasePromoted
 		if err := json.Unmarshal(entry.Payload, &promoted); err != nil {
 			return nil, fmt.Errorf("%w: release.promoted payload: %v", pkgevents.ErrPermanent, err)
 		}
 		return pkgevents.ReleasePromotedFields(pkgevents.DefaultTenantID, envelopeProducer, entry.CreatedAt, promoted)
 	}
-	if entry.StreamName == streams.RemediationRetryRequestedV2 {
+	if entry.StreamName == streams.RemediationRetryRequestedV1 {
 		return renderRemediationRetryRequested(entry)
 	}
 	return map[string]any{"payload": string(entry.Payload)}, nil
 }
 
-// renderRemediationRetryRequested renders a row on remediation.retry_requested:v2:
+// renderRemediationRetryRequested renders a row on remediation.retry_requested:v1:
 // the row stores the typed retry under its tenant (pkgoutbox.WrapTenant), and
 // the envelope names the row as the event, the tenant it stores and the time it
 // was written. The row is recognised by its stream rather than its event type:
@@ -102,15 +102,15 @@ func (p *releaseOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any,
 func renderRemediationRetryRequested(entry *pkgoutbox.Entry) (map[string]any, error) {
 	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV2, err)
+		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV1, err)
 	}
 	var retry pkgevents.RemediationRetryRequested
 	if err := json.Unmarshal(payload, &retry); err != nil {
-		return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV2, err)
+		return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV1, err)
 	}
 	values, err := pkgevents.RemediationRetryRequestedFields(entry.ID.String(), tenantID, envelopeProducer, entry.CreatedAt, retry)
 	if err != nil {
-		return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV2, err)
+		return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV1, err)
 	}
 	return values, nil
 }

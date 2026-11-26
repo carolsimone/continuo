@@ -30,7 +30,7 @@ const ftableEUniqueID = "e2e_schema.ftable_e"
 //	→ ftable_e fails (references public.wrong_name which does not exist)
 //	→ validation.result:v1 terminal (kind=complete, release rejected)
 //	→ release.rejected:v1 → remediation classifier classifies the node
-//	→ remediation.requested:v3 emitted for the release, its ftable_e entry
+//	→ heal.triggered:v1 emitted for the release, its ftable_e entry
 //	  carrying category=logic and no unfixable mark
 //	→ classification_decision row: source=validation, decision=emit, category=logic
 //
@@ -98,7 +98,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -149,7 +149,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 		"ftable_e must carry run_results_uri on release.rejected:v1 (structured validation result)")
 	t.Logf("✅ release.rejected:v1 carries run_results_uri=%s for ftable_e", rejectedRunResultsURI)
 
-	// 7. Poll remediation.requested:v3 for the release's batched trigger and
+	// 7. Poll heal.triggered:v1 for the release's batched trigger and
 	//    the entry it carries for ftable_e. The classifier receives
 	//    release.rejected:v1, fetches the dbt log from S3, classifies the
 	//    "does not exist" error as logic, and publishes one trigger for the
@@ -167,7 +167,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	require.Nil(t, node.Unfixable, "a logic failure is one a fix can reach, so the trigger must not mark it unfixable")
 	require.NotEmpty(t, node.ErrorSignature, "trigger must carry a non-empty error_signature")
 	require.NotEmpty(t, node.DBTLogURI, "trigger must carry a non-empty dbt_log_uri")
-	t.Logf("✅ %s received: category=%s signature=%s", streams.RemediationRequestedV3, node.Category, node.ErrorSignature)
+	t.Logf("✅ %s received: category=%s signature=%s", streams.HealTriggeredV1, node.Category, node.ErrorSignature)
 
 	// 9. Query classification_decision in continuo_remediation to confirm the
 	//    decision was persisted.
@@ -224,7 +224,7 @@ func waitForReleaseRejected(t *testing.T, ctx context.Context, clients *testClie
 // single upstream fix, and — because each carries the location the rejected
 // release's candidate declares — edit that ancestor where THIS release holds
 // it.
-func ancestorIDs(n pkgevents.RemediationRequestedNode) []string {
+func ancestorIDs(n pkgevents.HealTriggeredNode) []string {
 	ids := make([]string, 0, len(n.ChangedAncestors))
 	for _, a := range n.ChangedAncestors {
 		ids = append(ids, a.NodeID)

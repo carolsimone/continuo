@@ -25,7 +25,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// consumeOne runs the consumer of remediation.requested:v3 on rc, whose stream
+// consumeOne runs the consumer of heal.triggered:v1 on rc, whose stream
 // holds the consumer's group, until it accepts one message, and returns what it
 // accepted.
 func consumeOne(t *testing.T, rc *goredis.Client) runner.Accepted {
@@ -33,7 +33,7 @@ func consumeOne(t *testing.T, rc *goredis.Client) runner.Accepted {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	got := make(chan runner.Accepted, 1)
-	consumer := NewRemediationRequestedConsumer(rc, func(_ context.Context, a runner.Accepted) error {
+	consumer := NewHealTriggeredConsumer(rc, func(_ context.Context, a runner.Accepted) error {
 		select {
 		case got <- a:
 		default:
@@ -71,8 +71,8 @@ func runnerDeadLetterRow(t *testing.T, a runner.Accepted, remediationID uuid.UUI
 	body, err := json.Marshal(pkgevents.DeadLetteredMessage{
 		TenantID:      a.Trigger.TenantID,
 		OccurredAt:    now,
-		Stream:        streams.RemediationRequestedV3,
-		Group:         streams.AgentRemediationRemediationRequested,
+		Stream:        streams.HealTriggeredV1,
+		Group:         streams.AgentRemediationHealTriggered,
 		MessageID:     messageID,
 		Key:           key,
 		Fields:        fields,
@@ -125,12 +125,12 @@ func redriveValues(dl pkgevents.ConsumerDeadLetter, deadLetterID, redriveRowID u
 func TestBinding_ARedrivenDeadLetterReachesTheRunnerAsTheTriggerItWas(t *testing.T) {
 	ctx := context.Background()
 	rc := newTestRedis(t)
-	key := pkgredis.Key(streams.RemediationRequestedV3)
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, streams.AgentRemediationRemediationRequested, "0").Err())
+	key := pkgredis.Key(streams.HealTriggeredV1)
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, streams.AgentRemediationHealTriggered, "0").Err())
 
 	originalEntryID := uuid.New()
-	fields, err := pkgevents.RemediationRequestedFields("evt-1", "acme", "remediation",
-		time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), requestedFixture())
+	fields, err := pkgevents.HealTriggeredFields("evt-1", "acme", "remediation",
+		time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), healTriggeredFixture())
 	require.NoError(t, err)
 	fields["outbox_entry_id"] = originalEntryID.String()
 	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: fields}).Err())
@@ -147,7 +147,7 @@ func TestBinding_ARedrivenDeadLetterReachesTheRunnerAsTheTriggerItWas(t *testing
 	env, dl, err := pkgevents.DecodeConsumerDeadLetter(stored)
 	require.NoError(t, err)
 	require.Equal(t, "acme", env.TenantID)
-	require.Equal(t, streams.AgentRemediationRemediationRequested, dl.OriginalGroup)
+	require.Equal(t, streams.AgentRemediationHealTriggered, dl.OriginalGroup)
 
 	redriveRowID := uuid.New()
 	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{

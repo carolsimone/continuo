@@ -15,7 +15,7 @@ from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.exceptions import InvalidCompiledSqlError
 from domain.model import FailedNode, ManifestFile, ManifestKind
 from service.release_timings import ReleaseTimings, Stage
-from streams_contract import MANIFEST_LOADED_CANDIDATE_V2
+from streams_contract import RELEASE_PARSED_V1
 from tests.fakes import FakeClock, RecordingContractBundleWriter, ScriptedMemoryProbe, dbt_node, python_handler, source_of
 from tests.odcs_fixtures import bound_kpis_text, bundle_file, bundle_node, ontology_vector
 
@@ -248,7 +248,7 @@ def test_the_check_runs_only_when_every_node_resolved(tmp_path, monkeypatch):
 def _publishing(redis) -> CandidateManifestPublisher:
     """The real publisher over a recording redis client."""
     return CandidateManifestPublisher(
-        redis, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts="0.4.1")
+        redis, RELEASE_PARSED_V1, producer="topology-controller", continuo_contracts="0.4.1")
 
 
 def test_an_unencodable_failure_is_an_invalid_artifact(tmp_path, monkeypatch):

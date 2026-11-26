@@ -163,7 +163,7 @@ func (h *builtHarness) legacyRun(t *testing.T, releaseID, table string) (uuid.UU
 	return runID, taskID
 }
 
-// finish reports how attempt 0 of the task ended, as task.status.updated:v2
+// finish reports how attempt 0 of the task ended, as task.status.updated:v1
 // does; a failure is not retried.
 func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.AttemptStatus) {
 	t.Helper()
@@ -172,7 +172,7 @@ func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.
 	})
 }
 
-// reports is the handler of task.status.updated:v2 the harness reports
+// reports is the handler of task.status.updated:v1 the harness reports
 // through.
 func (h *builtHarness) reports() *svchandlers.AttemptReportHandler {
 	return svchandlers.NewAttemptReportHandler(defaultPlanner.Tasks, noRunMetrics{}, noRunMetrics{}, warehouse.SchemaBound, h.logger)
@@ -216,7 +216,7 @@ func (h *builtHarness) loaded(t *testing.T, key string) (loadedRow, bool) {
 	return row, true
 }
 
-// TestBuiltVersions drives task.status.updated:v2 against a real Postgres: a
+// TestBuiltVersions drives task.status.updated:v1 against a real Postgres: a
 // succeeded task of a run run-controller planned with a writing operation records the
 // version it loaded, the content hash of its node in the run's release, and
 // the other cases record nothing. Every subtest uses its own release and node.

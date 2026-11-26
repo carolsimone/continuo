@@ -18,7 +18,7 @@ import (
 // ClassifyRejection triages every failed node of one rejected release: each
 // node is classified deterministically and its decision recorded (emit and
 // drop alike), and, when at least one node is newly recorded, ONE batched
-// remediation.requested trigger carrying exactly those nodes is enqueued, all
+// heal.triggered trigger carrying exactly those nodes is enqueued, all
 // in a single transaction. A node the classifier drops (no change to the
 // release's source fixes it) is carried too, marked unfixable with its reason,
 // so the release page can name it and why no fix was proposed. The release,
@@ -87,7 +87,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 	if len(recorded) > 0 {
 		head := recorded[0].ev
 		eventID := event.RemediationEventID(head.ReleaseID, round).String()
-		payload := event.RemediationRequested{
+		payload := event.HealTriggered{
 			Source:           head.Source,
 			ReleaseID:        head.ReleaseID,
 			RemediationRound: round,
@@ -113,7 +113,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 			}
 			payload.Nodes = append(payload.Nodes, node)
 		}
-		body, err := json.Marshal(serialization.RemediationRequestedFromDomain(payload))
+		body, err := json.Marshal(serialization.HealTriggeredFromDomain(payload))
 		if err != nil {
 			return fmt.Errorf("marshal trigger: %w", err)
 		}
@@ -127,7 +127,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 			AggregateID:   event.AggregateIDForRelease(head.ReleaseID),
 			EventType:     event.EventType,
 			Payload:       stored,
-			StreamName:    streams.RemediationRequestedV3,
+			StreamName:    streams.HealTriggeredV1,
 			Status:        "pending",
 		}); err != nil {
 			return fmt.Errorf("enqueue trigger: %w", err)

@@ -43,7 +43,7 @@ Every release that passes writes a contract bundle. It holds the contract of
 every dbt model, seed and snapshot the release keeps and of every `python-odcs`
 node, and `summary.by_family` counts them by family. It is empty when the
 release has none. The bundle is canonical JSON (RFC 8785).
-`manifest.loaded.candidate:v2` and `release.promoted:v2` carry the SHA-256 of
+`release.parsed:v1` and `release.promoted:v1` carry the SHA-256 of
 its stored bytes, so a reader can check what it fetched.
 
 The three versions are integers, count independently of each other and of the

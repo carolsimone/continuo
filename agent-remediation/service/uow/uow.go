@@ -25,6 +25,6 @@ type UnitOfWork interface {
 	// OutboxRepo returns the outbox.Repository bound to the active transaction.
 	OutboxRepo() outbox.Repository
 	// MessageProcessingRepo returns the messageprocessing.Repository bound to the
-	// active transaction, used for inbound dedup of remediation.requested:v1.
+	// active transaction, used for inbound dedup of heal.triggered:v1.
 	MessageProcessingRepo() messageprocessing.Repository
 }

@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// ReleasePromotedSchemaVersion is the schema_version of release.promoted:v2 entries.
+// ReleasePromotedSchemaVersion is the schema_version of release.promoted:v1 entries.
 const ReleasePromotedSchemaVersion = 1
 
-// ReleasePromoted is the payload of a release.promoted:v2 entry: a topology
+// ReleasePromoted is the payload of a release.promoted:v1 entry: a topology
 // becoming the live one, numbered by PromotionSeq. release-controller allocates
 // the seq in the transaction that moves current_prod, or when it announces a
 // topology without moving it; a consumer applies an entry only when its seq is
@@ -41,7 +41,7 @@ type ReleasePromoted struct {
 	Rebaseline bool `json:"rebaseline"`
 }
 
-// ReleasePromotedEventID derives the event id of the release.promoted:v2 entry
+// ReleasePromotedEventID derives the event id of the release.promoted:v1 entry
 // with seq promotionSeq. Every promotion and announcement takes a fresh seq, so
 // the id names one announcement; re-publishing the same outbox row repeats it.
 func ReleasePromotedEventID(tenantID string, promotionSeq int64) string {
@@ -49,7 +49,7 @@ func ReleasePromotedEventID(tenantID string, promotionSeq int64) string {
 	return uuid.NewSHA1(EventIDNamespace, []byte(name)).String()
 }
 
-// ReleasePromotedFields renders p as the Redis fields of one release.promoted:v2
+// ReleasePromotedFields renders p as the Redis fields of one release.promoted:v1
 // entry. promoted_at is written in UTC and changed_node_ids is always a list.
 func ReleasePromotedFields(tenantID, producer string, occurredAt time.Time, p ReleasePromoted) (map[string]any, error) {
 	if p.ChangedNodeIDs == nil {

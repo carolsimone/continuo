@@ -54,7 +54,7 @@ func lastEntryFields(t *testing.T, r *goredis.Client, stream string) map[string]
 	return res[0].Values
 }
 
-// A report row is published as one task.status.updated:v2 entry: the
+// A report row is published as one task.status.updated:v1 entry: the
 // envelope names the row, the payload is the report.
 func TestPublisher_TaskStatusReport(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -69,11 +69,11 @@ func TestPublisher_TaskStatusReport(t *testing.T) {
 
 	id := uuid.New()
 	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: id, EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2, Payload: stored,
+		ID: id, EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV1, Payload: stored,
 		CreatedAt: time.Now(),
 	}))
 
-	v := lastEntryFields(t, r, streams.TaskStatusUpdatedV2)
+	v := lastEntryFields(t, r, streams.TaskStatusUpdatedV1)
 	assert.Equal(t, id.String(), v["event_id"])
 	assert.Equal(t, "acme", v["tenant_id"])
 	assert.Equal(t, "execution-controller", v["producer"])
@@ -190,7 +190,7 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 	}{
 		{
 			eventType:  event.EventTypeTaskStatusReport,
-			streamName: streams.TaskStatusUpdatedV2,
+			streamName: streams.TaskStatusUpdatedV1,
 			payload:    storedReport(t, "default", mustMarshal(t, pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Status: "succeeded"})),
 		},
 		{
@@ -318,7 +318,7 @@ func TestReport_CarriesTheDeploymentsTenant(t *testing.T) {
 // A report row that stores no tenant cannot be published under a guessed one:
 // it is a permanent error.
 func TestPublisher_AReportRowWithoutATenantIsPermanent(t *testing.T) {
-	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2,
+	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV1,
 		Payload: mustMarshal(t, pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Status: "running"})}
 
 	_, err := publisher.NewOutboxPublisher(nil, nil).Render(entry)

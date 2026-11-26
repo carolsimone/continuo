@@ -28,7 +28,7 @@ import (
 //	POST /releases (service-2, ftable_e as changed node)
 //	→ validation fails (ftable_e references public.wrong_name)
 //	→ release reaches "rejected" status
-//	→ remediation classifier emits one remediation.requested:v3 for the release
+//	→ remediation classifier emits one heal.triggered:v1 for the release
 //	→ agent-remediation consumes it and groups its failing set
 //	→ calls stub-llm (propose_fix tool call → deterministic SQL fix)
 //	→ writes proposed SQL and diff to S3
@@ -98,7 +98,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//    service_prod for every baseline project.
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
@@ -120,7 +120,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	// 5. Wait for the release to reach "rejected" status.
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
-	// 6. Poll remediation.requested:v3 to confirm the classifier consumed the
+	// 6. Poll heal.triggered:v1 to confirm the classifier consumed the
 	//    rejection and emitted the release's batched trigger with an entry for
 	//    ftable_e. This is a precondition for the agent-remediation to pick it up.
 	waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ftableEUniqueID}, 3*time.Minute)

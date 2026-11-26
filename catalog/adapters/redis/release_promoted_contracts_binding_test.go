@@ -22,12 +22,12 @@ func contractsBinding(u uow.UnitOfWork) pkgredis.MessageHandler {
 	return NewReleasePromotedContractsBinding(handlers.NewReleasePromotedContractsHandler(u, nil, nil, nil, time.Minute, logger), logger)
 }
 
-// The contracts group parses release.promoted:v2 with the topology group's
+// The contracts group parses release.promoted:v1 with the topology group's
 // parser: a promotion whose envelope names no tenant is dead-lettered before
 // the handler sees it.
 func TestParseReleasePromotedContracts_NoTenantIsPermanent(t *testing.T) {
 	u := &processedUnitOfWork{}
-	msg := releasePromotedV2MessageOf(t, "", events.ReleasePromoted{
+	msg := releasePromotedMessageOf(t, "", events.ReleasePromoted{
 		ReleaseID: "rel-7", PromotionSeq: 7, TopologyURI: "s3://b/k", TopologySHA256: "ab",
 	})
 
@@ -41,7 +41,7 @@ func TestParseReleasePromotedContracts_NoTenantIsPermanent(t *testing.T) {
 // message's outbox entry id.
 func TestReleasePromotedContractsBinding_PassesTheTenant(t *testing.T) {
 	u := &processedUnitOfWork{}
-	msg := releasePromotedV2MessageOf(t, "tenant-7", events.ReleasePromoted{
+	msg := releasePromotedMessageOf(t, "tenant-7", events.ReleasePromoted{
 		ReleaseID: "rel-7", PromotionSeq: 7, TopologyURI: "s3://b/k", TopologySHA256: "ab",
 	})
 

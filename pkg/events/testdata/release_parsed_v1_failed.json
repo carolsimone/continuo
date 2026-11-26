@@ -24,7 +24,7 @@
     }
   },
   "fields": {
-    "event_id": "af8f0c05-a09b-5e8c-b0a3-ff98eff564ac",
+    "event_id": "616ee102-98ec-516e-b516-199d61ac3e6a",
     "tenant_id": "default",
     "occurred_at": "2026-10-08T09:30:05.000250Z",
     "producer": "topology-controller",

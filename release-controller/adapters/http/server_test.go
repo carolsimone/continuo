@@ -60,8 +60,8 @@ func TestHealthRoutesAnswerBeforeTheAPIIsServed(t *testing.T) {
 // /healthz (readiness) and /livez (liveness) answer 200.
 func TestHealthzAndLivezHealthy(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("manifest_loaded_candidate")
-	reg.AddWorkerProbe("manifest_loaded_candidate_heartbeat", 0, func(context.Context) error { return nil })
+	reg.RegisterWorker("release_parsed")
+	reg.AddWorkerProbe("release_parsed_heartbeat", 0, func(context.Context) error { return nil })
 	srv := testServer(reg)
 
 	if code := probe(t, srv, "/healthz"); code != http.StatusOK {
@@ -76,7 +76,7 @@ func TestHealthzAndLivezHealthy(t *testing.T) {
 // failing DEPENDENCY probe fails /healthz (readiness) but NOT /livez (liveness).
 func TestDependencyOutageFailsReadinessNotLiveness(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("manifest_loaded_candidate")
+	reg.RegisterWorker("release_parsed")
 	reg.AddDependencyProbe("postgres", 0, func(context.Context) error { return errors.New("down") })
 	srv := testServer(reg)
 
@@ -92,8 +92,8 @@ func TestDependencyOutageFailsReadinessNotLiveness(t *testing.T) {
 // BOTH /healthz and /livez — liveness restarts the pod.
 func TestConsumerExitFailsBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("manifest_loaded_candidate")
-	reg.WorkerExited("manifest_loaded_candidate", errors.New("permanent bootstrap failure: WRONGTYPE"))
+	reg.RegisterWorker("release_parsed")
+	reg.WorkerExited("release_parsed", errors.New("permanent bootstrap failure: WRONGTYPE"))
 	srv := testServer(reg)
 
 	if code := probe(t, srv, "/healthz"); code != http.StatusServiceUnavailable {
@@ -108,8 +108,8 @@ func TestConsumerExitFailsBothProbes(t *testing.T) {
 // heartbeat and must fail BOTH probes.
 func TestStaleHeartbeatFailsBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("manifest_loaded_candidate")
-	reg.AddWorkerProbe("manifest_loaded_candidate_heartbeat", 0, func(context.Context) error {
+	reg.RegisterWorker("release_parsed")
+	reg.AddWorkerProbe("release_parsed_heartbeat", 0, func(context.Context) error {
 		return errors.New("read loop stalled — no activity for 5m0s")
 	})
 	srv := testServer(reg)

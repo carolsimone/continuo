@@ -128,7 +128,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 		}
 		top = row
 		return true, nil
-	}, "ListNodeTasks never returned the new run with populated started_at/completed_at — the task.status.updated:v2 consumer may have lagged")
+	}, "ListNodeTasks never returned the new run with populated started_at/completed_at — the task.status.updated:v1 consumer may have lagged")
 
 	require.NotNil(t, top, "ListNodeTasks must return the new run before the timeout")
 	assert.Equal(t, runID.String(), top.RunId, "ListNodeTasks[0].run_id must match the run we just triggered")

@@ -37,7 +37,7 @@ type HandleValidationResultInput struct {
 //
 // If every present validation node passed and the aggregate status is ok: a
 // candidate promotes to production (updates CurrentProd, upserts the changed
-// project's service_prod pointer, emits release.promoted:v2) and a
+// project's service_prod pointer, emits release.promoted:v1) and a
 // verification passes without touching either. Otherwise a candidate rejects
 // and emits release.rejected:v1, while a verification fails and emits no
 // release event. A run of either kind, on either outcome, emits
@@ -153,7 +153,7 @@ func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 // the next promotion seq, points current_prod at this release's candidate
 // topology artifact under that seq, upserts the changed project's
 // service_prod pointer, transitions the release to Promoted, persists it, and
-// writes the release.promoted:v2 and pipeline.run.finished:v1 outbox rows. The
+// writes the release.promoted:v1 and pipeline.run.finished:v1 outbox rows. The
 // caller owns Begin/Commit and any telemetry. The release must already hold
 // its candidate topology (i.e. be in Validating) and be a candidate — call
 // concludeValidated instead when the run's kind is unknown to the caller.

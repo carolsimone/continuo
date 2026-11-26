@@ -10,7 +10,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// NewReleasePromotedVersionsBinding wires ParseReleasePromotedV2 into the
+// NewReleasePromotedVersionsBinding wires ParseReleasePromoted into the
 // ReleasePromotedVersionsHandler, which writes under the tenant the parsed
 // input carries. A decode failure, and an envelope without a tenant, is
 // permanent (events.ErrPermanent): the binding logs and returns the error so
@@ -24,7 +24,7 @@ func NewReleasePromotedVersionsBinding(
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		in, err := ParseReleasePromotedV2(msg)
+		in, err := ParseReleasePromoted(msg)
 		if err != nil {
 			logger.Error("release.promoted (versions): decode failure — dead-lettering",
 				"message_id", msg.ID, "error", err)

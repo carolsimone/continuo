@@ -304,7 +304,7 @@ func TestRedisLoginsNeedTheDeadLetterStreams(t *testing.T) {
 
 // specRunControllerRule is the run-controller rule of section 7 of the
 // per-component credentials design.
-const specRunControllerRule = "~continuo:release.promoted:v2 ~continuo:task.status.updated:v2 " +
+const specRunControllerRule = "~continuo:release.promoted:v1 ~continuo:task.status.updated:v1 " +
 	"%W~continuo:task.dispatch:v1 %W~continuo:run.cancelled:v1 " +
 	"%W~continuo:consumer.dead_letter:v1 %W~continuo:outbox.dead_letter:v1 " +
 	"-@all +ping +hello +client|setinfo +xadd +xreadgroup +xack +xautoclaim +xclaim +xpending " +
@@ -329,7 +329,7 @@ func TestRunControllerRule(t *testing.T) {
 	if !slices.Equal(gotTokens, want) {
 		t.Fatalf("run-controller rule differs from the design example plus +xinfo|groups.\n got: %s\nwant: %s", got, specRunControllerRule)
 	}
-	const exact = "~continuo:release.promoted:v2 ~continuo:task.status.updated:v2 " +
+	const exact = "~continuo:release.promoted:v1 ~continuo:task.status.updated:v1 " +
 		"%W~continuo:consumer.dead_letter:v1 %W~continuo:outbox.dead_letter:v1 " +
 		"%W~continuo:run.cancelled:v1 %W~continuo:task.dispatch:v1 " +
 		"-@all +ping +hello +client|setinfo +xinfo|groups +xadd +xreadgroup +xack +xautoclaim +xclaim +xpending " +

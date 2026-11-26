@@ -344,14 +344,14 @@ func filled(v reflect.Value, name string) {
 	}
 }
 
-// A fixture's trigger takes every field of the remediation.requested payload a
+// A fixture's trigger takes every field of the heal.triggered payload a
 // trigger carries, under its payload name, and keeps each value: a field the
 // payload gains must be added to the fixture format too, or this fails. A
 // trigger carries no classification time, so that payload field is left out. A
 // node's unfixable mark takes a reason a classifier gives, the one value the
 // fixture format accepts.
 func TestLoadFixtures_TheTriggerTakesEveryFieldOfThePayload(t *testing.T) {
-	var p events.RemediationRequested
+	var p events.HealTriggered
 	filled(reflect.ValueOf(&p).Elem(), "")
 	require.NotEmpty(t, p.Nodes)
 	for i := range p.Nodes {

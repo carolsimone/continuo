@@ -248,3 +248,17 @@ names:
     use: dbt/projects
   - pattern: 'edits_map_to_a_service|edit_outside_services|EditsMapToAService'
     use: edits_map_to_a_project, edit_outside_projects
+  # Streams group: every stream starts again at :v1, the heal trigger is
+  # heal.triggered and the parse result is release.parsed. Each pattern lists
+  # the stream name, its Go and Python constants and the names of the files and
+  # identifiers built from it.
+  - pattern: '(?i)\w*remediation[._-]?requested\w*'
+    use: heal.triggered
+  - pattern: '(?i)\w*manifest[._-]?loaded[._-]?candidate\w*'
+    use: release.parsed
+  - pattern: '(?i)\w*task[._]?status[._]?updated[:_]?v2\w*'
+    use: task.status.updated:v1
+  - pattern: '(?i)\w*release[._]?promoted[:_]?v2\w*'
+    use: release.promoted:v1
+  - pattern: '(?i)\w*remediation[._]?retry[._]?requested[:_]?v2\w*'
+    use: remediation.retry_requested:v1

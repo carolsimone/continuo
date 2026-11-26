@@ -21,7 +21,7 @@ import (
 )
 
 // TestTopologyByReference_LatePromotionMovesNothing announces two topologies,
-// A then B, and then replays A's release.promoted:v2 entry under a fresh event
+// A then B, and then replays A's release.promoted:v1 entry under a fresh event
 // id and without its outbox entry id — a late delivery or a redrive that dedup
 // cannot recognise. A has a model of a schedule B drops, so applying the
 // replay would swap catalog's live graph and run-controller's live release
@@ -36,7 +36,7 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const staleSchedule = "e2e-stale-probe"
-	tap := startStreamTap(t, ctx, clients.redisClient, streams.ReleasePromotedV2)
+	tap := startStreamTap(t, ctx, clients.redisClient, streams.ReleasePromotedV1)
 
 	nodes, schedules := e2eTopology(t, ctx, clients)
 	probe := topologyartifact.Node{
@@ -66,14 +66,14 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 		}
 	}
 	replay["event_id"] = uuid.NewString()
-	replayID, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(streams.ReleasePromotedV2), Values: replay}).Result()
+	replayID, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(streams.ReleasePromotedV1), Values: replay}).Result()
 	require.NoError(t, err, "replay A's promotion")
 
 	// Both groups that apply a promotion handle the replay before the live
 	// pointers are read.
 	for _, group := range []string{streams.CatalogReleaseTopology, streams.RunControllerReleasePromoted} {
-		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, group, replayID)
-		assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, group, replayID, "open"),
+		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV1, group, replayID)
+		assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV1, group, replayID, "open"),
 			"a late promotion is a valid entry: group %s acknowledges it and never dead-letters it", group)
 	}
 	assert.Equal(t, livePointer{releaseID: b.ReleaseID, promotionSeq: b.PromotionSeq}, readLivePointer(ctx, clients),
@@ -170,10 +170,10 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 		ChangedNodeIDs: []string{},
 	})
 	require.NoError(t, err)
-	id, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(streams.ReleasePromotedV2), Values: fields}).Result()
+	id, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(streams.ReleasePromotedV1), Values: fields}).Result()
 	require.NoError(t, err)
 
-	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.CatalogReleaseTopology, id, "open")
+	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV1, streams.CatalogReleaseTopology, id, "open")
 	cleanup := []string{dl.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanup...) })
 	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(dl.GetFailureKind()))
@@ -182,7 +182,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	assert.Equal(t, before, readLivePointer(ctx, clients), "a corrupt artifact must never move the live pointer")
 
 	// run-controller's group reads the same artifact and refuses it for the same reason.
-	runControllerDL := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.RunControllerReleasePromoted, id, "open")
+	runControllerDL := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV1, streams.RunControllerReleasePromoted, id, "open")
 	cleanup = append(cleanup, runControllerDL.GetId())
 	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(runControllerDL.GetFailureKind()))
 	assert.Contains(t, strings.ToLower(runControllerDL.GetError()), "checksum")
@@ -190,8 +190,8 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	// The other two groups settle on the entry as well; whichever dead letter
 	// the versions group records is removed with this test's.
 	for _, g := range []string{streams.CatalogReleaseVersions, streams.ExecutionControllerReleasePromoted} {
-		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, g, id)
-		if other := findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, g, id, "open"); other != nil {
+		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV1, g, id)
+		if other := findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV1, g, id, "open"); other != nil {
 			cleanup = append(cleanup, other.GetId())
 		}
 	}

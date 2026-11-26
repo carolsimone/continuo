@@ -126,12 +126,12 @@ func (f *dispatchFlow) rows() []attemptRow {
 	return rows
 }
 
-// reports are the task.status.updated:v2 payloads written for the task, in order.
+// reports are the task.status.updated:v1 payloads written for the task, in order.
 func (f *dispatchFlow) reports() []pkgevents.TaskStatusReport {
 	f.t.Helper()
 	var payloads [][]byte
 	require.NoError(f.t, f.db.Select(&payloads, `SELECT payload FROM execution_outbox
-		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY created_at, id`, f.taskID, streams.TaskStatusUpdatedV2))
+		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY created_at, id`, f.taskID, streams.TaskStatusUpdatedV1))
 	out := make([]pkgevents.TaskStatusReport, 0, len(payloads))
 	for _, stored := range payloads {
 		_, p, err := outbox.UnwrapTenant(stored)

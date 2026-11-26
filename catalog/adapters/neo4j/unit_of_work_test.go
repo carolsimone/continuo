@@ -517,7 +517,7 @@ func TestUnitOfWork_WritesPausedFollowsTheLease(t *testing.T) {
 
 // versionsMarker is the versions group's marker for the same stream message
 // that marker(messageID) names for the topology group: both groups read one
-// release.promoted:v2 entry, so both carry its message id.
+// release.promoted:v1 entry, so both carry its message id.
 func (f *uowFixture) versionsMarker(messageID string) uow.Marker {
 	return uow.Marker{TenantID: f.tenant, Group: streams.CatalogReleaseVersions, MessageID: messageID}
 }

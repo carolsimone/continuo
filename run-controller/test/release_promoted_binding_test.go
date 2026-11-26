@@ -44,7 +44,7 @@ func (m *memoryArtifacts) Load(_ context.Context, uri, sha256 string) (svcports.
 	return a, nil
 }
 
-// promotionHarness drives run-controller's release.promoted:v2 binding against a real
+// promotionHarness drives run-controller's release.promoted:v1 binding against a real
 // Postgres. Every delivery gets a fresh stream message id.
 type promotionHarness struct {
 	artifacts *memoryArtifacts
@@ -69,7 +69,7 @@ func (h *promotionHarness) publish(tenantID, releaseID, sha string, nodes ...top
 	return uri
 }
 
-// deliver hands the binding one release.promoted:v2 entry and returns its
+// deliver hands the binding one release.promoted:v1 entry and returns its
 // message id and the binding's error.
 func (h *promotionHarness) deliver(t *testing.T, tenantID, releaseID string, seq int64, uri, sha string) (string, error) {
 	t.Helper()
@@ -120,7 +120,7 @@ type releaseTimes struct {
 	UpdatedAt string `db:"updated_at"`
 }
 
-// TestReleasePromotedBinding drives the release.promoted:v2 binding through the
+// TestReleasePromotedBinding drives the release.promoted:v1 binding through the
 // pointer outcomes and failure classes of a promotion. Each subtest uses its
 // own tenant, so they share one database without touching each other's rows.
 func TestReleasePromotedBinding(t *testing.T) {
@@ -150,7 +150,7 @@ func TestReleasePromotedBinding(t *testing.T) {
 			WHERE tenant_id = $1 AND release_id = 'rel-1' AND upstream_key = 'raw.orders' AND downstream_key = 'stg.orders'`, tenant))
 		assert.Equal(t, 1, countOf(t, db, `
 			SELECT count(*) FROM message_processing
-			WHERE message_id = $1 AND stream_name = $2 AND state = 'completed'`, id, streams.ReleasePromotedV2),
+			WHERE message_id = $1 AND stream_name = $2 AND state = 'completed'`, id, streams.ReleasePromotedV1),
 			"the dedup row is completed in the same transaction")
 	})
 
@@ -234,7 +234,7 @@ func TestReleasePromotedBinding(t *testing.T) {
 		assert.ErrorIs(t, err, svcports.ErrTopologyArtifactNotFound)
 		assert.Equal(t, pkgredis.ClassTransient, pkgredis.Classify(err))
 		assert.Zero(t, countOf(t, db, `SELECT count(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-			id, streams.ReleasePromotedV2), "the artifact is read before the transaction opens")
+			id, streams.ReleasePromotedV1), "the artifact is read before the transaction opens")
 	})
 
 	t.Run("an object-storage outage pauses the consumer", func(t *testing.T) {

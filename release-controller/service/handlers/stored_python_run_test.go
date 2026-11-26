@@ -69,7 +69,7 @@ func assertStoredPythonCandidateRejected(t *testing.T, store *fakeStore, release
 	assert.Nil(t, store.GetServiceProd(project), "no service_prod row is written for a kind-python run")
 	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
 	for _, e := range store.OutboxEntries() {
-		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "no release.promoted:v2 is emitted")
+		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "no release.promoted:v1 is emitted")
 	}
 
 	var rejected struct {
@@ -121,7 +121,7 @@ func TestHandleValidationResult_AStoredPythonVerificationFailsWithNoReleaseEvent
 	assert.Contains(t, r.FailDetail(), pythonKindRefusal)
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a verification emits no release event")
-		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a verification emits no release event")
+		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification emits no release event")
 	}
 	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }

@@ -40,7 +40,7 @@ func (h *reconcileHarness) firstPromoteSeedRunID(releaseID string) uuid.UUID {
 }
 
 // reconcileHarness runs the seed reconcile, alone and inside run-controller's
-// release.promoted:v2 binding, with releases of one tenant of its own. A pass
+// release.promoted:v1 binding, with releases of one tenant of its own. A pass
 // of the reconciler covers every tenant with a live release.
 type reconcileHarness struct {
 	db         *sqlx.DB
@@ -93,7 +93,7 @@ func (h *reconcileHarness) loaded(t *testing.T, schema, table, hash string) {
 	}))
 }
 
-// promote delivers one release.promoted:v2 entry for the harness's tenant to
+// promote delivers one release.promoted:v1 entry for the harness's tenant to
 // run-controller's binding, with the artifact it names held in memory.
 func (h *reconcileHarness) promote(t *testing.T, releaseID string, seq int64, bootstrap bool, changed []string, nodes ...topology.NodeSpec) {
 	t.Helper()
@@ -140,7 +140,7 @@ func (h *reconcileHarness) materialization(t *testing.T, key string) materializa
 // TestSeedReconcile drives the seed reconcile against a real Postgres: the run
 // and build request a changed seed gets, the passes that must create nothing,
 // two passes racing, and the first promotion's adoption through the
-// release.promoted:v2 binding. Each subtest uses its own tenant and releases.
+// release.promoted:v1 binding. Each subtest uses its own tenant and releases.
 func TestSeedReconcile(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")

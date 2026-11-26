@@ -36,7 +36,7 @@ func promoteCandidate(t *testing.T, deps *handlers.Deps, releaseID string, topo 
 }
 
 // Each promotion takes the next seq, records it on current_prod and carries it
-// on release.promoted:v2 with the run's own topology reference.
+// on release.promoted:v1 with the run's own topology reference.
 func TestPromote_EachPromotionTakesTheNextSeq(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
@@ -48,7 +48,7 @@ func TestPromote_EachPromotionTakesTheNextSeq(t *testing.T) {
 
 	var seqs []int64
 	for _, e := range outboxEntries(store) {
-		if e.StreamName == streams.ReleasePromotedV2 {
+		if e.StreamName == streams.ReleasePromotedV1 {
 			seqs = append(seqs, promotedEvent(t, e).PromotionSeq)
 		}
 	}
@@ -56,7 +56,7 @@ func TestPromote_EachPromotionTakesTheNextSeq(t *testing.T) {
 
 	rB, err := store.GetRelease("rB")
 	require.NoError(t, err)
-	last := promotedEvent(t, lastEntryOn(store, streams.ReleasePromotedV2))
+	last := promotedEvent(t, lastEntryOn(store, streams.ReleasePromotedV1))
 	assert.Equal(t, "rB", last.ReleaseID)
 	assert.Equal(t, rB.CandidateTopologyRef().URI, last.TopologyURI)
 	assert.Equal(t, rB.CandidateTopologyRef().SHA256, last.TopologySHA256)
@@ -81,7 +81,7 @@ func TestPromote_ChangedNodeIDsAreSortedAndNeverNameATest(t *testing.T) {
 		{UniqueID: "test.p.not_null_b.1", ProjectName: "svc-a", NodeType: "dbt-test", ContentHash: "t", UpstreamUniqueIDs: []string{"b"}},
 	})
 
-	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
 	assert.Equal(t, []string{"b", "c"}, p.ChangedNodeIDs)
 	assert.False(t, p.Bootstrap)
 }
@@ -102,7 +102,7 @@ func TestPromote_BootstrapListsTheExactDiff(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{ReleaseID: "rBoot", Status: "ok", TopologyRef: ref}))
 
-	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
 	assert.True(t, p.Bootstrap)
 	assert.Equal(t, []string{"a"}, p.ChangedNodeIDs, "no production yet: every non-test node is changed")
 	assert.Equal(t, int64(1), p.PromotionSeq)
@@ -116,10 +116,10 @@ func TestPromote_VerificationNeverTakesASeq(t *testing.T) {
 		ReleaseID: "rVerify", AggregateStatus: "ok",
 	}))
 	assert.Equal(t, int64(0), store.LastPromotionSeq())
-	assert.Nil(t, lastEntryOn(store, streams.ReleasePromotedV2))
+	assert.Nil(t, lastEntryOn(store, streams.ReleasePromotedV1))
 }
 
-// The contract bundle the parse named travels on release.promoted:v2, whether
+// The contract bundle the parse named travels on release.promoted:v1, whether
 // the promotion follows a validation or is a bootstrap that skips it.
 func TestPromoteToProduction_CarriesTheContractBundle(t *testing.T) {
 	ref := func(id string) release.ContractBundleRef {
@@ -145,7 +145,7 @@ func TestPromoteToProduction_CarriesTheContractBundle(t *testing.T) {
 		seedValidationNodes(t, deps, "rV", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 		require.NoError(t, handlers.HandleValidationResult(ctx, deps, handlers.HandleValidationResultInput{ReleaseID: "rV", AggregateStatus: "ok"}))
 
-		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
 		assert.Equal(t, ref("rV").URI, p.ContractBundleURI)
 		assert.Equal(t, ref("rV").SHA256, p.ContractBundleSHA256)
 	})
@@ -157,7 +157,7 @@ func TestPromoteToProduction_CarriesTheContractBundle(t *testing.T) {
 			ContractBundle: ref("rB"), ContinuoContracts: "0.2.0",
 		}))
 
-		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
 		assert.Equal(t, ref("rB").URI, p.ContractBundleURI)
 		assert.Equal(t, ref("rB").SHA256, p.ContractBundleSHA256)
 	})
@@ -167,7 +167,7 @@ func TestPromoteToProduction_CarriesTheContractBundle(t *testing.T) {
 		deps.Bucket = "continuo"
 		promoteCandidate(t, deps, "rN", topo)
 
-		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
 		assert.Empty(t, p.ContractBundleURI)
 		assert.Empty(t, p.ContractBundleSHA256)
 	})

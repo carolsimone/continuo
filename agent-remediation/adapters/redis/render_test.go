@@ -321,11 +321,11 @@ func TestRender_HandedOverCarriesTheRowsTenant(t *testing.T) {
 func TestRender_ConsumerDeadLetterCarriesTheRowsTenant(t *testing.T) {
 	p := &agentRemediationOutboxPublisher{}
 	occurred := time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)
-	key := pkgredis.Key(streams.RemediationRequestedV3)
+	key := pkgredis.Key(streams.HealTriggeredV1)
 	message := pkgevents.DeadLetteredMessage{
 		OccurredAt:    occurred,
-		Stream:        streams.RemediationRequestedV3,
-		Group:         streams.AgentRemediationRemediationRequested,
+		Stream:        streams.HealTriggeredV1,
+		Group:         streams.AgentRemediationHealTriggered,
 		MessageID:     "1700000000000-0",
 		Key:           key,
 		Fields:        map[string]string{"tenant_id": "acme", "event_id": "ev-1", "payload": `{"release_id":"rel-1"}`},
@@ -349,11 +349,11 @@ func TestRender_ConsumerDeadLetterCarriesTheRowsTenant(t *testing.T) {
 	assert.Equal(t, "acme", env.TenantID)
 	assert.Equal(t, "agent-remediation", env.Producer)
 	assert.True(t, occurred.Equal(env.OccurredAt))
-	assert.Equal(t, pkgevents.ConsumerDeadLetterEventID("acme", streams.AgentRemediationRemediationRequested,
-		streams.RemediationRequestedV3, "1700000000000-0@"+key), env.EventID)
+	assert.Equal(t, pkgevents.ConsumerDeadLetterEventID("acme", streams.AgentRemediationHealTriggered,
+		streams.HealTriggeredV1, "1700000000000-0@"+key), env.EventID)
 	assert.Equal(t, pkgevents.ConsumerDeadLetter{
-		OriginalStream:    streams.RemediationRequestedV3,
-		OriginalGroup:     streams.AgentRemediationRemediationRequested,
+		OriginalStream:    streams.HealTriggeredV1,
+		OriginalGroup:     streams.AgentRemediationHealTriggered,
 		OriginalMessageID: "1700000000000-0",
 		OriginalKey:       key,
 		Fields:            message.Fields,

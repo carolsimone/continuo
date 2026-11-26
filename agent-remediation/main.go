@@ -59,7 +59,7 @@ import (
 // has NO timeout, so one hung request could block the worker's step forever.
 const llmClientTimeout = 120 * time.Second
 
-// consumerHandlerTimeout bounds each remediation.requested handler invocation
+// consumerHandlerTimeout bounds each heal.triggered handler invocation
 // with a context deadline, so a genuinely-hung handler eventually returns
 // control to the read loop. The handler only records the trigger as a
 // remediation, one database transaction, so the ceiling is generous.
@@ -388,10 +388,10 @@ func main() {
 	)
 	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
 
-	// Start the remediation.requested consumer in a goroutine; blocks until ctx
+	// Start the heal.triggered consumer in a goroutine; blocks until ctx
 	// is cancelled. It hands each trigger to the runner, which records it as a
 	// remediation.
-	runConsumer("remediation_requested", rredis.NewRemediationRequestedConsumer(rc, accept, logger))
+	runConsumer("heal_triggered", rredis.NewHealTriggeredConsumer(rc, accept, logger))
 
 	// Start the RemediationProposals gRPC server. The proposal service uses a
 	// DB-bound (non-transactional) repository for reads and the UoW factory for

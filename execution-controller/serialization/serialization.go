@@ -1,7 +1,7 @@
 // Package serialization holds the wire- and persistence-facing DTOs for
 // execution-controller's json-tagged boundary types, keeping the domain packages
 // (command, model) free of struct tags. It sits outside adapters/ so the
-// application layer (service/reports, which writes the task.status.updated:v2
+// application layer (service/reports, which writes the task.status.updated:v1
 // report payloads to the outbox) may map through it without importing an
 // adapter, and outside domain/ so the tags live away from the domain types.
 // service/reports and the postgres repository (the deployments columns

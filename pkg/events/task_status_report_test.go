@@ -14,11 +14,11 @@ import (
 )
 
 var taskStatusReportFixtures = []string{
-	"testdata/task_status_updated_v2_queued.json",
-	"testdata/task_status_updated_v2_running.json",
-	"testdata/task_status_updated_v2_succeeded.json",
-	"testdata/task_status_updated_v2_failed.json",
-	"testdata/task_status_updated_v2_preflight.json",
+	"testdata/task_status_updated_v1_queued.json",
+	"testdata/task_status_updated_v1_running.json",
+	"testdata/task_status_updated_v1_succeeded.json",
+	"testdata/task_status_updated_v1_failed.json",
+	"testdata/task_status_updated_v1_preflight.json",
 }
 
 type taskStatusReportFixture struct {
@@ -141,7 +141,7 @@ func TestDecodeTaskStatusReport_RejectsAStoppedReportNamingAFailure(t *testing.T
 	}
 }
 
-// reportFields is a task.status.updated:v2 entry of execution-controller for
+// reportFields is a task.status.updated:v1 entry of execution-controller for
 // the run and task of validDispatchFields, with extra payload members.
 func reportFields(extra string) map[string]string {
 	fields := validDispatchFields(extra)
@@ -150,7 +150,7 @@ func reportFields(extra string) map[string]string {
 }
 
 func TestTaskStatusReport_DecodesTheSeedPreflightFindings(t *testing.T) {
-	fx := loadTaskStatusReportFixture(t, "testdata/task_status_updated_v2_preflight.json")
+	fx := loadTaskStatusReportFixture(t, "testdata/task_status_updated_v1_preflight.json")
 	_, p, err := events.DecodeTaskStatusReport(fixtureFields(t, fx.Fields))
 	require.NoError(t, err)
 	assert.Equal(t, model.AttemptStatusFailed, p.Status)
@@ -164,7 +164,7 @@ func TestTaskStatusReport_DecodesTheSeedPreflightFindings(t *testing.T) {
 		},
 	}, p.SeedPreflight)
 
-	_, plain, err := events.DecodeTaskStatusReport(fixtureFields(t, loadTaskStatusReportFixture(t, "testdata/task_status_updated_v2_failed.json").Fields))
+	_, plain, err := events.DecodeTaskStatusReport(fixtureFields(t, loadTaskStatusReportFixture(t, "testdata/task_status_updated_v1_failed.json").Fields))
 	require.NoError(t, err)
 	assert.Nil(t, plain.SeedPreflight)
 }

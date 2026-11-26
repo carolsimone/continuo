@@ -118,7 +118,7 @@ const (
 //
 //	POST /releases (kind=python-odcs, one node whose declared read cannot bind)
 //	→ the validation Job's bind check fails → release rejected
-//	→ classifier emits remediation.requested:v3 (one node, node_type=python-node)
+//	→ classifier emits heal.triggered:v1 (one node, node_type=python-node)
 //	→ agent-remediation's runner matches it to the python-validation type: its
 //	  contract_file step fetches the repository tarball at the failing commit
 //	  from stub-github and finds the .odcs.yaml file declaring the node, its
@@ -170,7 +170,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyBadReadProject, releaseID)
 	defer clearProd()
@@ -300,7 +300,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyLoopProject, releaseID)
 	defer clearProd()
@@ -716,7 +716,7 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path,
 //	  project, node_type=python-node}]} — the parser's own text is inline;
 //	  there is no dbt log because nothing ran
-//	→ classifier emits remediation.requested:v3 (source=parse, node_type=python-node)
+//	→ classifier emits heal.triggered:v1 (source=parse, node_type=python-node)
 //	→ agent-remediation's runner matches it to the python-parse type: the
 //	  trigger's file_path names the node's contract file by its path in the
 //	  project's bundle, not in the repository, so the contract_file step finds
