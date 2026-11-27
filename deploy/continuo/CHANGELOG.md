@@ -127,7 +127,7 @@ This release adds three values keys, `agentRemediation.workflows.files`, `contra
 - **The release the install runs on is its live release, and each project's record of what production runs is its production pointer.** TL;DR: the public API serves the live release at `GET /api/v1/live-release`, naming it `live_release_id`. A CI script that reads the earlier route gets a 404 until it reads this one. Nothing reads the old names.
   - The public API: `GET /api/v1/live-release` answers `{"live_release_id", "node_count", "updated_at"}`. The ui's own API serves it at `GET /api/releases/live-release`, and release-controller's internal API at `GET /live-release`.
   - The release database keeps the live release in `live_release` and each project's production pointer in `production_pointers`. The install starts with empty databases (see above).
-  - Tools in the release-controller image: `seed-production-pointers` writes the production pointers of an install whose live release has none, and `announce-topology --reannounce-live` and `--print-live` act on the live release's topology.
+  - Tools in the release-controller image: `seed-production-pointers` writes a production pointer for every project of the live release, replacing any the project already has (run it when a project of the live release has none), and `announce-topology --reannounce-live` and `--print-live` act on the live release's topology.
 
 ### Added
 

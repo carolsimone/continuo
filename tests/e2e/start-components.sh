@@ -82,6 +82,6 @@ log_info "Compiling and uploading dbt manifests..."
 docker exec dbt-compile-and-load \
   uv run python -m dbt_upload load --projects-dir /app/projects --release-id e2e-baseline
 log_info "dbt manifests uploaded to canonical keys (<project>/e2e-baseline/manifest.json)"
-log_info "NOTE: per-project image tags are seeded into release-controller's production pointers by setup.sh / provision-k8s-test-env.sh"
+log_info "NOTE: the e2e writes release-controller's production pointers from the per-project image tags in tests/e2e/.image-tags, which setup.sh / provision-k8s-test-env.sh write"
 
 log_info "All components started successfully!"

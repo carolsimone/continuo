@@ -33,7 +33,7 @@ func TestRetryWhileUnreachable_RetriesAnOutageUntilItClears(t *testing.T) {
 
 func TestRetryWhileUnreachable_ReturnsAnyOtherErrorAtOnce(t *testing.T) {
 	calls := 0
-	boom := errors.New("load the live release's topology r1: topology artifact corrupt")
+	boom := errors.New("load the topology of live release r1: topology artifact corrupt")
 	err := retryWhileUnreachable(context.Background(), discardLogger(), "test", func(context.Context) error {
 		calls++
 		return boom

@@ -21,7 +21,7 @@ func loadProdTopology(ctx context.Context, d *Deps, live *release.LiveRelease) (
 	}
 	topo, err := d.Topologies.Load(ctx, live.Topology())
 	if err != nil {
-		return nil, fmt.Errorf("load the live release's topology %s: %w", live.ReleaseID(), err)
+		return nil, fmt.Errorf("load the topology of live release %s: %w", live.ReleaseID(), err)
 	}
 	return topo, nil
 }
