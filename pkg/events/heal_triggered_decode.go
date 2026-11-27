@@ -32,7 +32,7 @@ func DecodeHealTriggered(fields map[string]string) (Envelope, HealTriggered, err
 // DecodeHealTriggeredPayload reads the payload of a heal trigger as a store
 // holds it: the heal.triggered:v1 payload as the stream carried it.
 // Every error wraps ErrMalformedEnvelope: a payload that is not JSON, an
-// empty release_id, a remediation_round below 1 (a missing one included), a source outside the
+// empty release_id, a round below 1 (a missing one included), a source outside the
 // remediation_source vocabulary, a node without a node_id, or an unfixable
 // reason other than the two the classifier records
 // (model.HandoverReasonClassifierInfra and
@@ -61,8 +61,8 @@ func validHealTriggered(p HealTriggered) error {
 	if p.ReleaseID == "" {
 		return fmt.Errorf("%w: no release_id", ErrMalformedEnvelope)
 	}
-	if p.RemediationRound < 1 {
-		return fmt.Errorf("%w: remediation_round %d for release %s", ErrMalformedEnvelope, p.RemediationRound, p.ReleaseID)
+	if p.Round < 1 {
+		return fmt.Errorf("%w: round %d for release %s", ErrMalformedEnvelope, p.Round, p.ReleaseID)
 	}
 	if !model.RemediationSource(p.Source).IsValid() {
 		return fmt.Errorf("%w: source %q for release %s", ErrMalformedEnvelope, p.Source, p.ReleaseID)

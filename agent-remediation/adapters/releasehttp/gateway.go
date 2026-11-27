@@ -52,7 +52,7 @@ type releaseCheckBody struct {
 	ImageTag          string `json:"image_tag"`
 	Kind              string `json:"kind"`
 	VerifiesReleaseID string `json:"verifies_release_id"`
-	RemediationRound  int    `json:"remediation_round"`
+	Round             int    `json:"round"`
 	Try               int    `json:"try"`
 	SourceOverlayURI  string `json:"source_overlay_uri,omitempty"`
 }
@@ -66,7 +66,7 @@ func (g *Gateway) Submit(ctx context.Context, r ports.ReleaseCheckRequest) error
 	}
 	raw, err := json.Marshal(releaseCheckBody{
 		CheckID: r.CheckID, Project: r.Project, ImageTag: r.ImageTag, Kind: r.Kind,
-		VerifiesReleaseID: r.VerifiesReleaseID, RemediationRound: r.RemediationRound, Try: r.Try, SourceOverlayURI: r.SourceOverlayURI,
+		VerifiesReleaseID: r.VerifiesReleaseID, Round: r.Round, Try: r.Try, SourceOverlayURI: r.SourceOverlayURI,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal release check %s: %w", r.CheckID, err)

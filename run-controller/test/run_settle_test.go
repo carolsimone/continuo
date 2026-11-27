@@ -55,7 +55,7 @@ func TestSettle(t *testing.T) {
 	h.storeRelease(t, releaseID, promotedNode("raw", "settle_orders", "dbt-model"))
 	unplanned, unplannedTask := h.legacyRun(t, releaseID, "settle_orders")
 	promoteRelease(t, db, scheduledNode("raw", "settle_planned", "dbt-model", "settle-planned"))
-	planned := h.trigger(t, "settle-planned", model.OperationRun)
+	planned := h.manualRun(t, "settle-planned", model.OperationRun)
 	newUoW := func() uow.UnitOfWork { return ownRuns{UnitOfWork: h.factory(), ids: []uuid.UUID{unplanned, planned}} }
 
 	n, err := runsettle.Settle(ctx, newUoW, h.logger)

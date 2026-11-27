@@ -30,13 +30,13 @@ func (f *fakeFixesClient) ListFixes(_ context.Context, in *remediationv1.ListFix
 func TestFixesClient_ListFixesForRelease_MapsSummaries(t *testing.T) {
 	fake := &fakeFixesClient{resp: &remediationv1.ListFixesResponse{
 		Fixes: []*remediationv1.Fix{
-			{Id: "p1", NodeId: "finance", Try: 1, Status: "failed", PrState: "", PrUrl: "", RemediationRound: 1},
+			{Id: "p1", NodeId: "finance", Try: 1, Status: "failed", PrState: "", PrUrl: "", Round: 1},
 			{
 				Id: "p2", NodeId: "finance", Try: 2, Status: "proposed",
 				PrState: "open", PrUrl: "https://x/pr/7",
-				PullRequests:     []*remediationv1.PullRequest{{Project: "core", PrState: "open", PrUrl: "https://x/pr/7"}},
-				PrProjects:       []string{"core"},
-				RemediationRound: 2,
+				PullRequests: []*remediationv1.PullRequest{{Project: "core", PrState: "open", PrUrl: "https://x/pr/7"}},
+				PrProjects:   []string{"core"},
+				Round:        2,
 			},
 		},
 	}}
@@ -45,12 +45,12 @@ func TestFixesClient_ListFixesForRelease_MapsSummaries(t *testing.T) {
 	got, err := client.ListFixesForRelease(context.Background(), "rel-1")
 	require.NoError(t, err)
 	require.Equal(t, []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "failed", RemediationRound: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "failed", Round: 1},
 		{
 			ID: "p2", NodeID: "finance", Try: 2, Status: "proposed",
-			PullRequests:     []ports.FixPR{{Project: "core", PRState: "open", PRURL: "https://x/pr/7"}},
-			PRProjects:       []string{"core"},
-			RemediationRound: 2,
+			PullRequests: []ports.FixPR{{Project: "core", PRState: "open", PRURL: "https://x/pr/7"}},
+			PRProjects:   []string{"core"},
+			Round:        2,
 		},
 	}, got)
 

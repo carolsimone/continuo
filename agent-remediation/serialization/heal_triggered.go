@@ -16,7 +16,7 @@ func TriggerFromHealTriggered(p events.HealTriggered) remediation.Trigger {
 	t := remediation.Trigger{
 		Source:        p.Source,
 		ReleaseID:     p.ReleaseID,
-		Round:         p.RemediationRound,
+		Round:         p.Round,
 		Repo:          p.Repo,
 		CommitSHA:     p.CommitSHA,
 		CodeBundleURI: p.CodeBundleURI,
@@ -57,13 +57,13 @@ func TriggerFromHealTriggered(p events.HealTriggered) remediation.Trigger {
 // classification time, so classified_at is empty.
 func healTriggeredFromTrigger(t remediation.Trigger) events.HealTriggered {
 	p := events.HealTriggered{
-		Source:           t.Source,
-		ReleaseID:        t.ReleaseID,
-		RemediationRound: t.Round,
-		Repo:             t.Repo,
-		CommitSHA:        t.CommitSHA,
-		CodeBundleURI:    t.CodeBundleURI,
-		Nodes:            make([]events.HealTriggeredNode, 0, len(t.Nodes)),
+		Source:        t.Source,
+		ReleaseID:     t.ReleaseID,
+		Round:         t.Round,
+		Repo:          t.Repo,
+		CommitSHA:     t.CommitSHA,
+		CodeBundleURI: t.CodeBundleURI,
+		Nodes:         make([]events.HealTriggeredNode, 0, len(t.Nodes)),
 	}
 	for _, n := range t.Nodes {
 		node := events.HealTriggeredNode{

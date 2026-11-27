@@ -203,74 +203,74 @@ func failedSource(t *testing.T, schedule string) string {
 	return src
 }
 
-func TestTriggerRerun_ARetryReturnsTheSameRun(t *testing.T) {
+func TestStartRerun_ARetryReturnsTheSameRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-rerun-retry"
 	promoteSchedules(t, runControllerDB, schedule)
 	src := failedSource(t, schedule)
 	requestID := uuid.NewString()
 
-	first, err := runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: requestID, SourceRunId: src})
+	first, err := runClient.StartRerun(ctx, &runv1.StartRerunRequest{RequestId: requestID, SourceRunId: src})
 	require.NoError(t, err)
 	t.Cleanup(func() { finishRun(t, first.GetRunId()) })
-	again, err := runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: requestID, SourceRunId: src})
+	again, err := runClient.StartRerun(ctx, &runv1.StartRerunRequest{RequestId: requestID, SourceRunId: src})
 	require.NoError(t, err)
 	assert.Equal(t, first.GetRunId(), again.GetRunId())
 	assert.Equal(t, schedule, first.GetScheduleName())
 	assert.Equal(t, schedule, again.GetScheduleName(), "a replay answers with the run's schedule name")
 	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE source_run_id = $1`, src))
 
-	_, err = runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: requestID, SourceRunId: src})
+	_, err = runClient.StartRebase(ctx, &runv1.StartRebaseRequest{RequestId: requestID, SourceRunId: src})
 	requireReused(t, err)
 }
 
-func TestTriggerRebase_ARetryReturnsTheSameRun(t *testing.T) {
+func TestStartRebase_ARetryReturnsTheSameRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-rebase-retry"
 	live := promoteSchedules(t, runControllerDB, schedule)
 	src := failedSource(t, schedule)
 	requestID := uuid.NewString()
-	req := &runv1.TriggerRebaseRequest{RequestId: requestID, SourceRunId: src, ExpectedReleaseId: live.ReleaseID}
+	req := &runv1.StartRebaseRequest{RequestId: requestID, SourceRunId: src, ExpectedReleaseId: live.ReleaseID}
 
-	first, err := runClient.TriggerRebase(ctx, req)
+	first, err := runClient.StartRebase(ctx, req)
 	require.NoError(t, err)
 	t.Cleanup(func() { finishRun(t, first.GetRunId()) })
-	again, err := runClient.TriggerRebase(ctx, req)
+	again, err := runClient.StartRebase(ctx, req)
 	require.NoError(t, err)
 	assert.Equal(t, first.GetRunId(), again.GetRunId())
 	assert.Equal(t, schedule, again.GetScheduleName())
 	assert.Equal(t, "rebase", schedulerKind(t, first.GetRunId()))
 
-	_, err = runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{
+	_, err = runClient.StartRebase(ctx, &runv1.StartRebaseRequest{
 		RequestId: requestID, SourceRunId: src, ExpectedReleaseId: live.ReleaseID, IncludeChangedUpstream: true,
 	})
 	requireReused(t, err)
 	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE source_run_id = $1`, src))
 }
 
-func TestTriggerSingleNodeRun_ReuseForAnotherNodeIsAlreadyExists(t *testing.T) {
+func TestStartSingleNodeRun_ReuseForAnotherNodeIsAlreadyExists(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-single"
 	promoteRelease(t, runControllerDB,
 		scheduledNode("mart", "rs_single_a", "dbt-model", schedule),
 		scheduledNode("mart", "rs_single_b", "dbt-model", schedule))
 	requestID := uuid.NewString()
-	nodeRun := func(table string) *runv1.TriggerSingleNodeRunRequest {
-		return &runv1.TriggerSingleNodeRunRequest{
+	nodeRun := func(table string) *runv1.StartSingleNodeRunRequest {
+		return &runv1.StartSingleNodeRunRequest{
 			RequestId: requestID, ProjectName: "service-1", SchemaName: "mart", TableName: table, MetadataSource: "latest",
 		}
 	}
 
-	first, err := runClient.TriggerSingleNodeRun(ctx, nodeRun("rs_single_a"))
+	first, err := runClient.StartSingleNodeRun(ctx, nodeRun("rs_single_a"))
 	require.NoError(t, err)
 	t.Cleanup(func() { finishRun(t, first.GetRunId()) })
 	assert.True(t, strings.HasPrefix(first.GetScheduleName(), "single-node-run-"), first.GetScheduleName())
-	again, err := runClient.TriggerSingleNodeRun(ctx, nodeRun("rs_single_a"))
+	again, err := runClient.StartSingleNodeRun(ctx, nodeRun("rs_single_a"))
 	require.NoError(t, err)
 	assert.Equal(t, first.GetRunId(), again.GetRunId())
 	assert.Equal(t, first.GetScheduleName(), again.GetScheduleName())
 
-	_, err = runClient.TriggerSingleNodeRun(ctx, nodeRun("rs_single_b"))
+	_, err = runClient.StartSingleNodeRun(ctx, nodeRun("rs_single_b"))
 	requireReused(t, err)
 	assert.Equal(t, 1, commandRecords(t, requestID))
 	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM tasks WHERE node_key LIKE 'mart.rs_single_%'`))
@@ -390,33 +390,33 @@ func TestPreviewRebase_IsServedOnRunService(t *testing.T) {
 // the request's fingerprint: the same list, in any order or spelling, replays
 // the run, another list reuses the id, and a call naming none keeps the
 // fingerprint every earlier call of the id had.
-func TestTriggerSingleNodeRun_TheAcknowledgedObjectsArePartOfTheFingerprint(t *testing.T) {
+func TestStartSingleNodeRun_TheAcknowledgedObjectsArePartOfTheFingerprint(t *testing.T) {
 	ctx := context.Background()
 	promoteRelease(t, runControllerDB, scheduledNode("raw", "rs_ack_seed", "dbt-seed", "rs-ack"))
 	h := newBuiltHarness(runControllerDB)
 	planner := runstart.Planner{Tasks: defaultPlanner.Tasks, Family: warehouse.SchemaBound, Engine: "postgres"}
 	commands := svchandlers.NewRunCommands(h.factory, noRunMetrics{}, planner, h.logger)
 	requestID := uuid.New()
-	fullRefresh := func(acknowledged ...string) svchandlers.TriggerSingleNodeRunCommand {
-		return svchandlers.TriggerSingleNodeRunCommand{RequestID: requestID, TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
+	fullRefresh := func(acknowledged ...string) svchandlers.StartSingleNodeRunCommand {
+		return svchandlers.StartSingleNodeRunCommand{RequestID: requestID, StartSingleNodeRunInput: svchandlers.StartSingleNodeRunInput{
 			TenantID: pkgevents.DefaultTenantID, Target: run.NodeID{ProjectName: "service-1", SchemaName: "raw", TableName: "rs_ack_seed"},
 			MetadataSource: run.MetadataSourceLatest, Operation: model.OperationFullRefresh, AcknowledgedDependents: acknowledged,
 		}}
 	}
 
-	first, err := commands.TriggerSingleNodeRun(ctx, fullRefresh("bi.a", "bi.b"))
+	first, err := commands.StartSingleNodeRun(ctx, fullRefresh("bi.a", "bi.b"))
 	require.NoError(t, err)
 	t.Cleanup(func() { finishRun(t, first.RunID.String()) })
 	assert.False(t, first.Replayed)
 
-	again, err := commands.TriggerSingleNodeRun(ctx, fullRefresh("bi.a", "bi.b"))
+	again, err := commands.StartSingleNodeRun(ctx, fullRefresh("bi.a", "bi.b"))
 	require.NoError(t, err)
 	assert.True(t, again.Replayed)
 	assert.Equal(t, first.RunID, again.RunID)
 
-	_, err = commands.TriggerSingleNodeRun(ctx, fullRefresh("bi.a"))
+	_, err = commands.StartSingleNodeRun(ctx, fullRefresh("bi.a"))
 	assert.ErrorIs(t, err, commandrequest.ErrReused)
-	_, err = commands.TriggerSingleNodeRun(ctx, fullRefresh())
+	_, err = commands.StartSingleNodeRun(ctx, fullRefresh())
 	assert.ErrorIs(t, err, commandrequest.ErrReused, "naming none is another request than naming two")
 	assert.Equal(t, 1, commandRecords(t, requestID.String()))
 
@@ -424,13 +424,13 @@ func TestTriggerSingleNodeRun_TheAcknowledgedObjectsArePartOfTheFingerprint(t *t
 
 // A single-node call the planner refuses stores no command record and no run,
 // so the same request id may be sent again once the refusal no longer holds.
-func TestTriggerSingleNodeRun_ARefusedCallStoresNothing(t *testing.T) {
+func TestStartSingleNodeRun_ARefusedCallStoresNothing(t *testing.T) {
 	ctx := context.Background()
 	h := newBuiltHarness(runControllerDB)
 	planner := runstart.Planner{Tasks: defaultPlanner.Tasks, Family: warehouse.SchemaBound, Engine: "postgres"}
 	commands := svchandlers.NewRunCommands(h.factory, noRunMetrics{}, planner, h.logger)
-	single := func(requestID uuid.UUID, table string, op model.Operation, acknowledged ...string) svchandlers.TriggerSingleNodeRunCommand {
-		return svchandlers.TriggerSingleNodeRunCommand{RequestID: requestID, TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
+	single := func(requestID uuid.UUID, table string, op model.Operation, acknowledged ...string) svchandlers.StartSingleNodeRunCommand {
+		return svchandlers.StartSingleNodeRunCommand{RequestID: requestID, StartSingleNodeRunInput: svchandlers.StartSingleNodeRunInput{
 			TenantID: pkgevents.DefaultTenantID, Target: run.NodeID{ProjectName: "service-1", SchemaName: "raw", TableName: table},
 			MetadataSource: run.MetadataSourceLatest, Operation: op, AcknowledgedDependents: acknowledged,
 		}}
@@ -447,13 +447,13 @@ func TestTriggerSingleNodeRun_ARefusedCallStoresNothing(t *testing.T) {
 		promoteRelease(t, runControllerDB, falseSeed)
 		requestID := uuid.New()
 
-		_, err := commands.TriggerSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh))
+		_, err := commands.StartSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh))
 		require.ErrorIs(t, err, runplan.ErrSeedFullRefreshDisabled)
 		assert.Zero(t, commandRecords(t, requestID.String()))
 		assert.Zero(t, tasksAt(table))
 
 		promoteRelease(t, runControllerDB, scheduledNode("raw", table, "dbt-seed", "rs-refused"))
-		retry, err := commands.TriggerSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh))
+		retry, err := commands.StartSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh))
 		require.NoError(t, err)
 		t.Cleanup(func() { finishRun(t, retry.RunID.String()) })
 		assert.False(t, retry.Replayed)
@@ -465,12 +465,12 @@ func TestTriggerSingleNodeRun_ARefusedCallStoresNothing(t *testing.T) {
 		promoteRelease(t, runControllerDB, scheduledNode("raw", table, "dbt-model", "rs-refused"))
 		requestID := uuid.New()
 
-		_, err := commands.TriggerSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh, "bi.a"))
+		_, err := commands.StartSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh, "bi.a"))
 		require.ErrorIs(t, err, runplan.ErrAcknowledgementNotAllowed)
 		assert.Zero(t, commandRecords(t, requestID.String()))
 		assert.Zero(t, tasksAt(table))
 
-		retry, err := commands.TriggerSingleNodeRun(ctx, single(requestID, table, model.OperationRun))
+		retry, err := commands.StartSingleNodeRun(ctx, single(requestID, table, model.OperationRun))
 		require.NoError(t, err)
 		t.Cleanup(func() { finishRun(t, retry.RunID.String()) })
 		assert.Equal(t, 1, commandRecords(t, requestID.String()))

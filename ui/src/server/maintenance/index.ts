@@ -26,7 +26,7 @@ export function sendMaintenance(res: Response): void {
 // The routes that start new work, as paths below /api. Matched without regard
 // to case or a trailing slash, as Express routes them.
 const GATED: ReadonlyArray<readonly [string, RegExp]> = [
-  ['POST', /^\/schedules\/[^/]+\/trigger\/?$/i],
+  ['POST', /^\/schedules\/[^/]+\/manual-run\/?$/i],
   ['POST', /^\/runs\/[^/]+\/rerun\/?$/i],
   ['POST', /^\/runs\/[^/]+\/rebase\/?$/i],
   ['POST', /^\/nodes\/[^/]+\/[^/]+\/[^/]+\/run\/?$/i],

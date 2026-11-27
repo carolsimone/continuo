@@ -39,12 +39,12 @@ func loadHealTriggeredFixture(t *testing.T) healTriggeredFixture {
 
 func validHealTriggered() events.HealTriggered {
 	return events.HealTriggered{
-		Source:           string(model.RemediationSourceValidation),
-		ReleaseID:        "rel_20261112_0042",
-		RemediationRound: 1,
-		Repo:             "acme/analytics-dbt",
-		CommitSHA:        "9f1c2e7a4b6d8031c5e7f9a2b4d6081a3c5e7f90",
-		ClassifiedAt:     "2026-11-12T10:31:07Z",
+		Source:       string(model.RemediationSourceValidation),
+		ReleaseID:    "rel_20261112_0042",
+		Round:        1,
+		Repo:         "acme/analytics-dbt",
+		CommitSHA:    "9f1c2e7a4b6d8031c5e7f9a2b4d6081a3c5e7f90",
+		ClassifiedAt: "2026-11-12T10:31:07Z",
 		Nodes: []events.HealTriggeredNode{
 			{NodeID: "analytics.orders_enriched", Category: "code_defect", Reason: "validation_failed"},
 		},
@@ -168,7 +168,7 @@ func TestDecodeHealTriggered_RefusesAnUnknownUnfixableReason(t *testing.T) {
 // stage records is refused on the trigger even though the vocabulary knows it.
 func TestDecodeHealTriggered_RefusesAHandoverReasonThatIsNotTheClassifiers(t *testing.T) {
 	for _, reason := range []model.HandoverReason{
-		model.HandoverReasonTriesSpent, model.HandoverReasonPreflightRoundsSpent, model.HandoverReasonDeclined,
+		model.HandoverReasonTriesSpent, model.HandoverReasonDraftsSpent, model.HandoverReasonDeclined,
 		model.HandoverReasonNoType, model.HandoverReasonNoRepository, model.HandoverReasonUnverifiableEdits,
 	} {
 		t.Run(string(reason), func(t *testing.T) {
@@ -184,7 +184,7 @@ func TestDecodeHealTriggered_RefusesAHandoverReasonThatIsNotTheClassifiers(t *te
 func TestHealTriggeredDecoders_RefuseWhatTheContractForbids(t *testing.T) {
 	cases := map[string]func(p *events.HealTriggered){
 		"no release id":               func(p *events.HealTriggered) { p.ReleaseID = "" },
-		"negative round":              func(p *events.HealTriggered) { p.RemediationRound = -1 },
+		"negative round":              func(p *events.HealTriggered) { p.Round = -1 },
 		"no source":                   func(p *events.HealTriggered) { p.Source = "" },
 		"unknown source":              func(p *events.HealTriggered) { p.Source = "plan" },
 		"a node without a node id":    func(p *events.HealTriggered) { p.Nodes[0].NodeID = "" },
@@ -212,7 +212,7 @@ func TestHealTriggeredDecoders_RefuseWhatTheContractForbids(t *testing.T) {
 // missing round.
 func TestDecodeHealTriggered_RefusesRoundZeroAndAMissingRound(t *testing.T) {
 	zero := validHealTriggered()
-	zero.RemediationRound = 0
+	zero.Round = 0
 	_, _, err := events.DecodeHealTriggered(healTriggeredFields(t, zero))
 	require.ErrorIs(t, err, events.ErrMalformedEnvelope, "round 0")
 
@@ -226,7 +226,7 @@ func TestDecodeHealTriggered_RefusesRoundZeroAndAMissingRound(t *testing.T) {
 // decoder refuses a 0 and a missing round, and keeps a later round.
 func TestDecodeHealTriggeredPayload_RefusesRoundZeroAndAMissingRound(t *testing.T) {
 	zero := validHealTriggered()
-	zero.RemediationRound = 0
+	zero.Round = 0
 	_, err := events.DecodeHealTriggeredPayload([]byte(healTriggeredFields(t, zero)["payload"]))
 	require.ErrorIs(t, err, events.ErrMalformedEnvelope, "round 0")
 
@@ -234,10 +234,10 @@ func TestDecodeHealTriggeredPayload_RefusesRoundZeroAndAMissingRound(t *testing.
 	require.ErrorIs(t, err, events.ErrMalformedEnvelope, "no round")
 
 	later := validHealTriggered()
-	later.RemediationRound = 3
+	later.Round = 3
 	got, err := events.DecodeHealTriggeredPayload([]byte(healTriggeredFields(t, later)["payload"]))
 	require.NoError(t, err)
-	assert.Equal(t, 3, got.RemediationRound)
+	assert.Equal(t, 3, got.Round)
 }
 
 func TestDecodeHealTriggered_RefusesAnUnreadableEntry(t *testing.T) {
@@ -246,7 +246,7 @@ func TestDecodeHealTriggered_RefusesAnUnreadableEntry(t *testing.T) {
 		"other version":    withField(valid(), "schema_version", "2"),
 		"payload not json": withPayload(valid(), `{`),
 		"no payload":       withPayload(valid(), ``),
-		"nodes not a list": withPayload(valid(), `{"source":"validation","release_id":"r","remediation_round":1,"nodes":{}}`),
+		"nodes not a list": withPayload(valid(), `{"source":"validation","release_id":"r","round":1,"nodes":{}}`),
 		"no occurred_at":   withField(valid(), "occurred_at", ""),
 	}
 	for name, fields := range cases {

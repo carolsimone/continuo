@@ -15,7 +15,7 @@ type Remediation struct {
 	ID        uuid.UUID
 	TenantID  string
 	ReleaseID string
-	// Round is the release's remediation round.
+	// Round is the release's round.
 	Round  int
 	Flow   string
 	Status RemediationStatus
@@ -70,8 +70,9 @@ type Cluster struct {
 	Members       []string
 	TypeName      string
 	Status        ClusterStatus
-	// Round is the cluster's revision round.
-	Round int
+	// Draft is the number of the cluster's draft in its try, from 1: a
+	// revision raises it.
+	Draft int
 	// Outcome is the cluster's result once it is handed over or fell back.
 	Outcome   *fix.NodeOutcome
 	UpdatedAt time.Time
@@ -81,7 +82,7 @@ type Cluster struct {
 // runner writes them.
 const (
 	// StepPreflight is the step name of the runner's pre-flight pass of a
-	// cluster: one row per round, whose output is the draft the pass left and
+	// cluster: one row per draft, whose output is the draft the pass left and
 	// whose findings are every finding of the pass.
 	StepPreflight = "preflight"
 	// KindRunner is the kind of the row of a step the runner performs itself.
@@ -108,7 +109,7 @@ type StepRun struct {
 	// Kind is the kind of the step: context, prompt, check, approver, output
 	// or runner.
 	Kind   string
-	Round  int
+	Draft  int
 	Status StepStatus
 	// InputDigest identifies the inputs the step ran on.
 	InputDigest string

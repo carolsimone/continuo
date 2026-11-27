@@ -278,7 +278,7 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsTakenOver(t *testing.T) {
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.FixRepo().InsertGenerating(ctx, fix.Fix{
-		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Try: 1,
+		Source: "compile", ReleaseID: releaseID, Round: 1, Try: 1,
 		Status: fix.StatusGenerating, ResolvedNodeIDs: []string{"svc-a"},
 		NodeOutcomes: map[string]fix.NodeOutcome{"svc-a": {Status: fix.StatusGenerating}},
 		CreatedAt:    t0,
@@ -307,7 +307,7 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsSettledWhenTheTryFails(t *t
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.FixRepo().InsertGenerating(ctx, fix.Fix{
-		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Try: 1,
+		Source: "compile", ReleaseID: releaseID, Round: 1, Try: 1,
 		Status: fix.StatusGenerating, ResolvedNodeIDs: []string{"svc-a"},
 		NodeOutcomes: map[string]fix.NodeOutcome{"svc-a": {Status: fix.StatusGenerating}},
 		CreatedAt:    t0,

@@ -50,7 +50,7 @@ func TestNewPendingRun_CreatesAPendingRun(t *testing.T) {
 func TestNewRun_StampsTheInitiator(t *testing.T) {
 	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
 
-	pending, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindTrigger, nil, "okta|alice", model.OperationRun, run.ReleaseStamp{}, now)
+	pending, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindManual, nil, "okta|alice", model.OperationRun, run.ReleaseStamp{}, now)
 	if err != nil || pending.InitiatedBy() != "okta|alice" {
 		t.Fatalf("pending run InitiatedBy = %q, err = %v; want okta|alice", pending.InitiatedBy(), err)
 	}
@@ -89,7 +89,7 @@ func TestNewSingleNodeRun_RefusesAnEmptyTenant(t *testing.T) {
 // one.
 func TestNewRuns_TakeTheirCallersRunID(t *testing.T) {
 	id := uuid.New()
-	pending, err := run.NewPendingRun("acme", id, "daily", run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
+	pending, err := run.NewPendingRun("acme", id, "daily", run.KindManual, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, id, pending.RunID())
 	derived, err := run.NewDerivedRun("acme", id, "daily", run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
@@ -99,7 +99,7 @@ func TestNewRuns_TakeTheirCallersRunID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, id, single.RunID())
 
-	_, err = run.NewPendingRun("acme", uuid.Nil, "daily", run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
+	_, err = run.NewPendingRun("acme", uuid.Nil, "daily", run.KindManual, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
 	assert.ErrorIs(t, err, run.ErrRunIDRequired)
 	_, err = run.NewDerivedRun("acme", uuid.Nil, "daily", run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
 	assert.ErrorIs(t, err, run.ErrRunIDRequired)
@@ -151,13 +151,13 @@ func TestNewPendingRun_RefusesANameLongerThanFiftyCharacters(t *testing.T) {
 	require.Len(t, accented, 100, "each é is two bytes")
 
 	for _, name := range []string{fifty, accented} {
-		r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
+		r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindManual, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
 		require.NoError(t, err, "a name of 50 characters (%d bytes) is a run's", len(name))
 		assert.Equal(t, name, r.ScheduleName())
 	}
 
 	for _, name := range []string{fiftyOne, accentedTooLong} {
-		_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
+		_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindManual, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
 		require.ErrorIs(t, err, run.ErrScheduleNameTooLong, "a name of 51 characters (%d bytes) is refused", len(name))
 		assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", err.Error())
 	}
@@ -207,7 +207,7 @@ func TestSetScheduledFor_OnlyACronRunHasASlot(t *testing.T) {
 	require.NotNil(t, cronRun.ScheduledFor())
 	assert.True(t, slot.Equal(*cronRun.ScheduledFor()))
 
-	for _, kind := range []run.Kind{run.KindTrigger, run.KindSingleNodeRun, run.KindPromoteSeed} {
+	for _, kind := range []run.Kind{run.KindManual, run.KindSingleNodeRun, run.KindPromoteSeed} {
 		other, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", kind, nil, "okta|alice", model.OperationRun, run.ReleaseStamp{}, slot)
 		require.NoError(t, err)
 		require.ErrorIs(t, other.SetScheduledFor(slot), run.ErrNotACronRun, "kind %s", kind)

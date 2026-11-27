@@ -67,7 +67,7 @@ export default function ReleasesPanel() {
               In flight · a fix's release check{' '}
               <Link to={`/release-checks/${releaseQueue.active.check_id}`}><strong>{releaseQueue.active.check_id}</strong></Link>
               {' '}for <Link to={`/releases/${releaseQueue.active.verifies_release_id}`}>{releaseQueue.active.verifies_release_id}</Link>
-              {' '}({releaseQueue.active.try ? `${tryLabel(releaseQueue.active.remediation_round, releaseQueue.active.try)}, ` : ''}project {releaseQueue.active.project}) · {releaseQueue.active.status}
+              {' '}({releaseQueue.active.try ? `${tryLabel(releaseQueue.active.round, releaseQueue.active.try)}, ` : ''}project {releaseQueue.active.project}) · {releaseQueue.active.status}
             </>
           ) : (
             <>

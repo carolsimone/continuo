@@ -207,7 +207,7 @@ func (e *expectation) handedOver(a FixRow, tries int, want map[string]model.Hand
 	e.that(got[0].tenant == rem.TenantID, "the hand-over event is stored under the tenant %q, want %q", got[0].tenant, rem.TenantID)
 	e.that(p.RemediationID == e.sr.id.String(), "the hand-over event names the remediation %q, want %q", p.RemediationID, e.sr.id)
 	e.that(p.ReleaseID == e.trigger.ReleaseID, "the hand-over event names the release %q, want %q", p.ReleaseID, e.trigger.ReleaseID)
-	e.that(p.RemediationRound == e.trigger.Round, "the hand-over event names the round %d, want %d", p.RemediationRound, e.trigger.Round)
+	e.that(p.Round == e.trigger.Round, "the hand-over event names the round %d, want %d", p.Round, e.trigger.Round)
 	e.that(p.Flow == rem.Flow, "the hand-over event names the flow %q, want %q", p.Flow, rem.Flow)
 	e.that(p.Tries == tries, "the hand-over event counts %d tries, want %d", p.Tries, tries)
 
@@ -349,8 +349,8 @@ func (e *expectation) fellBackToMembers(c remediation.Cluster) {
 
 // membersRanTheirTypes expects the shared-upstream cluster c to have fallen
 // back, each member's own cluster to have taken a single-cluster type and
-// started fresh: its context steps run in its round 1, its draft passed in
-// round 1, and the model was called about it once for each of the member's
+// started fresh: its context steps run in its draft 1, its draft passed in
+// draft 1, and the model was called about it once for each of the member's
 // scripted answers. The try is proposed for every failing node.
 func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Cluster) {
 	e.fellBackToMembers(c)
@@ -364,8 +364,8 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 			continue
 		}
 		e.that(e.reachedModel(m, typ), "member %s's own type %q never reached the model", m.TargetNodeID, m.TypeName)
-		e.that(m.Round == 1, "member %s's own cluster %d ended in round %d, want 1", m.TargetNodeID, m.Cluster, m.Round)
-		e.contextOnlyInRound1(m, typ)
+		e.that(m.Draft == 1, "member %s's own cluster %d ended in draft %d, want 1", m.TargetNodeID, m.Cluster, m.Draft)
+		e.contextOnlyInFirstDraft(m, typ)
 		e.clusterCalls(m, len(e.sr.script.MemberAnswers[m.TargetNodeID]))
 	}
 	if as := e.fixRows(fix.StatusProposed); len(as) == 1 {
@@ -378,7 +378,7 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 // every member skipped in try a and handed over with code, the cause of
 // the fall back, in the remediation's first and only try, and no release check
 // run. The code is declined when a step declined the upstream fix and
-// preflight_rounds_spent when pre-flight refused every round of it.
+// drafts_spent when pre-flight refused every draft of it.
 func (e *expectation) membersSkipped(c remediation.Cluster, a FixRow, code model.HandoverReason) {
 	e.that(c.Status == remediation.ClusterFellBack, "cluster %d is %s, not fell_back", c.Cluster, c.Status)
 	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
@@ -387,83 +387,83 @@ func (e *expectation) membersSkipped(c remediation.Cluster, a FixRow, code model
 	e.checks(0)
 }
 
-// stepRows is the journal rows of one round of one cluster of one try, by
-// step name. The journal holds one row per try, cluster, round and step, so
+// stepRows is the journal rows of one draft of one cluster of one try, by
+// step name. The journal holds one row per try, cluster, draft and step, so
 // each name has one row whatever order the store lists rows in; a second row
 // under one name is recorded as a problem rather than picked by that order.
-func (e *expectation) stepRows(try, cluster, round int) map[string]remediation.StepRun {
+func (e *expectation) stepRows(try, cluster, draft int) map[string]remediation.StepRun {
 	out := map[string]remediation.StepRun{}
 	for _, s := range e.sr.w.Steps(e.sr.id) {
-		if s.Try != try || s.Cluster != cluster || s.Round != round {
+		if s.Try != try || s.Cluster != cluster || s.Draft != draft {
 			continue
 		}
 		if _, dup := out[s.Step]; dup {
-			e.problems = append(e.problems, fmt.Sprintf("try %d cluster %d round %d has two rows of step %s", try, cluster, round, s.Step))
+			e.problems = append(e.problems, fmt.Sprintf("try %d cluster %d draft %d has two rows of step %s", try, cluster, draft, s.Step))
 		}
 		out[s.Step] = s
 	}
 	return out
 }
 
-// stepRow is the journal row of one step in one round of one cluster of one
+// stepRow is the journal row of one step in one draft of one cluster of one
 // try.
-func (e *expectation) stepRow(try, cluster, round int, step string) (remediation.StepRun, bool) {
-	row, ok := e.stepRows(try, cluster, round)[step]
+func (e *expectation) stepRow(try, cluster, draft int, step string) (remediation.StepRun, bool) {
+	row, ok := e.stepRows(try, cluster, draft)[step]
 	return row, ok
 }
 
-// reachedModel reports whether the first round of cluster c's prompt step of
+// reachedModel reports whether the first draft of cluster c's prompt step of
 // type typ ran.
 func (e *expectation) reachedModel(c remediation.Cluster, typ workflow.Type) bool {
 	row, ok := e.stepRow(1, c.Cluster, 1, string(typ.Agent.Prompt.Name))
 	return ok && row.Status == remediation.StepDone
 }
 
-// contextOnlyInRound1 expects every context step of typ to have run in
-// cluster c's round 1 and in no later round.
-func (e *expectation) contextOnlyInRound1(c remediation.Cluster, typ workflow.Type) {
+// contextOnlyInFirstDraft expects every context step of typ to have run in
+// cluster c's draft 1 and in no later draft.
+func (e *expectation) contextOnlyInFirstDraft(c remediation.Cluster, typ workflow.Type) {
 	for _, ref := range typ.Context {
 		row, ok := e.stepRow(1, c.Cluster, 1, string(ref.Name))
-		e.that(ok && row.Status == remediation.StepDone, "cluster %d's context step %s did not run in round 1", c.Cluster, ref.Name)
-		for round := 2; round <= c.Round; round++ {
-			_, again := e.stepRow(1, c.Cluster, round, string(ref.Name))
-			e.that(!again, "cluster %d's context step %s ran again in round %d", c.Cluster, ref.Name, round)
+		e.that(ok && row.Status == remediation.StepDone, "cluster %d's context step %s did not run in draft 1", c.Cluster, ref.Name)
+		for draft := 2; draft <= c.Draft; draft++ {
+			_, again := e.stepRow(1, c.Cluster, draft, string(ref.Name))
+			e.that(!again, "cluster %d's context step %s ran again in draft %d", c.Cluster, ref.Name, draft)
 		}
 	}
 }
 
-// passedInRound expects cluster c's draft to have passed pre-flight in round
-// pass after every earlier round's pre-flight refused its draft.
-func (e *expectation) passedInRound(c remediation.Cluster, typ workflow.Type, pass int) {
+// passedInDraft expects cluster c's draft to have passed pre-flight in draft
+// pass after every earlier draft's pre-flight refused its draft.
+func (e *expectation) passedInDraft(c remediation.Cluster, typ workflow.Type, pass int) {
 	e.that(c.Status == remediation.ClusterChecked, "cluster %d is %s, not checked", c.Cluster, c.Status)
-	e.that(c.Round == pass, "cluster %d ended in round %d, want %d", c.Cluster, c.Round, pass)
-	for round := 1; round <= pass; round++ {
-		prompt, ok := e.stepRow(1, c.Cluster, round, string(typ.Agent.Prompt.Name))
-		e.that(ok && prompt.Status == remediation.StepDone, "cluster %d's prompt step did not run in round %d", c.Cluster, round)
-		pre, ok := e.stepRow(1, c.Cluster, round, remediation.StepPreflight)
-		e.that(ok, "cluster %d has no pre-flight pass in round %d", c.Cluster, round)
+	e.that(c.Draft == pass, "cluster %d ended in draft %d, want %d", c.Cluster, c.Draft, pass)
+	for draft := 1; draft <= pass; draft++ {
+		prompt, ok := e.stepRow(1, c.Cluster, draft, string(typ.Agent.Prompt.Name))
+		e.that(ok && prompt.Status == remediation.StepDone, "cluster %d's prompt step did not run in draft %d", c.Cluster, draft)
+		pre, ok := e.stepRow(1, c.Cluster, draft, remediation.StepPreflight)
+		e.that(ok, "cluster %d has no pre-flight pass in draft %d", c.Cluster, draft)
 		refused := len(pre.Findings) > 0
-		e.that(refused == (round < pass), "cluster %d's round %d pre-flight refused its draft: %t, want %t (%v)",
-			c.Cluster, round, refused, round < pass, pre.Findings)
+		e.that(refused == (draft < pass), "cluster %d's draft %d pre-flight refused its draft: %t, want %t (%v)",
+			c.Cluster, draft, refused, draft < pass, pre.Findings)
 	}
-	e.contextOnlyInRound1(c, typ)
+	e.contextOnlyInFirstDraft(c, typ)
 }
 
-// roundsSpent expects pre-flight to have refused cluster c's draft in every
-// round typ allows, its prompt step to have run once per round, and the model
+// draftsSpent expects pre-flight to have refused cluster c's draft in every
+// draft typ allows, its prompt step to have run once per draft, and the model
 // to have been called about its target exactly calls times.
-func (e *expectation) roundsSpent(c remediation.Cluster, typ workflow.Type, calls int) {
-	rounds := typ.Agent.Rounds
-	e.that(c.Round == rounds, "cluster %d ended in round %d, want %d", c.Cluster, c.Round, rounds)
-	for round := 1; round <= rounds; round++ {
-		prompt, ok := e.stepRow(1, c.Cluster, round, string(typ.Agent.Prompt.Name))
-		e.that(ok && prompt.Status == remediation.StepDone, "cluster %d's prompt step did not run in round %d", c.Cluster, round)
-		pre, ok := e.stepRow(1, c.Cluster, round, remediation.StepPreflight)
-		e.that(ok && len(pre.Findings) > 0, "cluster %d's round %d pre-flight refused nothing", c.Cluster, round)
+func (e *expectation) draftsSpent(c remediation.Cluster, typ workflow.Type, calls int) {
+	drafts := typ.Agent.Drafts
+	e.that(c.Draft == drafts, "cluster %d ended in draft %d, want %d", c.Cluster, c.Draft, drafts)
+	for draft := 1; draft <= drafts; draft++ {
+		prompt, ok := e.stepRow(1, c.Cluster, draft, string(typ.Agent.Prompt.Name))
+		e.that(ok && prompt.Status == remediation.StepDone, "cluster %d's prompt step did not run in draft %d", c.Cluster, draft)
+		pre, ok := e.stepRow(1, c.Cluster, draft, remediation.StepPreflight)
+		e.that(ok && len(pre.Findings) > 0, "cluster %d's draft %d pre-flight refused nothing", c.Cluster, draft)
 	}
-	_, beyond := e.stepRow(1, c.Cluster, rounds+1, string(typ.Agent.Prompt.Name))
-	e.that(!beyond, "cluster %d's prompt step ran in round %d, past its %d rounds", c.Cluster, rounds+1, rounds)
-	e.contextOnlyInRound1(c, typ)
+	_, beyond := e.stepRow(1, c.Cluster, drafts+1, string(typ.Agent.Prompt.Name))
+	e.that(!beyond, "cluster %d's prompt step ran in draft %d, past its %d drafts", c.Cluster, drafts+1, drafts)
+	e.contextOnlyInFirstDraft(c, typ)
 	e.clusterCalls(c, calls)
 }
 
@@ -493,9 +493,9 @@ func (e *expectation) nextTryShownGateErrors(c remediation.Cluster, tryCalls int
 }
 
 // firstFinding is the first finding of cluster c's pre-flight checks in the
-// cluster's last round, in the order typ lists them.
+// cluster's last draft, in the order typ lists them.
 func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (remediation.Finding, bool) {
-	rows := e.stepRows(1, c.Cluster, c.Round)
+	rows := e.stepRows(1, c.Cluster, c.Draft)
 	for _, ref := range typ.Preflight {
 		if row, ok := rows[string(ref.Name)]; ok && len(row.Findings) > 0 {
 			return row.Findings[0], true
@@ -505,15 +505,15 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 }
 
 // singleHandedOver expects the single cluster c handed over with no
-// release check, in the remediation's first and only try: when roundsSpent,
-// by its last pre-flight round, which refused its draft, failed with that
-// round's first finding as its reason and the code preflight_rounds_spent;
+// release check, in the remediation's first and only try: when draftsSpent,
+// by its last draft, which refused its draft, failed with that
+// draft's first finding as its reason and the code drafts_spent;
 // otherwise by a context step that declined, skipped with the code declined
 // and no model call.
-func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, roundsSpent bool) {
+func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, draftsSpent bool) {
 	e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
-	want, code := fix.StatusFailed, model.HandoverReasonPreflightRoundsSpent
-	if roundsSpent {
+	want, code := fix.StatusFailed, model.HandoverReasonDraftsSpent
+	if draftsSpent {
 		finding, ok := e.firstFinding(c, typ)
 		e.that(ok, "pre-flight refused nothing in cluster %d", c.Cluster)
 		e.that(c.Outcome != nil && c.Outcome.Reason == finding.Message, "cluster %d ended with %+v, want the reason %q", c.Cluster, c.Outcome, finding.Message)

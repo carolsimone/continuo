@@ -12,7 +12,7 @@ import (
 
 // goldenStored is a heal.triggered:v1 payload as a store holds it: every
 // field, and no unfixable node.
-const goldenStored = `{"source":"validation","release_id":"rel-1","remediation_round":2,` +
+const goldenStored = `{"source":"validation","release_id":"rel-1","round":2,` +
 	`"repo":"org/repo","commit_sha":"abc123","code_bundle_uri":"s3://bundle","classified_at":"2026-11-13T09:00:00Z","nodes":[` +
 	`{"node_id":"svc-a","relation_id":"rel","category":"compile","error_signature":"sig-svc-a","reason":"syntax",` +
 	`"error_excerpt":"syntax error near select","dbt_log_uri":"s3://log","candidate_artifact_uri":"s3://cand",` +
@@ -22,7 +22,7 @@ const goldenStored = `{"source":"validation","release_id":"rel-1","remediation_r
 
 // goldenUnfixable is a heal.triggered:v1 payload whose second node the
 // classifier marked unfixable.
-const goldenUnfixable = `{"source":"validation","release_id":"rel-1","remediation_round":2,` +
+const goldenUnfixable = `{"source":"validation","release_id":"rel-1","round":2,` +
 	`"repo":"org/repo","commit_sha":"abc123","code_bundle_uri":"s3://bundle","classified_at":"2026-11-13T09:00:00Z","nodes":[` +
 	`{"node_id":"svc-a","category":"compile","error_signature":"sig-svc-a","reason":"syntax","dbt_log_uri":"s3://log"},` +
 	`{"node_id":"svc-b","category":"infra","error_signature":"sig-svc-b","reason":"timeout","dbt_log_uri":"s3://log-b",` +
@@ -78,7 +78,7 @@ func TestDecodeTrigger_KeepsTheUnfixableNodes(t *testing.T) {
 func TestDecodeTrigger_RefusesAMissingRound(t *testing.T) {
 	for _, payload := range []string{
 		`{"source":"validation","release_id":"rel-1","nodes":[]}`,
-		`{"source":"validation","release_id":"rel-1","remediation_round":0,"nodes":[]}`,
+		`{"source":"validation","release_id":"rel-1","round":0,"nodes":[]}`,
 	} {
 		if _, err := DecodeTrigger([]byte(payload)); err == nil {
 			t.Fatalf("decode %s: want an error", payload)
@@ -124,7 +124,7 @@ func TestEncodeTrigger_LeavesTheTenantOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	const want = `{"source":"validation","release_id":"rel-1","remediation_round":1,"repo":"","commit_sha":"","classified_at":"","nodes":[]}`
+	const want = `{"source":"validation","release_id":"rel-1","round":1,"repo":"","commit_sha":"","classified_at":"","nodes":[]}`
 	if string(raw) != want {
 		t.Fatalf("payload = %s, want %s", raw, want)
 	}

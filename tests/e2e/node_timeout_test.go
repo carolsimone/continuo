@@ -280,7 +280,7 @@ func TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry(t *testing.T) {
 	require.NoError(t, err, "StartRun(%s)", deadlineScheduleName)
 	runID, err := uuid.Parse(resp.RunId)
 	require.NoError(t, err, "StartRun must return the run's id")
-	t.Logf("run %s of %s triggered", runID, deadlineScheduleName)
+	t.Logf("run %s of %s started", runID, deadlineScheduleName)
 	taskID := taskOfRun(t, ctx, clients, runID, deadlineTable)
 
 	// The Job's deadline is the start timeout plus the node's own timeout.

@@ -26,14 +26,14 @@ function gatedApp(enabled: boolean) {
 }
 
 const GATED = [
-  '/api/schedules/daily/trigger',
+  '/api/schedules/daily/manual-run',
   '/api/runs/abc/rerun',
   '/api/runs/abc/rebase',
   '/api/nodes/svc/sch/tbl/run',
   '/api/v1/releases',
   '/api/releases/r1/retry-remediation',
-  '/API/Schedules/daily/TRIGGER',   // Express routes case-insensitively, so the gate must too
-  '/api/schedules/daily/trigger/',  // and with a trailing slash
+  '/API/Schedules/daily/MANUAL-RUN',   // Express routes case-insensitively, so the gate must too
+  '/api/schedules/daily/manual-run/',  // and with a trailing slash
 ];
 
 describe('maintenanceGate', () => {
@@ -54,7 +54,7 @@ describe('maintenanceGate', () => {
     expect(res.status).toBe(200);
   });
   it('lets everything through when off', async () => {
-    expect((await request(gatedApp(false)).post('/api/schedules/daily/trigger').send({})).status).toBe(200);
+    expect((await request(gatedApp(false)).post('/api/schedules/daily/manual-run').send({})).status).toBe(200);
   });
 });
 

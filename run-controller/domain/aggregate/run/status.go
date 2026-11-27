@@ -188,7 +188,7 @@ type Kind string
 
 const (
 	KindCron          Kind = "cron"
-	KindTrigger       Kind = "trigger"
+	KindManual        Kind = "manual"
 	KindRerun         Kind = "rerun"
 	KindRebase        Kind = "rebase"
 	KindSingleNodeRun Kind = "single_node_run"
@@ -199,7 +199,7 @@ const (
 
 func (k Kind) IsValid() bool {
 	switch k {
-	case KindCron, KindTrigger, KindRerun, KindRebase, KindSingleNodeRun, KindPromoteSeed:
+	case KindCron, KindManual, KindRerun, KindRebase, KindSingleNodeRun, KindPromoteSeed:
 		return true
 	}
 	return false

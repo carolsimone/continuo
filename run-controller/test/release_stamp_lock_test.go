@@ -75,7 +75,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		}
 	}
 
-	// Only rel-new has a model of stamp-lock, so the trigger's check that a
+	// Only rel-new has a model of stamp-lock, so the manual run's check that a
 	// model carries the name must read the live release under the lock too.
 	t.Run("a creation behind an uncommitted promotion names the promoted release", func(t *testing.T) {
 		promotion := h.factory()
@@ -120,7 +120,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "rel-old", p.ReleaseID)
 		stamp := run.ReleaseStamp{ReleaseID: p.ReleaseID, PromotionSeq: p.PromotionSeq}
-		rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "stamp-lock", run.KindTrigger, nil, alice.UserID, model.OperationRun, stamp, time.Now())
+		rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "stamp-lock", run.KindManual, nil, alice.UserID, model.OperationRun, stamp, time.Now())
 		require.NoError(t, err)
 		require.NoError(t, creation.Run().SaveRun(ctx, rn))
 

@@ -191,7 +191,7 @@ describe('releasePillClass for release check statuses', () => {
 });
 
 describe('effectiveRound', () => {
-  const p = (round?: number): FixDTO => ({ remediation_round: round } as FixDTO);
+  const p = (round?: number): FixDTO => ({ round: round } as FixDTO);
   it('treats a missing round as 1', () => expect(effectiveRound(p(undefined))).toBe(1));
   it('treats an explicit 0 as 1 (proto3 default over the wire)', () => expect(effectiveRound(p(0))).toBe(1));
   it('passes a positive round through', () => expect(effectiveRound(p(3))).toBe(3));
@@ -202,7 +202,7 @@ describe('groupFixes', () => {
   const mk = (o: Partial<FixDTO>): FixDTO => ({
     id: o.id ?? 'x',
     release_id: o.release_id ?? 'rel-1',
-    remediation_round: o.remediation_round,
+    round: o.round,
     created_at: o.created_at ?? '2026-09-03T10:00:00Z',
     try: o.try ?? 1,
     status: o.status ?? 'failed',
@@ -217,9 +217,9 @@ describe('groupFixes', () => {
 
   it('buckets by (release_id, round); same release+round is one group, different round is two', () => {
     const groups = groupFixes([
-      mk({ id: 'a', release_id: 'r1', remediation_round: 1, created_at: '2026-09-03T10:00:00Z' }),
-      mk({ id: 'b', release_id: 'r1', remediation_round: 1, created_at: '2026-09-03T11:00:00Z' }),
-      mk({ id: 'c', release_id: 'r1', remediation_round: 2, created_at: '2026-09-03T12:00:00Z' }),
+      mk({ id: 'a', release_id: 'r1', round: 1, created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'b', release_id: 'r1', round: 1, created_at: '2026-09-03T11:00:00Z' }),
+      mk({ id: 'c', release_id: 'r1', round: 2, created_at: '2026-09-03T12:00:00Z' }),
     ]);
     expect(groups).toHaveLength(2);
     const round1 = groups.find(g => g.round === 1)!;
@@ -229,24 +229,24 @@ describe('groupFixes', () => {
 
   it('orders groups newest first by their latest try', () => {
     const groups = groupFixes([
-      mk({ id: 'old', release_id: 'r1', remediation_round: 1, created_at: '2026-09-01T10:00:00Z' }),
-      mk({ id: 'new', release_id: 'r2', remediation_round: 1, created_at: '2026-09-05T10:00:00Z' }),
+      mk({ id: 'old', release_id: 'r1', round: 1, created_at: '2026-09-01T10:00:00Z' }),
+      mk({ id: 'new', release_id: 'r2', round: 1, created_at: '2026-09-05T10:00:00Z' }),
     ]);
     expect(groups.map(g => g.releaseId)).toEqual(['r2', 'r1']);
   });
 
   it('tie-breaks same created_at by higher try number for the latest', () => {
     const groups = groupFixes([
-      mk({ id: 'a1', release_id: 'r1', remediation_round: 1, try: 1, created_at: '2026-09-03T10:00:00Z' }),
-      mk({ id: 'a2', release_id: 'r1', remediation_round: 1, try: 2, created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'a1', release_id: 'r1', round: 1, try: 1, created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'a2', release_id: 'r1', round: 1, try: 2, created_at: '2026-09-03T10:00:00Z' }),
     ]);
     expect(groups[0].latest.id).toBe('a2');
   });
 
   it('tie-breaks same created_at with the round\'s hand-over row after its tries', () => {
     const groups = groupFixes([
-      mk({ id: 'h', release_id: 'r1', remediation_round: 1, try: HAND_OVER_TRY, status: 'escalated', created_at: '2026-09-03T10:00:00Z' }),
-      mk({ id: 't3', release_id: 'r1', remediation_round: 1, try: 3, created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'h', release_id: 'r1', round: 1, try: HAND_OVER_TRY, status: 'escalated', created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 't3', release_id: 'r1', round: 1, try: 3, created_at: '2026-09-03T10:00:00Z' }),
     ]);
     expect(groups[0].latest.id).toBe('h');
     expect(groups[0].tries.map(t => t.id)).toEqual(['h', 't3']);
@@ -369,7 +369,7 @@ describe('tryLabel', () => {
 });
 
 describe('tryBefore', () => {
-  const t = (remediation_round: number, tryNumber: number) => ({ remediation_round, try: tryNumber });
+  const t = (round: number, tryNumber: number) => ({ round, try: tryNumber });
   it.each([
     ['an earlier try of the round', t(1, 1), t(1, 2)],
     ['an earlier round\'s last try', t(1, 3), t(2, 1)],

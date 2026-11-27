@@ -215,7 +215,7 @@ func (g *ReleaseCheck) Submit(ctx context.Context, in step.GateInput) (step.Gate
 			ImageTag:          imageTag,
 			Kind:              r.kind,
 			VerifiesReleaseID: t.ReleaseID,
-			RemediationRound:  t.Round,
+			Round:             t.Round,
 			Try:               try,
 			SourceOverlayURI:  overlayURI,
 		}); err != nil {

@@ -6,7 +6,7 @@ package model
 // after every try of its round (TryBefore).
 const HandOverTry = 0
 
-// TryBefore reports whether try aTry of a remediation round aRound came before
+// TryBefore reports whether try aTry of a round aRound came before
 // try bTry of round bRound: an earlier round, or an earlier
 // try of the same round. A round's hand-over row (HandOverTry) is written once
 // its tries are spent, so it comes after every try of its round.

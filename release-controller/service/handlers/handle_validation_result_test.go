@@ -391,7 +391,7 @@ func TestHandleValidationResult_Fix_StopsAtPassed_NeverPromotes(t *testing.T) {
 // release_check.finished:v1 payload contract: a fix's pass emits
 // neither release.promoted:v1 nor release.rejected:v1, but does emit exactly
 // one release_check.finished:v1 whose check_kind, outcome, verifies_release_id,
-// remediation_round, try and candidate_schema describe this fix's release check.
+// round, try and candidate_schema describe this fix's release check.
 func TestHandleValidationResult_FixPasses_NoReleaseEvents_FinishedEmitted(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, store := newDeps(now)
@@ -419,7 +419,7 @@ func TestHandleValidationResult_FixPasses_NoReleaseEvents_FinishedEmitted(t *tes
 	assert.Equal(t, "fix", payload["check_kind"])
 	assert.Equal(t, "passed", payload["outcome"])
 	assert.Equal(t, "rel-1", payload["verifies_release_id"])
-	assert.EqualValues(t, 2, payload["remediation_round"])
+	assert.EqualValues(t, 2, payload["round"])
 	assert.EqualValues(t, 3, payload["try"])
 	assert.Equal(t, handlers.CandidateSchemaFor(r.ID()), payload["candidate_schema"])
 }
@@ -470,9 +470,9 @@ func TestHandleValidationResult_CandidatePromoted_EmitsFinishedToo(t *testing.T)
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(finished.Payload, &payload))
 	assert.Contains(t, payload, "try", "a candidate carries the try key too")
-	assert.Contains(t, payload, "remediation_round", "a candidate carries the remediation_round key too")
+	assert.Contains(t, payload, "round", "a candidate carries the round key too")
 	assert.EqualValues(t, 0, payload["try"], "a candidate proves no try")
-	assert.EqualValues(t, 0, payload["remediation_round"], "a candidate proves no try, so it names no round")
+	assert.EqualValues(t, 0, payload["round"], "a candidate proves no try, so it names no round")
 }
 
 // seedToValidatingPython mirrors seedToValidating but registers the release as
@@ -1034,7 +1034,7 @@ func rewireValidating(t *testing.T, store *fakeStore, r *releasecheck.Check, top
 		CommitSHA:         r.CommitSHA(),
 		CodeBundleURI:     r.CodeBundleURI(),
 		ManifestKind:      r.ManifestKind(),
-		RemediationRound:  r.RemediationRound(),
+		Round:             r.Round(),
 		RejectionPayload:  r.RejectionPayload(),
 	}))
 }

@@ -212,13 +212,13 @@ async function submitRebase() {
 describe('DetailPage — Rerun and Rebase buttons', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it('offers Rerun and Rebase onto live release after Trigger run, both enabled for a failed run behind the live release', async () => {
+  it('offers Rerun and Rebase onto live release after Start run, both enabled for a failed run behind the live release', async () => {
     const fetchMock = mockFetchSequence(staleRoutes());
     vi.stubGlobal('fetch', fetchMock);
     render(withRouter({ last_run_id: RUN_ID }));
     await waitForLatestRun(fetchMock);
 
-    expect(actionButtons().map(b => b.textContent)).toEqual(['▶ Trigger run', '↺ Rerun', '↪ Rebase onto live release']);
+    expect(actionButtons().map(b => b.textContent)).toEqual(['▶ Start run', '↺ Rerun', '↪ Rebase onto live release']);
     expect(await rerunAction()).toBeEnabled();
     expect(await rebaseAction()).toBeEnabled();
     expect(await rerunAction()).toHaveClass('btn', 'btn--secondary');
@@ -374,32 +374,32 @@ describe('DetailPage — Rerun and Rebase buttons', () => {
   });
 });
 
-describe('DetailPage — Trigger run topbar button', () => {
-  it('renders Trigger run in the topbar and POSTs /api/schedules/:name/trigger', async () => {
+describe('DetailPage — Start run topbar button', () => {
+  it('renders Start run in the topbar and POSTs /api/schedules/:name/manual-run', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
-      [`/api/schedules/${SCHED}/trigger`]: async () => ({ run_id: 'new-id' }),
+      [`/api/schedules/${SCHED}/manual-run`]: async () => ({ run_id: 'new-id' }),
     });
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    const btn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    const btn = await screen.findByRole('button', { name: /^▶ Start run$/ });
     fireEvent.click(btn);
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const triggerCall = calls.find(c => String(c[0]).includes(`/api/schedules/${SCHED}/trigger`));
-      expect(triggerCall).toBeDefined();
-      expect(triggerCall![1]).toMatchObject({ method: 'POST' });
+      const startCall = calls.find(c => String(c[0]).includes(`/api/schedules/${SCHED}/manual-run`));
+      expect(startCall).toBeDefined();
+      expect(startCall![1]).toMatchObject({ method: 'POST' });
     });
   });
 
-  it('DetailPage trigger: the body carries a request id, and a press after a timeout sends it again', async () => {
+  it('DetailPage manual run: the body carries a request id, and a press after a timeout sends it again', async () => {
     const ids: string[] = [];
     const routes = mockFetchSequence(failedRoutes());
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+      if (String(input).includes(`/api/schedules/${SCHED}/manual-run`)) {
         ids.push(JSON.parse(String(init?.body)).request_id);
         if (ids.length === 1) throw new Error('timeout');
         return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
@@ -410,20 +410,20 @@ describe('DetailPage — Trigger run topbar button', () => {
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
     await screen.findByText('Request failed — please try again');
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[0]).toMatch(UUID);
     expect(ids[1]).toBe(ids[0]);
   });
 
-  it('DetailPage trigger: a press hours after an unanswered one, with no newer run observed, is a retry with the same id', async () => {
+  it('DetailPage manual run: a press hours after an unanswered one, with no newer run observed, is a retry with the same id', async () => {
     const ids: string[] = [];
     const routes = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+      if (String(input).includes(`/api/schedules/${SCHED}/manual-run`)) {
         ids.push(JSON.parse(String(init?.body)).request_id);
         if (ids.length === 1) throw new Error('timeout');
         return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
@@ -434,10 +434,10 @@ describe('DetailPage — Trigger run topbar button', () => {
     try {
       render(withRouter({ last_run_id: RUN_ID }));
 
-      fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+      fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
       await screen.findByText('Request failed — please try again');
       vi.setSystemTime(Date.now() + 6 * 60 * 60 * 1000);
-      fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+      fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
 
       await waitFor(() => expect(ids).toHaveLength(2));
       expect(ids[1]).toBe(ids[0]);
@@ -446,7 +446,7 @@ describe('DetailPage — Trigger run topbar button', () => {
     }
   });
 
-  it('DetailPage trigger: a press after the page arrives at the schedule again and reads a newer run is a new action', async () => {
+  it('DetailPage manual run: a press after the page arrives at the schedule again and reads a newer run is a new action', async () => {
     const ids: string[] = [];
     const routes = mockFetchSequence({
       ...failedRoutes(),
@@ -456,7 +456,7 @@ describe('DetailPage — Trigger run topbar button', () => {
       '/api/runs/run-2': async () => ({ run_id: 'run-2', schedule_name: SCHED, status: 'succeeded' }),
     });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+      if (String(input).includes(`/api/schedules/${SCHED}/manual-run`)) {
         ids.push(JSON.parse(String(init?.body)).request_id);
         if (ids.length === 1) throw new Error('timeout');
         return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
@@ -483,20 +483,20 @@ describe('DetailPage — Trigger run topbar button', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
     await screen.findByText('Request failed — please try again');
     fireEvent.click(screen.getByRole('button', { name: 'to other' }));
     // Arriving at the schedule again reads its newest run, the one the
     // unanswered press made.
     fireEvent.click(screen.getByRole('button', { name: 'back' }));
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toMatch(UUID);
     expect(ids[1]).not.toBe(ids[0]);
   });
 
-  it('DetailPage trigger: a press made while the schedule list is still loading adopts the run the list then names', async () => {
+  it('DetailPage manual run: a press made while the schedule list is still loading adopts the run the list then names', async () => {
     const ids: string[] = [];
     const routes = mockFetchSequence(failedRoutes());
     let answerList: (body: unknown) => void = () => {};
@@ -506,7 +506,7 @@ describe('DetailPage — Trigger run topbar button', () => {
         const body = await list;
         return { ok: true, status: 200, json: async () => body } as Response;
       }
-      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+      if (String(input).includes(`/api/schedules/${SCHED}/manual-run`)) {
         ids.push(JSON.parse(String(init?.body)).request_id);
         if (ids.length === 1) throw new Error('timeout');
         return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
@@ -517,24 +517,24 @@ describe('DetailPage — Trigger run topbar button', () => {
 
     render(withRouter(null));
 
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
     await screen.findByText('Request failed — please try again');
     // The list names the schedule's newest run, which may be the one the
     // unanswered press made.
     answerList({ schedules: [{ schedule_name: SCHED, last_run_id: RUN_ID }] });
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u) === `/api/runs/${RUN_ID}`)).toBe(true));
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toBe(ids[0]);
   });
 
-  it('DetailPage trigger: a failed read of the schedule list is not a schedule that never ran', async () => {
+  it('DetailPage manual run: a failed read of the schedule list is not a schedule that never ran', async () => {
     const ids: string[] = [];
     const routes = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === '/api/schedules') throw new Error('network down');
-      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+      if (String(input).includes(`/api/schedules/${SCHED}/manual-run`)) {
         ids.push(JSON.parse(String(init?.body)).request_id);
         if (ids.length === 1) throw new Error('timeout');
         return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
@@ -559,19 +559,19 @@ describe('DetailPage — Trigger run topbar button', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
     await screen.findByText('Request failed — please try again');
     fireEvent.click(screen.getByRole('button', { name: 'to other' }));
     // Arriving again names the schedule's newest run: the page did not know
     // what the schedule showed when the unanswered press was made.
     fireEvent.click(screen.getByRole('button', { name: 'back' }));
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toBe(ids[0]);
   });
 
-  it('disables the topbar Trigger run button while a run is live', async () => {
+  it('disables the topbar Start run button while a run is live', async () => {
     // Use freshRoutes() but override the scheduler endpoint to return a
     // non-terminal status so liveRunExists becomes true.
     const fetchMock = mockFetchSequence({
@@ -596,20 +596,20 @@ describe('DetailPage — Trigger run topbar button', () => {
       const calls = fetchMock.mock.calls.map(c => String(c[0]));
       expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
     });
-    const btn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    const btn = await screen.findByRole('button', { name: /^▶ Start run$/ });
     expect(btn).toBeDisabled();
   });
 
-  it('uses .btn .btn--secondary classes (no .trigger-run-btn)', async () => {
+  it('uses .btn .btn--secondary classes and no bespoke run-button class', async () => {
     const fetchMock = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    const btn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    const btn = await screen.findByRole('button', { name: /^▶ Start run$/ });
     expect(btn.className).toContain('btn');
     expect(btn.className).toContain('btn--secondary');
-    expect(btn.className).not.toContain('trigger-run-btn');
+    expect(btn.className).not.toMatch(/-run-btn/);
   });
 });
 
@@ -619,20 +619,20 @@ describe('DetailPage — Trigger run topbar button', () => {
 // (latest) view; the legend + link behaviour is covered against that view in
 // detail-page-legend.test.tsx.
 
-describe('DetailPage — Trigger run success cue', () => {
-  it('turns the Trigger run button green and relabels on success', async () => {
+describe('DetailPage — Start run success cue', () => {
+  it('turns the Start run button green and relabels on success', async () => {
     const fetchMock = mockFetchSequence({
       ...freshRoutes(),
-      [`/api/schedules/${SCHED}/trigger`]: async () => ({ ok: true }),
+      [`/api/schedules/${SCHED}/manual-run`]: async () => ({ ok: true }),
     });
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    const triggerBtn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
-    fireEvent.click(triggerBtn);
+    const startBtn = await screen.findByRole('button', { name: /^▶ Start run$/ });
+    fireEvent.click(startBtn);
 
-    const success = await screen.findByRole('button', { name: /^Triggered$/ });
+    const success = await screen.findByRole('button', { name: /^Started$/ });
     expect(success.className).toContain('is-success');
   });
 });
@@ -645,7 +645,7 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
     const { container } = render(withRouter({ last_run_id: RUN_ID }));
 
     // Wait for initial render
-    await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    await screen.findByRole('button', { name: /^▶ Start run$/ });
 
     expect(container.querySelector('.page')).toBeTruthy();
     expect(container.querySelector('.page-header')).toBeTruthy();
@@ -653,10 +653,10 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
     expect(container.querySelector('.detail-topbar')).toBeNull();
   });
 
-  it('trigger error renders as .info-strip--error, not as an inline sibling of the button', async () => {
+  it('start error renders as .info-strip--error, not as an inline sibling of the button', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
-      [`/api/schedules/${SCHED}/trigger`]: async () => {
+      [`/api/schedules/${SCHED}/manual-run`]: async () => {
         throw new Error('network failure');
       },
     });
@@ -664,7 +664,7 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
 
     const errorEl = await screen.findByText(/Request failed — please try again/);
     expect(errorEl.closest('.info-strip--error')).toBeTruthy();
@@ -895,7 +895,7 @@ describe('DetailPage in latest mode — following a run to its end', () => {
       return runOf(id, status());
     };
     const fetchMock = mockFetchSequence({
-      [`/api/schedules/${LATEST_SCHED}/trigger`]: async () => {
+      [`/api/schedules/${LATEST_SCHED}/manual-run`]: async () => {
         state.lastRunId = NEW_RUN;
         return { run_id: NEW_RUN };
       },
@@ -916,17 +916,17 @@ describe('DetailPage in latest mode — following a run to its end', () => {
   }
   const useFakeInterval = () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   const nextPoll = () => act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-  const triggerButton = () => screen.getByRole('button', { name: /Trigger/ });
+  const startButton = () => screen.getByRole('button', { name: /Start run/ });
 
   afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-  it('shows the end of a run it triggered, without a reload', async () => {
+  it('shows the end of a run it started, without a reload', async () => {
     useFakeInterval();
     const { state } = schedule({ lastRunId: LATEST_RUN_ID, lastRunStatus: 'succeeded' });
     render(withLatestRouter());
-    await waitFor(() => expect(triggerButton()).not.toBeDisabled());
+    await waitFor(() => expect(startButton()).not.toBeDisabled());
 
-    fireEvent.click(triggerButton());
+    fireEvent.click(startButton());
     await screen.findByText(/Current run/);
 
     state.newRunStatus = 'failed';
@@ -936,19 +936,19 @@ describe('DetailPage in latest mode — following a run to its end', () => {
     expect(screen.getByText('failed')).toBeInTheDocument();
   });
 
-  it('frees Trigger run and reads Past runs again when the run it arrived at ends', async () => {
+  it('frees Start run and reads Past runs again when the run it arrived at ends', async () => {
     useFakeInterval();
     const { state } = schedule({ lastRunId: LATEST_RUN_ID, lastRunStatus: 'running' });
     render(withLatestRouter());
     await screen.findByText(/Current run/);
-    expect(triggerButton()).toBeDisabled();
+    expect(startButton()).toBeDisabled();
     const runsReadsWhileRunning = state.runsReads;
 
     state.lastRunStatus = 'succeeded';
     state.pastRuns = [runOf(LATEST_RUN_ID, 'succeeded')];
     await nextPoll();
 
-    await waitFor(() => expect(triggerButton()).not.toBeDisabled());
+    await waitFor(() => expect(startButton()).not.toBeDisabled());
     expect(screen.queryByText(/Current run/)).toBeNull();
     await waitFor(() => expect(state.runsReads).toBeGreaterThan(runsReadsWhileRunning));
   });
@@ -1650,7 +1650,7 @@ describe('DetailPage — brand header', () => {
     const fetchMock = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
     const { container } = render(withRouter({ last_run_id: RUN_ID }));
-    await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    await screen.findByRole('button', { name: /^▶ Start run$/ });
 
     const header = container.querySelector('.page-header')!;
     const brand = header.querySelector('a.brand');
@@ -1876,7 +1876,7 @@ describe('DetailPage — arrival and teardown', () => {
     expect(screen.queryByText('orders')).toBeNull();
   });
 
-  it('keeps the current schedule\'s request id when another schedule\'s late trigger answer lands', async () => {
+  it('keeps the current schedule\'s request id when another schedule\'s late start answer lands', async () => {
     const aAnswer = deferred<Response>();
     const ids: Record<string, string[]> = { a: [], b: [] };
     const pages = mockFetchSequence({
@@ -1887,11 +1887,11 @@ describe('DetailPage — arrival and teardown', () => {
       '/api/schedules': async () => ({ schedules: [] }),
     });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const trigger = /^\/api\/schedules\/(a|b)\/trigger$/.exec(String(input));
-      if (!trigger) return pages(input);
-      ids[trigger[1]].push(JSON.parse(String(init?.body)).request_id);
+      const start = /^\/api\/schedules\/(a|b)\/manual-run$/.exec(String(input));
+      if (!start) return pages(input);
+      ids[start[1]].push(JSON.parse(String(init?.body)).request_id);
       // Schedule a's answer is held; schedule b's first answer is a gateway error.
-      return trigger[1] === 'a'
+      return start[1] === 'a'
         ? aAnswer.promise
         : ({ ok: false, status: 503, json: async () => ({}) } as Response);
     }));
@@ -1903,7 +1903,7 @@ describe('DetailPage — arrival and teardown', () => {
         </Routes>
       </MemoryRouter>,
     );
-    const press = async () => fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    const press = async () => fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
 
     await press();
     await waitFor(() => expect(ids.a).toHaveLength(1));
@@ -1965,7 +1965,7 @@ describe('DetailPage — following the newest run', () => {
       [`/api/runs/${RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
       [`/api/runs/${RUN_ID}`]: async () => runOf(RUN_ID, 'succeeded'),
       [`/api/schedules/${SCHED}/graph`]: async () => graphOf('scheduled_orders'),
-      [`/api/schedules/${SCHED}/trigger`]: async () => {
+      [`/api/schedules/${SCHED}/manual-run`]: async () => {
         state.lastRunId = NEW_RUN_ID;
         return { run_id: NEW_RUN_ID };
       },
@@ -1986,12 +1986,12 @@ describe('DetailPage — following the newest run', () => {
 
   afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-  it('shows the run its Trigger run started, without a reload', async () => {
+  it('shows the run its Start run started, without a reload', async () => {
     schedule();
     render(withRouter({ last_run_id: RUN_ID }));
     await screen.findByText('old_orders');
 
-    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Start run$/ }));
 
     await screen.findByText('new_orders');
     expect(screen.queryByText('old_orders')).toBeNull();
@@ -2039,12 +2039,12 @@ describe('DetailPage — following the newest run', () => {
 
     state.lastRunId = NEW_RUN_ID;
     await nextPoll();
-    await waitFor(() => expect(screen.getByRole('button', { name: /Trigger run/ })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: /Start run/ })).toBeDisabled());
 
     state.newRunStatus = 'succeeded';
     await nextPoll();
     await nextPoll();
-    await waitFor(() => expect(screen.getByRole('button', { name: /Trigger run/ })).not.toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: /Start run/ })).not.toBeDisabled());
   });
 
   it('adds the run to Past runs once it has ended', async () => {

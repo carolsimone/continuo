@@ -4,7 +4,7 @@ name: Publish Base Image
 # publishing continuo-base:v1 — inside its own DAG, so component-image builds
 # wait for the fresh base instead of racing a separately-triggered workflow.
 on:
-  workflow_dispatch:  # allows manual trigger from the Actions UI
+  workflow_dispatch:  # lets someone start it by hand from the Actions UI
 
 env:
   # Pinned base tag consumed by every Go component's Dockerfile.prod

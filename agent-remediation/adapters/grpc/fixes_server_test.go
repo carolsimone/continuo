@@ -85,15 +85,15 @@ func TestFixesServer_ListFixes_HappyPath(t *testing.T) {
 	ts := time.Date(2024, 3, 15, 10, 0, 0, 0, time.UTC)
 	fakeViews := []fix.View{
 		{
-			ID:               "p1",
-			Source:           "test-source",
-			ReleaseID:        "rel-1",
-			RemediationRound: 2,
-			NodeID:           "node-1",
-			ResolvedNodeIDs:  []string{"s.a", "s.b"},
-			ErrorSignature:   "sig",
-			Try:              1,
-			Status:           fix.Status("pending"),
+			ID:              "p1",
+			Source:          "test-source",
+			ReleaseID:       "rel-1",
+			Round:           2,
+			NodeID:          "node-1",
+			ResolvedNodeIDs: []string{"s.a", "s.b"},
+			ErrorSignature:  "sig",
+			Try:             1,
+			Status:          fix.Status("pending"),
 			NodeOutcomes: map[string]fix.NodeOutcome{
 				"s.a": {Status: fix.StatusProposed, Reason: "fixed"},
 			},
@@ -132,7 +132,7 @@ func TestFixesServer_ListFixes_HappyPath(t *testing.T) {
 	assert.Equal(t, "p1", p.Id)
 	assert.Equal(t, "test-source", p.Source)
 	assert.Equal(t, "rel-1", p.ReleaseId)
-	assert.Equal(t, int32(2), p.RemediationRound, "viewToProto must copy RemediationRound")
+	assert.Equal(t, int32(2), p.Round, "viewToProto must copy Round")
 	assert.Equal(t, "node-1", p.NodeId)
 	assert.Equal(t, int32(1), p.Try)
 	assert.Equal(t, "pending", p.Status)

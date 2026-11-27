@@ -53,11 +53,11 @@ func TestSubmit_PostsTheReleaseCheckBody(t *testing.T) {
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 	require.NoError(t, g.Submit(context.Background(), ports.ReleaseCheckRequest{
 		CheckID: "verify-rel-1-core-r2-t1", Project: "core", ImageTag: "img:1", Kind: ports.ManifestKindDbt,
-		VerifiesReleaseID: "rel-1", RemediationRound: 2, Try: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-r2-t1/source-overlay.tar.gz",
+		VerifiesReleaseID: "rel-1", Round: 2, Try: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-r2-t1/source-overlay.tar.gz",
 	}))
 	assert.Equal(t, map[string]any{
 		"check_id": "verify-rel-1-core-r2-t1", "project": "core", "image_tag": "img:1", "kind": "dbt",
-		"verifies_release_id": "rel-1", "remediation_round": float64(2), "try": float64(1),
+		"verifies_release_id": "rel-1", "round": float64(2), "try": float64(1),
 		"source_overlay_uri": "s3://b/core/verify-rel-1-core-r2-t1/source-overlay.tar.gz",
 	}, got)
 }

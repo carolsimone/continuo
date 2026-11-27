@@ -83,13 +83,13 @@ func TestRunReadRepository_ListCompletedRunsCarriesKindAndRelease(t *testing.T) 
 	seq := int64(1)
 	schedule := "kind-" + uuid.NewString()[:8]
 	id := readRun(t, db, tenant, schedule, &rel, &seq, "succeeded", true)
-	_, err := db.Exec(`UPDATE runs SET kind = 'trigger' WHERE run_id = $1`, id)
+	_, err := db.Exec(`UPDATE runs SET kind = 'manual' WHERE run_id = $1`, id)
 	require.NoError(t, err)
 
 	runs, _, err := postgres.NewRunReadRepository(db).ListCompletedRuns(context.Background(), tenant, schedule, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
-	assert.Equal(t, run.KindTrigger, runs[0].Kind)
+	assert.Equal(t, run.KindManual, runs[0].Kind)
 	assert.Equal(t, rel, runs[0].ReleaseID)
 	assert.NotNil(t, runs[0].CompletedAt)
 }

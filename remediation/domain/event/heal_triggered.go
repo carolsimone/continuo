@@ -18,7 +18,7 @@ const EventType = "heal_triggered"
 var remediationEventNamespace = uuid.MustParse("b8c4d2e1-6f3a-4b9c-8d7e-1a2b3c4d5e6f")
 
 // RemediationEventID maps (releaseID, round) to a stable UUID. One rejected
-// release yields one batched trigger per remediation round, and the trigger's
+// release yields one batched trigger per round, and the trigger's
 // outbox row id derives from this id, so a redelivered rejection collapses to
 // one logical trigger. For round <= 1 the name is the release id alone;
 // round >= 2 appends "|round|N", so a human's "try again" mints a distinct id
@@ -39,7 +39,7 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 }
 
 // HealTriggered is the batched trigger emitted once per rejected
-// release and remediation round: the release-level facts every fix needs, and
+// release and round: the release-level facts every fix needs, and
 // one FailingNode per failure the classifier recorded in this batch, the
 // unfixable ones included. It is pointer-first: logs stay behind each node's
 // DBTLogURI and code behind CodeBundleURI; the only inline error text is each
@@ -48,11 +48,11 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 type HealTriggered struct {
 	Source    model.RemediationSource
 	ReleaseID string
-	// RemediationRound is the release's remediation round this trigger belongs
+	// Round is the release's round this trigger belongs
 	// to: 1 for the rejection itself, +1 per human "try again" on the release.
-	RemediationRound int
-	Repo             string
-	CommitSHA        string
+	Round     int
+	Repo      string
+	CommitSHA string
 	// CodeBundleURI locates the rejected release's code-bundle document; empty
 	// when parse never completed (compile-stage failures).
 	CodeBundleURI string

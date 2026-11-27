@@ -21,24 +21,24 @@ import (
 // runGRPCClient. A method that starts a run, or cancels a schedule's active
 // run, takes the request id the server makes the command idempotent on.
 type RunClient interface {
-	TriggerSchedule(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
-	TriggerScheduleTest(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
-	TriggerScheduleBuild(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
+	StartScheduleRun(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
+	StartScheduleTest(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
+	StartScheduleBuild(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
 	CancelSchedule(ctx context.Context, requestID, scheduleName, reason, by string) (*runv1.CancelActiveRunResponse, error)
-	// TriggerRerun re-executes what did not succeed in a failed or cancelled run.
-	TriggerRerun(ctx context.Context, requestID, sourceRunID, actor string) (*runv1.TriggerRerunResponse, error)
-	// PreviewRebase reports what TriggerRebase would run, creating nothing.
+	// StartRerun re-executes what did not succeed in a failed or cancelled run.
+	StartRerun(ctx context.Context, requestID, sourceRunID, actor string) (*runv1.StartRerunResponse, error)
+	// PreviewRebase reports what StartRebase would run, creating nothing.
 	PreviewRebase(ctx context.Context, sourceRunID string, includeChangedUpstream bool) (*runv1.PreviewRebaseResponse, error)
-	// TriggerRebase restarts a failed or cancelled run on the live release;
+	// StartRebase restarts a failed or cancelled run on the live release;
 	// expectedReleaseID is the release the caller previewed.
-	TriggerRebase(ctx context.Context, requestID, sourceRunID, expectedReleaseID string, includeChangedUpstream bool, actor string) (*runv1.TriggerRebaseResponse, error)
+	StartRebase(ctx context.Context, requestID, sourceRunID, expectedReleaseID string, includeChangedUpstream bool, actor string) (*runv1.StartRebaseResponse, error)
 	// CancelRun cancels a run by id. It takes no request id: cancelling a run
 	// that is already cancelling or cancelled changes nothing.
 	CancelRun(ctx context.Context, runID, reason, by string) (*runv1.RunResponse, error)
-	TriggerNodeRun(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeTest(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeBuild(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeFullRefresh(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error)
+	StartNodeRun(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error)
+	StartNodeTest(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error)
+	StartNodeBuild(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error)
+	StartNodeFullRefresh(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.StartSingleNodeRunResponse, error)
 
 	ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*runv1.GetScheduleGraphResponse, error)
@@ -78,11 +78,11 @@ var retryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond
 // methods retried on ABORTED. The schedule edits are retried on UNAVAILABLE
 // only (scheduleEditMethods), and a read and CancelRun are not retried.
 var commandMethods = map[string]bool{
-	runv1.RunService_StartRun_FullMethodName:             true,
-	runv1.RunService_TriggerRerun_FullMethodName:         true,
-	runv1.RunService_TriggerRebase_FullMethodName:        true,
-	runv1.RunService_TriggerSingleNodeRun_FullMethodName: true,
-	runv1.RunService_CancelActiveRun_FullMethodName:      true,
+	runv1.RunService_StartRun_FullMethodName:           true,
+	runv1.RunService_StartRerun_FullMethodName:         true,
+	runv1.RunService_StartRebase_FullMethodName:        true,
+	runv1.RunService_StartSingleNodeRun_FullMethodName: true,
+	runv1.RunService_CancelActiveRun_FullMethodName:    true,
 }
 
 // scheduleEditMethods are the RPCs that change the cron of a schedule. They
@@ -195,15 +195,15 @@ func (c *runGRPCClient) startRun(ctx context.Context, requestID, scheduleName, o
 	})
 }
 
-func (c *runGRPCClient) TriggerSchedule(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error) {
+func (c *runGRPCClient) StartScheduleRun(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error) {
 	return c.startRun(ctx, requestID, scheduleName, "", actor)
 }
 
-func (c *runGRPCClient) TriggerScheduleTest(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error) {
+func (c *runGRPCClient) StartScheduleTest(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error) {
 	return c.startRun(ctx, requestID, scheduleName, "test", actor)
 }
 
-func (c *runGRPCClient) TriggerScheduleBuild(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error) {
+func (c *runGRPCClient) StartScheduleBuild(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error) {
 	return c.startRun(ctx, requestID, scheduleName, "build", actor)
 }
 
@@ -216,8 +216,8 @@ func (c *runGRPCClient) CancelSchedule(ctx context.Context, requestID, scheduleN
 	})
 }
 
-func (c *runGRPCClient) TriggerRerun(ctx context.Context, requestID, sourceRunID, actor string) (*runv1.TriggerRerunResponse, error) {
-	return c.api.TriggerRerun(withActor(ctx, actor), &runv1.TriggerRerunRequest{
+func (c *runGRPCClient) StartRerun(ctx context.Context, requestID, sourceRunID, actor string) (*runv1.StartRerunResponse, error) {
+	return c.api.StartRerun(withActor(ctx, actor), &runv1.StartRerunRequest{
 		RequestId:   requestID,
 		SourceRunId: sourceRunID,
 	})
@@ -230,8 +230,8 @@ func (c *runGRPCClient) PreviewRebase(ctx context.Context, sourceRunID string, i
 	})
 }
 
-func (c *runGRPCClient) TriggerRebase(ctx context.Context, requestID, sourceRunID, expectedReleaseID string, includeChangedUpstream bool, actor string) (*runv1.TriggerRebaseResponse, error) {
-	return c.api.TriggerRebase(withActor(ctx, actor), &runv1.TriggerRebaseRequest{
+func (c *runGRPCClient) StartRebase(ctx context.Context, requestID, sourceRunID, expectedReleaseID string, includeChangedUpstream bool, actor string) (*runv1.StartRebaseResponse, error) {
+	return c.api.StartRebase(withActor(ctx, actor), &runv1.StartRebaseRequest{
 		RequestId:              requestID,
 		SourceRunId:            sourceRunID,
 		IncludeChangedUpstream: includeChangedUpstream,
@@ -310,12 +310,12 @@ func (c *runGRPCClient) ListNodeRuns(ctx context.Context, project, schema, table
 	})
 }
 
-// singleNodeRequest builds a TriggerSingleNodeRun request. An empty
+// singleNodeRequest builds a StartSingleNodeRun request. An empty
 // sourceRunID selects the "latest" metadata mode; a non-empty one selects
 // "snapshot_of_run", pinning the run to the metadata the given past run used.
 // run-controller rejects any other combination, so the CLI never sends one.
-func singleNodeRequest(requestID, project, schema, table, sourceRunID, operation string) *runv1.TriggerSingleNodeRunRequest {
-	req := &runv1.TriggerSingleNodeRunRequest{
+func singleNodeRequest(requestID, project, schema, table, sourceRunID, operation string) *runv1.StartSingleNodeRunRequest {
+	req := &runv1.StartSingleNodeRunRequest{
 		RequestId:      requestID,
 		ProjectName:    project,
 		SchemaName:     schema,
@@ -330,7 +330,7 @@ func singleNodeRequest(requestID, project, schema, table, sourceRunID, operation
 	return req
 }
 
-// metadata_source values accepted by TriggerSingleNodeRun. They mirror the
+// metadata_source values accepted by StartSingleNodeRun. They mirror the
 // run-controller component's run.MetadataSource* constants, which the CLI cannot import
 // (public-gRPC-only rule), so the literals are duplicated here deliberately.
 const (
@@ -338,26 +338,26 @@ const (
 	metadataSourceSnapshotOfRun = "snapshot_of_run"
 )
 
-func (c *runGRPCClient) triggerSingleNode(ctx context.Context, req *runv1.TriggerSingleNodeRunRequest, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	return c.api.TriggerSingleNodeRun(withActor(ctx, actor), req)
+func (c *runGRPCClient) startSingleNode(ctx context.Context, req *runv1.StartSingleNodeRunRequest, actor string) (*runv1.StartSingleNodeRunResponse, error) {
+	return c.api.StartSingleNodeRun(withActor(ctx, actor), req)
 }
 
-func (c *runGRPCClient) TriggerNodeRun(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, ""), actor)
+func (c *runGRPCClient) StartNodeRun(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error) {
+	return c.startSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, ""), actor)
 }
 
-func (c *runGRPCClient) TriggerNodeTest(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, "test"), actor)
+func (c *runGRPCClient) StartNodeTest(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error) {
+	return c.startSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, "test"), actor)
 }
 
-func (c *runGRPCClient) TriggerNodeBuild(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, "build"), actor)
+func (c *runGRPCClient) StartNodeBuild(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error) {
+	return c.startSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, "build"), actor)
 }
 
-func (c *runGRPCClient) TriggerNodeFullRefresh(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (c *runGRPCClient) StartNodeFullRefresh(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.StartSingleNodeRunResponse, error) {
 	req := singleNodeRequest(requestID, project, schema, table, sourceRunID, "full_refresh")
 	req.AcknowledgedDependents = acknowledged
-	return c.triggerSingleNode(ctx, req, actor)
+	return c.startSingleNode(ctx, req, actor)
 }
 
 func (c *runGRPCClient) UpsertSchedule(ctx context.Context, actor string, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error) {

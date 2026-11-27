@@ -13,7 +13,7 @@ import (
 
 // TestE2E_FailurePath_RerunRebasesBothFailureSubtrees verifies the full
 // rerun alignment: two independent failure subtrees in one run, a single
-// TriggerRerun call (no target fields) rebases BOTH subtrees in one new
+// StartRerun call (no target fields) rebases BOTH subtrees in one new
 // run, and the projection on the new run partitions correctly between
 // rebased and inherited rows.
 //
@@ -63,19 +63,19 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	t.Log("Verifying scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, schedulerID)
 
-	t.Log("Triggering rerun via gRPC TriggerRerun with only source_run_id...")
-	rerunResp, err := clients.runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: uuid.NewString(),
+	t.Log("Starting rerun via gRPC StartRerun with only source_run_id...")
+	rerunResp, err := clients.runClient.StartRerun(ctx, &runv1.StartRerunRequest{RequestId: uuid.NewString(),
 		SourceRunId: schedulerIDStr,
 	})
-	require.NoError(t, err, "TriggerRerun must succeed against a FAILED run")
-	require.NotEmpty(t, rerunResp.RunId, "TriggerRerun must return the new run's id")
+	require.NoError(t, err, "StartRerun must succeed against a FAILED run")
+	require.NotEmpty(t, rerunResp.RunId, "StartRerun must return the new run's id")
 	require.NotEqual(t, schedulerIDStr, rerunResp.RunId, "rerun must mint a NEW run id")
 
 	newRunID, err := uuid.Parse(rerunResp.RunId)
 	require.NoError(t, err)
 
 	sourceKind := queryRunKind(t, clients.runControllerDB, schedulerID)
-	assert.Equal(t, "trigger", sourceKind, "source row must NOT be mutated")
+	assert.Equal(t, "manual", sourceKind, "source row must NOT be mutated")
 
 	newKind := queryRunKind(t, clients.runControllerDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
@@ -126,7 +126,7 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 		}
 	}
 
-	t.Log("Rerun alignment verified: single trigger rebased both subtrees")
+	t.Log("Rerun alignment verified: one rerun rebased both subtrees")
 }
 
 // startFailureScheduleRun starts a run of the failure schedule through

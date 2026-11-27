@@ -14,11 +14,11 @@ import (
 // goldenHealTriggered has every tagged field set, an unfixable node
 // among them, so the payload reproduces each tag, name, casing and order of
 // heal.triggered:v1.
-const goldenHealTriggered = `{"source":"validation","release_id":"r","remediation_round":2,"repo":"acme/demo","commit_sha":"abc","code_bundle_uri":"s3://b","classified_at":"2026-01-02T03:04:05Z","nodes":[{"node_id":"n","relation_id":"sch.rel","category":"logic","error_signature":"sig","reason":"why","error_excerpt":"exc","dbt_log_uri":"s3://l","candidate_artifact_uri":"s3://c","file_path":"models/m.sql","project":"svc","node_type":"dbt-model","other_project":"svc2","other_file_path":"models/o.sql","changed_ancestors":[{"node_id":"a","file_path":"models/a.sql","project":"svc","depth":1}]},{"node_id":"m","category":"infra_transient","error_signature":"sig2","reason":"infra:connection_refused","dbt_log_uri":"s3://l2","unfixable":{"reason":"classifier_infra","detail":"could not connect to server: connection refused"}}]}`
+const goldenHealTriggered = `{"source":"validation","release_id":"r","round":2,"repo":"acme/demo","commit_sha":"abc","code_bundle_uri":"s3://b","classified_at":"2026-01-02T03:04:05Z","nodes":[{"node_id":"n","relation_id":"sch.rel","category":"logic","error_signature":"sig","reason":"why","error_excerpt":"exc","dbt_log_uri":"s3://l","candidate_artifact_uri":"s3://c","file_path":"models/m.sql","project":"svc","node_type":"dbt-model","other_project":"svc2","other_file_path":"models/o.sql","changed_ancestors":[{"node_id":"a","file_path":"models/a.sql","project":"svc","depth":1}]},{"node_id":"m","category":"infra_transient","error_signature":"sig2","reason":"infra:connection_refused","dbt_log_uri":"s3://l2","unfixable":{"reason":"classifier_infra","detail":"could not connect to server: connection refused"}}]}`
 
 func TestHealTriggeredMapsEveryField(t *testing.T) {
 	got := HealTriggeredFromDomain(event.HealTriggered{
-		Source: model.RemediationSourceValidation, ReleaseID: "r", RemediationRound: 2,
+		Source: model.RemediationSourceValidation, ReleaseID: "r", Round: 2,
 		Repo: "acme/demo", CommitSHA: "abc", CodeBundleURI: "s3://b", ClassifiedAt: "2026-01-02T03:04:05Z",
 		Nodes: []event.FailingNode{
 			{
@@ -45,10 +45,10 @@ func TestHealTriggeredMapsEveryField(t *testing.T) {
 // carries none.
 func TestHealTriggeredOmitemptyShape(t *testing.T) {
 	out, err := json.Marshal(HealTriggeredFromDomain(event.HealTriggered{
-		Source: model.RemediationSourceCompile, ReleaseID: "r", RemediationRound: 1, Repo: "repo", CommitSHA: "sha", ClassifiedAt: "t",
+		Source: model.RemediationSourceCompile, ReleaseID: "r", Round: 1, Repo: "repo", CommitSHA: "sha", ClassifiedAt: "t",
 		Nodes: []event.FailingNode{{NodeID: "n", Category: "c", ErrorSignature: "sig", Reason: "why", DBTLogURI: "s3://l"}},
 	}))
 	require.NoError(t, err)
-	const want = `{"source":"compile","release_id":"r","remediation_round":1,"repo":"repo","commit_sha":"sha","classified_at":"t","nodes":[{"node_id":"n","category":"c","error_signature":"sig","reason":"why","dbt_log_uri":"s3://l"}]}`
+	const want = `{"source":"compile","release_id":"r","round":1,"repo":"repo","commit_sha":"sha","classified_at":"t","nodes":[{"node_id":"n","category":"c","error_signature":"sig","reason":"why","dbt_log_uri":"s3://l"}]}`
 	assert.Equal(t, want, string(out))
 }

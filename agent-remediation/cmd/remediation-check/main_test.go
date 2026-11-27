@@ -339,11 +339,11 @@ func TestFiles_AReplacementOfTheTriggerFlowThatCannotRunExitsOne(t *testing.T) {
 	}
 }
 
-// A type runs at least one pre-flight round, so a type that asks for none is
+// A type runs at least one draft, so a type that asks for none is
 // refused at its agent line, as the component refuses it at startup.
-func TestFiles_ATypeWithNoRoundsExitsOne(t *testing.T) {
+func TestFiles_ATypeWithNoDraftsExitsOne(t *testing.T) {
 	dir := copyBuiltinEditing(t, filepath.Join("types", "dbt-compile.yaml"), func(typ string) string {
-		return strings.Replace(typ, "rounds: 3", "rounds: 0", 1)
+		return strings.Replace(typ, "drafts: 3", "drafts: 0", 1)
 	})
 
 	code, stdout, stderr := runFiles(t, "files", dir)
@@ -352,11 +352,11 @@ func TestFiles_ATypeWithNoRoundsExitsOne(t *testing.T) {
 	r := decode(t, stdout)
 	require.Len(t, r.Errors, 1, "%v", r.Errors)
 	agentLine := lineOf(t, builtinText(t, "types/dbt-compile.yaml"), "agent:")
-	assert.Equal(t, fmt.Sprintf(`types/dbt-compile.yaml:%d: type "dbt-compile" has rounds 0, and a type runs at least one pre-flight round, so rounds must be 1 or more`, agentLine), r.Errors[0])
+	assert.Equal(t, fmt.Sprintf(`types/dbt-compile.yaml:%d: type "dbt-compile" has drafts 0, and a type runs at least one draft, so drafts must be 1 or more`, agentLine), r.Errors[0])
 	assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
 }
 
-func TestFiles_ATypeOfOneRoundPasses(t *testing.T) {
+func TestFiles_ATypeOfOneDraftPasses(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.CopyFS(dir, os.DirFS(builtinDir)))
 	root, err := os.OpenRoot(dir)
@@ -365,9 +365,9 @@ func TestFiles_ATypeOfOneRoundPasses(t *testing.T) {
 	const typeFile = "types/dbt-compile.yaml"
 	body, err := root.ReadFile(typeFile)
 	require.NoError(t, err)
-	oneRound := strings.Replace(string(body), "rounds: 3", "rounds: 1", 1)
-	require.NotEqual(t, string(body), oneRound)
-	require.NoError(t, root.WriteFile(typeFile, []byte(oneRound), 0o600))
+	oneDraft := strings.Replace(string(body), "drafts: 3", "drafts: 1", 1)
+	require.NotEqual(t, string(body), oneDraft)
+	require.NoError(t, root.WriteFile(typeFile, []byte(oneDraft), 0o600))
 
 	code, stdout, stderr := runFiles(t, "files", dir)
 
@@ -408,7 +408,7 @@ version: 1
 name: my-validation
 match: { cluster: single, source: validation, node_types: [dbt-test] }
 context: [failing_node_source, dbt_log, failure_precedents]
-agent: { prompt: dbt-compile, tools: [], rounds: 2 }
+agent: { prompt: dbt-compile, tools: [], drafts: 2 }
 preflight: [content_changed, confidence_not_low]
 `
 
@@ -476,7 +476,7 @@ func TestFiles_AnInstallReplacementIsChecked(t *testing.T) {
 
 	t.Run("a valid replacement passes and is noted in the warnings", func(t *testing.T) {
 		dir := t.TempDir()
-		writeInstallFile(t, dir, typeFile, strings.Replace(builtinText(t, typeFile), "rounds: 3", "rounds: 2", 1))
+		writeInstallFile(t, dir, typeFile, strings.Replace(builtinText(t, typeFile), "drafts: 3", "drafts: 2", 1))
 
 		code, stdout, stderr := runFiles(t, "files", dir)
 
@@ -581,7 +581,7 @@ func TestFiles_AnInstallFlowThatDropsABuiltInTypeSkipsItsBuiltInFixture(t *testi
 		"without the install's shared-upstream fixture the built-in one fails": {
 			fixtures: flowFixtures,
 			failed: []string{
-				"shared-upstream preflight_rounds_spent",
+				"shared-upstream drafts_spent",
 				"shared-upstream declines_before_model",
 			},
 		},
@@ -840,7 +840,7 @@ func TestFiles_AWarningFromTheLoadReachesTheReport(t *testing.T) {
 	current := builtin.Types["dbt-compile"].Revision
 	dir := t.TempDir()
 	writeInstallFile(t, dir, "copy.yaml", "based_on: dbt-compile@000000000000\n"+
-		strings.Replace(builtinText(t, "types/dbt-compile.yaml"), "rounds: 3", "rounds: 2", 1))
+		strings.Replace(builtinText(t, "types/dbt-compile.yaml"), "drafts: 3", "drafts: 2", 1))
 	writeInstallFile(t, dir, "unlisted.yaml", strings.Replace(installedType, "name: my-validation", "name: unlisted", 1))
 
 	code, stdout, stderr := runFiles(t, "files", dir)

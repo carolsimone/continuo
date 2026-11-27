@@ -94,7 +94,7 @@ CREATE TABLE release_checks (
     code_bundle_uri text DEFAULT '' NOT NULL,
     manifest_kind text DEFAULT 'dbt' NOT NULL,
     fail_detail text DEFAULT '' NOT NULL,
-    remediation_round integer DEFAULT 1 NOT NULL,
+    round integer DEFAULT 1 NOT NULL,
     rejection_payload jsonb,
     source_overlay_uri text DEFAULT '' NOT NULL,
     verifies_release_id text DEFAULT '' NOT NULL,

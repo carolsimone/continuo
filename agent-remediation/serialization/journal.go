@@ -82,7 +82,7 @@ type ContextRecord struct {
 // PromptRecord is a prompt step's output as its row stores it: the model's
 // draft, or its decision to decline the cluster. A step that made a model call
 // and did not decline also stores the last call it made, its request and the
-// answer it got, which a later round revises.
+// answer it got, which a later draft revises.
 type PromptRecord struct {
 	Draft       remediation.Draft `json:"draft"`
 	Declined    bool              `json:"declined,omitempty"`
@@ -146,13 +146,13 @@ func digest(raw []byte) string {
 }
 
 // InputDigest identifies what a step of a cluster ran on: the cluster's
-// evidence and the round. Two runs with the same digest were given the same
+// evidence and the draft. Two runs with the same digest were given the same
 // input.
-func InputDigest(ev remediation.Evidence, round int) (string, error) {
+func InputDigest(ev remediation.Evidence, draft int) (string, error) {
 	raw, err := json.Marshal(struct {
 		Evidence map[remediation.EvidenceKey]any `json:"evidence"`
-		Round    int                             `json:"round"`
-	}{evidenceValues(ev), round})
+		Draft    int                             `json:"draft"`
+	}{evidenceValues(ev), draft})
 	if err != nil {
 		return "", fmt.Errorf("encode the step's input: %w", err)
 	}

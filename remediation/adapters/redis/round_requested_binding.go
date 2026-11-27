@@ -13,34 +13,34 @@ import (
 	"github.com/carolsimone/continuo/remediation/service/handlers"
 )
 
-// NewRemediationRetryConsumer consumes remediation.retry_requested:v1: a
-// rejected release's stored rejection replayed with a remediation_round. It
+// NewRoundRequestedConsumer consumes round.requested:v1: a
+// rejected release's stored rejection replayed with a round. It
 // classifies the rejection's whole failed-node set exactly as the original
 // rejection was, emitting one batched trigger for the round under the retry's
 // tenant, so a "try again" walks the same path as the rejection itself, one
 // round later.
-func NewRemediationRetryConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	return pkgredis.NewStreamConsumer(rc, streams.RemediationRetryRequestedV1, streams.RemediationRetryRequested,
-		newRetryHandler(deps, logger), logger)
+func NewRoundRequestedConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
+	return pkgredis.NewStreamConsumer(rc, streams.RoundRequestedV1, streams.RemediationRoundRequested,
+		newRoundRequestedHandler(deps, logger), logger)
 }
 
-// newRetryHandler returns the MessageHandler that classifies the stored
-// rejection of one remediation.retry_requested:v1 message, stamping the
+// newRoundRequestedHandler returns the MessageHandler that classifies the stored
+// rejection of one round.requested:v1 message, stamping the
 // retry's own round on its evidence and storing the trigger under the tenant of
 // the message's envelope. An entry that cannot be read, one that names no
 // tenant and one whose rejection cannot be decoded are permanent failures: the
 // error wraps events.ErrPermanent, so the consumer dead-letters them. Any error
 // from classification is returned as is, so the consumer redelivers it.
-func newRetryHandler(deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
+func newRoundRequestedHandler(deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		env, retry, err := pkgevents.DecodeRemediationRetryRequested(stringFields(msg.Values))
+		env, retry, err := pkgevents.DecodeRoundRequested(stringFields(msg.Values))
 		if err != nil {
-			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV1, err)
+			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.RoundRequestedV1, err)
 		}
 		if env.TenantID == "" {
-			return fmt.Errorf("%w: %s entry of release %s names no tenant", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV1, retry.ReleaseID)
+			return fmt.Errorf("%w: %s entry of release %s names no tenant", pkgevents.ErrPermanent, streams.RoundRequestedV1, retry.ReleaseID)
 		}
-		return classifyRejectionBody(ctx, deps, logger, streams.RemediationRetryRequestedV1, env.TenantID, retry.Rejection, retry.RemediationRound)
+		return classifyRejectionBody(ctx, deps, logger, streams.RoundRequestedV1, env.TenantID, retry.Rejection, retry.Round)
 	}
 }
 

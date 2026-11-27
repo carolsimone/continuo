@@ -175,7 +175,7 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
 /* The group takes the focus only to hold the keyboard's place when the focused
    run control leaves, so it draws no ring of its own. */
 .scheduler-card-actions:focus { outline: none; }
-/* The trigger keeps its width through Triggering… and Triggered, so a press does
+/* The Start button keeps its width through Starting… and Started, so a press does
    not move the button under the pointer. */
 .scheduler-card-actions .btn-group > .btn:first-child { min-width: 90px; justify-content: center; }
 .schedule-name {
@@ -1658,7 +1658,7 @@ a.release-author:hover { text-decoration: underline; }
                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- Remediation panel ---- */
-/* Group rows: one per (release, remediation round). The first cell is the
+/* Group rows: one per (release, round). The first cell is the
    expander — a chevron that turns to point down while the group is open —
    and an open group tints its row and drops its divider, so the tries
    block below reads as the row's continuation rather than a new table. */

@@ -142,10 +142,10 @@ func TestPrompts_AssembleTheirRequestAndMakeOneModelCall(t *testing.T) {
 
 			require.Len(t, model.reqs, 1)
 			assert.Equal(t, tc.wantRequest(false), model.reqs[0])
-			assert.Contains(t, model.reqs[0].User, "## Earlier tries at this failure\n", "the first round's request shows the earlier tries")
+			assert.Contains(t, model.reqs[0].User, "## Earlier tries at this failure\n", "the first draft's request shows the earlier tries")
 			assert.Contains(t, model.reqs[0].User, "Why the gate failed: <still bad>")
 			assert.Contains(t, model.reqs[0].User, "Current contract (the node's contract as continuo last promoted it, for reference only: do not copy its version, or its provenance and reads properties, into the file):\n```yaml\n<id: fx.rates",
-				"the first round's request shows the node's current contract")
+				"the first draft's request shows the node's current contract")
 		})
 	}
 }
@@ -248,11 +248,11 @@ func TestPrompts_NeedTheContractFileAndReturnTheModelError(t *testing.T) {
 	}
 }
 
-// revisesTheLastCall runs the step's first round, then a second round that
+// revisesTheLastCall runs the step's first draft, then a second draft that
 // carries the first one's draft, last call and findings. It asserts the second
-// round makes one model call, the revision of the first round's request with
+// draft makes one model call, the revision of the first draft's request with
 // its answer and the findings, and that the draft it returns is the one the
-// first round builds from the same answer.
+// first draft builds from the same answer.
 func revisesTheLastCall(t *testing.T, tc promptCase) {
 	t.Helper()
 	f := failure(func(f *remediation.Failure) { f.Target.NodeType = tc.nodeType })
@@ -262,23 +262,23 @@ func revisesTheLastCall(t *testing.T, tc promptCase) {
 		ports.ProposedFile{Path: "svc/contracts/shared.yaml", Content: "second shared"},
 	)
 	m := answers(first, second)
-	round1 := proposeWith(t, tc.build(), f, promptEvidence(), m)
+	draft1 := proposeWith(t, tc.build(), f, promptEvidence(), m)
 	findings := []remediation.Finding{
 		{Code: "contract_rejected", Message: "the packager refused the contract: column amount is not declared", File: "svc/contracts/fx.yaml"},
 		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix"},
 	}
 
 	out, err := tc.build().Propose(context.Background(), step.PromptInput{
-		Failure: f, Evidence: promptEvidence(), Round: 1,
-		Previous: &round1.Draft, PreviousRequest: &m.reqs[0], PreviousAnswer: &first, Findings: findings,
+		Failure: f, Evidence: promptEvidence(), Revision: 1,
+		Previous: &draft1.Draft, PreviousRequest: &m.reqs[0], PreviousAnswer: &first, Findings: findings,
 	}, m)
 
 	require.NoError(t, err)
-	require.Len(t, m.reqs, 2, "a later round makes one model call")
+	require.Len(t, m.reqs, 2, "a later draft makes one model call")
 	assert.Equal(t, prompt.Revise(m.reqs[0], step.AnswerJSON(first), step.FindingLines(findings)), m.reqs[1])
 	assert.NotEqual(t, m.reqs[0], m.reqs[1])
 	again := proposeWith(t, tc.build(), f, promptEvidence(), answers(second))
-	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first round's answer is")
+	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first draft's answer is")
 }
 
 func TestPythonContract_RevisesTheLastCallWithTheFindings(t *testing.T) {
@@ -293,12 +293,12 @@ func TestCSVContract_RevisesTheLastCallWithTheFindings(t *testing.T) {
 	revisesTheLastCall(t, promptCases()[2])
 }
 
-func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
+func TestPrompts_ARevisionWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
 	req, res := prompt.ProposeRequest{User: "u"}, answer()
 	cases := map[string]step.PromptInput{
-		"no previous call":    {Round: 1},
-		"no previous request": {Round: 1, PreviousAnswer: &res},
-		"no previous answer":  {Round: 1, PreviousRequest: &req},
+		"no previous call":    {Revision: 1},
+		"no previous request": {Revision: 1, PreviousAnswer: &res},
+		"no previous answer":  {Revision: 1, PreviousRequest: &req},
 	}
 	for _, tc := range promptCases() {
 		for name, in := range cases {

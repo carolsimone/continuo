@@ -17,11 +17,11 @@ import (
 
 // TestSingleNodeTestOperation verifies the `test` run operation end-to-end for a
 // single node that has tests. seed_table_1 is seeded with test_count=2 and
-// carries real dbt tests (not_null + unique on id), so a TriggerSingleNodeRun
+// carries real dbt tests (not_null + unique on id), so a StartSingleNodeRun
 // with operation="test" dispatches a `dbt test --select seed_table_1` Job that
 // runs those tests, succeeds, and finalizes the run 'succeeded' with exactly one
 // task. The run records operation="test", proving the operation threaded
-// from the trigger through to the run projection.
+// from the start through to the run projection.
 func TestSingleNodeTestOperation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -44,15 +44,15 @@ func TestSingleNodeTestOperation(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-test-op")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetProject, targetSchema, targetTable)
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	t.Logf("StartSingleNodeRun operation=test: %s.%s.%s", targetProject, targetSchema, targetTable)
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",
 		Operation:      "test",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(operation=test) failed")
+	require.NoError(t, err, "StartSingleNodeRun(operation=test) failed")
 	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
 
 	runID, err := uuid.Parse(resp.RunId)
@@ -111,7 +111,7 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 //
 // It reproduces the exact prod state: a node whose `test_count` is unknown in the
 // live release (a topology promoted before test_count capture existed). An unknown
-// count is treated as "no known tests", so the trigger is refused like a known
+// count is treated as "no known tests", so the start is refused like a known
 // zero: only a KNOWN, positive test_count is runnable, and no run or Job exists
 // that could no-op and retry.
 func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
@@ -144,13 +144,13 @@ func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	t.Log("TestSingleNodeTestOperationUnsetTestCountIsGated passed")
 }
 
-// requireTestOfNodeRefused triggers a single-node test of the node and asserts
-// the trigger is refused with FailedPrecondition and creates no run.
+// requireTestOfNodeRefused starts a single-node test of the node and asserts
+// the start is refused with FailedPrecondition and creates no run.
 func requireTestOfNodeRefused(t *testing.T, ctx context.Context, clients *testClients, project, schema, table string) {
 	t.Helper()
 	before := countRunsOfKind(t, clients, "single_node_run")
-	t.Logf("TriggerSingleNodeRun operation=test on a node without known tests: %s.%s.%s", project, schema, table)
-	_, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	t.Logf("StartSingleNodeRun operation=test on a node without known tests: %s.%s.%s", project, schema, table)
+	_, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    project,
 		SchemaName:     schema,
 		TableName:      table,
@@ -159,7 +159,7 @@ func requireTestOfNodeRefused(t *testing.T, ctx context.Context, clients *testCl
 	})
 	require.Error(t, err, "a test of a node without known tests must be refused")
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "the refusal is FailedPrecondition: %v", err)
-	assert.Equal(t, before, countRunsOfKind(t, clients, "single_node_run"), "a refused trigger creates no run")
+	assert.Equal(t, before, countRunsOfKind(t, clients, "single_node_run"), "a refused start creates no run")
 }
 
 // TestWholeDAGTestOperation verifies whole-DAG "flat fan-out" test runs. The
@@ -277,7 +277,7 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 
 // TestNodeCatalogOperationScoping verifies the UI-facing node list
 // (GET /api/nodes, ui's proxy of run-controller.ListNodes) scopes stats per
-// operation dimension end-to-end. A model run and a test run are triggered
+// operation dimension end-to-end. A model run and a test run are started
 // against the SAME node (seed_table_1, test_count=2), each populating a
 // DISTINCT node-list slice under its own operation: operation=run reflects the
 // model run's terminal status, operation=test reflects the test run's. A
@@ -310,15 +310,15 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "node-catalog-op-scoping")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSingleNodeRun operation=run: %s.%s.%s", targetProject, targetSchema, targetTable)
-	runResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	t.Logf("StartSingleNodeRun operation=run: %s.%s.%s", targetProject, targetSchema, targetTable)
+	runResp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",
 		Operation:      "run",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(operation=run) failed")
+	require.NoError(t, err, "StartSingleNodeRun(operation=run) failed")
 	require.NotEmpty(t, runResp.RunId, "must return a non-empty run_id")
 
 	modelRunID, err := uuid.Parse(runResp.RunId)
@@ -328,15 +328,15 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	t.Log("Waiting for the model run to reach 'succeeded'...")
 	verifySchedulerSucceeded(t, ctx, clients, modelRunID)
 
-	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetProject, targetSchema, targetTable)
-	testResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	t.Logf("StartSingleNodeRun operation=test: %s.%s.%s", targetProject, targetSchema, targetTable)
+	testResp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",
 		Operation:      "test",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(operation=test) failed")
+	require.NoError(t, err, "StartSingleNodeRun(operation=test) failed")
 	require.NotEmpty(t, testResp.RunId, "must return a non-empty run_id")
 
 	testRunID, err := uuid.Parse(testResp.RunId)

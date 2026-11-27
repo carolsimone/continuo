@@ -49,7 +49,7 @@ func TestHandleGetReleaseQueue_ActiveCandidate(t *testing.T) {
 	assert.Equal(t, "candidate", active["check_kind"])
 	assert.Equal(t, "compiling", active["status"])
 	assert.Equal(t, "core", active["project"])
-	for _, key := range []string{"verifies_release_id", "remediation_round", "try"} {
+	for _, key := range []string{"verifies_release_id", "round", "try"} {
 		_, has := active[key]
 		assert.False(t, has, "a candidate's active summary carries no %s", key)
 	}
@@ -74,6 +74,6 @@ func TestHandleGetReleaseQueue_ActiveFixCarriesRoundTryAndVerifies(t *testing.T)
 	assert.Equal(t, "verify-1", active["check_id"])
 	assert.Equal(t, "fix", active["check_kind"])
 	assert.Equal(t, "rel-1", active["verifies_release_id"])
-	assert.EqualValues(t, 3, active["remediation_round"])
+	assert.EqualValues(t, 3, active["round"])
 	assert.EqualValues(t, 2, active["try"])
 }

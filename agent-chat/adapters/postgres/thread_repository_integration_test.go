@@ -163,8 +163,8 @@ func TestThreadRepository_PendingActionsAndRetention(t *testing.T) {
 	require.NoError(t, err)
 
 	a := &domain.PendingAction{
-		ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_trigger",
-		Args: map[string]string{"schedule-name": "daily"}, Summary: "Trigger schedule \"daily\" now?",
+		ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_run",
+		Args: map[string]string{"schedule-name": "daily"}, Summary: "Start a manual run of schedule \"daily\" now?",
 		Status: domain.ActionPending, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
 	}
 	require.NoError(t, repo.CreatePendingAction(ctx, a))
@@ -201,9 +201,9 @@ func TestThreadRepository_GetPendingAction(t *testing.T) {
 
 	now := time.Now().UTC()
 	// An older pending action and a newer one; an expired one; a resolved one.
-	older := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "old"}, Summary: "old", Status: domain.ActionPending, CreatedAt: now.Add(-2 * time.Minute), ExpiresAt: now.Add(5 * time.Minute)}
-	newer := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "new"}, Summary: "new", Status: domain.ActionPending, CreatedAt: now.Add(-1 * time.Minute), ExpiresAt: now.Add(5 * time.Minute)}
-	expired := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "exp"}, Summary: "exp", Status: domain.ActionPending, CreatedAt: now, ExpiresAt: now.Add(-time.Second)}
+	older := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_run", Args: map[string]string{"schedule-name": "old"}, Summary: "old", Status: domain.ActionPending, CreatedAt: now.Add(-2 * time.Minute), ExpiresAt: now.Add(5 * time.Minute)}
+	newer := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_run", Args: map[string]string{"schedule-name": "new"}, Summary: "new", Status: domain.ActionPending, CreatedAt: now.Add(-1 * time.Minute), ExpiresAt: now.Add(5 * time.Minute)}
+	expired := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_run", Args: map[string]string{"schedule-name": "exp"}, Summary: "exp", Status: domain.ActionPending, CreatedAt: now, ExpiresAt: now.Add(-time.Second)}
 	require.NoError(t, repo.CreatePendingAction(ctx, older))
 	require.NoError(t, repo.CreatePendingAction(ctx, newer))
 	require.NoError(t, repo.CreatePendingAction(ctx, expired))

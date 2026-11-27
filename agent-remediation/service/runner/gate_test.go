@@ -66,7 +66,7 @@ func TestRunner_NoEditSettlesTheTry(t *testing.T) {
 		p := h.fixRow(1).Fix
 		assert.Equal(t, fix.StatusFailed, p.Status)
 		assert.Equal(t, map[string]fix.NodeOutcome{
-			"svc-a": {Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent},
+			"svc-a": {Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonDraftsSpent},
 			"svc-b": {Status: fix.StatusSkipped, Reason: dbtTestReason, Code: model.HandoverReasonNoType},
 		}, p.NodeOutcomes)
 		assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)

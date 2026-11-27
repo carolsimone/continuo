@@ -61,7 +61,7 @@ The checks one cluster's draft must pass before the try goes on.
 _Avoid_: lint, validation, precheck
 
 **Revision**:
-The model's new draft for a cluster after pre-flight refused the last one, made from the refused draft and what pre-flight found. A type sets how many drafts a cluster gets in one try (its `rounds` key counts them).
+The model's new draft for a cluster after pre-flight refused the last one, made from the refused draft and what pre-flight found. A type sets how many drafts a cluster gets in one try (its `drafts` key counts them).
 _Avoid_: round, retry, re-prompt
 
 **Cross-cluster check**:

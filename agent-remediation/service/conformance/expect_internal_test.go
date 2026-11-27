@@ -27,20 +27,20 @@ type rowsWorld struct {
 
 func (w rowsWorld) Steps(uuid.UUID) []remediation.StepRun { return w.rows }
 
-// The journal of a cluster that played several rounds holds one row of its
-// prompt step per round. A read picks the row of the round it asks for, so
+// The journal of a cluster that played several drafts holds one row of its
+// prompt step per draft. A read picks the row of the draft it asks for, so
 // its answer is the same in whatever order the store lists the rows.
-func TestExpectation_ReadsTheRowOfTheRoundItAsksForInEitherOrder(t *testing.T) {
+func TestExpectation_ReadsTheRowOfTheDraftItAsksForInEitherOrder(t *testing.T) {
 	id := uuid.New()
 	const prompt = "dbt-compile"
-	round1 := remediation.StepRun{RemediationID: id, Try: 1, Cluster: 1, Round: 1, Step: prompt, Status: remediation.StepDone, Failures: 1}
-	round2 := remediation.StepRun{RemediationID: id, Try: 1, Cluster: 1, Round: 2, Step: prompt, Status: remediation.StepFailed, Failures: 3}
+	draft1 := remediation.StepRun{RemediationID: id, Try: 1, Cluster: 1, Draft: 1, Step: prompt, Status: remediation.StepDone, Failures: 1}
+	draft2 := remediation.StepRun{RemediationID: id, Try: 1, Cluster: 1, Draft: 2, Step: prompt, Status: remediation.StepFailed, Failures: 3}
 	typ := workflow.Type{Agent: workflow.Agent{Prompt: workflow.StepRef{Name: prompt}}}
 
-	for _, rows := range [][]remediation.StepRun{{round1, round2}, {round2, round1}} {
+	for _, rows := range [][]remediation.StepRun{{draft1, draft2}, {draft2, draft1}} {
 		e := (&scenarioRun{w: rowsWorld{rows: rows}, id: id}).expect(remediation.Trigger{})
 
-		assert.True(t, e.reachedModel(remediation.Cluster{Try: 1, Cluster: 1}, typ), "round 1's prompt step ran")
+		assert.True(t, e.reachedModel(remediation.Cluster{Try: 1, Cluster: 1}, typ), "draft 1's prompt step ran")
 		first, ok := e.stepRow(1, 1, 1, prompt)
 		require.True(t, ok)
 		assert.Equal(t, 1, first.Failures)
@@ -53,23 +53,23 @@ func TestExpectation_ReadsTheRowOfTheRoundItAsksForInEitherOrder(t *testing.T) {
 	}
 }
 
-// Two rows of one step in one round of one cluster cannot both be the row a
+// Two rows of one step in one draft of one cluster cannot both be the row a
 // read asks for, so the read records the problem instead of answering with
 // whichever row the store listed last.
-func TestExpectation_TwoRowsOfOneStepInOneRoundAreAProblem(t *testing.T) {
+func TestExpectation_TwoRowsOfOneStepInOneDraftAreAProblem(t *testing.T) {
 	id := uuid.New()
-	row := remediation.StepRun{RemediationID: id, Try: 1, Cluster: 1, Round: 1, Step: "dbt-compile", Status: remediation.StepDone}
+	row := remediation.StepRun{RemediationID: id, Try: 1, Cluster: 1, Draft: 1, Step: "dbt-compile", Status: remediation.StepDone}
 	e := (&scenarioRun{w: rowsWorld{rows: []remediation.StepRun{row, row}}, id: id}).expect(remediation.Trigger{})
 
 	_, _ = e.stepRow(1, 1, 1, "dbt-compile")
 
 	require.Error(t, e.err())
-	assert.Contains(t, e.err().Error(), "try 1 cluster 1 round 1 has two rows of step dbt-compile")
+	assert.Contains(t, e.err().Error(), "try 1 cluster 1 draft 1 has two rows of step dbt-compile")
 }
 
 // journalRow is a journal row of the named step, in the cluster, of the kind.
 func journalRow(id uuid.UUID, cluster int, name, kind string) remediation.StepRun {
-	return remediation.StepRun{RemediationID: id, Try: 1, Cluster: cluster, Round: 1, Step: name, Kind: kind, Status: remediation.StepDone}
+	return remediation.StepRun{RemediationID: id, Try: 1, Cluster: cluster, Draft: 1, Step: name, Kind: kind, Status: remediation.StepDone}
 }
 
 // A remediation that hands every node over before any draft runs one step: the
@@ -160,16 +160,16 @@ func TestExpectation_HandedOverReadsTheEventFromTheOutbox(t *testing.T) {
 	trigger := remediation.Trigger{ReleaseID: "rel-1", Round: 1}
 	try := FixRow{Fix: fix.Fix{Try: 1, NodeOutcomes: map[string]fix.NodeOutcome{
 		"a": {Status: fix.StatusSkipped, Reason: "why a", Code: model.HandoverReasonDeclined},
-		"b": {Status: fix.StatusFailed, Reason: "why b", Code: model.HandoverReasonPreflightRoundsSpent},
+		"b": {Status: fix.StatusFailed, Reason: "why b", Code: model.HandoverReasonDraftsSpent},
 	}}}
 	event := events.RemediationHandedOver{
-		RemediationID: id.String(), ReleaseID: "rel-1", RemediationRound: 1, Flow: "rejected-release", Tries: 1,
+		RemediationID: id.String(), ReleaseID: "rel-1", Round: 1, Flow: "rejected-release", Tries: 1,
 		Nodes: []events.HandedOverNode{
 			{NodeID: "a", Reason: string(model.HandoverReasonDeclined), Message: "why a"},
-			{NodeID: "b", Reason: string(model.HandoverReasonPreflightRoundsSpent), Message: "why b"},
+			{NodeID: "b", Reason: string(model.HandoverReasonDraftsSpent), Message: "why b"},
 		},
 	}
-	want := map[string]model.HandoverReason{"a": model.HandoverReasonDeclined, "b": model.HandoverReasonPreflightRoundsSpent}
+	want := map[string]model.HandoverReason{"a": model.HandoverReasonDeclined, "b": model.HandoverReasonDraftsSpent}
 	edit := func(f func(p *events.RemediationHandedOver)) events.RemediationHandedOver {
 		p := event
 		p.Nodes = append([]events.HandedOverNode(nil), event.Nodes...)
@@ -251,7 +251,7 @@ func TestExpectation_HandedOverReadsTheEventFromTheOutbox(t *testing.T) {
 	t.Run("a node whose outcome carries another code", func(t *testing.T) {
 		e := (&scenarioRun{w: handOverWorld{rem: rem, outbox: []outbox.Entry{handedOverRow(t, "tenant-1", event)}}, id: id}).expect(trigger)
 
-		e.handedOver(try, 1, map[string]model.HandoverReason{"a": model.HandoverReasonNoType, "b": model.HandoverReasonPreflightRoundsSpent})
+		e.handedOver(try, 1, map[string]model.HandoverReason{"a": model.HandoverReasonNoType, "b": model.HandoverReasonDraftsSpent})
 
 		require.Error(t, e.err())
 		assert.Contains(t, e.err().Error(), `node a ended try 1 with the code "declined" (why a), want "no_type"`)

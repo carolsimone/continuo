@@ -38,41 +38,41 @@ func rejectedRelease(t *testing.T, id, payload string) *releasecheck.Check {
 func TestRetryRemediation_DeadEndStartsRoundTwo(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"release_id":"rel-1","stage":"compile","reason":"compile_failed"}`))
-	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 3, Status: "escalated", RemediationRound: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 3, Status: "escalated", Round: 1}}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, res.RemediationRound)
+	require.Equal(t, 2, res.Round)
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, r.RemediationRound())
+	require.Equal(t, 2, r.Round())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
-	require.Equal(t, streams.RemediationRetryRequestedV1, entries[0].StreamName)
-	require.Equal(t, "remediation_retry_requested", entries[0].EventType)
+	require.Equal(t, streams.RoundRequestedV1, entries[0].StreamName)
+	require.Equal(t, "round_requested", entries[0].EventType)
 }
 
 // TestRetryRemediation_WritesTheTypedRetry pins the row the retry stores: the
-// typed remediation.retry_requested:v1 payload, wrapped under the default
+// typed round.requested:v1 payload, wrapped under the default
 // tenant, carrying the later round and the release's stored rejection
 // unchanged.
 func TestRetryRemediation_WritesTheTypedRetry(t *testing.T) {
 	const rejection = `{"release_id":"rel-1","stage":"compile","reason":"compile_failed","per_node":[{"node_id":"finance","error":"boom"}]}`
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", rejection))
-	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 3, Status: "escalated", RemediationRound: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 3, Status: "escalated", Round: 1}}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, res.RemediationRound)
+	require.Equal(t, 2, res.Round)
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	e := entries[0]
-	require.Equal(t, streams.RemediationRetryRequestedV1, e.StreamName)
-	require.Equal(t, "remediation_retry_requested", e.EventType)
+	require.Equal(t, streams.RoundRequestedV1, e.StreamName)
+	require.Equal(t, "round_requested", e.EventType)
 	require.Equal(t, "release-controller", e.AggregateType)
 	require.Equal(t, handlers.AggregateIDForRelease("rel-1"), e.AggregateID)
 	require.Equal(t, uuid.NewSHA1(uuid.NameSpaceOID, []byte("remediation-retry:rel-1:2")), e.ID, "one row per release and round")
@@ -80,10 +80,10 @@ func TestRetryRemediation_WritesTheTypedRetry(t *testing.T) {
 	tenantID, payload, err := pkgoutbox.UnwrapTenant(e.Payload)
 	require.NoError(t, err)
 	require.Equal(t, events.DefaultTenantID, tenantID)
-	var got events.RemediationRetryRequested
+	var got events.RoundRequested
 	require.NoError(t, json.Unmarshal(payload, &got))
 	require.Equal(t, "rel-1", got.ReleaseID)
-	require.Equal(t, 2, got.RemediationRound)
+	require.Equal(t, 2, got.Round)
 	require.Equal(t, rejection, string(got.Rejection), "the stored rejection travels unchanged")
 
 	var raw map[string]json.RawMessage
@@ -100,17 +100,17 @@ func TestRetryRemediation_AllHandedOverRoundIsRetryable(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"release_id":"rel-1","stage":"compile","reason":"compile_failed"}`))
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "skipped", RemediationRound: 1},
-		{ID: "p2", NodeID: "ledger", Try: 1, Status: "skipped", RemediationRound: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "skipped", Round: 1},
+		{ID: "p2", NodeID: "ledger", Try: 1, Status: "skipped", Round: 1},
 	}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, res.RemediationRound)
+	require.Equal(t, 2, res.Round)
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, r.RemediationRound())
+	require.Equal(t, 2, r.Round())
 	require.Len(t, outboxEntries(store), 1)
 }
 
@@ -130,7 +130,7 @@ func TestRetryRemediation_RefusesWhenAFixIsOpen(t *testing.T) {
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Equal(t, 1, r.Round(), "no round spent")
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
@@ -177,8 +177,8 @@ func TestRetryRemediation_Refusals(t *testing.T) {
 		{"no stored payload", func() *releasecheck.Check { return rejectedRelease(t, "rel-1", "") }, handlers.ErrNotRetryable},
 		{"rounds exhausted", func() *releasecheck.Check {
 			r := rejectedRelease(t, "rel-1", `{}`)
-			_, _ = r.StartRemediationRound(now)
-			_, _ = r.StartRemediationRound(now)
+			_, _ = r.StartRound(now)
+			_, _ = r.StartRound(now)
 			return r
 		}, releasecheck.ErrRoundsExhausted},
 	}
@@ -208,7 +208,7 @@ func TestRetryRemediation_FixReaderUnavailableIsAnError(t *testing.T) {
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 1, r.RemediationRound())
+	require.Equal(t, 1, r.Round())
 }
 
 func TestRetryRemediation_RoundOneWithNoRowsIsInProgress(t *testing.T) {
@@ -221,7 +221,7 @@ func TestRetryRemediation_RoundOneWithNoRowsIsInProgress(t *testing.T) {
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Equal(t, 1, r.Round(), "no round spent")
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
@@ -229,14 +229,14 @@ func TestRetryRemediation_SecondPostBeforeNewRoundRowsIsRefused(t *testing.T) {
 	seedNow := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	r := rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`)
-	_, err := r.StartRemediationRound(seedNow)
+	_, err := r.StartRound(seedNow)
 	require.NoError(t, err)
-	require.Equal(t, 2, r.RemediationRound())
+	require.Equal(t, 2, r.Round())
 	store.SeedRelease(r)
 	// Only round 1's terminal fix exists — the retry that bumped the
 	// release to round 2 has not yet produced round 2's first row.
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "escalated", RemediationRound: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "escalated", Round: 1},
 	}}
 
 	_, err = handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -244,7 +244,7 @@ func TestRetryRemediation_SecondPostBeforeNewRoundRowsIsRefused(t *testing.T) {
 
 	got, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, got.RemediationRound(), "round unchanged")
+	require.Equal(t, 2, got.Round(), "round unchanged")
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
@@ -263,7 +263,7 @@ func TestRetryRemediation_ReleaseCheckIsNotAnID(t *testing.T) {
 		Status:            releasecheck.StatusRejected,
 		ChangedProject:    "finance",
 		VerifiesReleaseID: "rel-orig",
-		RemediationRound:  1,
+		Round:             1,
 		Try:               1,
 		RejectionPayload:  []byte(`{"reason":"compile_failed"}`),
 		CreatedAt:         now,
@@ -282,8 +282,8 @@ func TestRetryRemediation_OpenPROnEarlierTryRefuses(t *testing.T) {
 	// already failed. The latest-try check alone would miss try 1 —
 	// the retry must still refuse on it.
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "proposed", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/9"}}, RemediationRound: 1},
-		{ID: "p2", NodeID: "finance", Try: 2, Status: "failed", RemediationRound: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "proposed", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/9"}}, Round: 1},
+		{ID: "p2", NodeID: "finance", Try: 2, Status: "failed", Round: 1},
 	}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -294,7 +294,7 @@ func TestRetryRemediation_OpenPROnEarlierTryRefuses(t *testing.T) {
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Equal(t, 1, r.Round(), "no round spent")
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
@@ -305,16 +305,16 @@ func TestRetryRemediation_RejectedPRDoesNotBlockARound(t *testing.T) {
 	// it opened was closed without merging: that try is a dead end, not an
 	// open one, so it must not block a new round.
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "proposed", PullRequests: []ports.FixPR{{PRState: "rejected"}}, RemediationRound: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "proposed", PullRequests: []ports.FixPR{{PRState: "rejected"}}, Round: 1},
 	}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, res.RemediationRound)
+	require.Equal(t, 2, res.Round)
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, r.RemediationRound())
+	require.Equal(t, 2, r.Round())
 }
 
 func TestRetryRemediation_ProposedWithNoPRStillBlocksARound(t *testing.T) {
@@ -324,7 +324,7 @@ func TestRetryRemediation_ProposedWithNoPRStillBlocksARound(t *testing.T) {
 	// the try is still a live fix a human could review, so it must
 	// still refuse the retry.
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "proposed", RemediationRound: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "proposed", Round: 1},
 	}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -334,15 +334,15 @@ func TestRetryRemediation_ProposedWithNoPRStillBlocksARound(t *testing.T) {
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Equal(t, 1, r.Round(), "no round spent")
 }
 
 func TestRetryRemediation_NamesTheLowestNodeIDWhenSeveralAreOpen(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p-marketing", NodeID: "marketing", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/marketing"}}, RemediationRound: 1},
-		{ID: "p-finance", NodeID: "finance", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/finance"}}, RemediationRound: 1},
+		{ID: "p-marketing", NodeID: "marketing", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/marketing"}}, Round: 1},
+		{ID: "p-finance", NodeID: "finance", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/finance"}}, Round: 1},
 	}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -366,7 +366,7 @@ func TestRetryRemediation_MultiProjectProposedOneProjectStillOpenBlocks(t *testi
 			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
 			{Project: "b", PRState: "open", PRURL: "https://x/pr/b"},
 		},
-		RemediationRound: 1,
+		Round: 1,
 	}}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -377,7 +377,7 @@ func TestRetryRemediation_MultiProjectProposedOneProjectStillOpenBlocks(t *testi
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Equal(t, 1, r.Round(), "no round spent")
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
@@ -388,12 +388,12 @@ func TestRetryRemediation_OpenPRsInTwoRoundsNameTheLaterRound(t *testing.T) {
 	seedNow := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	r := rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`)
-	_, err := r.StartRemediationRound(seedNow)
+	_, err := r.StartRound(seedNow)
 	require.NoError(t, err)
 	store.SeedRelease(r)
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p-r1-t3", NodeID: "finance", Try: 3, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/round-1"}}, RemediationRound: 1},
-		{ID: "p-r2-t1", NodeID: "finance", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/round-2"}}, RemediationRound: 2},
+		{ID: "p-r1-t3", NodeID: "finance", Try: 3, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/round-1"}}, Round: 1},
+		{ID: "p-r2-t1", NodeID: "finance", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/round-2"}}, Round: 2},
 	}}
 
 	_, err = handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -418,7 +418,7 @@ func TestRetryRemediation_MultiProjectMergedPRAcrossRoundsBlocks(t *testing.T) {
 			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
 			{Project: "b", PRState: "merged", PRURL: "https://x/pr/b"},
 		},
-		RemediationRound: 1,
+		Round: 1,
 	}}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -428,7 +428,7 @@ func TestRetryRemediation_MultiProjectMergedPRAcrossRoundsBlocks(t *testing.T) {
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Equal(t, 1, r.Round(), "no round spent")
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
@@ -444,16 +444,16 @@ func TestRetryRemediation_MultiProjectBothPRsRejectedIsADeadEnd(t *testing.T) {
 			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
 			{Project: "b", PRState: "rejected", PRURL: "https://x/pr/b"},
 		},
-		RemediationRound: 1,
+		Round: 1,
 	}}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, res.RemediationRound)
+	require.Equal(t, 2, res.Round)
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 2, r.RemediationRound())
+	require.Equal(t, 2, r.Round())
 }
 
 func TestRetryRemediation_MultiProjectOwningProjectWithoutPRBlocks(t *testing.T) {
@@ -469,7 +469,7 @@ func TestRetryRemediation_MultiProjectOwningProjectWithoutPRBlocks(t *testing.T)
 		PullRequests: []ports.FixPR{
 			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
 		},
-		RemediationRound: 1,
+		Round: 1,
 	}}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -480,7 +480,7 @@ func TestRetryRemediation_MultiProjectOwningProjectWithoutPRBlocks(t *testing.T)
 
 	r, err := store.GetRelease("rel-1")
 	require.NoError(t, err)
-	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Equal(t, 1, r.Round(), "no round spent")
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
@@ -492,7 +492,7 @@ func TestRetryRemediation_FixNamingNoProjectIsOneGroup(t *testing.T) {
 		deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 		store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
 		deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-			{ID: "p1", NodeID: "finance", Try: 1, Status: "proposed", RemediationRound: 1},
+			{ID: "p1", NodeID: "finance", Try: 1, Status: "proposed", Round: 1},
 		}}
 
 		_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -507,13 +507,13 @@ func TestRetryRemediation_FixNamingNoProjectIsOneGroup(t *testing.T) {
 		store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
 		deps.Fixes = &fakeFixes{items: []ports.FixSummary{{
 			ID: "p1", NodeID: "finance", Try: 1, Status: "proposed",
-			PullRequests:     []ports.FixPR{{Project: "", PRState: "rejected", PRURL: "https://x/pr/1"}},
-			RemediationRound: 1,
+			PullRequests: []ports.FixPR{{Project: "", PRState: "rejected", PRURL: "https://x/pr/1"}},
+			Round:        1,
 		}}}
 
 		res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 		require.NoError(t, err)
-		require.Equal(t, 2, res.RemediationRound)
+		require.Equal(t, 2, res.Round)
 	})
 }
 

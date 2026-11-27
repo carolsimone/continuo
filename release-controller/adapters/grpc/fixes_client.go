@@ -41,9 +41,9 @@ func (c *FixesClient) ListFixesForRelease(ctx context.Context, releaseID string)
 	for _, f := range resp.Fixes {
 		out = append(out, ports.FixSummary{
 			ID: f.Id, NodeID: f.NodeId, Try: int(f.Try), Status: f.Status,
-			PullRequests:     mapPullRequests(f.PullRequests),
-			PRProjects:       f.PrProjects,
-			RemediationRound: int(f.RemediationRound),
+			PullRequests: mapPullRequests(f.PullRequests),
+			PRProjects:   f.PrProjects,
+			Round:        int(f.Round),
 		})
 	}
 	return out, nil

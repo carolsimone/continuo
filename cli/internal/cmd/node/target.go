@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// nodeTarget is the positional input shared by node trigger, test and build:
+// nodeTarget is the positional input shared by node run, test and build:
 // the node's identity triple plus an optional past run whose metadata
 // snapshot the new run should be pinned to.
 type nodeTarget struct {
@@ -49,7 +49,7 @@ func nodeTargetArgs(verb string, stdout, stderr io.Writer) cobra.PositionalArgs 
 	}
 }
 
-// sourceRunArgDoc is the help text shared by node trigger, test and build for
+// sourceRunArgDoc is the help text shared by node run, test and build for
 // the optional fourth positional argument and the errors it can add.
 const sourceRunArgDoc = `  [source-run-id]  Optional. The id of a past run of this node, as listed by
                    "node history". When given, the new run reuses the image
@@ -63,5 +63,5 @@ const sourceRunArgDoc = `  [source-run-id]  Optional. The id of a past run of th
 const sourceRunErrorsDoc = `  not_found  (exit 3)  the node is not in the release the run would use, or the source run does not exist
   conflict   (exit 4)  the source run has not finished yet, the node's schedule has an active run, or the request id was used before with other arguments`
 
-// nodeRunExitCodes is the exit_codes annotation for node trigger, test, build and full_refresh.
+// nodeRunExitCodes is the exit_codes annotation for node run, test, build and full_refresh.
 const nodeRunExitCodes = `[0,2,3,4,5,6,7]`

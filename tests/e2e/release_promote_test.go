@@ -65,7 +65,7 @@ const probeUniqueID = "e2e_schema.rel_probe"
 // assembly can reconstruct the full manifest list at advance-time.
 //
 // After promotion, the test also drives two real production runs of rel_probe
-// via TriggerSingleNodeRun to prove the parse-cache hydrate/degrade invariants
+// via StartSingleNodeRun to prove the parse-cache hydrate/degrade invariants
 // end-to-end: the first run must hydrate from the artifact the compile leg
 // just uploaded for (service-1, changedImageTag); deleting that artifact and
 // rerunning must still succeed, recording parse_cache='degraded'.
@@ -227,7 +227,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	//    swap (step 7) stamped rel_probe's :Node with that same image_tag,
 	//    so the first production run of rel_probe after promotion must hydrate
 	//    from that artifact via the hydrate-parse-cache initContainer.
-	firstRunID, firstScheduleName := triggerRelProbeRun(t, ctx, clients)
+	firstRunID, firstScheduleName := startRelProbeRun(t, ctx, clients)
 	defer cleanupSingleNodeRun(t, ctx, clients, firstRunID, firstScheduleName)
 	verifySchedulerSucceeded(t, ctx, clients, firstRunID)
 	waitForParseCache(t, ctx, clients.runControllerDB, firstRunID, "hydrated", 3*time.Minute)
@@ -237,32 +237,32 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	//     initContainer's fetch fails, but the run still succeeds (exit 0) and
 	//     records parse_cache='degraded' rather than failing the Job.
 	deleteParseCacheProdArtifact(t, ctx, clients, changedProject, changedImageTag)
-	secondRunID, secondScheduleName := triggerRelProbeRun(t, ctx, clients)
+	secondRunID, secondScheduleName := startRelProbeRun(t, ctx, clients)
 	defer cleanupSingleNodeRun(t, ctx, clients, secondRunID, secondScheduleName)
 	verifySchedulerSucceeded(t, ctx, clients, secondRunID)
 	waitForParseCache(t, ctx, clients.runControllerDB, secondRunID, "degraded", 3*time.Minute)
 	t.Log("✅ exit-0 degrade proven: rerun succeeded without the parse cache artifact")
 }
 
-// triggerRelProbeRun triggers a "latest"-mode single-node run of rel_probe
-// (service-1/e2e_schema/rel_probe) via TriggerSingleNodeRun and returns the
+// startRelProbeRun starts a "latest"-mode single-node run of rel_probe
+// (service-1/e2e_schema/rel_probe) via StartSingleNodeRun and returns the
 // synthesised run_id and schedule_name. It does not wait for completion or
 // register cleanup — callers do both, mirroring TestSingleNodeRunLatest.
-func triggerRelProbeRun(t *testing.T, ctx context.Context, clients *testClients) (uuid.UUID, string) {
+func startRelProbeRun(t *testing.T, ctx context.Context, clients *testClients) (uuid.UUID, string) {
 	t.Helper()
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    "service-1",
 		SchemaName:     "e2e_schema",
 		TableName:      "rel_probe",
 		MetadataSource: "latest",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(rel_probe) failed")
-	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a non-empty run_id")
-	require.NotEmpty(t, resp.ScheduleName, "TriggerSingleNodeRun must return a non-empty schedule_name")
+	require.NoError(t, err, "StartSingleNodeRun(rel_probe) failed")
+	require.NotEmpty(t, resp.RunId, "StartSingleNodeRun must return a non-empty run_id")
+	require.NotEmpty(t, resp.ScheduleName, "StartSingleNodeRun must return a non-empty schedule_name")
 
 	runID, err := uuid.Parse(resp.RunId)
 	require.NoError(t, err, "run_id must be a valid UUID")
-	t.Logf("triggered rel_probe run: run_id=%s schedule_name=%s", runID, resp.ScheduleName)
+	t.Logf("started rel_probe run: run_id=%s schedule_name=%s", runID, resp.ScheduleName)
 	return runID, resp.ScheduleName
 }
 

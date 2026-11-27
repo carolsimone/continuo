@@ -17,9 +17,9 @@ import ReleaseCheckTimeline from './ReleaseCheckTimeline';
 import SeedReloadNotices from './SeedReloadNotices';
 import ReleaseRunsPanel from './ReleaseRunsPanel';
 
-// A release gets at most this many remediation rounds; the release-controller
+// A release gets at most this many rounds; the release-controller
 // enforces the same limit and answers 409 rounds_exhausted past it.
-const MAX_REMEDIATION_ROUNDS = 3;
+const MAX_ROUNDS = 3;
 
 // PR states that mean a fix is already out for human review — "Try again"
 // stays hidden while one of these is open, since a retry would be redundant.
@@ -28,7 +28,7 @@ const OPEN_PR_STATES = ['opening', 'open', 'merged'];
 // Messages for the release-controller's 409/502/500 refusal reasons, other
 // than fix_open (handled separately because it also carries a PR link).
 const REFUSAL_TEXT: Record<string, string> = {
-  rounds_exhausted: `Retried ${MAX_REMEDIATION_ROUNDS} times — push a new commit to start over.`,
+  rounds_exhausted: `Retried ${MAX_ROUNDS} times — push a new commit to start over.`,
   not_retryable: 'This release was rejected before retries existed — push a new commit.',
   not_healable: 'This rejection is not something the agent can fix.',
   not_rejected: 'Only a rejected release can be retried.',
@@ -85,7 +85,7 @@ function fixIsDeadEnd(p: FixDTO): boolean {
 // hasActiveFix reports whether any failed node has a generating/verifying/
 // proposed fix among the given fixes — the same furthest-along ranking
 // FixCell uses, restricted to whatever list is passed in (all fixes, or
-// only the current remediation round's), so the dead-end check below can be
+// only the current round's), so the dead-end check below can be
 // scoped to a single round without disturbing how the table renders. A
 // 'proposed' try every one of whose owning-project PRs was closed
 // without merging is excluded: that try is a dead end for every node it
@@ -223,7 +223,7 @@ export default function ReleaseDetailPage() {
   // owners.
   const [fixOwner, setFixOwner] = useState<Map<string, ApproverDTO>>(new Map());
   // The last polled fix list for this release, kept alongside fixState so
-  // the dead-end check below can recompute in-flight/PR state per remediation
+  // the dead-end check below can recompute in-flight/PR state per
   // round (fixState itself is a rendering-only summary across every round).
   const [fixes, setFixes] = useState<FixDTO[]>([]);
   // Per (stage, node_id) release check phase for a node currently shown as
@@ -304,11 +304,11 @@ export default function ReleaseDetailPage() {
   // to find.
   const isRejected = rel?.status === 'rejected';
 
-  // This remediation round's fixes — a fix with no remediation_round
+  // This round's fixes — a fix with no round
   // (older rows, or a round-1 try) counts as round 1. Scoping the
   // in-flight check to this set is what keeps a freshly-bumped round from
   // reading as a dead end off the *previous* round's now-terminal fixes.
-  const currentRoundFixes = fixes.filter(p => effectiveRound(p) === rel?.remediation_round);
+  const currentRoundFixes = fixes.filter(p => effectiveRound(p) === rel?.round);
 
   // A rejected release is a dead end for remediation — nothing left for the
   // agent to do without human input — once it has at least one failed node,
@@ -460,7 +460,7 @@ export default function ReleaseDetailPage() {
           setFixOwner(ownerByKey);
           verifying = failed.some(k => byKey.get(k) === 'verifying');
           // Stop once every failed node has settled *for the release's current
-          // remediation round*: its latest current-round try landed on
+          // round*: its latest current-round try landed on
           // 'proposed', or on a terminal-but-blank outcome ('skipped'/
           // 'failed'/'escalated'). A node still 'generating'/'verifying', or
           // with no current-round fix at all yet, is not settled and
@@ -472,7 +472,7 @@ export default function ReleaseDetailPage() {
           // fix is written, and the previous round's now-stale terminal
           // outcome must not read as settled during that gap — otherwise
           // polling would stop before ever seeing the retry's fix.
-          const currentRound = rel?.remediation_round;
+          const currentRound = rel?.round;
           const currentRoundFixes = currentRound === undefined
             ? releaseFixes
             : releaseFixes.filter(p => effectiveRound(p) === currentRound);
@@ -510,10 +510,10 @@ export default function ReleaseDetailPage() {
   }, [id, isRejected, failedKey, pollNonce]);
 
   // restartFixPolling re-arms the effect above after a successful retry,
-  // so a fresh remediation round's fixes are picked up without a reload.
+  // so a fresh round's fixes are picked up without a reload.
   const restartFixPolling = () => setPollNonce(n => n + 1);
 
-  // retry asks release-controller to start another remediation round. A 202
+  // retry asks release-controller to start another round. A 202
   // advances the round shown in the header and restarts fix polling; a
   // 409 means the request was refused, and the reason is turned into the text
   // shown under the button.
@@ -524,7 +524,7 @@ export default function ReleaseDetailPage() {
       const r = await fetch(`/api/releases/${id}/retry-remediation`, { method: 'POST' });
       const body = await r.json().catch(() => ({}));
       if (r.status === 202) {
-        setRel(prev => (prev ? { ...prev, remediation_round: body.remediation_round } : prev));
+        setRel(prev => (prev ? { ...prev, round: body.round } : prev));
         restartFixPolling();
         return;
       }
@@ -566,7 +566,7 @@ export default function ReleaseDetailPage() {
         <button type="button" className="detail-back-link" onClick={() => navigate('/?tab=releases')}>← Back</button>
         <div className="detail-page-title">{rel.release_id}</div>
         <span className={`pill ${releasePillClass(rel.status)}`}>
-          {rel.status}{rel.remediation_round > 1 ? ` · round ${rel.remediation_round}` : ''}
+          {rel.status}{rel.round > 1 ? ` · round ${rel.round}` : ''}
         </span>
       </PageHeader>
 
@@ -594,7 +594,7 @@ export default function ReleaseDetailPage() {
 
       <SeedReloadNotices notices={rel.notices} seedBuildRan={seedBuildRan} />
 
-      {rel.status === 'rejected' && deadEnd && rel.remediation_round < MAX_REMEDIATION_ROUNDS && (
+      {rel.status === 'rejected' && deadEnd && rel.round < MAX_ROUNDS && (
         <div className="action-banner">
           <div className="action-banner__body">
             <div className="action-banner__title">No fix was produced for this release</div>
@@ -608,14 +608,14 @@ export default function ReleaseDetailPage() {
               <path d="M21 12a9 9 0 1 1-2.64-6.36" />
               <path d="M21 3v6h-6" />
             </svg>
-            Try again (round {rel.remediation_round} of {MAX_REMEDIATION_ROUNDS})
+            Try again (round {rel.round} of {MAX_ROUNDS})
           </button>
         </div>
       )}
-      {rel.status === 'rejected' && deadEnd && rel.remediation_round >= MAX_REMEDIATION_ROUNDS && (
+      {rel.status === 'rejected' && deadEnd && rel.round >= MAX_ROUNDS && (
         <div className="info-strip info-strip--neutral">
           <span className="info-strip__icon">ⓘ</span>
-          Retried {MAX_REMEDIATION_ROUNDS} times — push a new commit to start over.
+          Retried {MAX_ROUNDS} times — push a new commit to start over.
         </div>
       )}
       {retryError && (
@@ -675,7 +675,7 @@ export default function ReleaseDetailPage() {
                   return (
                     <tr key={c.check_id}>
                       <td><Link className="nodes-node-name" to={`/release-checks/${c.check_id}`}>{c.check_id}</Link></td>
-                      <td>{tryLabel(c.remediation_round, c.try)}</td>
+                      <td>{tryLabel(c.round, c.try)}</td>
                       <td>{c.project}</td>
                       <td><span className={`pill-sm ${releasePillClass(phase).replace('pill--', 'pill-sm--')}`}>{phase}</span></td>
                       <td className="nodes-ts">{c.activated_at ? c.activated_at.slice(0, 19).replace('T', ' ') : '—'}</td>

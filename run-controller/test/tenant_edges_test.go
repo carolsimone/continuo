@@ -185,21 +185,21 @@ func TestTenantEdges(t *testing.T) {
 		requireCode(t, err, codes.FailedPrecondition, "CancelActiveRun finds no active run of the request's tenant")
 		_, err = runClient.CancelRun(ctx, &runv1.CancelRunRequest{RunId: runID, CancelledBy: "alice"})
 		requireCode(t, err, codes.NotFound, "CancelRun")
-		_, err = runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: uuid.NewString(), SourceRunId: runID})
-		requireCode(t, err, codes.NotFound, "TriggerRerun")
+		_, err = runClient.StartRerun(ctx, &runv1.StartRerunRequest{RequestId: uuid.NewString(), SourceRunId: runID})
+		requireCode(t, err, codes.NotFound, "StartRerun")
 		_, err = runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: runID})
 		requireCode(t, err, codes.NotFound, "PreviewRebase")
-		_, err = runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(), SourceRunId: runID})
-		requireCode(t, err, codes.NotFound, "TriggerRebase")
-		_, err = runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+		_, err = runClient.StartRebase(ctx, &runv1.StartRebaseRequest{RequestId: uuid.NewString(), SourceRunId: runID})
+		requireCode(t, err, codes.NotFound, "StartRebase")
+		_, err = runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 			RequestId: uuid.NewString(), ProjectName: project, SchemaName: schema, TableName: table,
 			MetadataSource: "snapshot_of_run", SourceRunId: runID,
 		})
-		requireCode(t, err, codes.NotFound, "TriggerSingleNodeRun of another tenant's run")
-		_, err = runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+		requireCode(t, err, codes.NotFound, "StartSingleNodeRun of another tenant's run")
+		_, err = runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 			RequestId: uuid.NewString(), ProjectName: project, SchemaName: schema, TableName: table, MetadataSource: "latest",
 		})
-		requireCode(t, err, codes.NotFound, "TriggerSingleNodeRun of a node only another tenant's release holds")
+		requireCode(t, err, codes.NotFound, "StartSingleNodeRun of a node only another tenant's release holds")
 
 		assert.Equal(t, string(run.RunStatusRunning), e.runStatus(t, runControllerDB), "the run is left as it was")
 		assert.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, runControllerDB))

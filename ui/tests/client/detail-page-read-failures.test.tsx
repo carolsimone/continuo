@@ -72,7 +72,7 @@ function renderPage(state: unknown = { last_run_id: RUN_ID }) {
 // reads keep running on microtasks inside act.
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
-const triggerButton = () => screen.getByRole('button', { name: /Trigger run/ });
+const startButton = () => screen.getByRole('button', { name: /Start run/ });
 const statusPill = (container: HTMLElement) => container.querySelector('.page-header .pill')?.textContent;
 
 describe('DetailPage when reads fail', () => {
@@ -95,7 +95,7 @@ describe('DetailPage when reads fail', () => {
     expect(screen.queryByText('Loading run…')).toBeNull();
     expect(screen.getByTestId('run-progress-pct')).toBeInTheDocument();
     expect(statusPill(container)).toBe('running');
-    expect(triggerButton()).toBeDisabled();
+    expect(startButton()).toBeDisabled();
     expect(screen.getByText(NOTICE)).toBeInTheDocument();
 
     down = false;
@@ -129,13 +129,13 @@ describe('DetailPage when reads fail', () => {
     await advance(0);
     expect(screen.getByText('Run unavailable')).toBeInTheDocument();
     // The status is unknown, which is not a run that is active.
-    expect(triggerButton()).toBeEnabled();
+    expect(startButton()).toBeEnabled();
 
     down = false;
     await advance(5000);
     expect(screen.getByTestId('run-progress-pct')).toBeInTheDocument();
     expect(statusPill(container)).toBe('running');
-    expect(triggerButton()).toBeDisabled();
+    expect(startButton()).toBeDisabled();
   });
 
   it('says the run is unavailable within 10 s when the reads hang, and recovers on its own', async () => {

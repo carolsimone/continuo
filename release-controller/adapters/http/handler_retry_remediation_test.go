@@ -277,7 +277,7 @@ func TestRetryRemediationHandler_Accepted(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["rel-1"] = rejectedReleaseForRetry(t, "rel-1", now)
 	deps.Fixes = &fakeFixReader{items: []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "escalated", RemediationRound: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "escalated", Round: 1},
 	}}
 
 	rec := postRetryRemediation(newTestServer(deps), "rel-1")
@@ -287,7 +287,7 @@ func TestRetryRemediationHandler_Accepted(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "rel-1", body["release_id"])
-	require.EqualValues(t, 2, body["remediation_round"])
+	require.EqualValues(t, 2, body["round"])
 }
 
 func TestRetryRemediationHandler_FixOpen(t *testing.T) {
@@ -312,9 +312,9 @@ func TestRetryRemediationHandler_RoundsExhausted(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, releases := newRetryRemediationDeps(now)
 	r := rejectedReleaseForRetry(t, "rel-1", now)
-	_, err := r.StartRemediationRound(now)
+	_, err := r.StartRound(now)
 	require.NoError(t, err)
-	_, err = r.StartRemediationRound(now)
+	_, err = r.StartRound(now)
 	require.NoError(t, err)
 	releases.releases["rel-1"] = r
 

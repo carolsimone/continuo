@@ -15,7 +15,7 @@ import (
 )
 
 // PreviousTries is the context source `previous_tries`: every earlier try at
-// the cluster's failure in its release, in this remediation round and the ones
+// the cluster's failure in its release, in this round and the ones
 // before it, each with what it changed and why it was refused. It reads the
 // runner's own tries from their journal and the tries recorded with no
 // remediation from their fix rows.
@@ -115,7 +115,7 @@ func (s *PreviousTries) triesWithNoRemediation(ctx context.Context, f remediatio
 			continue
 		}
 		rec := remediation.TryRecord{
-			Round:    v.RemediationRound,
+			Round:    v.Round,
 			Try:      v.Try,
 			Clusters: []remediation.ClusterRecord{{Members: append([]string(nil), v.ResolvedNodeIDs...), Edits: s.tryDiffs(ctx, v)}},
 		}

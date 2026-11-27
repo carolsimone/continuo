@@ -136,7 +136,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{unfixableInfraUniqueID}, handoverStageBudget)
 	require.Len(t, triggersForRelease(t, requestedTap, releaseID), 1, "one trigger per rejected release and round")
 	require.Equal(t, pkgevents.DefaultTenantID, trigger.TenantID, "the trigger carries the rejection's tenant")
-	require.Equal(t, 1, trigger.RemediationRound)
+	require.Equal(t, 1, trigger.Round)
 	require.Equal(t, string(model.RemediationSourceValidation), trigger.Source)
 	require.Len(t, trigger.Nodes, 1, "the trigger carries the one failing node; got %v", triggerNodeIDs(trigger))
 	node := trigger.Nodes[0]
@@ -181,14 +181,14 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	// 8. "Try again" is accepted: the skipped try ended round 1.
 	st, body := postRetry(t, clients, releaseID)
 	require.Equal(t, http.StatusAccepted, st, "body=%v", body)
-	require.EqualValues(t, 2, body["remediation_round"])
+	require.EqualValues(t, 2, body["round"])
 
 	// 9. Round 2 is classified and handed over the same way, and its skipped
 	//    try is try 1 of round 2.
 	var round2 tappedTrigger
 	pollUntil(t, ctx, handoverStageBudget, 2*time.Second, func() (bool, error) {
 		for _, p := range triggersForRelease(t, requestedTap, releaseID) {
-			if p.RemediationRound == 2 {
+			if p.Round == 2 {
 				round2 = p
 				return true, nil
 			}
@@ -204,7 +204,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	assertDecision(t, ctx, clients, releaseID, 2)
 	assertSkippedTry(t, ctx, clients, releaseID, 2, 1, again.Unfixable.Detail)
 	assertHandOver(t, ctx, clients, waitForHandOver(t, ctx, handedOverTap, releaseID, 2), releaseID, 2, again.Unfixable.Detail)
-	require.EqualValues(t, 2, getReleaseDetail(t, clients, releaseID)["remediation_round"])
+	require.EqualValues(t, 2, getReleaseDetail(t, clients, releaseID)["round"])
 	t.Logf("✅ release %s: every round hands the unfixable node over, and Try again starts the next", releaseID)
 }
 
@@ -228,7 +228,7 @@ func assertDecision(t *testing.T, ctx context.Context, clients *testClients, rel
 		err := clients.remediationDB.GetContext(ctx, &decision,
 			`SELECT source, release_id, node_id, category, decision, reason
 			   FROM classification_decision
-			  WHERE release_id = $1 AND node_id = $2 AND remediation_round = $3`,
+			  WHERE release_id = $1 AND node_id = $2 AND round = $3`,
 			releaseID, unfixableInfraUniqueID, round)
 		return err == nil, nil
 	}, fmt.Sprintf("timeout waiting for the round-%d classification_decision of release %s", round, releaseID))
@@ -255,8 +255,8 @@ func assertSkippedTry(t *testing.T, ctx context.Context, clients *testClients, r
 		}
 		last = ""
 		for _, p := range resp.GetFixes() {
-			last += fmt.Sprintf("[round %d try %d %s] ", p.GetRemediationRound(), p.GetTry(), p.GetStatus())
-			if int(p.GetRemediationRound()) == round && p.GetStatus() == "skipped" {
+			last += fmt.Sprintf("[round %d try %d %s] ", p.GetRound(), p.GetTry(), p.GetStatus())
+			if int(p.GetRound()) == round && p.GetStatus() == "skipped" {
 				found = p
 			}
 		}
@@ -291,7 +291,7 @@ func waitForHandOver(t *testing.T, ctx context.Context, tap *streamTap, releaseI
 	ofRound := func() []tappedHandOver {
 		var out []tappedHandOver
 		for _, h := range tap.HandOvers(t) {
-			if h.ReleaseID == releaseID && h.RemediationRound == round {
+			if h.ReleaseID == releaseID && h.Round == round {
 				out = append(out, h)
 			}
 		}
@@ -330,7 +330,7 @@ func assertHandOver(t *testing.T, ctx context.Context, clients *testClients, h t
 	}
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &rem,
 		`SELECT id, status, current_try FROM remediation
-		  WHERE tenant_id = $1 AND release_id = $2 AND remediation_round = $3`,
+		  WHERE tenant_id = $1 AND release_id = $2 AND round = $3`,
 		pkgevents.DefaultTenantID, releaseID, round))
 	require.Equal(t, rem.ID, h.RemediationID, "the hand-over names its remediation")
 	require.Equal(t, "done", rem.Status)

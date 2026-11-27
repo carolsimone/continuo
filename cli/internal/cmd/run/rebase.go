@@ -91,7 +91,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerRebase(ctx, client.RequestID(), runID, releaseID, withChangedUpstream, cfg.Actor)
+			resp, err := c.StartRebase(ctx, client.RequestID(), runID, releaseID, withChangedUpstream, cfg.Actor)
 			if err != nil {
 				cliErr := output.FromGRPC(err)
 				if output.IsFailedPrecondition(err) && strings.Contains(cliErr.Message, liveReleaseMoved) {

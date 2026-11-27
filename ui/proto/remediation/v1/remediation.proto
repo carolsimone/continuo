@@ -71,8 +71,8 @@ message Fix {
   // contract try reached 'failed', and the evidence the next try is
   // shown. Empty unless the release check failed.
   string verify_error = 28;
-  // remediation_round is the release's remediation round this try belongs to.
-  int32 remediation_round = 29;
+  // round is the release's round this try belongs to.
+  int32 round = 29;
   // resolved_node_ids is the failing nodes this try addresses, sorted;
   // node_id is their representative.
   repeated string resolved_node_ids = 30;
@@ -143,7 +143,7 @@ message BeginPullRequestResponse {
   string diff_uri = 6;
   string release_id = 7;
   string node_id = 8;
-  // try is the claimed fix's try number in its round (remediation_round).
+  // try is the claimed fix's try number in its round.
   int32 try = 9;
   string rationale = 10;
   string confidence = 11;
@@ -166,8 +166,8 @@ message BeginPullRequestResponse {
   // the nodes in resolved_node_ids, sorted by node_id. A node the fix
   // records no approver for has no entry.
   repeated Approver approvers = 18;
-  // remediation_round is the round of the claimed fix's try.
-  int32 remediation_round = 19;
+  // round is the round of the claimed fix's try.
+  int32 round = 19;
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.

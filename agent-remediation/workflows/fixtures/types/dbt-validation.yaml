@@ -46,9 +46,9 @@ catalog:
       resolution_diff: "-amount\n+total as amount"
 release:
   image_tag: sha-validation
-# Each list is one round's answers, in call order. A first round makes two
+# Each list is one draft's answers, in call order. A first draft makes two
 # calls: the diagnosis of the candidate SQL, then the fix of the real source. A
-# later round revises the source fix the round before it made, in one call, so
+# revision revises the source fix the draft before it made, in one call, so
 # its answers are the revision lists.
 answers:
   pass:

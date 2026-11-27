@@ -13,23 +13,23 @@ const (
 	// TryChecksFailed: a cross-cluster check refused the try's drafts, or the
 	// gate refused them at submit.
 	TryChecksFailed = "checks_failed"
-	// TryPreflightSpent: every pre-flight round of the cluster's type refused
-	// the draft.
-	TryPreflightSpent = "preflight_spent"
+	// TryDraftsSpent: pre-flight refused every draft the cluster's type
+	// allows.
+	TryDraftsSpent = "drafts_spent"
 	// TryDeclined: a step declined the cluster, or its draft made no edit.
 	TryDeclined = "declined"
 )
 
-// The result labels of RemediationMetrics.Round: how one pre-flight pass of a
+// The result labels of RemediationMetrics.Draft: how one pre-flight pass of a
 // cluster ended.
 const (
-	// RoundPassed: no check of the pass found anything.
-	RoundPassed = "passed"
-	// RoundRevised: a check found something and the cluster has a round left,
+	// DraftPassed: no check of the pass found anything.
+	DraftPassed = "passed"
+	// DraftRevised: a check found something and the cluster has a draft left,
 	// so the model revises the draft.
-	RoundRevised = "revised"
-	// RoundSpent: a check found something in the cluster's last round.
-	RoundSpent = "spent"
+	DraftRevised = "revised"
+	// DraftSpent: a check found something in the cluster's last draft.
+	DraftSpent = "spent"
 )
 
 // The outcome labels of RemediationMetrics.Outcome: how a node ended when its
@@ -70,8 +70,8 @@ const TypeNone = "none"
 type RemediationMetrics interface {
 	// Try counts one cluster ended by a try, with the Try* result.
 	Try(flow, typ, result string)
-	// Round counts one pre-flight pass, with the Round* result.
-	Round(flow, typ, result string)
+	// Draft counts one pre-flight pass, with the Draft* result.
+	Draft(flow, typ, result string)
 	// Outcome counts one node of a remediation that ended, with the Outcome*
 	// label and, for a node handed over, the reason the node carries.
 	Outcome(flow, typ, outcome, reason string)
@@ -91,7 +91,7 @@ type NopRemediationMetrics struct{}
 var _ RemediationMetrics = NopRemediationMetrics{}
 
 func (NopRemediationMetrics) Try(string, string, string)                  {}
-func (NopRemediationMetrics) Round(string, string, string)                {}
+func (NopRemediationMetrics) Draft(string, string, string)                {}
 func (NopRemediationMetrics) Outcome(string, string, string, string)      {}
 func (NopRemediationMetrics) SystemFailure(string, string)                {}
 func (NopRemediationMetrics) Stage(string, string, string, time.Duration) {}

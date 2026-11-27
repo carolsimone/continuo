@@ -58,7 +58,7 @@ const (
 //     tasks are written with it, and a ResourceQuota keeps every pod from
 //     being created while the runs exist, so none of them builds a model. No
 //     run of the tenant then holds a task for the node.
-//  5. TriggerSingleNodeRun of it creates a run of exactly its task, which
+//  5. StartSingleNodeRun of it creates a run of exactly its task, which
 //     succeeds, and ListNodes then lists it with that run, still dormant.
 //
 // The release leaves the live topology as service-1's alone and starts the
@@ -313,16 +313,16 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	t.Logf("✅ runs of the %d schedules %v hold no task for %s", len(schedules), schedules, dormantProbeKey)
 
 	// ── 5. a single-node run of it succeeds ──────────────────────────────────
-	triggered, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+	started, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 		RequestId: uuid.NewString(), ProjectName: dormantProbeProject, SchemaName: seedSchemaName, TableName: dormantProbeTable,
 		MetadataSource: "latest",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(%s)", dormantProbeKey)
-	require.NotEmpty(t, triggered.GetScheduleName(), "TriggerSingleNodeRun names the run's schedule")
-	runID, err := uuid.Parse(triggered.GetRunId())
-	require.NoError(t, err, "TriggerSingleNodeRun must return the run's id")
-	defer cleanupSingleNodeRun(t, ctx, clients, runID, triggered.GetScheduleName())
-	t.Logf("TriggerSingleNodeRun(%s) created run %s", dormantProbeKey, runID)
+	require.NoError(t, err, "StartSingleNodeRun(%s)", dormantProbeKey)
+	require.NotEmpty(t, started.GetScheduleName(), "StartSingleNodeRun names the run's schedule")
+	runID, err := uuid.Parse(started.GetRunId())
+	require.NoError(t, err, "StartSingleNodeRun must return the run's id")
+	defer cleanupSingleNodeRun(t, ctx, clients, runID, started.GetScheduleName())
+	t.Logf("StartSingleNodeRun(%s) created run %s", dormantProbeKey, runID)
 
 	var plannedKeys []string
 	require.NoError(t, clients.runControllerDB.SelectContext(ctx, &plannedKeys, `

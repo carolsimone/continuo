@@ -45,16 +45,16 @@ var runServiceStarts = map[string]func(c runv1.RunServiceClient, md *metadata.MD
 		_, err := c.StartRun(context.Background(), &runv1.StartRunRequest{RequestId: "x", ScheduleName: "daily"}, grpclib.Trailer(md))
 		return err
 	},
-	"TriggerRerun": func(c runv1.RunServiceClient, md *metadata.MD) error {
-		_, err := c.TriggerRerun(context.Background(), &runv1.TriggerRerunRequest{}, grpclib.Trailer(md))
+	"StartRerun": func(c runv1.RunServiceClient, md *metadata.MD) error {
+		_, err := c.StartRerun(context.Background(), &runv1.StartRerunRequest{}, grpclib.Trailer(md))
 		return err
 	},
-	"TriggerRebase": func(c runv1.RunServiceClient, md *metadata.MD) error {
-		_, err := c.TriggerRebase(context.Background(), &runv1.TriggerRebaseRequest{}, grpclib.Trailer(md))
+	"StartRebase": func(c runv1.RunServiceClient, md *metadata.MD) error {
+		_, err := c.StartRebase(context.Background(), &runv1.StartRebaseRequest{}, grpclib.Trailer(md))
 		return err
 	},
-	"TriggerSingleNodeRun": func(c runv1.RunServiceClient, md *metadata.MD) error {
-		_, err := c.TriggerSingleNodeRun(context.Background(), &runv1.TriggerSingleNodeRunRequest{}, grpclib.Trailer(md))
+	"StartSingleNodeRun": func(c runv1.RunServiceClient, md *metadata.MD) error {
+		_, err := c.StartSingleNodeRun(context.Background(), &runv1.StartSingleNodeRunRequest{}, grpclib.Trailer(md))
 		return err
 	},
 }

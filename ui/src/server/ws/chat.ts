@@ -15,7 +15,7 @@ export interface ChatWsOptions {
   // Resolves the incoming HTTP upgrade request to a user; returning null rejects
   // the upgrade. Defaults to deny-all so an unwired chat socket can never be
   // opened. The chat endpoint is operator-only: it spends LLM tokens and can
-  // request run triggers.
+  // ask to start runs.
   authenticate?: (req: IncomingMessage) => Promise<AuthUser | null>;
   // When set, browser upgrade requests whose Origin header does not exactly match
   // this value are rejected with 403 before authentication is attempted. Mirrors

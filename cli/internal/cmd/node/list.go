@@ -84,7 +84,7 @@ Flags:
   --project    Exact project name. Default "" (all projects).
   --dormant    List only dormant nodes, the ones that belong to no schedule. A
                run started by hand executes them
-               ("continuo node trigger <project> <schema> <table>"). Default
+               ("continuo node run <project> <schema> <table>"). Default
                false (every node of the live release).
   --operation  Which operation's tasks feed the statistics: run | test |
                build. Default "run". An unrecognized value is a usage error.

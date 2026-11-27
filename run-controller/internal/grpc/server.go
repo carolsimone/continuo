@@ -25,9 +25,9 @@ type Server struct {
 // cancels and reads, PreviewRebase and PreviewSchedule among them, are not.
 var MaintenanceGatedMethods = []string{
 	runv1.RunService_StartRun_FullMethodName,
-	runv1.RunService_TriggerRerun_FullMethodName,
-	runv1.RunService_TriggerRebase_FullMethodName,
-	runv1.RunService_TriggerSingleNodeRun_FullMethodName,
+	runv1.RunService_StartRerun_FullMethodName,
+	runv1.RunService_StartRebase_FullMethodName,
+	runv1.RunService_StartSingleNodeRun_FullMethodName,
 	runv1.RunService_UpsertSchedule_FullMethodName,
 	runv1.RunService_DeleteSchedule_FullMethodName,
 }

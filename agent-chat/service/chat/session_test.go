@@ -217,13 +217,13 @@ func seedDanglingConfirm(t *testing.T, repo *fakeRepo) (threadID uuid.UUID, acti
 	ctx := context.Background()
 	thread, err := repo.CreateThread(ctx, "alice")
 	require.NoError(t, err)
-	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleUser, domain.TextContent{Text: "trigger daily"})
+	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleUser, domain.TextContent{Text: "run daily"})
 	require.NoError(t, err)
-	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleToolCall, domain.ToolCallContent{CallID: "c1", Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}})
+	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleToolCall, domain.ToolCallContent{CallID: "c1", Tool: "schedule_run", Args: map[string]string{"schedule-name": "daily"}})
 	require.NoError(t, err)
 	action := &domain.PendingAction{
-		ID: uuid.New(), ThreadID: thread.ID, Tool: "schedule_trigger",
-		Args: map[string]string{"schedule-name": "daily"}, Summary: "Run `continuo schedule trigger daily`?",
+		ID: uuid.New(), ThreadID: thread.ID, Tool: "schedule_run",
+		Args: map[string]string{"schedule-name": "daily"}, Summary: "Run `continuo schedule run daily`?",
 		Status: domain.ActionPending, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(5 * time.Minute),
 	}
 	require.NoError(t, repo.CreatePendingAction(ctx, action))
@@ -234,8 +234,8 @@ var statusDef = ports.ToolDef{
 	Name: "schedule_status", CLIPath: []string{"schedule", "status"},
 	Params: []ports.ToolParam{{Name: "schedule-name", Required: true}}, ParamOrder: []string{"schedule-name"},
 }
-var triggerDef = ports.ToolDef{
-	Name: "schedule_trigger", Mutating: true, CLIPath: []string{"schedule", "trigger"},
+var scheduleRunDef = ports.ToolDef{
+	Name: "schedule_run", Mutating: true, CLIPath: []string{"schedule", "run"},
 	Params: []ports.ToolParam{{Name: "schedule-name", Required: true}}, ParamOrder: []string{"schedule-name"},
 }
 
@@ -262,44 +262,44 @@ func TestSession_ReadToolLoopEndsInFinal(t *testing.T) {
 
 func TestSession_MutatingToolWaitsForApproval(t *testing.T) {
 	provider := &scriptedProvider{results: []*ports.TurnResult{
-		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}}}},
-		{Text: "Triggered."},
+		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_run", Args: map[string]string{"schedule-name": "daily"}}}},
+		{Text: "Started."},
 	}}
 	exec := &fakeExecutor{}
-	s, sink, _ := newTestSession(t, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef})
+	s, sink, _ := newTestSession(t, provider, exec, map[string]ports.ToolDef{"schedule_run": scheduleRunDef})
 
-	s.Enqueue("trigger daily")
+	s.Enqueue("run daily")
 	id := <-sink.confirmIDs
 	assert.Empty(t, exec.calls)
 	s.Confirm(id, true)
-	waitFor(t, sink, "final:Triggered.")
+	waitFor(t, sink, "final:Started.")
 	require.Len(t, exec.calls, 1)
 }
 
 func TestSession_DenialFeedsRefusalToModel(t *testing.T) {
 	provider := &scriptedProvider{results: []*ports.TurnResult{
-		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}}}},
-		{Text: "Understood, not triggering."},
+		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_run", Args: map[string]string{"schedule-name": "daily"}}}},
+		{Text: "Understood, not starting it."},
 	}}
 	exec := &fakeExecutor{}
-	s, sink, _ := newTestSession(t, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef})
+	s, sink, _ := newTestSession(t, provider, exec, map[string]ports.ToolDef{"schedule_run": scheduleRunDef})
 
-	s.Enqueue("trigger daily")
+	s.Enqueue("run daily")
 	id := <-sink.confirmIDs
 	s.Confirm(id, false)
-	waitFor(t, sink, "final:Understood, not triggering.")
+	waitFor(t, sink, "final:Understood, not starting it.")
 	assert.Empty(t, exec.calls)
 }
 
 func TestSession_ConfirmExpiryCountsAsDenial(t *testing.T) {
 	provider := &scriptedProvider{results: []*ports.TurnResult{
-		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}}}},
+		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_run", Args: map[string]string{"schedule-name": "daily"}}}},
 		{Text: "Request expired."},
 	}}
 	exec := &fakeExecutor{}
-	s, sink, _ := newTestSession(t, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef})
+	s, sink, _ := newTestSession(t, provider, exec, map[string]ports.ToolDef{"schedule_run": scheduleRunDef})
 
-	s.Enqueue("trigger daily")
+	s.Enqueue("run daily")
 	<-sink.confirmIDs
 	waitFor(t, sink, "final:Request expired.")
 	assert.Empty(t, exec.calls)
@@ -505,9 +505,9 @@ func TestSession_ResumeApprovalRunsToolAndContinues(t *testing.T) {
 	repo := newFakeRepo()
 	threadID, actionID := seedDanglingConfirm(t, repo)
 	// On continuation (after the tool runs) the provider produces the final text.
-	provider := &scriptedProvider{results: []*ports.TurnResult{{Text: "Triggered."}}}
+	provider := &scriptedProvider{results: []*ports.TurnResult{{Text: "Started."}}}
 	exec := &fakeExecutor{}
-	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef}, threadID.String(), 5*time.Minute)
+	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_run": scheduleRunDef}, threadID.String(), 5*time.Minute)
 
 	// Resume re-offers the pending confirmation after replaying history.
 	id := <-sink.confirmIDs
@@ -517,9 +517,9 @@ func TestSession_ResumeApprovalRunsToolAndContinues(t *testing.T) {
 
 	// Approving out-of-turn runs the tool and continues the turn.
 	s.Confirm(id, true)
-	waitFor(t, sink, "final:Triggered.")
+	waitFor(t, sink, "final:Started.")
 	require.Len(t, exec.calls, 1)
-	assert.Equal(t, "schedule_trigger", exec.calls[0].Name)
+	assert.Equal(t, "schedule_run", exec.calls[0].Name)
 
 	assert.Equal(t, domain.ActionApproved, repo.actions[actionID].Status)
 
@@ -542,15 +542,15 @@ func TestSession_ResumeApprovalRunsToolAndContinues(t *testing.T) {
 func TestSession_ResumeDenialRecordsRefusalAndContinues(t *testing.T) {
 	repo := newFakeRepo()
 	threadID, actionID := seedDanglingConfirm(t, repo)
-	provider := &scriptedProvider{results: []*ports.TurnResult{{Text: "Understood, not triggering."}}}
+	provider := &scriptedProvider{results: []*ports.TurnResult{{Text: "Understood, not starting it."}}}
 	exec := &fakeExecutor{}
-	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef}, threadID.String(), 5*time.Minute)
+	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_run": scheduleRunDef}, threadID.String(), 5*time.Minute)
 
 	id := <-sink.confirmIDs
 	require.Equal(t, actionID, id)
 
 	s.Confirm(id, false)
-	waitFor(t, sink, "final:Understood, not triggering.")
+	waitFor(t, sink, "final:Understood, not starting it.")
 	assert.Empty(t, exec.calls, "a denied tool must not run on resume")
 	assert.Equal(t, domain.ActionDenied, repo.actions[actionID].Status)
 }
@@ -558,13 +558,13 @@ func TestSession_ResumeDenialRecordsRefusalAndContinues(t *testing.T) {
 func TestSession_DisconnectLeavesPendingActionResumable(t *testing.T) {
 	repo := newFakeRepo()
 	provider := &scriptedProvider{results: []*ports.TurnResult{
-		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}}}},
+		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_run", Args: map[string]string{"schedule-name": "daily"}}}},
 	}}
 	exec := &fakeExecutor{}
 	// Long TTL so the confirmation does not time out before the disconnect.
-	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef}, "", 5*time.Minute)
+	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_run": scheduleRunDef}, "", 5*time.Minute)
 
-	s.Enqueue("trigger daily")
+	s.Enqueue("run daily")
 	actionID := <-sink.confirmIDs
 
 	// Close cancels the session ctx — exactly what a WebSocket/gRPC drop does.
@@ -593,27 +593,27 @@ func TestSession_DisconnectLeavesPendingActionResumable(t *testing.T) {
 // (here the source run a snapshot-mode run is pinned to), not only the node.
 func TestCommandString_ShowsOptionalPositionalInConfirmPrompt(t *testing.T) {
 	def := ports.ToolDef{
-		Name: "node_trigger", Mutating: true, CLIPath: []string{"node", "trigger"},
+		Name: "node_run", Mutating: true, CLIPath: []string{"node", "run"},
 		ParamOrder: []string{"project", "schema", "table", "source-run-id"},
 	}
 	got := commandString("continuo", def, map[string]string{
 		"project": "finance", "schema": "analytics", "table": "orders",
 		"source-run-id": "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b",
 	})
-	assert.Equal(t, "continuo node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", got)
+	assert.Equal(t, "continuo node run finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", got)
 }
 
 // Absent and whitespace-only optional values are left out of the displayed
 // command, matching the argv the executor builds.
 func TestCommandString_SkipsBlankOptionalPositional(t *testing.T) {
 	def := ports.ToolDef{
-		Name: "node_trigger", CLIPath: []string{"node", "trigger"},
+		Name: "node_run", CLIPath: []string{"node", "run"},
 		ParamOrder: []string{"project", "schema", "table", "source-run-id"},
 	}
 	got := commandString("continuo", def, map[string]string{
 		"project": "finance", "schema": "analytics", "table": "orders", "source-run-id": "  ",
 	})
-	assert.Equal(t, "continuo node trigger finance analytics orders", got)
+	assert.Equal(t, "continuo node run finance analytics orders", got)
 }
 
 // The confirm prompt of a seed's full refresh shows every object the operator

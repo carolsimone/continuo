@@ -2105,7 +2105,7 @@ func seedReleaseInParsing(store *fakeStore, id, project string, fix bool, verifi
 		ChangedProject:    project,
 		VerifiesReleaseID: verifiesID,
 		ManifestKind:      release.ManifestKindDbt,
-		RemediationRound:  1,
+		Round:             1,
 		CreatedAt:         time.Unix(90, 0).UTC(),
 		Transitions:       []releasecheck.Transition{{To: releasecheck.StatusParsing, At: time.Unix(90, 0).UTC()}},
 	}))
@@ -2130,7 +2130,7 @@ func seedRejectedOriginal(store *fakeStore, id, project string, candidate releas
 		CandidateTopology: ref,
 		FailingNodes:      failing,
 		ManifestKind:      release.ManifestKindDbt,
-		RemediationRound:  1,
+		Round:             1,
 		CreatedAt:         time.Unix(80, 0).UTC(),
 		Transitions:       []releasecheck.Transition{{To: releasecheck.StatusRejected, At: time.Unix(85, 0).UTC()}},
 	}))

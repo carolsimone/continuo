@@ -13,7 +13,7 @@ import (
 // NewFullRefreshCommand builds `continuo node full-refresh <project> <schema>
 // <table> [source-run-id]`. It rebuilds one dbt model or seed from scratch:
 // the node's production table is dropped and recreated. Only that node runs;
-// nothing upstream or downstream is triggered. With three arguments the run
+// nothing upstream or downstream runs. With three arguments the run
 // uses the latest topology metadata; with a fourth it reuses the metadata
 // snapshot of that past run.
 //
@@ -35,7 +35,7 @@ func NewFullRefreshCommand(factory RunClientFactory, cfg *config.Config, stdout,
 Use when the user asks to fully refresh, rebuild from scratch, or re-create a
 specific dbt model or seed — for example an incremental model whose logic or
 columns changed, whose normal runs only insert new rows. The node's production
-table is dropped and rebuilt. Only this node runs; continuo does not trigger its
+table is dropped and rebuilt. Only this node runs; continuo does not run its
 upstream or downstream nodes. On Postgres, views that select from a model are
 dropped with it until their own models run again. Only dbt models and dbt seeds
 can be fully refreshed; snapshots, dbt tests and python nodes are rejected.
@@ -119,13 +119,13 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerNodeFullRefresh(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor, acknowledged)
+			resp, err := c.StartNodeFullRefresh(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor, acknowledged)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered single-node full refresh run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
+				return output.HumanSuccess(stderr, "Started single-node full refresh run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
 			}
 			return output.EmitSuccess(stdout, map[string]string{
 				"run_id":        resp.GetRunId(),

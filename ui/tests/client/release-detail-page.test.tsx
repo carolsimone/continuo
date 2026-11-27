@@ -692,7 +692,7 @@ describe('ReleaseDetailPage — the runs a promotion started', () => {
     mockRuns([{ run_id: 'r1', kind: 'promote_seed', status: 'succeeded', schedule_name: 'promote-seed-5b2e0a1c' }]);
     mockRelease(promotedRelease);
     const { container } = renderPage('/releases/rel-a1b2c3d-201');
-    const link = await screen.findByRole('link', { name: /Seed reload/ });
+    const link = await screen.findByRole('link', { name: /Promote-seed run/ });
     expect(link).toHaveAttribute('href', '/run/r1');
     const row = link.closest('tr')!;
     expect(row.querySelector('.pill-sm--succeeded')?.textContent).toBe('succeeded');
@@ -744,9 +744,9 @@ describe('ReleaseRunsPanel — polling', () => {
     renderPage('/releases/rel-a1b2c3d-201');
     await tickFor(0);
     expect(reads()).toBe(1);
-    expect(screen.queryByRole('link', { name: /Seed reload/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Promote-seed run/ })).toBeNull();
     await tickFor(5000);
-    expect(screen.getByRole('link', { name: /Seed reload/ })).toHaveAttribute('href', '/run/r1');
+    expect(screen.getByRole('link', { name: /Promote-seed run/ })).toHaveAttribute('href', '/run/r1');
   });
 
   it('keeps reading while a run is active and stops once every run is terminal', async () => {

@@ -141,8 +141,8 @@ func TestPrompt_TheDraftIsOneEditOfTheAncestor(t *testing.T) {
 }
 
 // An answer the model leaves empty or unchanged, or rates low, is a draft and
-// not a decline: the pre-flight checks refuse it, so a round after the first
-// revises it, and the cluster falls back only once its rounds are spent.
+// not a decline: the pre-flight checks refuse it, so a draft after the first
+// revises it, and the cluster falls back only once its drafts are spent.
 func TestUpstream_AnUnchangedAnswerIsADraftTheChecksRefuse(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -202,7 +202,7 @@ func TestPrompt_RefusesAProjectWithNoRepositoryPath(t *testing.T) {
 func TestUpstream_RevisesTheLastCallWithTheFindings(t *testing.T) {
 	first, second := answer(targetSource, "high"), answer(fixedSource, "medium")
 	model := &fakeModel{res: first}
-	round1 := proposeUpstream(t, failure(nil), upstreamEvidence(), model)
+	draft1 := proposeUpstream(t, failure(nil), upstreamEvidence(), model)
 	findings := []remediation.Finding{
 		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: "services/up-svc/models/up.sql"},
 		{Code: "confidence_low", Message: "the model rated its own fix low"},
@@ -210,24 +210,24 @@ func TestUpstream_RevisesTheLastCallWithTheFindings(t *testing.T) {
 
 	model.res = second
 	out, err := newPrompt().Propose(context.Background(), step.PromptInput{
-		Failure: failure(nil), Evidence: upstreamEvidence(), Round: 1,
-		Previous: &round1.Draft, PreviousRequest: &model.reqs[0], PreviousAnswer: &first, Findings: findings,
+		Failure: failure(nil), Evidence: upstreamEvidence(), Revision: 1,
+		Previous: &draft1.Draft, PreviousRequest: &model.reqs[0], PreviousAnswer: &first, Findings: findings,
 	}, model)
 
 	require.NoError(t, err)
-	require.Len(t, model.reqs, 2, "a later round makes one model call")
+	require.Len(t, model.reqs, 2, "a later draft makes one model call")
 	assert.Equal(t, prompt.Revise(model.reqs[0], step.AnswerJSON(first), step.FindingLines(findings)), model.reqs[1])
 	assert.NotEqual(t, model.reqs[0], model.reqs[1])
 	again := proposeUpstream(t, failure(nil), upstreamEvidence(), &fakeModel{res: second})
-	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first round's answer is")
+	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first draft's answer is")
 }
 
-func TestPrompt_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
+func TestPrompt_ARevisionWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
 	req, res := prompt.ProposeRequest{User: "u"}, answer(fixedSource, "high")
 	cases := map[string]step.PromptInput{
-		"no previous call":    {Round: 1},
-		"no previous request": {Round: 1, PreviousAnswer: &res},
-		"no previous answer":  {Round: 1, PreviousRequest: &req},
+		"no previous call":    {Revision: 1},
+		"no previous request": {Revision: 1, PreviousAnswer: &res},
+		"no previous answer":  {Revision: 1, PreviousRequest: &req},
 	}
 	for name, in := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -243,10 +243,10 @@ func TestPrompt_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *tes
 	}
 }
 
-func TestPrompt_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
+func TestPrompt_TheFirstDraftIsShownTheEarlierTries(t *testing.T) {
 	tries := []remediation.TryRecord{{
 		Round: 1, Try: 1,
-		Clusters: []remediation.ClusterRecord{{Members: []string{"model.up-svc.m1"}, Outcome: "failed (preflight_rounds_spent): the answer repeats the original"}},
+		Clusters: []remediation.ClusterRecord{{Members: []string{"model.up-svc.m1"}, Outcome: "failed (drafts_spent): the answer repeats the original"}},
 	}}
 	ev := upstreamEvidence().With(remediation.KeyPreviousTries, tries)
 	model := &fakeModel{res: answer(fixedSource, "high")}
@@ -255,5 +255,5 @@ func TestPrompt_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
 
 	require.Len(t, model.reqs, 1)
 	assert.Equal(t, step.WithPreviousTries(expectedRequest(false), ev), model.reqs[0])
-	assert.Contains(t, model.reqs[0].User, "- outcome: failed (preflight_rounds_spent): the answer repeats the original")
+	assert.Contains(t, model.reqs[0].User, "- outcome: failed (drafts_spent): the answer repeats the original")
 }

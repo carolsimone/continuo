@@ -76,7 +76,7 @@ export function createReleasesRouter(
     }
   });
 
-  // POST /api/releases/:id/retry-remediation — start another remediation round.
+  // POST /api/releases/:id/retry-remediation — start another round.
   // release-controller's status and body are passed through: 202 with the new
   // round, or 409 with a reason the page turns into "look at the fix instead".
   router.post('/:id/retry-remediation', async (req, res) => {

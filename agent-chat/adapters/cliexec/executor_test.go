@@ -242,9 +242,9 @@ func TestNewExecutor_DefaultsMaxBytes(t *testing.T) {
 func TestExecutor_OmitsAbsentOptionalPositional(t *testing.T) {
 	e := newExecutor(t)
 	res := e.Execute(context.Background(), "alice", uuid.New(),
-		call("node_trigger", map[string]string{"project": "finance", "schema": "analytics", "table": "orders"}))
+		call("node_run", map[string]string{"project": "finance", "schema": "analytics", "table": "orders"}))
 	assert.False(t, res.IsError)
-	assert.Contains(t, res.Output, `"argv":"node trigger finance analytics orders"`)
+	assert.Contains(t, res.Output, `"argv":"node run finance analytics orders"`)
 }
 
 func TestExecutor_AppendsPresentOptionalPositional(t *testing.T) {
@@ -252,12 +252,12 @@ func TestExecutor_AppendsPresentOptionalPositional(t *testing.T) {
 	e := NewExecutor(testCatalog(t), fakeCLI(t), nil, 5*time.Second, 4096,
 		slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	res := e.Execute(context.Background(), "alice", uuid.New(),
-		call("node_trigger", map[string]string{
+		call("node_run", map[string]string{
 			"project": "finance", "schema": "analytics", "table": "orders",
 			"source-run-id": "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b",
 		}))
 	assert.False(t, res.IsError)
-	assert.Contains(t, res.Output, `"argv":"node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"`)
+	assert.Contains(t, res.Output, `"argv":"node run finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"`)
 }
 
 // requestIDCLI echoes the CONTINUO_REQUEST_ID it received, as JSON.
@@ -288,15 +288,15 @@ func TestExecute_AMutatingCallCarriesAStableRequestID(t *testing.T) {
 		slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	thread := uuid.New()
 	args := map[string]string{"schedule-name": "daily"}
-	trigger := func(thread uuid.UUID, callID string) ports.ToolResult {
+	start := func(thread uuid.UUID, callID string) ports.ToolResult {
 		return e.Execute(context.Background(), "alice", thread,
-			ports.ToolCall{ID: callID, Name: "schedule_trigger", Args: args})
+			ports.ToolCall{ID: callID, Name: "schedule_run", Args: args})
 	}
 
-	first := requestIDOf(t, trigger(thread, "call-1"))
-	again := requestIDOf(t, trigger(thread, "call-1"))
-	otherCall := requestIDOf(t, trigger(thread, "call-2"))
-	otherThread := requestIDOf(t, trigger(uuid.New(), "call-1"))
+	first := requestIDOf(t, start(thread, "call-1"))
+	again := requestIDOf(t, start(thread, "call-1"))
+	otherCall := requestIDOf(t, start(thread, "call-2"))
+	otherThread := requestIDOf(t, start(uuid.New(), "call-1"))
 
 	parsed, err := uuid.Parse(first)
 	require.NoError(t, err, "the request id is a UUID")
@@ -306,7 +306,7 @@ func TestExecute_AMutatingCallCarriesAStableRequestID(t *testing.T) {
 	assert.NotEqual(t, first, otherThread, "another thread gets another request id")
 	assert.Equal(t, uuid.NewSHA1(agentChatRequestNamespace, []byte(thread.String()+"\x00call-1")).String(), first)
 
-	res := trigger(thread, "call-1")
+	res := start(thread, "call-1")
 	assert.Contains(t, res.Output, `"marker":"present"`, "nil base env must still inherit the parent environment")
 }
 

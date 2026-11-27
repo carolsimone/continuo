@@ -1,6 +1,6 @@
 {
   "cancellation_reasons": [
-    "Incorrect trigger",
+    "Started by mistake",
     "Data quality issue",
     "Manual intervention",
     "Other"

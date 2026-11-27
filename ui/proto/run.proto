@@ -21,8 +21,8 @@ import "google/protobuf/timestamp.proto";
 // is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
 // empty result where it returns one.
 //
-// The commands that start a run (StartRun, TriggerRerun, TriggerRebase and
-// TriggerSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
+// The commands that start a run (StartRun, StartRerun, StartRebase and
+// StartSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
 // first call with an id does its work. A retry with the same id and the same
 // parameters writes nothing and answers with the run the first call created or
 // cancelled. The same id with other parameters is ALREADY_EXISTS ("request_id
@@ -43,7 +43,7 @@ service RunService {
 
   // StartRun creates a run of a schedule's nodes in the live release and
   // dispatches its ready tasks in the transaction that creates it. The run's
-  // kind is trigger. A test of a schedule none of whose nodes has data tests
+  // kind is manual. A test of a schedule none of whose nodes has data tests
   // is not refused: the run is created, ends skipped with no task, and its id
   // is returned.
   // Errors:
@@ -65,7 +65,7 @@ service RunService {
   //   UNAVAILABLE         - maintenance mode is on.
   rpc StartRun(StartRunRequest) returns (StartRunResponse);
 
-  // TriggerRerun creates a run that re-executes a failed or cancelled run's
+  // StartRerun creates a run that re-executes a failed or cancelled run's
   // tasks that did not succeed, and their descendants, on the source run's
   // release, and dispatches the ready ones in the transaction that creates it.
   // The new run keeps the source's schedule_name.
@@ -81,9 +81,9 @@ service RunService {
   //                         rolling back; send it again with the same
   //                         request_id.
   //   UNAVAILABLE         - maintenance mode is on.
-  rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
+  rpc StartRerun(StartRerunRequest) returns (StartRerunResponse);
 
-  // TriggerSingleNodeRun creates a synthesised single-node run that executes
+  // StartSingleNodeRun creates a synthesised single-node run that executes
   // exactly one task with no downstream pickup. The required metadata_source
   // field of the request selects one of two modes:
   //   - "latest": the node as the live release holds it.
@@ -116,10 +116,10 @@ service RunService {
   //                         rolling back; send it again with the same
   //                         request_id.
   //   UNAVAILABLE         - maintenance mode is on.
-  rpc TriggerSingleNodeRun(TriggerSingleNodeRunRequest)
-      returns (TriggerSingleNodeRunResponse);
+  rpc StartSingleNodeRun(StartSingleNodeRunRequest)
+      returns (StartSingleNodeRunResponse);
 
-  // TriggerRebase creates a new run on the source's schedule and the live
+  // StartRebase creates a new run on the source's schedule and the live
   // release that restarts the source from its failure. It re-executes the
   // source's tasks that did not succeed (failed, cancelled or skipped) whose
   // node the live schedule still holds, the live schedule's nodes the source
@@ -147,16 +147,16 @@ service RunService {
   //                         rolling back; send it again with the same
   //                         request_id.
   //   UNAVAILABLE         - maintenance mode is on.
-  rpc TriggerRebase(TriggerRebaseRequest) returns (TriggerRebaseResponse);
+  rpc StartRebase(StartRebaseRequest) returns (StartRebaseResponse);
 
-  // PreviewRebase reports what TriggerRebase would run for the same
+  // PreviewRebase reports what StartRebase would run for the same
   // source_run_id and include_changed_upstream on the live release, without
   // creating a run: the live release, how many nodes run and why, and the
   // changed upstream nodes with what each feeds and its last successful
   // duration. changed_nodes lists every changed upstream node the option would
   // add, whether or not include_changed_upstream is set. Maintenance mode does
   // not refuse it.
-  // Errors: as TriggerRebase, except that an active run on the schedule does
+  // Errors: as StartRebase, except that an active run on the schedule does
   // not refuse a preview, no release is compared, and it takes no request_id,
   // so it is never ALREADY_EXISTS or ABORTED.
   rpc PreviewRebase(PreviewRebaseRequest) returns (PreviewRebaseResponse);
@@ -288,7 +288,7 @@ service RunService {
   //
   // A schedule is a schedule name: the models of the live release whose dbt
   // tag names it. Its cron says when it runs on its own; a schedule with no
-  // cron runs only when triggered. The commands below change only the cron,
+  // cron runs only when someone starts it. The commands below change only the cron,
   // and they take no request_id. Repeating an UpsertSchedule saves the same
   // cron, timezone, description and paused flag again, but each save raises
   // version and updated_at: a retry that sends the expected_version the
@@ -327,7 +327,7 @@ service RunService {
   rpc UpsertSchedule(UpsertScheduleRequest) returns (UpsertScheduleResponse);
 
   // DeleteSchedule removes the cron of a schedule, which then runs only when
-  // triggered. A run of it in progress goes on. Deleting the cron of a
+  // someone starts it. A run of it in progress goes on. Deleting the cron of a
   // schedule that has none succeeds.
   // Errors:
   //   INVALID_ARGUMENT - empty schedule_name.
@@ -387,7 +387,7 @@ message Run {
   // promote-seed run carries a name made for it, "single-node-run-<8hex>" or
   // "promote-seed-<8hex>", and a rerun or rebase of a run copies its name.
   string schedule_name = 2;
-  string kind = 3;       // cron | trigger | rerun | rebase | single_node_run | promote_seed
+  string kind = 3;       // cron | manual | rerun | rebase | single_node_run | promote_seed
   string operation = 4;  // run | test | build | full_refresh
   string status = 5;     // pending | running | cancelling | succeeded | failed | cancelled | skipped
   // failure_reason says why a failed run failed when no task of it did:
@@ -520,17 +520,17 @@ message StartRunResponse {
   string run_id = 1;
 }
 
-message TriggerRerunRequest {
+message StartRerunRequest {
   string request_id = 1;      // Required: UUID
   string source_run_id = 2;   // Required: the failed or cancelled run to rerun
 }
 
-message TriggerRerunResponse {
+message StartRerunResponse {
   string run_id = 1;         // the new rerun run
   string schedule_name = 2;  // copied verbatim from the source schedule_name
 }
 
-message TriggerSingleNodeRunRequest {
+message StartSingleNodeRunRequest {
   string request_id = 1;       // Required: UUID
   string project_name = 2;     // Required
   string schema_name = 3;      // Required
@@ -546,26 +546,26 @@ message TriggerSingleNodeRunRequest {
   repeated string acknowledged_dependents = 8;
 }
 
-message TriggerSingleNodeRunResponse {
+message StartSingleNodeRunResponse {
   string run_id = 1;         // the synthesised run
   string schedule_name = 2;  // "single-node-run-<8hex>"
 }
 
-message TriggerRebaseRequest {
+message StartRebaseRequest {
   string request_id = 1;                 // Required: UUID
   string source_run_id = 2;              // Required: the failed or cancelled run to rebase from
   bool include_changed_upstream = 3;     // also re-execute the changed nodes upstream of what re-executes
   string expected_release_id = 4;        // the live release the caller previewed; empty skips the check
 }
 
-message TriggerRebaseResponse {
+message StartRebaseResponse {
   string run_id = 1;         // the new rebase run
   string schedule_name = 2;  // copied verbatim from the source schedule_name
 }
 
 message PreviewRebaseRequest {
   string source_run_id = 1;           // Required: the failed or cancelled run to rebase from
-  bool include_changed_upstream = 2;  // as TriggerRebaseRequest.include_changed_upstream
+  bool include_changed_upstream = 2;  // as StartRebaseRequest.include_changed_upstream
 }
 
 // ChangedUpstreamNode is a changed node upstream of what a rebase re-executes.
@@ -578,7 +578,7 @@ message ChangedUpstreamNode {
 }
 
 message PreviewRebaseResponse {
-  string release_id = 1;         // the live release previewed; send it as TriggerRebaseRequest.expected_release_id
+  string release_id = 1;         // the live release previewed; send it as StartRebaseRequest.expected_release_id
   int64 promotion_seq = 2;       // the promotion_seq of that release
   int32 total_nodes = 3;         // tasks of the rebase: re-executed plus inherited
   int32 will_run = 4;            // tasks it re-executes: the sum of the four counts below
@@ -628,7 +628,7 @@ message ListRunsRequest {
   // release_id lists every run of the release, of any status. Exactly one of
   // schedule_name and release_id is required.
   string release_id = 4;
-  // kind, read with release_id, keeps only the runs of that kind: cron | trigger |
+  // kind, read with release_id, keeps only the runs of that kind: cron | manual |
   // rerun | rebase | single_node_run | promote_seed. Empty keeps every kind. A
   // value that is not a run kind is refused whichever list is asked for.
   string kind = 5;
@@ -641,7 +641,7 @@ message RunSummary {
   string created_at = 4;      // RFC3339, UTC, seconds
   string completed_at = 5;    // RFC3339, UTC, seconds; empty while the run is active
   string failure_reason = 6;  // stalled | empty_selection | invalid_node_type when the run failed without a failed task; empty otherwise
-  string kind = 7;            // cron | trigger | rerun | rebase | single_node_run | promote_seed
+  string kind = 7;            // cron | manual | rerun | rebase | single_node_run | promote_seed
   string release_id = 8;      // the release the run executes on; empty when it names none
 }
 
@@ -750,7 +750,7 @@ message ViewOutage {
 message NodeTask {
   string run_id = 1;
   string schedule_name = 2;
-  string kind = 3;                // the run kind: cron | trigger | rerun | rebase | single_node_run | promote_seed
+  string kind = 3;                // the run kind: cron | manual | rerun | rebase | single_node_run | promote_seed
   string run_status = 4;          // the run status: a run_status value
   string task_id = 5;
   string task_status = 6;         // a task_status value
@@ -863,7 +863,7 @@ message ListSchedulesRequest {}
 // updated_at unset. last_run_status is a run_status value.
 message ScheduleSummary {
   string schedule_name = 1;
-  string cron = 2;             // empty when the schedule has no cron: it runs only when triggered
+  string cron = 2;             // empty when the schedule has no cron: it runs only when someone starts it
   string description = 3;      // empty when the schedule has none
   string timezone = 4;         // IANA timezone the cron is read in
   bool has_active_run = 5;     // a pending, running or cancelling run holds the schedule

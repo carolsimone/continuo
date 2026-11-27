@@ -17,9 +17,9 @@ import (
 // for a single node. Unlike `test`, `build` has no no_tests gate, so any node
 // is a valid target — seed_table_1 is used purely because it's a known-good
 // dbt-seed node already exercised by the test-operation e2e case. A
-// TriggerSingleNodeRun with operation="build" dispatches a `dbt build
+// StartSingleNodeRun with operation="build" dispatches a `dbt build
 // --select seed_table_1` Job that succeeds, and the run records
-// operation="build", proving the operation threaded from the trigger through
+// operation="build", proving the operation threaded from the start through
 // to the stored run.
 func TestBuildOperationSingleNode(t *testing.T) {
 	if testing.Short() {
@@ -43,15 +43,15 @@ func TestBuildOperationSingleNode(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-build-op")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSingleNodeRun operation=build: %s.%s.%s", targetProject, targetSchema, targetTable)
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	t.Logf("StartSingleNodeRun operation=build: %s.%s.%s", targetProject, targetSchema, targetTable)
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",
 		Operation:      "build",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(operation=build) failed")
+	require.NoError(t, err, "StartSingleNodeRun(operation=build) failed")
 	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
 
 	runID, err := uuid.Parse(resp.RunId)
@@ -191,12 +191,12 @@ func TestBuildOperationRerun(t *testing.T) {
 		"precondition: source run must be a build run")
 
 	// ── Rerun the failed build run ──────────────────────────────────────────
-	t.Log("Triggering rerun via gRPC TriggerRerun with only source_run_id...")
-	rerunResp, err := clients.runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: uuid.NewString(),
+	t.Log("Starting rerun via gRPC StartRerun with only source_run_id...")
+	rerunResp, err := clients.runClient.StartRerun(ctx, &runv1.StartRerunRequest{RequestId: uuid.NewString(),
 		SourceRunId: srcID.String(),
 	})
-	require.NoError(t, err, "TriggerRerun must succeed against a FAILED build run")
-	require.NotEmpty(t, rerunResp.RunId, "TriggerRerun must return the new run's id")
+	require.NoError(t, err, "StartRerun must succeed against a FAILED build run")
+	require.NotEmpty(t, rerunResp.RunId, "StartRerun must return the new run's id")
 	require.NotEqual(t, srcID.String(), rerunResp.RunId, "rerun must mint a NEW run id")
 
 	newRunID, err := uuid.Parse(rerunResp.RunId)
@@ -226,7 +226,7 @@ func TestBuildOperationRerun(t *testing.T) {
 
 	// The derived-frontier discriminator: the rerun re-dispatches the rebased
 	// node (ftable_e) as a build Job, proving DispatchDerivedRun threaded
-	// operation through the rerun's frontier, not just the initial trigger.
+	// operation through the rerun's frontier, not just the initial run.
 	// The source run also dispatched a Job for ftable_e (it's the node that
 	// failed there too), so the selector must scope to THIS run's run-id
 	// label, not just table_name, or it could pick up the source run's Job.

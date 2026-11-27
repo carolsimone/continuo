@@ -35,11 +35,11 @@ type FailureEvidence struct {
 	// through a separate ingress adapter.
 	Source    model.RemediationSource
 	ReleaseID string
-	// RemediationRound is the release's remediation round this evidence
+	// Round is the release's round this evidence
 	// belongs to: 1 for the rejection itself, +1 per human "try again" on
 	// the release. 0 and 1 both mean round 1 — ClassifyRejection normalises
 	// an unset value before using it.
-	RemediationRound     int
+	Round                int
 	NodeID               string
 	RelationID           string // optional; the contested physical relation for a duplicate-relation failure — distinct from NodeID (the target claimant's own identity), which can name a different string once the target carries an alias. Empty for every other source.
 	DBTLogURI            string

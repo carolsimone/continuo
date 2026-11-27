@@ -31,14 +31,14 @@ type fakeNodeRunController struct {
 	gotOperation string
 	gotLimit     int32
 
-	trigResp         *runv1.TriggerSingleNodeRunResponse
-	trigErr          error
-	gotActor         string
-	gotRequestIDs    []string
-	gotTrigProject   string
-	gotTrigSourceRun string
+	runResp         *runv1.StartSingleNodeRunResponse
+	runErr          error
+	gotActor        string
+	gotRequestIDs   []string
+	gotRunProject   string
+	gotRunSourceRun string
 
-	testResp         *runv1.TriggerSingleNodeRunResponse
+	testResp         *runv1.StartSingleNodeRunResponse
 	testErr          error
 	gotTestActor     string
 	gotTestProject   string
@@ -46,7 +46,7 @@ type fakeNodeRunController struct {
 	gotTestTable     string
 	gotTestSourceRun string
 
-	buildResp         *runv1.TriggerSingleNodeRunResponse
+	buildResp         *runv1.StartSingleNodeRunResponse
 	buildErr          error
 	gotBuildActor     string
 	gotBuildProject   string
@@ -54,7 +54,7 @@ type fakeNodeRunController struct {
 	gotBuildTable     string
 	gotBuildSourceRun string
 
-	fullRefreshResp         *runv1.TriggerSingleNodeRunResponse
+	fullRefreshResp         *runv1.StartSingleNodeRunResponse
 	fullRefreshErr          error
 	gotFullRefreshActor     string
 	gotFullRefreshProject   string
@@ -83,25 +83,25 @@ func (f *fakeNodeRunController) ListNodeRuns(_ context.Context, project, schema,
 	return f.runsResp, f.runsErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeRun(_ context.Context, requestID, project, _, _, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) StartNodeRun(_ context.Context, requestID, project, _, _, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
-	f.gotTrigProject, f.gotTrigSourceRun, f.gotActor = project, sourceRunID, actor
-	return f.trigResp, f.trigErr
+	f.gotRunProject, f.gotRunSourceRun, f.gotActor = project, sourceRunID, actor
+	return f.runResp, f.runErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeTest(_ context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) StartNodeTest(_ context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTestProject, f.gotTestSchema, f.gotTestTable, f.gotTestSourceRun, f.gotTestActor = project, schema, table, sourceRunID, actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeBuild(_ context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) StartNodeBuild(_ context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotBuildProject, f.gotBuildSchema, f.gotBuildTable, f.gotBuildSourceRun, f.gotBuildActor = project, schema, table, sourceRunID, actor
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeFullRefresh(_ context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) StartNodeFullRefresh(_ context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.StartSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotFullRefreshProject, f.gotFullRefreshSchema, f.gotFullRefreshTable, f.gotFullRefreshSourceRun, f.gotFullRefreshActor = project, schema, table, sourceRunID, actor
 	f.gotAcknowledged = acknowledged

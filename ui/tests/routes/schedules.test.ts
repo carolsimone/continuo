@@ -178,7 +178,7 @@ describe('GET /api/schedules/:name/runs', () => {
   });
 });
 
-describe('routes/schedules: POST /:name/trigger', () => {
+describe('routes/schedules: POST /:name/manual-run', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 with run_id on success and forwards request_id', async () => {
@@ -186,7 +186,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
       cb(null, { run_id: 'aaa-bbb-ccc' })
     );
 
-    const res = await request(app).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
+    const res = await request(app).post('/api/schedules/hourly/manual-run').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ run_id: 'aaa-bbb-ccc' });
@@ -214,7 +214,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
     });
     authedApp.use('/api/schedules', createSchedulesRouter(mockRunClient as any));
 
-    const res = await request(authedApp).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
+    const res = await request(authedApp).post('/api/schedules/hourly/manual-run').send({ request_id: REQUEST_ID });
     expect(res.status).toBe(200);
     expect(seenUserId).toBe('okta|alice');
   });
@@ -226,7 +226,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
       cb(null, { run_id: 'r1' });
     });
 
-    const res = await request(app).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
+    const res = await request(app).post('/api/schedules/hourly/manual-run').send({ request_id: REQUEST_ID });
     expect(res.status).toBe(200);
     expect(seenUserId).toBe('system');
   });
@@ -235,7 +235,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.NOT_FOUND, 'schedule "nope" not found in catalog')));
 
-    const res = await request(app).post('/api/schedules/nope/trigger').send({ request_id: REQUEST_ID });
+    const res = await request(app).post('/api/schedules/nope/manual-run').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'schedule "nope" not found in catalog' });
@@ -245,7 +245,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.FAILED_PRECONDITION, 'schedule "hourly" already has an active run')));
 
-    const res = await request(app).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
+    const res = await request(app).post('/api/schedules/hourly/manual-run').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(409);
     expect(res.body).toEqual({ error: 'schedule "hourly" already has an active run' });
@@ -255,7 +255,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.INTERNAL, 'internal')));
 
-    const res = await request(app).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
+    const res = await request(app).post('/api/schedules/hourly/manual-run').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'internal' });
@@ -263,7 +263,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
 
   it('forwards operation=test', async () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) => cb(null, { run_id: 's1' }));
-    const res = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID, operation: 'test' });
+    const res = await request(app).post('/api/schedules/daily/manual-run').send({ request_id: REQUEST_ID, operation: 'test' });
     expect(res.status).toBe(200);
     expect(mockStartRun).toHaveBeenCalledWith(
       { request_id: REQUEST_ID, schedule_name: 'daily', operation: 'test' },
@@ -273,13 +273,13 @@ describe('routes/schedules: POST /:name/trigger', () => {
   });
 
   it('rejects a bad operation with 400 and no gRPC call', async () => {
-    const res = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID, operation: 'drop' });
+    const res = await request(app).post('/api/schedules/daily/manual-run').send({ request_id: REQUEST_ID, operation: 'drop' });
     expect(res.status).toBe(400);
     expect(mockStartRun).not.toHaveBeenCalled();
   });
 
   it('rejects full_refresh with 400 and no gRPC call', async () => {
-    const res = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID, operation: 'full_refresh' });
+    const res = await request(app).post('/api/schedules/daily/manual-run').send({ request_id: REQUEST_ID, operation: 'full_refresh' });
     expect(res.status).toBe(400);
     expect(mockStartRun).not.toHaveBeenCalled();
   });
@@ -290,7 +290,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
     ['an empty request_id', { request_id: '' }],
     ['a request_id that is not a UUID', { request_id: 'nope', operation: 'test' }],
   ])('refuses a missing or malformed request_id with 400: %s', async (_label, body) => {
-    const req = request(app).post('/api/schedules/daily/trigger');
+    const req = request(app).post('/api/schedules/daily/manual-run');
     const res = await (body === undefined ? req : req.send(body));
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'request_id must be a UUID' });
@@ -301,16 +301,16 @@ describe('routes/schedules: POST /:name/trigger', () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.ALREADY_EXISTS, 'request_id reused with different parameters')));
 
-    const res = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID });
+    const res = await request(app).post('/api/schedules/daily/manual-run').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(409);
     expect(res.body).toEqual({ error: 'request_id reused with different parameters' });
   });
 
-  it('answers 503 maintenance when run-controller refuses the trigger in maintenance mode', async () => {
+  it('answers 503 maintenance when run-controller refuses the manual run in maintenance mode', async () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) => cb(maintenanceError()));
 
-    const res = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID });
+    const res = await request(app).post('/api/schedules/daily/manual-run').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: MAINTENANCE_MESSAGE, code: MAINTENANCE_CODE });

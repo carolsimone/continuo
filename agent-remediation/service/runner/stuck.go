@@ -209,7 +209,7 @@ func failFixRow(ctx context.Context, repo repository.FixRepository, snap remedia
 			return fmt.Errorf("list the fixes of release %s: %w", releaseID, err)
 		}
 		for _, v := range views {
-			if v.RemediationRound != snap.Remediation.Round || v.Try != snap.Try.Try {
+			if v.Round != snap.Remediation.Round || v.Try != snap.Try.Try {
 				continue
 			}
 			switch v.Status {

@@ -155,7 +155,7 @@ func (w *World) FixRows() []conformance.FixRow {
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i].Fix, out[j].Fix
-		return pkg_model.TryBefore(a.RemediationRound, a.Try, b.RemediationRound, b.Try)
+		return pkg_model.TryBefore(a.Round, a.Try, b.Round, b.Try)
 	})
 	return out
 }

@@ -203,12 +203,12 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 		ctx := context.Background()
 
 		// Promote a release carrying the schedule, then start it: StartRun
-		// creates a run of kind trigger, which CancelActiveRun then cancels.
+		// creates a run of kind manual, which CancelActiveRun then cancels.
 		promoteSchedules(t, runControllerDB, "daily-cancel-success")
 		runID := startRun(t, "daily-cancel-success")
 
-		// A manual start persists kind='trigger', not 'cron'.
-		assert.Equal(t, "trigger", schedulerKind(t, runID))
+		// A manual start persists kind='manual', not 'cron'.
+		assert.Equal(t, "manual", schedulerKind(t, runID))
 
 		resp, err := runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
 			RequestId:          uuid.NewString(),

@@ -39,7 +39,7 @@ var _ step.Prompt = (*sourcePrompt)(nil)
 func NewDBTCompile() step.Prompt {
 	return &sourcePrompt{
 		name:         "dbt-compile",
-		description:  "Shows the model the files around a failed dbt compile with the dbt log, and reads back the corrected content of the one file it chooses. The first-round request carries the earlier tries at the failure, when there are any.",
+		description:  "Shows the model the files around a failed dbt compile with the dbt log, and reads back the corrected content of the one file it chooses. The first-draft request carries the earlier tries at the failure, when there are any.",
 		readsLog:     true,
 		suspectsRoot: true,
 		pick:         pickNamed,
@@ -55,7 +55,7 @@ func NewDBTCompile() step.Prompt {
 func NewDBTParse() step.Prompt {
 	return &sourcePrompt{
 		name:         "dbt-parse",
-		description:  "Shows the model the files around a node whose SQL the parser rejected with the parser's error, and reads back the corrected content of the one file it chooses. The first-round request carries the earlier tries at the failure, when there are any.",
+		description:  "Shows the model the files around a node whose SQL the parser rejected with the parser's error, and reads back the corrected content of the one file it chooses. The first-draft request carries the earlier tries at the failure, when there are any.",
 		suspectsRoot: true,
 		pick:         pickNamed,
 		build: func(f remediation.Failure, files remediation.SourceFiles, _ string, precedents []prompt.Precedent) prompt.ProposeRequest {
@@ -69,7 +69,7 @@ func NewDBTParse() step.Prompt {
 func NewSeed() step.Prompt {
 	return &sourcePrompt{
 		name:        "seed",
-		description: "Shows the model a seed's csv with the dbt log, and reads back the corrected csv. The first-round request carries the earlier tries at the failure, when there are any.",
+		description: "Shows the model a seed's csv with the dbt log, and reads back the corrected csv. The first-draft request carries the earlier tries at the failure, when there are any.",
 		readsLog:    true,
 		pick: func(_ ports.ProposeResult, files remediation.SourceFiles) (string, bool) {
 			return files.Primary, true
@@ -95,8 +95,8 @@ func (p *sourcePrompt) Meta() step.Meta {
 }
 
 // Propose builds the request from the cluster's evidence, calls the model once
-// and reads its answer into a draft. In a round after the first the request is
-// the revision of the last round's request with its answer and the findings
+// and reads its answer into a draft. In a draft after the first the request is
+// the revision of the last draft's request with its answer and the findings
 // (step.RevisionRequest), and the answer is read the same way. The draft names
 // the file the model chose. When that file is one the model was shown, the draft
 // holds one edit of it, whose content may still be empty or unchanged for the
@@ -122,7 +122,7 @@ func (p *sourcePrompt) Propose(ctx context.Context, in step.PromptInput, m step.
 	return step.PromptOutput{Draft: p.draft(in.Failure, files, res)}, nil
 }
 
-// request builds the first round's request from the cluster's evidence, with
+// request builds the first draft's request from the cluster's evidence, with
 // the earlier tries at the failure (step.WithPreviousTries).
 func (p *sourcePrompt) request(in step.PromptInput, files remediation.SourceFiles) prompt.ProposeRequest {
 	var dbtLog string

@@ -14,7 +14,7 @@ import (
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 )
 
-// A trigger names a schedule run-controller knows: a model of the tenant's live release
+// A manual run names a schedule run-controller knows: a model of the tenant's live release
 // carries the name, or the name has a cron. A name with neither is NotFound
 // and stores nothing, while a name a model carries starts with no cron and
 // nothing else to say it exists.
@@ -37,7 +37,7 @@ func TestStartRun_ANameNoModelHasIsNotFound(t *testing.T) {
 }
 
 // A name whose cron outlived its models (a later release dropped every model
-// carrying it) is a schedule run-controller knows with nothing to run: a trigger of it
+// carrying it) is a schedule run-controller knows with nothing to run: a manual run of it
 // is refused as an empty selection, creates no run and stores no record.
 func TestStartRun_ANameWithACronButNoModelsIsAnEmptySelection(t *testing.T) {
 	ctx := context.Background()
@@ -56,7 +56,7 @@ func TestStartRun_ANameWithACronButNoModelsIsAnEmptySelection(t *testing.T) {
 }
 
 // A schedule name may be up to 50 characters long, the longest a run carries.
-// A trigger of a longer name is InvalidArgument with the run's own message,
+// A manual run of a longer name is InvalidArgument with the run's own message,
 // whether or not a model of the live release carries the name, and creates
 // no run and stores no record; a name of 50 characters starts.
 func TestStartRun_ANameLongerThanARunCarriesIsInvalidArgument(t *testing.T) {
@@ -86,7 +86,7 @@ func TestStartRun_ANameLongerThanARunCarriesIsInvalidArgument(t *testing.T) {
 }
 
 // A schedule whose stored cron no longer parses is still a schedule run-controller
-// knows: a trigger of it with no models is the empty selection, not NotFound.
+// knows: a manual run of it with no models is the empty selection, not NotFound.
 func TestStartRun_ANameWhoseStoredCronNoLongerParsesIsKnown(t *testing.T) {
 	ctx := context.Background()
 	name := newScheduleName(t, "start-bad-cron")
@@ -109,7 +109,7 @@ func TestStartRun_TheMadeUpNameOfASingleNodeRunNeedsNoModelOrCron(t *testing.T) 
 	table := "made_up_" + uuid.NewString()[:8]
 	promoteRelease(t, runControllerDB, scheduledNode("mart", table, "dbt-model", ""))
 
-	single, err := runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+	single, err := runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 		RequestId: uuid.NewString(), ProjectName: "service-1", SchemaName: "mart", TableName: table, MetadataSource: "latest",
 	})
 	require.NoError(t, err, "a single-node run starts under its made-up name")
@@ -118,7 +118,7 @@ func TestStartRun_TheMadeUpNameOfASingleNodeRunNeedsNoModelOrCron(t *testing.T) 
 	require.NoError(t, err)
 	finishRun(t, single.GetRunId())
 
-	rerun, err := runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: uuid.NewString(), SourceRunId: single.GetRunId()})
+	rerun, err := runClient.StartRerun(ctx, &runv1.StartRerunRequest{RequestId: uuid.NewString(), SourceRunId: single.GetRunId()})
 	require.NoError(t, err, "a rerun of it starts under the same name")
 	t.Cleanup(func() { finishRun(t, rerun.GetRunId()) })
 	assert.Equal(t, single.GetScheduleName(), rerun.GetScheduleName())

@@ -32,7 +32,7 @@ func (*Prompt) Meta() step.Meta {
 		Kind: step.KindPrompt,
 		Description: "Shows the model the changed ancestor's source with what this release changed in it, the failing members below it with their errors " +
 			"and past precedent, and reads back the ancestor's corrected source as the draft's one edit." +
-			" The first-round request carries the earlier tries at the failure, when there are any.",
+			" The first-draft request carries the earlier tries at the failure, when there are any.",
 		Needs: []remediation.EvidenceKey{
 			remediation.KeyFailure,
 			remediation.KeyUpstreamTarget,
@@ -45,8 +45,8 @@ func (*Prompt) Meta() step.Meta {
 // and reads its answer into a draft of one edit of the ancestor's file. The
 // edit's original is the ancestor's source as the evidence holds it. The edit's content may be empty
 // or equal to the original, for the checks to refuse. A cross-project cluster
-// asks the model to keep what the members read. In a round after the first the
-// request is the revision of the last round's request with its answer and the
+// asks the model to keep what the members read. In a draft after the first the
+// request is the revision of the last draft's request with its answer and the
 // findings (step.RevisionRequest), and the answer is read the same way.
 func (p *Prompt) Propose(ctx context.Context, in step.PromptInput, m step.Model) (step.PromptOutput, error) {
 	target, ok := remediation.Get[remediation.UpstreamTarget](in.Evidence, remediation.KeyUpstreamTarget)
@@ -87,7 +87,7 @@ func (p *Prompt) Propose(ctx context.Context, in step.PromptInput, m step.Model)
 	}}, nil
 }
 
-// request builds the first round's request from the cluster's evidence, with
+// request builds the first draft's request from the cluster's evidence, with
 // the earlier tries at the failure (step.WithPreviousTries).
 func (p *Prompt) request(in step.PromptInput, target remediation.UpstreamTarget) prompt.ProposeRequest {
 	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)

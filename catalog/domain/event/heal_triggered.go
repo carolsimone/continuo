@@ -2,7 +2,7 @@ package event
 
 // HealTriggered mirrors the heal.triggered:v1 payload the
 // remediation classifier produces: one message per rejected release and
-// remediation round, carrying every failing node the classifier recorded,
+// round, carrying every failing node the classifier recorded,
 // the ones no fix can reach included. Only the fields the case base records
 // are mapped; the heal agent's routing fields are not this consumer's concern.
 type HealTriggered struct {

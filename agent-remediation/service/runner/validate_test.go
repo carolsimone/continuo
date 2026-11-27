@@ -137,7 +137,7 @@ func validType() workflow.Type {
 		Name:      "t",
 		Match:     workflow.Match{Cluster: workflow.ClusterSingle, Source: "compile", Pos: pos(typeFile, 4)},
 		Context:   []workflow.StepRef{ref(typeFile, 5, "dbt_log")},
-		Agent:     workflow.Agent{Prompt: ref(typeFile, 6, "dbt-compile"), Rounds: 1, Pos: pos(typeFile, 6)},
+		Agent:     workflow.Agent{Prompt: ref(typeFile, 6, "dbt-compile"), Drafts: 1, Pos: pos(typeFile, 6)},
 		Preflight: []workflow.StepRef{ref(typeFile, 7, "target_file_was_shown")},
 		File:      typeFile,
 		Pos:       pos(typeFile, 1),
@@ -306,22 +306,22 @@ func TestValidate_RefusesAnUnprovidedNeed(t *testing.T) {
 	})
 }
 
-// A type runs at least one pre-flight round, so a type that asks for fewer is
+// A type runs at least one draft, so a type that asks for fewer is
 // refused at its agent line rather than run with none.
-func TestValidate_RefusesRoundsBelowOne(t *testing.T) {
-	for _, rounds := range []int{0, -1} {
-		t.Run(fmt.Sprintf("rounds %d", rounds), func(t *testing.T) {
-			refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Agent.Rounds = rounds },
-				fmt.Sprintf(`types/t.yaml:6: type "t" has rounds %d, and a type runs at least one pre-flight round, so rounds must be 1 or more`, rounds))
+func TestValidate_RefusesDraftsBelowOne(t *testing.T) {
+	for _, drafts := range []int{0, -1} {
+		t.Run(fmt.Sprintf("drafts %d", drafts), func(t *testing.T) {
+			refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Agent.Drafts = drafts },
+				fmt.Sprintf(`types/t.yaml:6: type "t" has drafts %d, and a type runs at least one draft, so drafts must be 1 or more`, drafts))
 		})
 	}
 }
 
-func TestValidate_AcceptsOneRoundOrMore(t *testing.T) {
-	for _, rounds := range []int{1, 2, 3} {
-		t.Run(fmt.Sprintf("rounds %d", rounds), func(t *testing.T) {
+func TestValidate_AcceptsOneDraftOrMore(t *testing.T) {
+	for _, drafts := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("drafts %d", drafts), func(t *testing.T) {
 			f, ty := validFlow(), validType()
-			ty.Agent.Rounds = rounds
+			ty.Agent.Drafts = drafts
 			_, err := Validate(setOf(f, ty), stubRegistry())
 			require.NoError(t, err)
 		})
@@ -406,7 +406,7 @@ func TestValidate_RefusesReservedAgentTools(t *testing.T) {
 func TestValidate_JoinsEveryRefusal(t *testing.T) {
 	f, ty := validFlow(), validType()
 	f.Tries = 0
-	ty.Agent.Rounds = 0
+	ty.Agent.Drafts = 0
 	_, err := Validate(setOf(f, ty), stubRegistry())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `flows/f.yaml:1`)

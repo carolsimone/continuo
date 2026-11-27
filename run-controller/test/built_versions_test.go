@@ -62,7 +62,7 @@ func (h *builtHarness) commands() *svchandlers.RunCommands {
 // rerun reruns the default tenant's run source for initiator under a fresh
 // request id and returns the rerun's id.
 func (h *builtHarness) rerun(ctx context.Context, source uuid.UUID, initiator identity.Identity) (uuid.UUID, error) {
-	res, err := h.commands().TriggerRerun(ctx, svchandlers.TriggerRerunCommand{
+	res, err := h.commands().StartRerun(ctx, svchandlers.StartRerunCommand{
 		TenantID: pkgevents.DefaultTenantID, RequestID: uuid.New(), SourceRunID: source, Initiator: initiator,
 	})
 	return res.RunID, err
@@ -70,15 +70,15 @@ func (h *builtHarness) rerun(ctx context.Context, source uuid.UUID, initiator id
 
 // rebase creates the rebase in asks for under a fresh request id and returns
 // its id.
-func (h *builtHarness) rebase(ctx context.Context, in svchandlers.TriggerRebaseInput) (uuid.UUID, error) {
-	res, err := h.commands().TriggerRebase(ctx, svchandlers.TriggerRebaseCommand{RequestID: uuid.New(), TriggerRebaseInput: in})
+func (h *builtHarness) rebase(ctx context.Context, in svchandlers.StartRebaseInput) (uuid.UUID, error) {
+	res, err := h.commands().StartRebase(ctx, svchandlers.StartRebaseCommand{RequestID: uuid.New(), StartRebaseInput: in})
 	return res.RunID, err
 }
 
 // singleNode creates the single-node run in asks for under a fresh request id
 // and returns its id.
-func (h *builtHarness) singleNode(ctx context.Context, in svchandlers.TriggerSingleNodeRunInput) (uuid.UUID, error) {
-	res, err := h.commands().TriggerSingleNodeRun(ctx, svchandlers.TriggerSingleNodeRunCommand{RequestID: uuid.New(), TriggerSingleNodeRunInput: in})
+func (h *builtHarness) singleNode(ctx context.Context, in svchandlers.StartSingleNodeRunInput) (uuid.UUID, error) {
+	res, err := h.commands().StartSingleNodeRun(ctx, svchandlers.StartSingleNodeRunCommand{RequestID: uuid.New(), StartSingleNodeRunInput: in})
 	return res.RunID, err
 }
 
@@ -104,16 +104,16 @@ func (h *builtHarness) saveRun(t *testing.T, rn *run.Run) uuid.UUID {
 	return rn.RunID()
 }
 
-// trigger triggers schedule, which a model of the live release carries, with
+// manualRun starts a manual run of schedule, which a model of the live release carries, with
 // operation op on the live release, and returns the run.
-func (h *builtHarness) trigger(t *testing.T, schedule string, op model.Operation) uuid.UUID {
+func (h *builtHarness) manualRun(t *testing.T, schedule string, op model.Operation) uuid.UUID {
 	t.Helper()
 	id, err := h.start(context.Background(), pkgevents.DefaultTenantID, schedule, identity.FromUserID("okta|alice"), op)
 	require.NoError(t, err)
 	return id
 }
 
-// start starts a triggered run of tenantID's schedule with operation op for
+// start starts a manual run of tenantID's schedule with operation op for
 // initiator, as StartRun starts one, in a transaction of its own, and returns
 // it.
 func (h *builtHarness) start(ctx context.Context, tenantID, schedule string, initiator identity.Identity, op model.Operation) (uuid.UUID, error) {
@@ -124,7 +124,7 @@ func (h *builtHarness) start(ctx context.Context, tenantID, schedule string, ini
 	}
 	defer u.Rollback() //nolint:errcheck
 	if err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).StartInTransaction(ctx, u, svchandlers.StartRunInput{
-		RunID: id, TenantID: tenantID, ScheduleName: schedule, Kind: run.KindTrigger, Initiator: initiator, Operation: op,
+		RunID: id, TenantID: tenantID, ScheduleName: schedule, Kind: run.KindManual, Initiator: initiator, Operation: op,
 	}); err != nil {
 		return uuid.Nil, err
 	}
@@ -230,7 +230,7 @@ func TestBuiltVersions(t *testing.T) {
 
 	t.Run("a succeeded task of a planned run records the release's content hash", func(t *testing.T) {
 		stamp := promoteRelease(t, db, scheduledNode("raw", "orders_built", "dbt-model", "built-orders"))
-		runID := h.trigger(t, "built-orders", model.OperationRun)
+		runID := h.manualRun(t, "built-orders", model.OperationRun)
 		taskID := task(runID, "raw.orders_built")
 
 		h.finish(t, runID, taskID, run.AttemptSucceeded)
@@ -251,7 +251,7 @@ func TestBuiltVersions(t *testing.T) {
 		one := 1
 		tested.TestCount = &one
 		promoteRelease(t, db, tested)
-		runID := h.trigger(t, "built-tested", model.OperationTest)
+		runID := h.manualRun(t, "built-tested", model.OperationTest)
 
 		h.finish(t, runID, task(runID, "raw.tested_built"), run.AttemptSucceeded)
 
@@ -261,7 +261,7 @@ func TestBuiltVersions(t *testing.T) {
 
 	t.Run("a failed task records nothing", func(t *testing.T) {
 		promoteRelease(t, db, scheduledNode("raw", "failing", "dbt-model", "built-failing"))
-		runID := h.trigger(t, "built-failing", model.OperationRun)
+		runID := h.manualRun(t, "built-failing", model.OperationRun)
 
 		h.finish(t, runID, task(runID, "raw.failing"), run.AttemptFailed)
 
@@ -273,7 +273,7 @@ func TestBuiltVersions(t *testing.T) {
 		blank := scheduledNode("raw", "unhashed", "dbt-model", "built-unhashed")
 		blank.ContentHash = ""
 		promoteRelease(t, db, blank)
-		runID := h.trigger(t, "built-unhashed", model.OperationRun)
+		runID := h.manualRun(t, "built-unhashed", model.OperationRun)
 
 		h.finish(t, runID, task(runID, "raw.unhashed"), run.AttemptSucceeded)
 
@@ -283,7 +283,7 @@ func TestBuiltVersions(t *testing.T) {
 
 	t.Run("the version is recorded in the task status transaction, so a rollback records nothing", func(t *testing.T) {
 		promoteRelease(t, db, scheduledNode("raw", "rolled_back", "dbt-model", "built-rollback"))
-		runID := h.trigger(t, "built-rollback", model.OperationRun)
+		runID := h.manualRun(t, "built-rollback", model.OperationRun)
 		taskID := task(runID, "raw.rolled_back")
 
 		ctx := context.Background()
@@ -304,7 +304,7 @@ func TestBuiltVersions(t *testing.T) {
 
 	t.Run("a rerun records the content hash of its source's release", func(t *testing.T) {
 		source := promoteRelease(t, db, scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun"))
-		sourceID := h.trigger(t, "built-rerun", model.OperationRun)
+		sourceID := h.manualRun(t, "built-rerun", model.OperationRun)
 		_, err := db.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1`, sourceID)
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, sourceID)

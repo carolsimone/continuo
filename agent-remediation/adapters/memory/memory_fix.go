@@ -33,7 +33,7 @@ func roundOrDefault(n int) int {
 
 func (d *data) findFix(releaseID string, round, try int) *fixRow {
 	for _, row := range d.fixes {
-		if row.p.ReleaseID == releaseID && row.p.RemediationRound == roundOrDefault(round) && row.p.Try == try {
+		if row.p.ReleaseID == releaseID && row.p.Round == roundOrDefault(round) && row.p.Try == try {
 			return row
 		}
 	}
@@ -66,12 +66,12 @@ func (d *data) checkRemediation(id string) error {
 
 // CountTries counts the terminal tries of one round of a release. The round's
 // hand-over row (fix.HandOverTry) is no try of its own and is not counted.
-func (r *fixRepository) CountTries(_ context.Context, releaseID string, remediationRound int) (int, error) {
+func (r *fixRepository) CountTries(_ context.Context, releaseID string, round int) (int, error) {
 	var n int
 	err := r.gate(func(d *data) error {
 		for _, row := range d.fixes {
 			p := row.p
-			if p.ReleaseID == releaseID && p.RemediationRound == remediationRound && p.Try != fix.HandOverTry &&
+			if p.ReleaseID == releaseID && p.Round == round && p.Try != fix.HandOverTry &&
 				p.Status != fix.StatusGenerating && p.Status != fix.StatusVerifying {
 				n++
 			}
@@ -85,25 +85,25 @@ func (r *fixRepository) CountTries(_ context.Context, releaseID string, remediat
 // when the (release, round, try) row exists.
 func (r *fixRepository) InsertGenerating(_ context.Context, p fix.Fix) error {
 	return r.gate(func(d *data) error {
-		if d.findFix(p.ReleaseID, p.RemediationRound, p.Try) != nil {
+		if d.findFix(p.ReleaseID, p.Round, p.Try) != nil {
 			return nil
 		}
 		if err := d.checkRemediation(p.RemediationID); err != nil {
 			return err
 		}
 		d.fixes = append(d.fixes, &fixRow{id: uuid.NewString(), p: cloneFix(fix.Fix{
-			Source:           p.Source,
-			ReleaseID:        p.ReleaseID,
-			RemediationID:    p.RemediationID,
-			RemediationRound: roundOrDefault(p.RemediationRound),
-			NodeID:           p.NodeID,
-			ResolvedNodeIDs:  p.ResolvedNodeIDs,
-			ErrorSignature:   p.ErrorSignature,
-			Try:              p.Try,
-			Status:           fix.StatusGenerating,
-			NodeOutcomes:     p.NodeOutcomes,
-			Projects:         p.Projects,
-			CreatedAt:        p.CreatedAt,
+			Source:          p.Source,
+			ReleaseID:       p.ReleaseID,
+			RemediationID:   p.RemediationID,
+			Round:           roundOrDefault(p.Round),
+			NodeID:          p.NodeID,
+			ResolvedNodeIDs: p.ResolvedNodeIDs,
+			ErrorSignature:  p.ErrorSignature,
+			Try:             p.Try,
+			Status:          fix.StatusGenerating,
+			NodeOutcomes:    p.NodeOutcomes,
+			Projects:        p.Projects,
+			CreatedAt:       p.CreatedAt,
 		})})
 		return nil
 	})
@@ -172,16 +172,16 @@ func (r *fixRepository) Upsert(_ context.Context, p fix.Fix) error {
 		if err := d.checkRemediation(p.RemediationID); err != nil {
 			return err
 		}
-		row := d.findFix(p.ReleaseID, p.RemediationRound, p.Try)
+		row := d.findFix(p.ReleaseID, p.Round, p.Try)
 		if row == nil {
-			p.RemediationRound = roundOrDefault(p.RemediationRound)
+			p.Round = roundOrDefault(p.Round)
 			d.fixes = append(d.fixes, &fixRow{id: uuid.NewString(), p: cloneFix(p)})
 			return nil
 		}
 		old := row.p
 		next := cloneFix(p)
 		next.Source = old.Source
-		next.RemediationRound = old.RemediationRound
+		next.Round = old.Round
 		next.NodeID = old.NodeID
 		next.ErrorSignature = old.ErrorSignature
 		if next.RemediationID == "" {
@@ -227,7 +227,7 @@ func (row *fixRow) view() fix.View {
 		ID:                  row.id,
 		Source:              p.Source,
 		ReleaseID:           p.ReleaseID,
-		RemediationRound:    p.RemediationRound,
+		Round:               p.Round,
 		RemediationID:       p.RemediationID,
 		NodeID:              p.NodeID,
 		ResolvedNodeIDs:     resolved,

@@ -17,12 +17,12 @@ const RemediationHandedOverSchemaVersion = 1
 // before it opened one. A try recorded skipped, or failed because the trigger
 // named no repository, opens no try and is not counted.
 type RemediationHandedOver struct {
-	RemediationID    string           `json:"remediation_id"`
-	ReleaseID        string           `json:"release_id"`
-	RemediationRound int              `json:"remediation_round"`
-	Flow             string           `json:"flow"`
-	Tries            int              `json:"tries"`
-	Nodes            []HandedOverNode `json:"nodes"`
+	RemediationID string           `json:"remediation_id"`
+	ReleaseID     string           `json:"release_id"`
+	Round         int              `json:"round"`
+	Flow          string           `json:"flow"`
+	Tries         int              `json:"tries"`
+	Nodes         []HandedOverNode `json:"nodes"`
 }
 
 // HandedOverNode is one node left to a human. Reason is a value of the
@@ -44,7 +44,7 @@ type HandedOverNode struct {
 // carries the entry. The payload always holds a nodes array, empty when p
 // names none. A payload the contract forbids is refused with an error that
 // wraps ErrMalformedEnvelope: an empty remediation_id, release_id or flow, a
-// remediation_round below 1, negative tries, or a node without a node_id or
+// round below 1, negative tries, or a node without a node_id or
 // with a reason outside the handover_reason vocabulary. A node's owner is not
 // checked.
 func RemediationHandedOverFields(eventID, tenantID, producer string, occurredAt time.Time, p RemediationHandedOver) (map[string]any, error) {
@@ -72,8 +72,8 @@ func validRemediationHandedOver(p RemediationHandedOver) error {
 		return fmt.Errorf("%w: no release_id for remediation %s", ErrMalformedEnvelope, p.RemediationID)
 	case p.Flow == "":
 		return fmt.Errorf("%w: no flow for remediation %s", ErrMalformedEnvelope, p.RemediationID)
-	case p.RemediationRound < 1:
-		return fmt.Errorf("%w: remediation_round %d for remediation %s", ErrMalformedEnvelope, p.RemediationRound, p.RemediationID)
+	case p.Round < 1:
+		return fmt.Errorf("%w: round %d for remediation %s", ErrMalformedEnvelope, p.Round, p.RemediationID)
 	case p.Tries < 0:
 		return fmt.Errorf("%w: tries %d for remediation %s", ErrMalformedEnvelope, p.Tries, p.RemediationID)
 	}

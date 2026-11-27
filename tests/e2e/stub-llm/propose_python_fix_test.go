@@ -146,7 +146,7 @@ const earlierTriesSection = "\n\n## Earlier tries at this failure\n" +
 	"```\n" +
 	"Why the gate failed: e2e_schema.py_loop_read: relation \"public.still_wrong_name\" does not exist"
 
-// pythonFixPromptAfter is the request a later try or a later pre-flight round
+// pythonFixPromptAfter is the request a later try or a revision
 // sends for the loop fixture: the contract-fix request with the given section
 // (the earlier tries, or the previous answer with the checks' findings)
 // appended after it.
@@ -187,8 +187,8 @@ func TestProposePythonFix_LoopFixture_RetryWithoutTheEvidenceKeepsFailing(t *tes
 	}
 }
 
-// TestProposePythonFix_LoopFixture_RevisionInTheFirstTryStaysBroken: a later
-// pre-flight round of the first try carries the model's previous answer, which
+// TestProposePythonFix_LoopFixture_RevisionInTheFirstTryStaysBroken: a
+// revision in the first try carries the model's previous answer, which
 // names the still-broken read, but no earlier try, so it is no retry.
 func TestProposePythonFix_LoopFixture_RevisionInTheFirstTryStaysBroken(t *testing.T) {
 	revision := "\n\n## Your previous answer\n```json\n" +

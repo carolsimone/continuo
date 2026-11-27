@@ -340,7 +340,7 @@ func TestValidationOp_DeclaresTheFourNodeOps(t *testing.T) {
 func TestHandoverReason_DeclaresTheEightReasons(t *testing.T) {
 	want := []model.HandoverReason{
 		model.HandoverReasonTriesSpent,
-		model.HandoverReasonPreflightRoundsSpent,
+		model.HandoverReasonDraftsSpent,
 		model.HandoverReasonDeclined,
 		model.HandoverReasonNoType,
 		model.HandoverReasonClassifierInfra,
@@ -349,7 +349,7 @@ func TestHandoverReason_DeclaresTheEightReasons(t *testing.T) {
 		model.HandoverReasonUnverifiableEdits,
 	}
 	wantText := []string{
-		"tries_spent", "preflight_rounds_spent", "declined", "no_type",
+		"tries_spent", "drafts_spent", "declined", "no_type",
 		"classifier_infra", "classifier_unhealable_parse", "no_repository", "unverifiable_edits",
 	}
 	got := model.HandoverReasons()

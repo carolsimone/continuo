@@ -2,7 +2,7 @@ import { ScheduleSummary } from './types';
 
 // Whether a schedule runs on its own: scheduled (its cron fires), paused (it has
 // a cron, and nothing starts on its own) or manual (no cron: it runs only when
-// triggered).
+// someone starts it).
 export type ScheduleState = 'scheduled' | 'paused' | 'manual';
 
 export function scheduleState(s: Pick<ScheduleSummary, 'cron' | 'paused'>): ScheduleState {

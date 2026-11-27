@@ -40,7 +40,7 @@ const (
 // Job is created only once no pod of the attempt before it can run:
 //
 //	missing_image_probe's image tag names an image that does not exist
-//	→ TriggerSingleNodeRun → run-controller dispatches attempt 0
+//	→ StartSingleNodeRun → run-controller dispatches attempt 0
 //	→ its pod cannot pull the image (ErrImagePull, ImagePullBackOff)
 //	→ execution-controller deletes the Job, waits for its pod to stop and
 //	  reports attempt 0 failed (start, image_pull)
@@ -90,17 +90,17 @@ func TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap(t *testing.T) {
 	waitForAnnouncedTopology(t, ctx, clients, announced, append(schedules, missingImageSchedule))
 	waitForRunControllerLiveRelease(t, ctx, clients, announced)
 
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    "service-1",
 		SchemaName:     seedSchemaName,
 		TableName:      missingImageTable,
 		MetadataSource: "latest",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(%s)", missingImageTable)
+	require.NoError(t, err, "StartSingleNodeRun(%s)", missingImageTable)
 	runID, err := uuid.Parse(resp.RunId)
-	require.NoError(t, err, "TriggerSingleNodeRun must return the run's id")
+	require.NoError(t, err, "StartSingleNodeRun must return the run's id")
 	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
-	t.Logf("run %s of %s (image tag %s) triggered", runID, missingImageTable, missingTag)
+	t.Logf("run %s of %s (image tag %s) started", runID, missingImageTable, missingTag)
 	taskID := taskOfRun(t, ctx, clients, runID, missingImageTable)
 
 	// latest is the highest attempt whose Job or pod has been listed so far; a
@@ -169,7 +169,7 @@ func TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap(t *testing.T) {
 //
 //	a ResourceQuota of zero pods in the Jobs' namespace keeps every new pod
 //	from being created
-//	→ TriggerSingleNodeRun(ftable_a) → its attempt 0's Job is created but gets
+//	→ StartSingleNodeRun(ftable_a) → its attempt 0's Job is created but gets
 //	  no pod
 //	→ at the start timeout execution-controller deletes the Job and reports
 //	  attempt 0 failed (timeout, start_timeout)
@@ -200,17 +200,17 @@ func TestE2E_StartFailure_APodThatNeverStartsTimesOutWithoutARetry(t *testing.T)
 
 	blockPodCreation(t, ctx)
 
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    "service-1",
 		SchemaName:     seedSchemaName,
 		TableName:      startTimeoutTable,
 		MetadataSource: "latest",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(%s)", startTimeoutTable)
+	require.NoError(t, err, "StartSingleNodeRun(%s)", startTimeoutTable)
 	runID, err := uuid.Parse(resp.RunId)
-	require.NoError(t, err, "TriggerSingleNodeRun must return the run's id")
+	require.NoError(t, err, "StartSingleNodeRun must return the run's id")
 	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
-	t.Logf("run %s of %s triggered with pod creation blocked", runID, startTimeoutTable)
+	t.Logf("run %s of %s started with pod creation blocked", runID, startTimeoutTable)
 	taskID := taskOfRun(t, ctx, clients, runID, startTimeoutTable)
 
 	job := waitForAttemptJob(t, ctx, taskID, 0, 2*time.Minute)

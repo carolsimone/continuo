@@ -304,18 +304,18 @@ func (lf leaseFlow) cronHoldingTableA(t *testing.T) statusFlow {
 	return cron
 }
 
-// triggerSingleNode creates a single-node run of table on the live release
-// through RunCommands.TriggerSingleNodeRun under a fresh request id; the run,
+// startSingleNode creates a single-node run of table on the live release
+// through RunCommands.StartSingleNodeRun under a fresh request id; the run,
 // its tasks, its command record and its outbox rows are deleted when the test
 // ends.
-func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
+func (lf leaseFlow) startSingleNode(t *testing.T, table string) statusFlow {
 	t.Helper()
 	ctx := context.Background()
 	cmds := handlers.NewRunCommands(func() uow.UnitOfWork { return newPlanningUoW(lf.db) }, noRunMetrics{},
 		runstart.Planner{Tasks: testTaskDefaults}, discardLogger())
-	res, err := cmds.TriggerSingleNodeRun(ctx, handlers.TriggerSingleNodeRunCommand{
+	res, err := cmds.StartSingleNodeRun(ctx, handlers.StartSingleNodeRunCommand{
 		RequestID: uuid.New(),
-		TriggerSingleNodeRunInput: handlers.TriggerSingleNodeRunInput{
+		StartSingleNodeRunInput: handlers.StartSingleNodeRunInput{
 			TenantID:       lf.tenant,
 			Target:         run.NodeID{ProjectName: "service-1", SchemaName: "e2e_schema", TableName: table},
 			MetadataSource: run.MetadataSourceLatest,
@@ -396,12 +396,12 @@ func TestLeaseWaker_GrantsAFreedNodeToItsOldestWaiter(t *testing.T) {
 	keyA := string(leaseKey(lf.tableA))
 	cron := lf.cronHoldingTableA(t)
 
-	single := lf.triggerSingleNode(t, lf.tableA)
+	single := lf.startSingleNode(t, lf.tableA)
 	singleTask := single.taskID(lf.tableA)
 	requireWaiting(t, db, singleTask, "the single-node task waits for the cron task's lease")
 	assert.Empty(t, single.attempts(t, keyA), "its creation dispatched nothing")
 	assert.Empty(t, single.dispatches(t))
-	later := lf.triggerSingleNode(t, lf.tableA)
+	later := lf.startSingleNode(t, lf.tableA)
 	laterTask := later.taskID(lf.tableA)
 	requireWaiting(t, db, laterTask, "a second single-node task waits too")
 	metrics := &leaseMetrics{}
@@ -454,8 +454,8 @@ func TestLeaseWaker_SkipsARunThatIsNotRunning(t *testing.T) {
 	lf := newLeaseFlow(t, db)
 	keyA := string(leaseKey(lf.tableA))
 	cron := lf.cronHoldingTableA(t)
-	stuck := lf.triggerSingleNode(t, lf.tableA)
-	cancelled := lf.triggerSingleNode(t, lf.tableA)
+	stuck := lf.startSingleNode(t, lf.tableA)
+	cancelled := lf.startSingleNode(t, lf.tableA)
 	cancelByID(t, db, cancelled.tenant, cancelled.r.RunID(), "alice", "not needed")
 	// A cancel ends a run's pending tasks, so only a defect leaves a cancelling
 	// run with a task still waiting.
@@ -516,8 +516,8 @@ func TestFailStalled_AWaitBehindAnOlderWaiterGrantedTheNodeIsNotFailed(t *testin
 	db := newTestDB(t)
 	lf := newLeaseFlow(t, db)
 	cron := lf.cronHoldingTableA(t)
-	older := lf.triggerSingleNode(t, lf.tableA)
-	younger := lf.triggerSingleNode(t, lf.tableA)
+	older := lf.startSingleNode(t, lf.tableA)
+	younger := lf.startSingleNode(t, lf.tableA)
 	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`,
 		younger.r.RunID())
 	require.NoError(t, err)
@@ -555,7 +555,7 @@ func TestAttemptReconcile_GrantsAFreedNodeBeforeItLooksForStalledRuns(t *testing
 	lf := newLeaseFlow(t, db)
 	keyA := string(leaseKey(lf.tableA))
 	cron := lf.cronHoldingTableA(t)
-	single := lf.triggerSingleNode(t, lf.tableA)
+	single := lf.startSingleNode(t, lf.tableA)
 	singleTask := single.taskID(lf.tableA)
 	requireWaiting(t, db, singleTask, "the single-node task waits for the cron task's lease")
 	waitedTenMinutes(t, db, single.r.RunID(), singleTask)
@@ -607,7 +607,7 @@ func TestAttemptReconcile_GrantsANodeFreedAfterTheWakersPassUnderTheRunsLock(t *
 	lf := newLeaseFlow(t, db)
 	keyA := string(leaseKey(lf.tableA))
 	cron := lf.cronHoldingTableA(t)
-	single := lf.triggerSingleNode(t, lf.tableA)
+	single := lf.startSingleNode(t, lf.tableA)
 	singleTask := single.taskID(lf.tableA)
 	requireWaiting(t, db, singleTask, "the single-node task waits for the cron task's lease")
 	waitedTenMinutes(t, db, single.r.RunID(), singleTask)
@@ -930,8 +930,8 @@ func TestLeaseWaker_RepairsAndCounts(t *testing.T) {
 	lf := newLeaseFlow(t, db)
 	cron := lf.cronHoldingTableA(t)
 	cronTask := cron.taskID(lf.tableA)
-	first := lf.triggerSingleNode(t, lf.tableA)
-	second := lf.triggerSingleNode(t, lf.tableA)
+	first := lf.startSingleNode(t, lf.tableA)
+	second := lf.startSingleNode(t, lf.tableA)
 	// A defect ends the cron task without the report that releases its lease.
 	_, err := db.Exec(`UPDATE tasks SET status = 'succeeded' WHERE task_id = $1`, cronTask)
 	require.NoError(t, err)

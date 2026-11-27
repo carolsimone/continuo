@@ -63,8 +63,8 @@ func TestScheduleBuild_SuccessEmitsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	assert.Equal(t, "sched_456", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
-	_, err := time.Parse(time.RFC3339, payload["triggered_at"])
-	assert.NoError(t, err, "triggered_at must be RFC3339")
+	_, err := time.Parse(time.RFC3339, payload["requested_at"])
+	assert.NoError(t, err, "requested_at must be RFC3339")
 	assert.Equal(t, "daily_ingest", fake.gotBuildScheduleName)
 }
 

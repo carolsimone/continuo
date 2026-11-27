@@ -38,7 +38,7 @@ version: 1
 name: dbt-compile
 match: { cluster: single, source: compile, node_types: [model, none] }
 context: [failing_node_source, dbt_log]
-agent: { prompt: dbt-compile, tools: [], rounds: 2 }
+agent: { prompt: dbt-compile, tools: [], drafts: 2 }
 preflight: [target_file_was_shown, content_changed]
 `
 
@@ -81,7 +81,7 @@ func TestLoad_ReadsAFlowAndATypeFromOneFolder(t *testing.T) {
 	assert.Equal(t, workflow.StepName("dbt-compile"), typ.Agent.Prompt.Name)
 	assert.Equal(t, 6, typ.Agent.Prompt.Pos.Line)
 	assert.Empty(t, typ.Agent.Tools)
-	assert.Equal(t, 2, typ.Agent.Rounds)
+	assert.Equal(t, 2, typ.Agent.Drafts)
 	assert.Equal(t, "types/dbt-compile.yaml", typ.File)
 	require.Len(t, typ.Preflight, 2)
 	assert.Equal(t, 7, typ.Preflight[1].Pos.Line)
@@ -376,7 +376,7 @@ func TestLoad_RefusesAFileThatIsNotYAML(t *testing.T) {
 func TestLoad_RefusesAnAliasThatWouldHideUnknownFields(t *testing.T) {
 	cases := map[string]string{
 		"alias value of a mapping": "kind: type\nname: x\nmatch: &m {cluster: single, source: compile}\nagent: *m\n",
-		"alias in the other order": "kind: type\nname: x\nagent: &a {prompt: p, rounds: 1}\nmatch: *a\n",
+		"alias in the other order": "kind: type\nname: x\nagent: &a {prompt: p, drafts: 1}\nmatch: *a\n",
 		"alias in a list":          "kind: type\nname: x\ncontext: [&c a, *c]\n",
 	}
 	for name, body := range cases {
@@ -434,7 +434,7 @@ func TestLoad_RefusesAnUnknownKeyInANestedMapping(t *testing.T) {
 		"output":            {"kind: flow\nname: f\noutput:\n  on_fail: {}\n", "f.yaml:4"},
 		"match":             {"kind: type\nname: t\nmatch:\n  cluster: single\n  sources: compile\n", "t.yaml:5"},
 		"match flow style":  {"kind: type\nname: t\nmatch: { cluster: single, sourse: compile }\n", "t.yaml:3"},
-		"agent flow style":  {"kind: type\nname: t\nagent: { prompt: p, round: 1 }\n", "t.yaml:3"},
+		"agent flow style":  {"kind: type\nname: t\nagent: { prompt: p, draft: 1 }\n", "t.yaml:3"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

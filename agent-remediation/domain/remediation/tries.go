@@ -8,7 +8,7 @@ import (
 )
 
 // TryRecord is one earlier try at a release's failing set, as a later try is
-// shown it: the remediation round and try it was, what each of its clusters
+// shown it: the round and try it was, what each of its clusters
 // proposed and why it was refused, what the checks across clusters found, and
 // why the gate failed it. A try recorded with no remediation carries the
 // number its fix row has in its round.
@@ -24,15 +24,15 @@ type TryRecord struct {
 }
 
 // ClusterRecord is one cluster of an earlier try: its type, the node its fix
-// edited and its failing members, the edits of its last pre-flight round, the
-// findings of each of its pre-flight rounds (one entry per round, first round
+// edited and its failing members, the edits of its last draft, the
+// findings of each of its drafts' pre-flight passes (one entry per draft, first draft
 // first), and how it ended when it ended without a checked draft.
 type ClusterRecord struct {
 	Type         string
 	TargetNodeID string
 	Members      []string
 	Edits        []EditRecord
-	Rounds       [][]Finding
+	Drafts       [][]Finding
 	Outcome      string
 }
 
@@ -42,7 +42,7 @@ type EditRecord struct {
 	Diff string
 }
 
-// TryRef names a try by its remediation round and its try number in that round.
+// TryRef names a try by its round and its try number in that round.
 type TryRef struct {
 	Round int
 	Try   int

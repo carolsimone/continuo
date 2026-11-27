@@ -19,7 +19,7 @@ type ReleaseCheckRequest struct {
 	ImageTag          string
 	Kind              string
 	VerifiesReleaseID string
-	RemediationRound  int
+	Round             int
 	Try               int
 	SourceOverlayURI  string
 }

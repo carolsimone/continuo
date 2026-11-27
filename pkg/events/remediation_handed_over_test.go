@@ -35,11 +35,11 @@ func loadRemediationHandedOverFixture(t *testing.T) remediationHandedOverFixture
 
 func validRemediationHandedOver() events.RemediationHandedOver {
 	return events.RemediationHandedOver{
-		RemediationID:    "3f9d2b8e-6c15-4a07-9e43-1b5a7c0d8f26",
-		ReleaseID:        "rel_20261112_0042",
-		RemediationRound: 1,
-		Flow:             "rejected-release",
-		Tries:            3,
+		RemediationID: "3f9d2b8e-6c15-4a07-9e43-1b5a7c0d8f26",
+		ReleaseID:     "rel_20261112_0042",
+		Round:         1,
+		Flow:          "rejected-release",
+		Tries:         3,
 		Nodes: []events.HandedOverNode{
 			{NodeID: "analytics.orders_enriched", Reason: string(model.HandoverReasonTriesSpent), Message: "m"},
 		},
@@ -120,7 +120,7 @@ func TestRemediationHandedOverFields_RefuseWhatTheContractForbids(t *testing.T) 
 		"no remediation id":             func(p *events.RemediationHandedOver) { p.RemediationID = "" },
 		"no release id":                 func(p *events.RemediationHandedOver) { p.ReleaseID = "" },
 		"no flow":                       func(p *events.RemediationHandedOver) { p.Flow = "" },
-		"round 0":                       func(p *events.RemediationHandedOver) { p.RemediationRound = 0 },
+		"round 0":                       func(p *events.RemediationHandedOver) { p.Round = 0 },
 		"negative tries":                func(p *events.RemediationHandedOver) { p.Tries = -1 },
 		"a node without a node id":      func(p *events.RemediationHandedOver) { p.Nodes[0].NodeID = "" },
 		"a node without a reason":       func(p *events.RemediationHandedOver) { p.Nodes[0].Reason = "" },

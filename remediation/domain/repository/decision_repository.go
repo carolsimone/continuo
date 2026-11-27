@@ -15,22 +15,22 @@ import (
 type ClassificationDecision struct {
 	Source    model.RemediationSource
 	ReleaseID string
-	// RemediationRound is the release's remediation round this decision
+	// Round is the release's round this decision
 	// belongs to: 1 for the rejection itself, +1 per human "try again" on
 	// the release. Part of the natural key, so a release can be
 	// re-classified once per round rather than only once ever.
-	RemediationRound int
-	NodeID           string
-	Category         failure.Category
-	ErrorSignature   string
-	Decision         failure.Decision
-	Reason           string
-	DBTLogURI        string
-	CreatedAt        time.Time
+	Round          int
+	NodeID         string
+	Category       failure.Category
+	ErrorSignature string
+	Decision       failure.Decision
+	Reason         string
+	DBTLogURI      string
+	CreatedAt      time.Time
 }
 
 // ClassificationDecisionRepository persists classification decisions. Upsert
-// is idempotent on (source, release_id, remediation_round, node_id): a
+// is idempotent on (source, release_id, round, node_id): a
 // redelivered rejection or retry-round replay is a no-op. It returns
 // inserted=true only when a new row was written, so callers can skip
 // re-emitting a trigger for an already-classified (node, round).

@@ -88,11 +88,11 @@ const (
 const NodeTypeNone = "none"
 
 // Agent is the model call of a type: the prompt that builds the request, the
-// tools the model may use, and how many rounds it may take.
+// tools the model may use, and how many drafts it may take.
 type Agent struct {
 	Prompt StepRef
 	Tools  []StepRef
-	Rounds int
+	Drafts int
 	Pos    Pos
 }
 

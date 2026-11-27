@@ -11,8 +11,8 @@ const mockGetRun = vi.fn();
 const mockListTasks = vi.fn();
 const mockListRunAttempts = vi.fn();
 const mockGetRunGraph = vi.fn();
-const mockTriggerRerun = vi.fn();
-const mockTriggerRebase = vi.fn();
+const mockStartRerun = vi.fn();
+const mockStartRebase = vi.fn();
 const mockPreviewRebase = vi.fn();
 const mockCancelRun = vi.fn();
 const mockListRuns = vi.fn();
@@ -22,8 +22,8 @@ const mockClient = {
   listTasks: mockListTasks,
   listRunAttempts: mockListRunAttempts,
   getRunGraph: mockGetRunGraph,
-  triggerRerun: mockTriggerRerun,
-  triggerRebase: mockTriggerRebase,
+  startRerun: mockStartRerun,
+  startRebase: mockStartRebase,
   previewRebase: mockPreviewRebase,
   cancelRun: mockCancelRun,
   listRuns: mockListRuns,
@@ -137,12 +137,12 @@ describe('routes/runs: POST /:id/rerun', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('POST /:id/rerun forwards request_id', async () => {
-    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRerun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(null, { run_id: 'run-2', schedule_name: 'daily' }));
     const res = await request(app).post(`/api/runs/${VALID_ID}/rerun`).send({ request_id: REQUEST_ID });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ run_id: 'run-2', schedule_name: 'daily' });
-    expect(mockTriggerRerun).toHaveBeenCalledWith(
+    expect(mockStartRerun).toHaveBeenCalledWith(
       { request_id: REQUEST_ID, source_run_id: VALID_ID },
       expect.any(Object),
       expect.any(Function),
@@ -151,7 +151,7 @@ describe('routes/runs: POST /:id/rerun', () => {
 
   it('forwards the authenticated user id as gRPC metadata', async () => {
     let seenUserId: string | undefined;
-    mockTriggerRerun.mockImplementation((_req: any, md: any, cb: any) => {
+    mockStartRerun.mockImplementation((_req: any, md: any, cb: any) => {
       seenUserId = md.get(USER_ID_METADATA_KEY)[0];
       cb(null, { run_id: 'run-2', schedule_name: 'daily' });
     });
@@ -171,11 +171,11 @@ describe('routes/runs: POST /:id/rerun', () => {
     const res = await (body === undefined ? req : req.send(body));
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'request_id must be a UUID' });
-    expect(mockTriggerRerun).not.toHaveBeenCalled();
+    expect(mockStartRerun).not.toHaveBeenCalled();
   });
 
   it('returns 400 for INVALID_ARGUMENT', async () => {
-    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRerun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.INVALID_ARGUMENT, 'invalid source_run_id')));
     const res = await request(app).post('/api/runs/not-a-uuid/rerun').send({ request_id: REQUEST_ID });
     expect(res.status).toBe(400);
@@ -183,7 +183,7 @@ describe('routes/runs: POST /:id/rerun', () => {
   });
 
   it('returns 404 for NOT_FOUND', async () => {
-    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRerun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.NOT_FOUND, 'run not found')));
     const res = await request(app).post(`/api/runs/${VALID_ID}/rerun`).send({ request_id: REQUEST_ID });
     expect(res.status).toBe(404);
@@ -191,7 +191,7 @@ describe('routes/runs: POST /:id/rerun', () => {
   });
 
   it('returns 409 for FAILED_PRECONDITION (the schedule has an active run)', async () => {
-    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRerun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.FAILED_PRECONDITION, 'schedule has an active run')));
     const res = await request(app).post(`/api/runs/${VALID_ID}/rerun`).send({ request_id: REQUEST_ID });
     expect(res.status).toBe(409);
@@ -199,7 +199,7 @@ describe('routes/runs: POST /:id/rerun', () => {
   });
 
   it('returns 500 for INTERNAL and for an unknown gRPC code', async () => {
-    mockTriggerRerun
+    mockStartRerun
       .mockImplementationOnce((_req: any, _md: any, cb: any) => cb(grpcError(grpc.status.INTERNAL, 'internal error')))
       .mockImplementationOnce((_req: any, _md: any, cb: any) => cb(Object.assign(new Error('weird'), { code: 999 })));
     expect((await request(app).post(`/api/runs/${VALID_ID}/rerun`).send({ request_id: REQUEST_ID })).status).toBe(500);
@@ -642,7 +642,7 @@ describe('routes/runs: POST /:id/rebase', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('forwards the toggle and the previewed release and returns 200', async () => {
-    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) => cb(null, { run_id: 'run-2', schedule_name: 'daily' }));
+    mockStartRebase.mockImplementation((_req: any, _md: any, cb: any) => cb(null, { run_id: 'run-2', schedule_name: 'daily' }));
 
     const res = await request(app)
       .post(`/api/runs/${VALID_ID}/rebase`)
@@ -650,7 +650,7 @@ describe('routes/runs: POST /:id/rebase', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ run_id: 'run-2', schedule_name: 'daily' });
-    expect(mockTriggerRebase).toHaveBeenCalledWith(
+    expect(mockStartRebase).toHaveBeenCalledWith(
       { request_id: REQUEST_ID, source_run_id: VALID_ID, include_changed_upstream: true, expected_release_id: 'rel-7' },
       expect.any(Object),
       expect.any(Function),
@@ -658,12 +658,12 @@ describe('routes/runs: POST /:id/rebase', () => {
   });
 
   it('defaults an absent toggle to false and an absent release to no check', async () => {
-    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) => cb(null, {}));
+    mockStartRebase.mockImplementation((_req: any, _md: any, cb: any) => cb(null, {}));
 
     const res = await request(app).post(`/api/runs/${VALID_ID}/rebase`).send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(200);
-    expect(mockTriggerRebase.mock.calls.map(c => c[0])).toEqual([
+    expect(mockStartRebase.mock.calls.map(c => c[0])).toEqual([
       { request_id: REQUEST_ID, source_run_id: VALID_ID, include_changed_upstream: false, expected_release_id: '' },
     ]);
   });
@@ -681,11 +681,11 @@ describe('routes/runs: POST /:id/rebase', () => {
 
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
-    expect(mockTriggerRebase).not.toHaveBeenCalled();
+    expect(mockStartRebase).not.toHaveBeenCalled();
   });
 
   it('answers 409 with code release_moved when the live release is not the previewed one', async () => {
-    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRebase.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.FAILED_PRECONDITION, RELEASE_MOVED_MESSAGE)));
 
     const res = await request(app)
@@ -697,7 +697,7 @@ describe('routes/runs: POST /:id/rebase', () => {
   });
 
   it('keeps any other FAILED_PRECONDITION a plain 409 without a code', async () => {
-    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRebase.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.FAILED_PRECONDITION, 'schedule already has an active run')));
 
     const res = await request(app).post(`/api/runs/${VALID_ID}/rebase`).send({ request_id: REQUEST_ID });
@@ -708,7 +708,7 @@ describe('routes/runs: POST /:id/rebase', () => {
   });
 
   it('reads the release-moved message only from a FAILED_PRECONDITION', async () => {
-    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRebase.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.INTERNAL, RELEASE_MOVED_MESSAGE)));
 
     const res = await request(app).post(`/api/runs/${VALID_ID}/rebase`).send({ request_id: REQUEST_ID });
@@ -718,7 +718,7 @@ describe('routes/runs: POST /:id/rebase', () => {
   });
 
   it('answers a maintenance refusal with 503 maintenance', async () => {
-    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRebase.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.UNAVAILABLE, 'maintenance', { [MAINTENANCE_TRAILER_KEY]: 'true' })));
 
     const res = await request(app).post(`/api/runs/${VALID_ID}/rebase`).send({ request_id: REQUEST_ID });
@@ -728,7 +728,7 @@ describe('routes/runs: POST /:id/rebase', () => {
   });
 
   it('maps NOT_FOUND and INVALID_ARGUMENT as every other route does', async () => {
-    mockTriggerRebase
+    mockStartRebase
       .mockImplementationOnce((_req: any, _md: any, cb: any) => cb(grpcError(grpc.status.NOT_FOUND, 'source run not found')))
       .mockImplementationOnce((_req: any, _md: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'invalid source_run_id')));
 
@@ -750,11 +750,11 @@ describe('routes/runs: POST /:id/rebase', () => {
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'request_id must be a UUID' });
-    expect(mockTriggerRebase).not.toHaveBeenCalled();
+    expect(mockStartRebase).not.toHaveBeenCalled();
   });
 
   it('answers ALREADY_EXISTS (request_id reused with different parameters) with 409', async () => {
-    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+    mockStartRebase.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.ALREADY_EXISTS, 'request_id reused with different parameters')));
 
     const res = await request(app).post(`/api/runs/${VALID_ID}/rebase`).send({ request_id: REQUEST_ID });

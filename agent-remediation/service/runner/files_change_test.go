@@ -19,7 +19,7 @@ import (
 // A runner runs the files it loaded, and the files can change while a try is
 // open (a deploy, an install's own edit). A cluster runs context steps only
 // while it is gathering: once past gathering, its evidence comes from the
-// context rows it has, and its round's prompt and pre-flight checks are read
+// context rows it has, and its draft's prompt and pre-flight checks are read
 // from the rows they wrote, whatever the loaded files now list.
 
 // filesWith is a copy of files with change applied to the copy.
@@ -74,7 +74,7 @@ func (h *harness) stopAfter(stop func(id uuid.UUID) bool) context.Context {
 func (h *harness) assertNoFailure(id uuid.UUID) {
 	h.t.Helper()
 	for _, s := range h.store.Steps(id) {
-		assert.Zero(h.t, s.Failures, "step %s of cluster %d in round %d counted a failure: %s", s.Step, s.Cluster, s.Round, s.LastError)
+		assert.Zero(h.t, s.Failures, "step %s of cluster %d in draft %d counted a failure: %s", s.Step, s.Cluster, s.Draft, s.LastError)
 	}
 	rem := h.remediation(id)
 	assert.Zero(h.t, rem.Failures, "the remediation counted a failure")
@@ -157,11 +157,11 @@ func TestRunner_ACheckedClusterOfATypeTheFilesNoLongerDefineIsStillVerified(t *t
 	h.assertNoFailure(id)
 }
 
-// stopInRound2 stops the drive once cluster 1 is proposing in round 2.
-func stopInRound2(h *harness) context.Context {
+// stopInDraft2 stops the drive once cluster 1 is proposing in draft 2.
+func stopInDraft2(h *harness) context.Context {
 	return h.stopAfter(func(id uuid.UUID) bool {
 		for _, c := range h.store.Clusters(id) {
-			if c.Cluster == 1 && c.Round == 2 && c.Status == remediation.ClusterProposing {
+			if c.Cluster == 1 && c.Draft == 2 && c.Status == remediation.ClusterProposing {
 				return true
 			}
 		}
@@ -169,10 +169,10 @@ func stopInRound2(h *harness) context.Context {
 	})
 }
 
-func TestRunner_ARoundTwoRevisesUnderFilesThatAddAContextStep(t *testing.T) {
-	h := newHarness(t, withRounds(3))
+func TestRunner_TheSecondDraftRevisesUnderFilesThatAddAContextStep(t *testing.T) {
+	h := newHarness(t, withDrafts(3))
 	answersInTurn(h, lowConfidence, fixAnswer)
-	dctx := stopInRound2(h)
+	dctx := stopInDraft2(h)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.ErrorIs(t, h.runner.Drive(dctx, id), context.Canceled)
 	require.Equal(t, 1, h.llm.calls())
@@ -181,23 +181,23 @@ func TestRunner_ARoundTwoRevisesUnderFilesThatAddAContextStep(t *testing.T) {
 	require.NoError(t, h.runnerOver(filesWith(h.files, flowContext("previous_tries"))).Drive(ctx, id))
 
 	reqs := h.llm.all()
-	require.Len(t, reqs, 2, "round 2 makes one model call")
+	require.Len(t, reqs, 2, "draft 2 makes one model call")
 	want := prompt.Revise(reqs[0], step.AnswerJSON(lowConfidence(reqs[0])), step.FindingLines([]remediation.Finding{lowConfidenceFinding}))
-	assert.Equal(t, want, reqs[1], "round 2 revises round 1")
+	assert.Equal(t, want, reqs[1], "draft 2 revises draft 1")
 	assert.Empty(t, h.stepRows(id, 1, 1)["previous_tries"], "a cluster past gathering runs no context step")
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterChecked, c.Status)
-	assert.Equal(t, 2, c.Round)
+	assert.Equal(t, 2, c.Draft)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
 	h.assertNoFailure(id)
 }
 
-func TestRunner_ARoundTwoRevisesWithTheFindingsOfTheChecksThatRanUnderFilesThatAddACheck(t *testing.T) {
-	h := newHarness(t, withRounds(3))
+func TestRunner_TheSecondDraftRevisesWithTheFindingsOfTheChecksThatRanUnderFilesThatAddACheck(t *testing.T) {
+	h := newHarness(t, withDrafts(3))
 	h.files = filesWith(h.files, compilePreflight("content_changed", "confidence_not_low"))
 	h.runner = h.runnerOver(h.files)
 	answersInTurn(h, lowConfidence, fixAnswer)
-	dctx := stopInRound2(h)
+	dctx := stopInDraft2(h)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.ErrorIs(t, h.runner.Drive(dctx, id), context.Canceled)
 
@@ -208,13 +208,13 @@ func TestRunner_ARoundTwoRevisesWithTheFindingsOfTheChecksThatRanUnderFilesThatA
 	reqs := h.llm.all()
 	require.Len(t, reqs, 2)
 	want := prompt.Revise(reqs[0], step.AnswerJSON(lowConfidence(reqs[0])), step.FindingLines([]remediation.Finding{lowConfidenceFinding}))
-	assert.Equal(t, want, reqs[1], "round 2 carries round 1's findings")
-	assert.Len(t, h.roundRows(id, 1, "target_file_was_shown"), 1, "round 2 runs the checks the runner loaded")
+	assert.Equal(t, want, reqs[1], "draft 2 carries draft 1's findings")
+	assert.Len(t, h.draftRows(id, 1, "target_file_was_shown"), 1, "draft 2 runs the checks the runner loaded")
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 	h.assertNoFailure(id)
 }
 
-func TestRunner_AClusterInPreflightRunsItsPassOnTheRoundsPromptRowUnderFilesThatRenameThePrompt(t *testing.T) {
+func TestRunner_AClusterInPreflightRunsItsPassOnTheDraftsPromptRowUnderFilesThatRenameThePrompt(t *testing.T) {
 	h := newHarness(t)
 	dctx := h.stopAfter(func(id uuid.UUID) bool {
 		for _, c := range h.store.Clusters(id) {
@@ -236,7 +236,7 @@ func TestRunner_AClusterInPreflightRunsItsPassOnTheRoundsPromptRowUnderFilesThat
 	h.reclaim(id)
 	require.NoError(t, h.runnerOver(renamed).Drive(ctx, id))
 
-	assert.Equal(t, 1, h.llm.calls(), "the round's prompt is not asked again")
+	assert.Equal(t, 1, h.llm.calls(), "the draft's prompt is not asked again")
 	assert.Empty(t, h.stepRows(id, 1, 1)["dbt-parse"])
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
@@ -246,7 +246,7 @@ func TestRunner_AClusterInPreflightRunsItsPassOnTheRoundsPromptRowUnderFilesThat
 func TestRunner_AGatheringClusterRunsAContextStepTheFilesAdd(t *testing.T) {
 	h := newHarness(t)
 	dctx := h.stopAfter(func(id uuid.UUID) bool {
-		_, ok := h.roundRows(id, 1, "failing_node_source")[1]
+		_, ok := h.draftRows(id, 1, "failing_node_source")[1]
 		return ok
 	})
 	id := h.accept(trigger("compile", compileNode("svc-a")))
@@ -256,7 +256,7 @@ func TestRunner_AGatheringClusterRunsAContextStepTheFilesAdd(t *testing.T) {
 	h.reclaim(id)
 	require.NoError(t, h.runnerOver(filesWith(h.files, flowContext("previous_tries"))).Drive(ctx, id))
 
-	rows := h.roundRows(id, 1, "previous_tries")
+	rows := h.draftRows(id, 1, "previous_tries")
 	require.Len(t, rows, 1, "a gathering cluster runs the context step the loaded files list")
 	assert.Equal(t, remediation.StepDone, rows[1].Status)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
@@ -271,7 +271,7 @@ func TestRunner_AContextRowWhoseEvidenceTheBuildDoesNotKnowIsLeftOut(t *testing.
 	})
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.ErrorIs(t, h.runner.Drive(dctx, id), context.Canceled)
-	done := h.roundRows(id, 1, "dbt_log")[1]
+	done := h.draftRows(id, 1, "dbt_log")[1]
 	retired := done
 	retired.ID = 0
 	retired.Step = "retired_step"

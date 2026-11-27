@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import ReleaseCheckDetailPage from './ReleaseCheckDetailPage';
 
 const check = {
-  check_id: 'verify-rel-1-core-r1-t2', status: 'failed', changed_project: 'core', verifies_release_id: 'rel-1', remediation_round: 1, try: 2,
+  check_id: 'verify-rel-1-core-r1-t2', status: 'failed', changed_project: 'core', verifies_release_id: 'rel-1', round: 1, try: 2,
   created_at: '2026-09-02T10:00:00Z', activated_at: '2026-09-02T10:01:00Z', finished_at: '2026-09-02T10:09:00Z',
   transitions: [{ to: 'received', at: '2026-09-02T10:00:00Z' }, { to: 'failed', at: '2026-09-02T10:09:00Z' }],
   validation_node_ids: ['model.core.orders'], failing_nodes: ['model.core.orders'],

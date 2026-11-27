@@ -29,7 +29,7 @@ import (
 type recordedMetrics struct {
 	mu       sync.Mutex
 	tries    []string
-	rounds   []string
+	drafts   []string
 	outcomes []string
 	failures []string
 	tokens   []string
@@ -47,7 +47,7 @@ func (m *recordedMetrics) add(into *[]string, parts ...string) {
 }
 
 func (m *recordedMetrics) Try(flow, typ, result string)   { m.add(&m.tries, flow, typ, result) }
-func (m *recordedMetrics) Round(flow, typ, result string) { m.add(&m.rounds, flow, typ, result) }
+func (m *recordedMetrics) Draft(flow, typ, result string) { m.add(&m.drafts, flow, typ, result) }
 func (m *recordedMetrics) Outcome(flow, typ, outcome, reason string) {
 	m.add(&m.outcomes, flow, typ, outcome, reason)
 }
@@ -74,7 +74,7 @@ func (m *recordedMetrics) snapshot(list *[]string) []string {
 }
 
 func (m *recordedMetrics) gotTries() []string    { return m.snapshot(&m.tries) }
-func (m *recordedMetrics) gotRounds() []string   { return m.snapshot(&m.rounds) }
+func (m *recordedMetrics) gotDrafts() []string   { return m.snapshot(&m.drafts) }
 func (m *recordedMetrics) gotOutcomes() []string { return m.snapshot(&m.outcomes) }
 func (m *recordedMetrics) gotFailures() []string { return m.snapshot(&m.failures) }
 func (m *recordedMetrics) gotTokens() []string   { return m.snapshot(&m.tokens) }
@@ -124,7 +124,7 @@ func TestRunner_CountsOneTryPerClusterPerTry(t *testing.T) {
 
 // A cluster counts the result of the try that worked it: the verdict of the
 // gate, a refusal of the drafts by a cross-cluster check or by the gate at
-// submit, every pre-flight round spent, or a decline.
+// submit, every draft spent, or a decline.
 func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 	t.Run("the gate passed", func(t *testing.T) {
 		m := &recordedMetrics{}
@@ -166,14 +166,14 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 		})
 	}
 
-	t.Run("every pre-flight round was spent", func(t *testing.T) {
+	t.Run("every draft was spent", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m), withTries(1))
 		h.llm.answer = lowConfidence
 		id := h.accept(trigger("compile", compileNode("svc-a")))
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		assert.Equal(t, []string{sample("dbt-compile", "preflight_spent")}, m.gotTries())
+		assert.Equal(t, []string{sample("dbt-compile", "drafts_spent")}, m.gotTries())
 	})
 
 	t.Run("a step declined", func(t *testing.T) {
@@ -200,7 +200,7 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 		assert.Equal(t, []string{sample("cross-project-upstream", "handed_over", "declined")}, m.gotOutcomes())
 	})
 
-	t.Run("a cross-project cluster fell back because its pre-flight rounds were spent", func(t *testing.T) {
+	t.Run("a cross-project cluster fell back because its drafts were spent", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m), withTries(1))
 		h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: "dbt"}}
@@ -215,8 +215,8 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 		require.NoError(t, h.runner.Drive(ctx, id))
 
 		require.Equal(t, remediation.ClusterFellBack, h.cluster(id, 1, 1).Status)
-		assert.Equal(t, []string{sample("cross-project-upstream", "preflight_spent")}, m.gotTries())
-		assert.Equal(t, []string{sample("cross-project-upstream", "handed_over", "preflight_rounds_spent")}, m.gotOutcomes())
+		assert.Equal(t, []string{sample("cross-project-upstream", "drafts_spent")}, m.gotTries())
+		assert.Equal(t, []string{sample("cross-project-upstream", "handed_over", "drafts_spent")}, m.gotOutcomes())
 	})
 
 	t.Run("a draft made no edit", func(t *testing.T) {
@@ -312,24 +312,24 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 func TestRunner_CountsEachPreflightPass(t *testing.T) {
 	t.Run("a refused draft is revised and passes", func(t *testing.T) {
 		m := &recordedMetrics{}
-		h := newHarness(t, withMetrics(m), withRounds(3))
+		h := newHarness(t, withMetrics(m), withDrafts(3))
 		answersInTurn(h, lowConfidence, fixAnswer)
 		id := h.accept(trigger("compile", compileNode("svc-a")))
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		assert.Equal(t, []string{sample("dbt-compile", "revised"), sample("dbt-compile", "passed")}, m.gotRounds())
+		assert.Equal(t, []string{sample("dbt-compile", "revised"), sample("dbt-compile", "passed")}, m.gotDrafts())
 	})
 
-	t.Run("every round is refused", func(t *testing.T) {
+	t.Run("every draft is refused", func(t *testing.T) {
 		m := &recordedMetrics{}
-		h := newHarness(t, withMetrics(m), withRounds(3))
+		h := newHarness(t, withMetrics(m), withDrafts(3))
 		h.llm.answer = lowConfidence
 		id := h.accept(trigger("compile", compileNode("svc-a")))
 		require.NoError(t, h.runner.Drive(ctx, id))
 
 		assert.Equal(t, []string{
 			sample("dbt-compile", "revised"), sample("dbt-compile", "revised"), sample("dbt-compile", "spent"),
-		}, m.gotRounds())
+		}, m.gotDrafts())
 	})
 
 	t.Run("a pass whose commit fails counts nothing until the pass commits", func(t *testing.T) {
@@ -351,11 +351,11 @@ func TestRunner_CountsEachPreflightPass(t *testing.T) {
 			}
 		}
 		require.Error(t, h.runner.Drive(ctx, id), "the pre-flight pass's commit fails")
-		assert.Empty(t, m.gotRounds(), "the rolled-back pass counts nothing")
+		assert.Empty(t, m.gotDrafts(), "the rolled-back pass counts nothing")
 
 		h.afterCommit = nil
 		require.NoError(t, h.runner.Drive(ctx, id))
-		assert.Equal(t, []string{sample("dbt-compile", "passed")}, m.gotRounds(), "the pass that committed counts once")
+		assert.Equal(t, []string{sample("dbt-compile", "passed")}, m.gotDrafts(), "the pass that committed counts once")
 	})
 }
 
@@ -601,10 +601,10 @@ func TestRunner_CountsNoTokensOnACacheHit(t *testing.T) {
 	assert.Len(t, m.gotTokens(), 2, "an answer the cache replays uses none")
 }
 
-// A revision round is a call of its own, with tokens of its own.
-func TestRunner_CountsTheTokensOfEachRound(t *testing.T) {
+// A revision is a call of its own, with tokens of its own.
+func TestRunner_CountsTheTokensOfEachDraft(t *testing.T) {
 	m := &recordedMetrics{}
-	h := newHarness(t, withMetrics(m), withRounds(3))
+	h := newHarness(t, withMetrics(m), withDrafts(3))
 	answersInTurn(h, lowConfidence, fixAnswer)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))

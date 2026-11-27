@@ -47,10 +47,10 @@ func TestRunRepository_ACronRunStoresItsSlot(t *testing.T) {
 	slot := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), nil)
 	cronRun := cronRunOf(t, tenant, slot)
-	trigger, err := run.NewPendingRun(tenant, uuid.New(), "adhoc", run.KindTrigger, nil, "okta|alice",
+	manual, err := run.NewPendingRun(tenant, uuid.New(), "adhoc", run.KindManual, nil, "okta|alice",
 		model.OperationRun, run.ReleaseStamp{}, slot)
 	require.NoError(t, err)
-	saveRuns(t, u, cronRun, trigger)
+	saveRuns(t, u, cronRun, manual)
 
 	var stored *time.Time
 	require.NoError(t, db.Get(&stored, `SELECT scheduled_for FROM runs WHERE tenant_id = $1 AND run_id = $2`, tenant, cronRun.RunID()))
@@ -62,9 +62,9 @@ func TestRunRepository_ACronRunStoresItsSlot(t *testing.T) {
 	require.NotNil(t, read.ScheduledFor())
 	assert.True(t, slot.Equal(*read.ScheduledFor()))
 
-	other, err := u.Run().GetRun(ctx, tenant, trigger.RunID())
+	other, err := u.Run().GetRun(ctx, tenant, manual.RunID())
 	require.NoError(t, err)
-	assert.Nil(t, other.ScheduledFor(), "a triggered run has no slot")
+	assert.Nil(t, other.ScheduledFor(), "a manual run has no slot")
 }
 
 // A second run of a slot that already has its run is run.ErrSlotTaken: the

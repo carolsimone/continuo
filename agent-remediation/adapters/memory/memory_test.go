@@ -36,7 +36,7 @@ func TestMemoryUnitOfWork_CommitPublishesAndRollbackDiscards(t *testing.T) {
 	require.NoError(t, u.FixRepo().Upsert(ctx, p))
 	require.NoError(t, u.Commit())
 	require.Len(t, store.Fixes(), 1)
-	require.Equal(t, 1, store.Fixes()[0].Fix.RemediationRound, "an unset round defaults to 1 as in Postgres")
+	require.Equal(t, 1, store.Fixes()[0].Fix.Round, "an unset round defaults to 1 as in Postgres")
 }
 
 func TestMemoryUnitOfWork_FailNextCommitFailsOnceAndDiscardsTheWrites(t *testing.T) {

@@ -36,7 +36,7 @@ In scope — anything that lets someone cross a trust boundary the system is
 supposed to enforce:
 
 - Authentication or authorisation bypass in `ui`, including the operator
-  role checks that gate run triggering, release promotion, and PR creation.
+  role checks that gate starting runs, release promotion, and PR creation.
 - Any path that lets an unapproved change reach production, since the release
   pipeline's core promise is that promotion is human-gated.
 - Injection into generated dbt commands or SQL.

@@ -37,7 +37,7 @@
 //     final streaming text chunk ("DONE: ok" or "DONE: error"), finish_reason="stop".
 //
 //  4. user-message mode: take the last word of the user text as the schedule name.
-//     If the text contains "trigger" emit a tool_call for "schedule_trigger", else
+//     If the text contains "start" emit a tool_call for "schedule_run", else
 //     "schedule_status". finish_reason="tool_calls". Both are SSE streaming.
 //
 // The SSE chunk shapes match what the agent-chat openai adapter expects:
@@ -162,8 +162,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		toolName := "schedule_status"
-		if strings.Contains(strings.ToLower(text), "trigger") {
-			toolName = "schedule_trigger"
+		if strings.Contains(strings.ToLower(text), "start") {
+			toolName = "schedule_run"
 		}
 
 		writeToolCallChunk(w, toolName, scheduleName)
@@ -356,7 +356,7 @@ func contractYAML(userContent string) string {
 // every request of a try after the first, with the diffs the earlier tries
 // applied and why each was refused. The section exists only when an earlier try
 // was recorded, so the heading is what tells a retry apart from a first
-// attempt. A later pre-flight round of the first try does not carry it: it
+// attempt. A revision in the first try does not carry it: it
 // shows the model its previous answer under its own heading, and is no retry.
 const earlierTriesHeading = "## Earlier tries at this failure"
 

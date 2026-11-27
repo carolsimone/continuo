@@ -72,11 +72,11 @@ func retryDeps(r *retryRecorder, log string) handlers.Deps {
 	}
 }
 
-// retryMessage renders a remediation.retry_requested:v1 entry as the stream
+// retryMessage renders a round.requested:v1 entry as the stream
 // holds it, under tenantID.
-func retryMessage(t *testing.T, tenantID string, p pkgevents.RemediationRetryRequested) goredis.XMessage {
+func retryMessage(t *testing.T, tenantID string, p pkgevents.RoundRequested) goredis.XMessage {
 	t.Helper()
-	fields, err := pkgevents.RemediationRetryRequestedFields("evt-1", tenantID, "release-controller",
+	fields, err := pkgevents.RoundRequestedFields("evt-1", tenantID, "release-controller",
 		time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC), p)
 	require.NoError(t, err)
 	return goredis.XMessage{ID: "5-0", Values: fields}
@@ -85,22 +85,22 @@ func retryMessage(t *testing.T, tenantID string, p pkgevents.RemediationRetryReq
 const retryRejection = `{"release_id":"rel-1","stage":"compile","reason":"compile_failed","repo":"o/r","commit_sha":"sha",
 	"per_node":[{"node_id":"core","status":"failed","dbt_log_uri":"s3://c.log"},{"node_id":"fine","status":"ok"}]}`
 
-// TestRetryBinding_DecodesTheTypedRetry holds that a retry entry reads through
+// TestRoundRequestedBinding_DecodesTheTypedRetry holds that a retry entry reads through
 // the typed decoder: its rejection classifies as the original did, the round is
 // the retry's own, and the trigger it writes is stored under the entry's tenant.
-func TestRetryBinding_DecodesTheTypedRetry(t *testing.T) {
+func TestRoundRequestedBinding_DecodesTheTypedRetry(t *testing.T) {
 	r := &retryRecorder{}
-	h := newRetryHandler(retryDeps(r, `Compilation Error in model core: syntax error`), slog.New(slog.DiscardHandler))
+	h := newRoundRequestedHandler(retryDeps(r, `Compilation Error in model core: syntax error`), slog.New(slog.DiscardHandler))
 
-	msg := retryMessage(t, "globex", pkgevents.RemediationRetryRequested{
-		ReleaseID: "rel-1", RemediationRound: 3, Rejection: json.RawMessage(retryRejection),
+	msg := retryMessage(t, "globex", pkgevents.RoundRequested{
+		ReleaseID: "rel-1", Round: 3, Rejection: json.RawMessage(retryRejection),
 	})
 	require.NoError(t, h(context.Background(), msg))
 
 	require.Len(t, r.decisions, 1, "only the failed node is classified")
 	assert.Equal(t, "core", r.decisions[0].NodeID)
 	assert.Equal(t, pkg_model.RemediationSourceCompile, r.decisions[0].Source)
-	assert.Equal(t, 3, r.decisions[0].RemediationRound, "the round is the retry's")
+	assert.Equal(t, 3, r.decisions[0].Round, "the round is the retry's")
 
 	require.Len(t, r.entries, 1)
 	assert.Equal(t, streams.HealTriggeredV1, r.entries[0].StreamName)
@@ -110,31 +110,31 @@ func TestRetryBinding_DecodesTheTypedRetry(t *testing.T) {
 	var trigger pkgevents.HealTriggered
 	require.NoError(t, json.Unmarshal(payload, &trigger))
 	assert.Equal(t, "rel-1", trigger.ReleaseID)
-	assert.Equal(t, 3, trigger.RemediationRound)
+	assert.Equal(t, 3, trigger.Round)
 	assert.True(t, r.committed)
 }
 
-// TestRetryBinding_TheRoundIsTheTypedRoundNotTheRejections holds that a
-// remediation_round written inside the stored rejection never reaches the
+// TestRoundRequestedBinding_TheRoundIsTheTypedRoundNotTheRejections holds that a
+// round written inside the stored rejection never reaches the
 // evidence: the retry names its round beside the rejection.
-func TestRetryBinding_TheRoundIsTheTypedRoundNotTheRejections(t *testing.T) {
+func TestRoundRequestedBinding_TheRoundIsTheTypedRoundNotTheRejections(t *testing.T) {
 	r := &retryRecorder{}
-	h := newRetryHandler(retryDeps(r, `Compilation Error in model core: syntax error`), slog.New(slog.DiscardHandler))
-	stale := `{"release_id":"rel-1","stage":"compile","reason":"compile_failed","remediation_round":9,
+	h := newRoundRequestedHandler(retryDeps(r, `Compilation Error in model core: syntax error`), slog.New(slog.DiscardHandler))
+	stale := `{"release_id":"rel-1","stage":"compile","reason":"compile_failed","round":9,
 		"per_node":[{"node_id":"core","status":"failed","dbt_log_uri":"s3://c.log"}]}`
 
-	msg := retryMessage(t, "acme", pkgevents.RemediationRetryRequested{ReleaseID: "rel-1", RemediationRound: 2, Rejection: json.RawMessage(stale)})
+	msg := retryMessage(t, "acme", pkgevents.RoundRequested{ReleaseID: "rel-1", Round: 2, Rejection: json.RawMessage(stale)})
 	require.NoError(t, h(context.Background(), msg))
 
 	require.Len(t, r.decisions, 1)
-	assert.Equal(t, 2, r.decisions[0].RemediationRound)
+	assert.Equal(t, 2, r.decisions[0].Round)
 }
 
 // TestEvidenceFromRejected_CarriesNoRound holds that the evidence of a
 // rejection names no round, whatever the rejection carries: 0 means round 1,
 // which ClassifyRejection normalises, and a retry stamps its own round.
 func TestEvidenceFromRejected_CarriesNoRound(t *testing.T) {
-	for name, field := range map[string]string{"no round field": "", "a stored round": `"remediation_round":4,`} {
+	for name, field := range map[string]string{"no round field": "", "a stored round": `"round":4,`} {
 		t.Run(name, func(t *testing.T) {
 			raw := []byte(`{"release_id":"rel-1","stage":"compile","reason":"compile_failed",` + field + `
 			  "per_node":[{"node_id":"core","status":"failed","dbt_log_uri":"s3://c.log"}]}`)
@@ -142,33 +142,33 @@ func TestEvidenceFromRejected_CarriesNoRound(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, evs, 1)
 			assert.Equal(t, pkg_model.RemediationSourceCompile, evs[0].Source)
-			assert.Equal(t, 0, evs[0].RemediationRound)
+			assert.Equal(t, 0, evs[0].Round)
 		})
 	}
 }
 
-// TestRetryBinding_NothingToClassifyIsAcknowledged holds that a retry whose
+// TestRoundRequestedBinding_NothingToClassifyIsAcknowledged holds that a retry whose
 // rejection yields no failed node to classify (a reason that is not healable, a
 // shadow rejection) opens no transaction and is acknowledged.
-func TestRetryBinding_NothingToClassifyIsAcknowledged(t *testing.T) {
+func TestRoundRequestedBinding_NothingToClassifyIsAcknowledged(t *testing.T) {
 	r := &retryRecorder{}
-	h := newRetryHandler(retryDeps(r, ""), slog.New(slog.DiscardHandler))
+	h := newRoundRequestedHandler(retryDeps(r, ""), slog.New(slog.DiscardHandler))
 	notHealable := `{"release_id":"rel-1","stage":"validation","reason":"upstream_clone_failed",
 		"per_node":[{"node_id":"analytics.b","status":"failed","validation_op":"clone_from_prod"}]}`
 
-	msg := retryMessage(t, "acme", pkgevents.RemediationRetryRequested{ReleaseID: "rel-1", RemediationRound: 2, Rejection: json.RawMessage(notHealable)})
+	msg := retryMessage(t, "acme", pkgevents.RoundRequested{ReleaseID: "rel-1", Round: 2, Rejection: json.RawMessage(notHealable)})
 
 	require.NoError(t, h(context.Background(), msg))
 	assert.False(t, r.begun)
 	assert.Empty(t, r.entries)
 }
 
-// TestRetryBinding_AnEntryNoRedeliveryCanReadIsPermanent holds that a retry
+// TestRoundRequestedBinding_AnEntryNoRedeliveryCanReadIsPermanent holds that a retry
 // whose envelope or payload cannot be decoded, one that names no tenant, and one
 // whose rejection is not a rejection, is permanent: the consumer dead-letters it
 // and writes nothing.
-func TestRetryBinding_AnEntryNoRedeliveryCanReadIsPermanent(t *testing.T) {
-	good := pkgevents.RemediationRetryRequested{ReleaseID: "rel-1", RemediationRound: 2, Rejection: json.RawMessage(retryRejection)}
+func TestRoundRequestedBinding_AnEntryNoRedeliveryCanReadIsPermanent(t *testing.T) {
+	good := pkgevents.RoundRequested{ReleaseID: "rel-1", Round: 2, Rejection: json.RawMessage(retryRejection)}
 	withField := func(name string, value any) goredis.XMessage {
 		m := retryMessage(t, "acme", good)
 		m.Values[name] = value
@@ -186,15 +186,15 @@ func TestRetryBinding_AnEntryNoRedeliveryCanReadIsPermanent(t *testing.T) {
 		"another schema version":                  withField("schema_version", "9"),
 		"an unreadable occurred_at":               withField("occurred_at", "yesterday"),
 		"no tenant":                               withField("tenant_id", ""),
-		"a round below 2":                         retryMessage(t, "acme", pkgevents.RemediationRetryRequested{ReleaseID: "rel-1", RemediationRound: 1, Rejection: json.RawMessage(retryRejection)}),
-		"no release":                              retryMessage(t, "acme", pkgevents.RemediationRetryRequested{RemediationRound: 2, Rejection: json.RawMessage(retryRejection)}),
-		"a rejection that is not an object":       retryMessage(t, "acme", pkgevents.RemediationRetryRequested{ReleaseID: "rel-1", RemediationRound: 2, Rejection: json.RawMessage(`"x"`)}),
-		"a rejection that does not decode as one": retryMessage(t, "acme", pkgevents.RemediationRetryRequested{ReleaseID: "rel-1", RemediationRound: 2, Rejection: json.RawMessage(`{"per_node":"x"}`)}),
+		"a round below 2":                         retryMessage(t, "acme", pkgevents.RoundRequested{ReleaseID: "rel-1", Round: 1, Rejection: json.RawMessage(retryRejection)}),
+		"no release":                              retryMessage(t, "acme", pkgevents.RoundRequested{Round: 2, Rejection: json.RawMessage(retryRejection)}),
+		"a rejection that is not an object":       retryMessage(t, "acme", pkgevents.RoundRequested{ReleaseID: "rel-1", Round: 2, Rejection: json.RawMessage(`"x"`)}),
+		"a rejection that does not decode as one": retryMessage(t, "acme", pkgevents.RoundRequested{ReleaseID: "rel-1", Round: 2, Rejection: json.RawMessage(`{"per_node":"x"}`)}),
 	}
 	for name, msg := range cases {
 		t.Run(name, func(t *testing.T) {
 			r := &retryRecorder{}
-			h := newRetryHandler(retryDeps(r, "boom"), slog.New(slog.DiscardHandler))
+			h := newRoundRequestedHandler(retryDeps(r, "boom"), slog.New(slog.DiscardHandler))
 
 			err := h(context.Background(), msg)
 
@@ -229,7 +229,7 @@ func TestRejectionBinding_StoresTheTriggerUnderTheMessagesTenant(t *testing.T) {
 			tenantID, _, err := outbox.UnwrapTenant(r.entries[0].Payload)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, tenantID)
-			assert.Equal(t, 1, r.decisions[0].RemediationRound, "a rejection is round 1")
+			assert.Equal(t, 1, r.decisions[0].Round, "a rejection is round 1")
 		})
 	}
 }

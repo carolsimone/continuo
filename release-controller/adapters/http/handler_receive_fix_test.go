@@ -18,7 +18,7 @@ import (
 func validFixInput() ReceiveFixRequest {
 	return ReceiveFixRequest{
 		CheckID: "verify-rel-1-core-r1-t1", Project: "core", ImageTag: "img:1", Kind: "dbt",
-		VerifiesReleaseID: "rel-1", RemediationRound: 1, Try: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-r1-t1/source-overlay.tar.gz",
+		VerifiesReleaseID: "rel-1", Round: 1, Try: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-r1-t1/source-overlay.tar.gz",
 	}
 }
 
@@ -54,7 +54,7 @@ func TestHandleReceiveFix_ValidationIs400(t *testing.T) {
 		"missing check_id": func(in *ReceiveFixRequest) { in.CheckID = "" },
 		"bad kind":         func(in *ReceiveFixRequest) { in.Kind = "yaml" },
 		"try below one":    func(in *ReceiveFixRequest) { in.Try = 0 },
-		"round below one":  func(in *ReceiveFixRequest) { in.RemediationRound = 0 },
+		"round below one":  func(in *ReceiveFixRequest) { in.Round = 0 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := validFixInput()
@@ -138,7 +138,7 @@ func TestHandleReceiveCandidate_RefusesFixFieldsWith400(t *testing.T) {
 func TestHandleReceiveFix_StoresEveryWireFieldAsSent(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
 	raw := `{"check_id":"verify-rel-7-core-r2-t3","project":"core","image_tag":"img:7","kind":"dbt",` +
-		`"verifies_release_id":"rel-7","remediation_round":2,"try":3,"source_overlay_uri":"s3://b/core/overlay.tar.gz"}`
+		`"verifies_release_id":"rel-7","round":2,"try":3,"source_overlay_uri":"s3://b/core/overlay.tar.gz"}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/release-checks", strings.NewReader(raw))
 	newTestServer(deps).Routes().ServeHTTP(rec, req)
@@ -148,7 +148,7 @@ func TestHandleReceiveFix_StoresEveryWireFieldAsSent(t *testing.T) {
 	require.NotNil(t, stored)
 	assert.Equal(t, releasecheck.KindFix, stored.Kind())
 	assert.Equal(t, "rel-7", stored.VerifiesReleaseID())
-	assert.Equal(t, 2, stored.RemediationRound())
+	assert.Equal(t, 2, stored.Round())
 	assert.Equal(t, 3, stored.Try())
 	assert.Equal(t, "s3://b/core/overlay.tar.gz", stored.SourceOverlayURI())
 	assert.Equal(t, "img:7", stored.ImageTags()["core"])

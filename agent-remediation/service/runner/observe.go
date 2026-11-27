@@ -66,11 +66,11 @@ func (run tryRun) countStage(typ, stage string, row remediation.StepRun) {
 	run.after.add(func(m ports.RemediationMetrics) { m.Stage(flow, typ, stage, d) })
 }
 
-// countRound collects the end of one pre-flight pass of a cluster of the type
+// countDraft collects the end of one pre-flight pass of a cluster of the type
 // typ.
-func (run tryRun) countRound(typ, result string) {
+func (run tryRun) countDraft(typ, result string) {
 	flow := run.snap.Remediation.Flow
-	run.after.add(func(m ports.RemediationMetrics) { m.Round(flow, typ, result) })
+	run.after.add(func(m ports.RemediationMetrics) { m.Draft(flow, typ, result) })
 }
 
 // countTries collects how each cluster the try worked ended, as the try ends.
@@ -112,8 +112,8 @@ func clusterResult(c remediation.Cluster, checked string) (string, bool) {
 		switch c.Outcome.Code {
 		case pkg_model.HandoverReasonDeclined:
 			return ports.TryDeclined, true
-		case pkg_model.HandoverReasonPreflightRoundsSpent:
-			return ports.TryPreflightSpent, true
+		case pkg_model.HandoverReasonDraftsSpent:
+			return ports.TryDraftsSpent, true
 		}
 	}
 	return "", false

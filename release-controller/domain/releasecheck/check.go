@@ -55,16 +55,16 @@ func (s Status) IsTerminal() bool {
 	return false
 }
 
-// MaxRemediationRounds bounds how many times remediation may be driven for one
+// MaxRounds bounds how many times remediation may be driven for one
 // rejected candidate: the rejection itself plus two "try again"s. Beyond it
 // only a new commit — a new candidate — starts over.
-const MaxRemediationRounds = 3
+const MaxRounds = 3
 
 var (
 	// ErrWrongKind is returned by a method that only one kind of check may take.
 	ErrWrongKind       = errors.New("operation is not valid for this kind of check")
 	ErrNotRejected     = errors.New("release is not rejected")
-	ErrRoundsExhausted = errors.New("remediation rounds exhausted")
+	ErrRoundsExhausted = errors.New("rounds exhausted")
 )
 
 // Transition is one entry of a check's status history.
@@ -107,13 +107,13 @@ type NodeValidationResult struct {
 // came from, whether it bootstraps production, whether that bootstrap
 // re-baselines fingerprints, and its remediation history.
 type Candidate struct {
-	Repo             string
-	CommitSHA        string
-	Bootstrap        bool
-	Rebaseline       bool
-	RemediationRound int
+	Repo       string
+	CommitSHA  string
+	Bootstrap  bool
+	Rebaseline bool
+	Round      int
 	// RejectionPayload is the exact release.rejected:v1 payload the
-	// candidate emitted at its rejection, kept so a later remediation round
+	// candidate emitted at its rejection, kept so a later round
 	// can replay it verbatim.
 	RejectionPayload []byte
 }
@@ -177,7 +177,7 @@ func newCheck(id string, kind Kind, project, imageTag string, manifestKind relea
 // with bootstrap.
 func NewCandidate(id, project, imageTag string, bootstrap, rebaseline bool, repo, commitSHA string, kind release.ManifestKind, now time.Time) *Check {
 	r := newCheck(id, KindCandidate, project, imageTag, kind, now)
-	r.candidate = &Candidate{Repo: repo, CommitSHA: commitSHA, Bootstrap: bootstrap, Rebaseline: rebaseline, RemediationRound: 1}
+	r.candidate = &Candidate{Repo: repo, CommitSHA: commitSHA, Bootstrap: bootstrap, Rebaseline: rebaseline, Round: 1}
 	return r
 }
 
@@ -256,12 +256,12 @@ func (r *Check) CommitSHA() string {
 	return r.candidate.CommitSHA
 }
 
-// RemediationRound is a candidate's current remediation round, or the round of
+// Round is a candidate's current round, or the round of
 // the try a fix's release check proves.
-func (r *Check) RemediationRound() int {
+func (r *Check) Round() int {
 	switch {
 	case r.candidate != nil:
-		return r.candidate.RemediationRound
+		return r.candidate.Round
 	case r.fix != nil:
 		return r.fix.Round
 	default:
@@ -398,7 +398,7 @@ func (r *Check) ParseTimings() release.ParseTimings { return r.parseTimings }
 func (r *Check) SetParseTimings(t release.ParseTimings) { r.parseTimings = t }
 
 // SetRejectionPayload records the exact release.rejected:v1 payload a
-// candidate emitted, so a later remediation round can replay it. A
+// candidate emitted, so a later round can replay it. A
 // fix emits no such payload; the call is a no-op for it.
 func (r *Check) SetRejectionPayload(p []byte) {
 	if r.candidate != nil {
@@ -567,21 +567,21 @@ func (r *Check) Fail(reason, detail string, failingNodes []string, now time.Time
 	return nil
 }
 
-// StartRemediationRound records that a human asked for another remediation
+// StartRound records that a human asked for another
 // round on a rejected candidate and returns the new round number.
-func (r *Check) StartRemediationRound(now time.Time) (int, error) {
+func (r *Check) StartRound(now time.Time) (int, error) {
 	if r.kind != KindCandidate {
-		return 0, fmt.Errorf("check %s: start remediation round: %w", r.id, ErrWrongKind)
+		return 0, fmt.Errorf("check %s: start round: %w", r.id, ErrWrongKind)
 	}
 	if r.status != StatusRejected {
 		return 0, ErrNotRejected
 	}
-	if r.candidate.RemediationRound >= MaxRemediationRounds {
+	if r.candidate.Round >= MaxRounds {
 		return 0, ErrRoundsExhausted
 	}
-	r.candidate.RemediationRound++
-	r.transitions = append(r.transitions, Transition{To: "remediation_retry", At: now})
-	return r.candidate.RemediationRound, nil
+	r.candidate.Round++
+	r.transitions = append(r.transitions, Transition{To: "round_started", At: now})
+	return r.candidate.Round, nil
 }
 
 // RehydrateInput carries every persisted field needed to reconstruct a Check
@@ -610,9 +610,9 @@ type RehydrateInput struct {
 	CreatedAt               time.Time
 	Transitions             []Transition
 	Notices                 []release.Notice
-	// RemediationRound is a candidate's current remediation round, or the
+	// Round is a candidate's current round, or the
 	// round of the try a fix's release check proves.
-	RemediationRound int
+	Round int
 	// Candidate-only.
 	Bootstrap        bool
 	Rebaseline       bool
@@ -650,13 +650,13 @@ func Rehydrate(in RehydrateInput) *Check {
 	}
 	switch in.Kind {
 	case KindFix:
-		r.fix = &Fix{VerifiesReleaseID: in.VerifiesReleaseID, Round: in.RemediationRound, Try: in.Try, SourceOverlayURI: in.SourceOverlayURI}
+		r.fix = &Fix{VerifiesReleaseID: in.VerifiesReleaseID, Round: in.Round, Try: in.Try, SourceOverlayURI: in.SourceOverlayURI}
 	default:
-		round := in.RemediationRound
+		round := in.Round
 		if round < 1 {
 			round = 1
 		}
-		r.candidate = &Candidate{Repo: in.Repo, CommitSHA: in.CommitSHA, Bootstrap: in.Bootstrap, Rebaseline: in.Rebaseline, RemediationRound: round, RejectionPayload: in.RejectionPayload}
+		r.candidate = &Candidate{Repo: in.Repo, CommitSHA: in.CommitSHA, Bootstrap: in.Bootstrap, Rebaseline: in.Rebaseline, Round: round, RejectionPayload: in.RejectionPayload}
 	}
 	return r
 }

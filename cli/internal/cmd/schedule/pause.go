@@ -52,7 +52,7 @@ func NewPauseCommand(factory RunClientFactory, cfg *config.Config, stdout, stder
 Use when the user asks to pause, hold, stop or disable the automatic runs of a
 schedule (during an upstream outage, or after a data incident) without losing its cron.
 The cron, timezone and description are kept. A run of the schedule already in
-progress goes on, and a manual "schedule trigger" still works. Fires that come
+progress goes on, and "schedule run" still starts a manual run. Fires that come
 due while it is paused do not run later.
 
 The command reads the schedule and saves it back paused, with the version it

@@ -37,7 +37,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// Cleanup any existing data
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// Tap task.dispatch:v1 before anything is triggered: execution-controller consumes it
+	// Tap task.dispatch:v1 before anything starts: execution-controller consumes it
 	// and the trim loop removes consumed entries, so the checks below read what
 	// the tap recorded rather than the stream's history.
 	dispatchTap := startStreamTap(t, ctx, clients.redisClient, streams.TaskDispatchV1)
@@ -81,7 +81,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	t.Log("Verifying audit fields (kind, image_tag)...")
 
 	trackerKind := queryRunKind(t, clients.runControllerDB, schedulerID)
-	assert.Equal(t, "trigger", trackerKind, "runs.kind must be trigger after StartRun")
+	assert.Equal(t, "manual", trackerKind, "runs.kind must be manual after StartRun")
 
 	imageTag := queryFirstTaskImageTag(t, clients.runControllerDB, schedulerID)
 	assert.NotEmpty(t, imageTag, "tasks.image_tag must be populated")

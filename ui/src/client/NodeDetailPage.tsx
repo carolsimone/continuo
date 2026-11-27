@@ -269,13 +269,13 @@ export default function NodeDetailPage() {
   }, [operation, nodeType, canFullRefresh]);
 
   // latestHasNoTests reflects the LATEST topology's test_count only. It gates the
-  // latest-mode trigger (which the backend evaluates against latest metadata) but
+  // latest-mode button (which the backend evaluates against latest metadata) but
   // NOT the old-snapshot path: a snapshot_of_run test is validated against the
   // source run's own pinned test_count, which this page does not know, so testing
   // an older version stays available and the backend's no_tests check is the
   // backstop there. Only a KNOWN, positive test_count is runnable: a known zero
   // and an unset count (a node predating test_count capture, so test_count_known
-  // is false) are both treated as "no tests" and gate the latest-mode trigger,
+  // is false) are both treated as "no tests" and gate the latest-mode button,
   // matching run-controller's single-node gate.
   const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
@@ -335,16 +335,16 @@ export default function NodeDetailPage() {
 
   // A node no longer active in the latest topology has no latest version to
   // run, so every latest-mode operation is unavailable for it; only the
-  // old-snapshot trigger remains.
+  // old-snapshot button remains.
   const latestUnavailable = inactive;
 
-  // The latest-mode test trigger is also gated by latest test metadata; the
-  // old-snapshot trigger is never blocked here (see latestHasNoTests). For an
+  // The latest-mode test button is also gated by latest test metadata; the
+  // old-snapshot button is never blocked here (see latestHasNoTests). For an
   // inactive node the inactive strip already explains why latest is unavailable.
   const latestTestBlocked = operation === 'test' && latestHasNoTests && !inactive;
 
   // Until the node's type is known a full refresh cannot be validated, so both
-  // triggers stay disabled while it is selected.
+  // buttons stay disabled while it is selected.
   const fullRefreshUnavailable = operation === 'full_refresh' && !canFullRefresh;
 
   return (
@@ -435,7 +435,7 @@ export default function NodeDetailPage() {
               ? 'This node is no longer active in the topology'
               : 'Run only this node against the latest topology'}
         >
-          {runState === 'loading' ? 'Triggering…' : runState === 'success' ? 'Triggered' : runVerb}
+          {runState === 'loading' ? 'Starting…' : runState === 'success' ? 'Started' : runVerb}
         </button>
         <button
           type="button"

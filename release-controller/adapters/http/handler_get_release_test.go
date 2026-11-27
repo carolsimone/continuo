@@ -67,7 +67,7 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	assert.Equal(t, "deadbeefcafe1234", decoded["commit_sha"])
 	// Guard the full response shape so an accidental field drop in the extracted
 	// helper is caught: 11 pre-existing keys plus repo + commit_sha +
-	// remediation_round + rebaseline + notices + continuo_contracts +
+	// round + rebaseline + notices + continuo_contracts +
 	// contract_bundle_uri + contract_bundle_sha256. There is no shadow key: a
 	// candidate response never carries one, since GET /releases/{id} only ever
 	// returns a candidate.

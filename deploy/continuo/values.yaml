@@ -660,7 +660,7 @@ contracts:
 
 # Maintenance mode. While enabled, continuo starts no new work and lets the
 # work already running finish: ui, the public release API and the CLI refuse new
-# runs, triggers, releases, remediation retries, schedule edits and dead-letter
+# runs, releases, remediation retries, schedule edits and dead-letter
 # redrives with HTTP 503 / gRPC UNAVAILABLE and the message "continuo is in
 # maintenance mode"; run-controller consumes each cron slot that comes due with
 # no run (it is not caught up afterwards); release-controller activates no

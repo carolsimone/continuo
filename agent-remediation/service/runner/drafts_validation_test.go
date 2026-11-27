@@ -49,28 +49,28 @@ func sourceFixAnswer(source, confidence string) func(prompt.ProposeRequest) port
 }
 
 // The model rates its own fix of the real source low. That answer is the draft's
-// edit, pre-flight refuses it, and the next round revises the source fix alone:
+// edit, pre-flight refuses it, and the next draft revises the source fix alone:
 // the diagnosis is not made again.
 func TestRunner_ALowConfidenceSourceFixGoesBackToTheModel(t *testing.T) {
-	h := newHarness(t, withRounds(2))
+	h := newHarness(t, withDrafts(2))
 	answersInTurn(h, diagnosisAnswer, sourceFixAnswer("select  good  from t", "low"), sourceFixAnswer(revisedSourceText, "high"))
 	id := h.accept(trigger("validation", validationNode(h)))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	reqs := h.llm.all()
-	require.Len(t, reqs, 3, "the diagnosis and the source fix in round 1, the source fix revised in round 2")
+	require.Len(t, reqs, 3, "the diagnosis and the source fix in draft 1, the source fix revised in draft 2")
 	assert.True(t, prompt.IsSourceFix(reqs[1]))
 	want := prompt.Revise(reqs[1], step.AnswerJSON(sourceFixAnswer("select  good  from t", "low")(reqs[1])), step.FindingLines([]remediation.Finding{lowConfidenceFinding}))
-	assert.Equal(t, want, reqs[2], "round 2 revises the source fix with its answer and the finding")
+	assert.Equal(t, want, reqs[2], "draft 2 revises the source fix with its answer and the finding")
 
-	passes := h.roundRows(id, 1, "preflight")
+	passes := h.draftRows(id, 1, "preflight")
 	require.Len(t, passes, 2)
 	assert.Equal(t, []remediation.Finding{lowConfidenceFinding}, passes[1].Findings)
 	assert.Empty(t, passes[2].Findings)
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterChecked, c.Status)
-	assert.Equal(t, 2, c.Round)
+	assert.Equal(t, 2, c.Draft)
 	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
 	revised, ok := h.artifacts.get("proposed-fix/rel-1/" + validationNodeID + "/round-1/try-1.source.sql")
 	require.True(t, ok)
@@ -78,9 +78,9 @@ func TestRunner_ALowConfidenceSourceFixGoesBackToTheModel(t *testing.T) {
 }
 
 // A source fix the model gives back unchanged is refused by content_changed, and
-// with no round left the cluster is handed over on that finding.
-func TestRunner_AnUnchangedSourceFixInTheLastRoundHandsTheClusterOver(t *testing.T) {
-	h := newHarness(t, withRounds(1))
+// with no draft left the cluster is handed over on that finding.
+func TestRunner_AnUnchangedSourceFixInTheLastDraftHandsTheClusterOver(t *testing.T) {
+	h := newHarness(t, withDrafts(1))
 	answersInTurn(h, diagnosisAnswer, sourceFixAnswer(modelSourceText, "high"))
 	id := h.accept(trigger("validation", validationNode(h)))
 
@@ -92,13 +92,13 @@ func TestRunner_AnUnchangedSourceFixInTheLastRoundHandsTheClusterOver(t *testing
 	require.NotNil(t, c.Outcome)
 	assert.Equal(t, fix.StatusFailed, c.Outcome.Status)
 	assert.Equal(t, "the model returned the file unchanged, which is not a fix", c.Outcome.Reason)
-	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, c.Outcome.Code)
+	assert.Equal(t, model.HandoverReasonDraftsSpent, c.Outcome.Code)
 }
 
 // A failed source-fix call is the step's error, not a draft with no edit: the
 // step is tried again, and the model is not asked for the diagnosis twice.
 func TestRunner_AFailedSourceFixCallIsRetriedNotDowngraded(t *testing.T) {
-	h := newHarness(t, withRounds(1))
+	h := newHarness(t, withDrafts(1))
 	h.llm.answer = diagnosisAnswer
 	h.llm.onCall = func(n int) {
 		if n == 1 {
@@ -110,18 +110,18 @@ func TestRunner_AFailedSourceFixCallIsRetriedNotDowngraded(t *testing.T) {
 	err := h.runner.Drive(ctx, id)
 
 	require.ErrorIs(t, err, assert.AnError)
-	prompts := h.roundRows(id, 1, "dbt-validation")
+	prompts := h.draftRows(id, 1, "dbt-validation")
 	require.Len(t, prompts, 1)
 	assert.Equal(t, remediation.StepFailed, prompts[1].Status)
 	assert.Equal(t, 1, prompts[1].Failures)
 	assert.Equal(t, remediation.ClusterProposing, h.cluster(id, 1, 1).Status, "the cluster is not settled by a failed call")
-	assert.Empty(t, h.roundRows(id, 1, "preflight"))
+	assert.Empty(t, h.draftRows(id, 1, "preflight"))
 
 	h.llm.err = nil
 	require.NoError(t, h.drive(id))
 	assert.Equal(t, 3, h.llm.calls(), "the retried step is answered the diagnosis from the cache and asks the source fix again")
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
-	row := h.roundRows(id, 1, "dbt-validation")[1]
+	row := h.draftRows(id, 1, "dbt-validation")[1]
 	assert.Equal(t, remediation.StepDone, row.Status)
 	assert.Equal(t, 1, row.Failures, "the row keeps the failure the retry followed")
 }

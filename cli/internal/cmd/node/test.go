@@ -82,13 +82,13 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerNodeTest(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor)
+			resp, err := c.StartNodeTest(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered single-node test run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
+				return output.HumanSuccess(stderr, "Started single-node test run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
 			}
 			payload := map[string]string{
 				"run_id":        resp.GetRunId(),

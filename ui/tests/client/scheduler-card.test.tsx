@@ -114,7 +114,7 @@ function repeat(status: string, n: number): string[] {
 const runStatus = (container: HTMLElement) => container.querySelector('[data-testid="run-status"]')!;
 const shownCounts = (container: HTMLElement) =>
   [...container.querySelectorAll('.run-progress-counts .rp-count')].map(el => el.textContent);
-const triggerButton = () => screen.queryByTitle('Trigger a full DAG run');
+const startButton = () => screen.queryByTitle('Start a manual run of the whole schedule');
 const cancelButton = () => screen.queryByTitle('Cancel the active run');
 
 beforeEach(() => { installFetch(); });
@@ -215,7 +215,7 @@ describe('SchedulerCard — navigation', () => {
     const { container } = renderCardWithRouteProbe(baseSchedule(IDLE), OPERATOR);
     fireEvent.click(screen.getByLabelText(/operation/i).closest('.btn-group') as Element);
     fireEvent.click(container.querySelector('.scheduler-card-actions') as Element);
-    fireEvent.click(triggerButton() as Element);
+    fireEvent.click(startButton() as Element);
     expect(screen.queryByTestId('schedule-detail')).toBeNull();
   });
 
@@ -249,32 +249,32 @@ describe('SchedulerCard — navigation', () => {
 });
 
 describe('SchedulerCard — operation', () => {
-  it('Trigger run button has .btn.btn--secondary', () => {
+  it('Start run button has .btn.btn--secondary', () => {
     renderCard(baseSchedule(IDLE));
-    const btn = triggerButton() as HTMLElement;
+    const btn = startButton() as HTMLElement;
     expect(btn.className).toMatch(/\bbtn\b/);
     expect(btn.className).toMatch(/\bbtn--secondary\b/);
-    expect(btn).toHaveTextContent('Trigger run');
+    expect(btn).toHaveTextContent('Start run');
   });
 
-  it('trigger button verb tracks the operation select, POST carries operation', async () => {
+  it('Start button verb tracks the operation select, POST carries operation', async () => {
     const handler = installFetch();
     renderCard(baseSchedule(IDLE));
 
-    const btn = triggerButton() as HTMLElement;
-    expect(btn).toHaveTextContent(/trigger run/i);
+    const btn = startButton() as HTMLElement;
+    expect(btn).toHaveTextContent(/start run/i);
 
     fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'build' } });
-    expect(btn).toHaveTextContent(/trigger build/i);
+    expect(btn).toHaveTextContent(/start build/i);
 
     fireEvent.click(btn);
 
     await waitFor(() => {
-      const triggerCall = handler.mock.calls.find(([input]) =>
-        String(input).includes('/trigger'),
+      const startCall = handler.mock.calls.find(([input]) =>
+        String(input).includes('/manual-run'),
       );
-      expect(triggerCall).toBeDefined();
-      const [, init] = triggerCall as unknown as [RequestInfo, RequestInit];
+      expect(startCall).toBeDefined();
+      const [, init] = startCall as unknown as [RequestInfo, RequestInit];
       const body = JSON.parse(String(init?.body));
       expect(body).toMatchObject({ operation: 'build' });
     });
@@ -292,17 +292,17 @@ describe('SchedulerCard — operation', () => {
 });
 
 describe('SchedulerCard — the run controls', () => {
-  it('offers Trigger and no Cancel while nothing runs', () => {
+  it('offers Start and no Cancel while nothing runs', () => {
     renderCard(baseSchedule(IDLE));
-    expect(triggerButton()).toBeEnabled();
+    expect(startButton()).toBeEnabled();
     expect(screen.getByLabelText(/operation/i)).toBeEnabled();
     expect(cancelButton()).toBeNull();
   });
 
-  it('offers Cancel and no Trigger while a run is active', () => {
+  it('offers Cancel and no Start while a run is active', () => {
     renderCard(baseSchedule(ACTIVE));
     expect(cancelButton()).toBeEnabled();
-    expect(triggerButton()).toBeNull();
+    expect(startButton()).toBeNull();
     expect(screen.queryByLabelText(/operation/i)).toBeNull();
   });
 
@@ -313,106 +313,106 @@ describe('SchedulerCard — the run controls', () => {
     expect(btn.className).toMatch(/\bbtn--danger\b/);
   });
 
-  it('keeps the chosen operation for the next trigger after a run', () => {
+  it('keeps the chosen operation for the next start after a run', () => {
     const view = render(cardTree(baseSchedule(IDLE)));
     fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'test' } });
     view.rerender(cardTree(baseSchedule(ACTIVE)));
     view.rerender(cardTree(baseSchedule(IDLE)));
-    expect(triggerButton()).toHaveTextContent('Trigger test');
+    expect(startButton()).toHaveTextContent('Start test');
   });
 
-  it('offers Cancel as soon as a run is active, while Trigger stays until its request has answered and held Triggered', async () => {
+  it('offers Cancel as soon as a run is active, while Start stays until its request has answered and held Started', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     try {
       let answer!: (r: Response) => void;
       vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
-        if (String(input).includes('/trigger')) return new Promise<Response>(resolve => { answer = resolve; });
+        if (String(input).includes('/manual-run')) return new Promise<Response>(resolve => { answer = resolve; });
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ tasks: [] }) } as Response);
       }));
       const view = render(cardTree(baseSchedule(IDLE)));
 
-      fireEvent.click(triggerButton() as HTMLElement);
-      expect(triggerButton()).toHaveTextContent('Triggering…');
-      expect(triggerButton()).toBeDisabled();
+      fireEvent.click(startButton() as HTMLElement);
+      expect(startButton()).toHaveTextContent('Starting…');
+      expect(startButton()).toBeDisabled();
       expect(screen.getByLabelText(/operation/i)).toBeDisabled();
       expect(cancelButton()).toBeNull();
 
       // The schedule list's poll names the new run before the request answers.
       view.rerender(cardTree(baseSchedule({ ...ACTIVE, last_run_id: 'r2' })));
-      expect(triggerButton()).toHaveTextContent('Triggering…');
+      expect(startButton()).toHaveTextContent('Starting…');
       expect(cancelButton()).toBeEnabled();
 
       await act(async () => {
         answer({ ok: true, status: 200, json: () => Promise.resolve({ run_id: 'r2' }) } as Response);
         for (let i = 0; i < 5; i++) await Promise.resolve();
       });
-      expect(triggerButton()).toHaveTextContent('Triggered');
-      expect(triggerButton()).toBeDisabled();
+      expect(startButton()).toHaveTextContent('Started');
+      expect(startButton()).toBeDisabled();
       expect(screen.getByLabelText(/operation/i)).toBeDisabled();
       expect(cancelButton()).toBeEnabled();
 
       await act(async () => { vi.advanceTimersByTime(3000); });
-      expect(triggerButton()).toBeNull();
+      expect(startButton()).toBeNull();
       expect(cancelButton()).toBeEnabled();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('a refused trigger returns to Trigger and says why in a strip', async () => {
+  it('a refused start returns to Start and says why in a strip', async () => {
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
-      if (String(input).includes('/trigger')) {
+      if (String(input).includes('/manual-run')) {
         return Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'a run is active' }) } as Response);
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ tasks: [] }) } as Response);
     }));
     renderCard(baseSchedule(IDLE));
-    fireEvent.click(triggerButton() as HTMLElement);
+    fireEvent.click(startButton() as HTMLElement);
     const strip = (await screen.findByText('a run is active')).closest('.info-strip');
     expect(strip?.className).toMatch(/\binfo-strip--error\b/);
-    expect(triggerButton()).toBeEnabled();
-    expect(triggerButton()).toHaveTextContent('Trigger run');
+    expect(startButton()).toBeEnabled();
+    expect(startButton()).toHaveTextContent('Start run');
   });
 
-  it('drops a refused trigger\'s error once the card shows a newer run, since Trigger is not there to clear it', async () => {
+  it('drops a refused start\'s error once the card shows a newer run, since Start is not there to clear it', async () => {
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
-      if (String(input).includes('/trigger')) {
+      if (String(input).includes('/manual-run')) {
         return Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'a run is active' }) } as Response);
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ tasks: [] }) } as Response);
     }));
     const view = render(cardTree(baseSchedule(IDLE)));
-    fireEvent.click(triggerButton() as HTMLElement);
+    fireEvent.click(startButton() as HTMLElement);
     await screen.findByText('a run is active');
 
     view.rerender(cardTree(baseSchedule({ ...ACTIVE, last_run_id: 'r2' })));
     await waitFor(() => expect(screen.queryByText('a run is active')).toBeNull());
   });
 
-  it('keeps a refused trigger\'s error while the card shows the same run', async () => {
+  it('keeps a refused start\'s error while the card shows the same run', async () => {
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
-      if (String(input).includes('/trigger')) {
+      if (String(input).includes('/manual-run')) {
         return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'upstream timed out' }) } as Response);
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ tasks: [] }) } as Response);
     }));
     const view = render(cardTree(baseSchedule(IDLE)));
-    fireEvent.click(triggerButton() as HTMLElement);
+    fireEvent.click(startButton() as HTMLElement);
     await screen.findByText('upstream timed out');
 
     view.rerender(cardTree(baseSchedule(IDLE)));
     expect(screen.getByText('upstream timed out')).toBeInTheDocument();
   });
 
-  it('does not navigate from a refused trigger\'s error, so its message can be read', async () => {
+  it('does not navigate from a refused start\'s error, so its message can be read', async () => {
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
-      if (String(input).includes('/trigger')) {
+      if (String(input).includes('/manual-run')) {
         return Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'a run is active' }) } as Response);
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ tasks: [] }) } as Response);
     }));
     renderCardWithRouteProbe(baseSchedule(IDLE));
-    fireEvent.click(triggerButton() as HTMLElement);
+    fireEvent.click(startButton() as HTMLElement);
     fireEvent.click(await screen.findByText('a run is active'));
     expect(screen.queryByTestId('schedule-detail')).toBeNull();
   });
@@ -420,12 +420,12 @@ describe('SchedulerCard — the run controls', () => {
 
 describe('SchedulerCard — the focus when a run control leaves', () => {
   // The group is no action: a key meant for the control that left starts nothing,
-  // where Trigger, which has no confirmation, would start a run.
+  // where Start, which has no confirmation, would start a run.
   const controlsGroup = () => screen.getByRole('group', { name: 'hourly-events controls' });
 
-  it('moves from Trigger to the group of controls', () => {
+  it('moves from Start to the group of controls', () => {
     const view = render(cardTree(baseSchedule(IDLE)));
-    (triggerButton() as HTMLElement).focus();
+    (startButton() as HTMLElement).focus();
     view.rerender(cardTree(baseSchedule(ACTIVE)));
     expect(document.activeElement).toBe(controlsGroup());
   });
@@ -437,12 +437,12 @@ describe('SchedulerCard — the focus when a run control leaves', () => {
     expect(document.activeElement).toBe(controlsGroup());
   });
 
-  it('moves from Cancel to the group of controls, never to Trigger', () => {
+  it('moves from Cancel to the group of controls, never to Start', () => {
     const view = render(cardTree(baseSchedule(ACTIVE)));
     (cancelButton() as HTMLElement).focus();
     view.rerender(cardTree(baseSchedule(IDLE)));
     expect(document.activeElement).toBe(controlsGroup());
-    expect(document.activeElement).not.toBe(triggerButton());
+    expect(document.activeElement).not.toBe(startButton());
   });
 
   it('is not taken back when it had already left the control that goes', () => {
@@ -476,7 +476,7 @@ describe('SchedulerCard — a cancelling run', () => {
     expect(pill).toHaveTextContent('cancelling');
     expect(pill.className).toMatch(/\bpill-sm--cancelling\b/);
     expect(cancelButton()).toBeEnabled();
-    expect(triggerButton()).toBeNull();
+    expect(startButton()).toBeNull();
   });
 
   it('counts stopping tasks', async () => {
@@ -582,13 +582,13 @@ describe('SchedulerCard — the facts line', () => {
     expect(screen.queryByText(/^next /)).toBeNull();
   });
 
-  it('says a schedule with no cron runs only when triggered, with no pill or cron, and offers an operator Add cron', () => {
+  it('says a schedule with no cron runs only when someone starts it, with no pill or cron, and offers an operator Add cron', () => {
     const { container } = renderCard(baseSchedule({
       ...IDLE, cron: '', timezone: '', paused: false, version: 0, updated_by: '', updated_at: null, cron_words: '',
     }), OPERATOR);
     expect(container.querySelector('.pill-sm--paused')).toBeNull();
     expect(container.querySelector('.schedule-cron')).toBeNull();
-    expect(screen.getByText('No cron: runs only when triggered')).toBeInTheDocument();
+    expect(screen.getByText('No cron: runs only when someone starts it')).toBeInTheDocument();
     const add = screen.getByRole('button', { name: 'Add cron' });
     expect(add.className).toMatch(/\bbtn--secondary\b/);
     expect(screen.queryByRole('button', { name: 'Edit cron' })).toBeNull();
@@ -887,13 +887,13 @@ describe('SchedulerCard — before the tasks are read', () => {
 describe('SchedulerCard — request id', () => {
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-  // Answers the trigger with the next reply in order, a rejection standing
+  // Answers the start with the next reply in order, a rejection standing
   // for a request that got no answer, and returns the request ids it received.
-  function installTrigger(replies: Array<{ ok: boolean; status?: number; body?: unknown } | 'timeout'>) {
+  function installStart(replies: Array<{ ok: boolean; status?: number; body?: unknown } | 'timeout'>) {
     const ids: string[] = [];
     let n = 0;
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes('/trigger')) {
+      if (String(input).includes('/manual-run')) {
         ids.push(JSON.parse(String(init?.body)).request_id);
         const reply = replies[n++];
         if (reply === 'timeout') return Promise.reject(new Error('timeout'));
@@ -904,20 +904,20 @@ describe('SchedulerCard — request id', () => {
     return ids;
   }
 
-  it('SchedulerCard trigger: the body carries a request id', async () => {
-    const ids = installTrigger([{ ok: true, body: { run_id: 'r2' } }]);
+  it('SchedulerCard start: the body carries a request id', async () => {
+    const ids = installStart([{ ok: true, body: { run_id: 'r2' } }]);
     renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
 
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
 
     await waitFor(() => expect(ids).toHaveLength(1));
     expect(ids[0]).toMatch(UUID);
   });
 
   it('requestId: a press after a timeout is a retry and sends the same id', async () => {
-    const ids = installTrigger(['timeout', { ok: true }]);
+    const ids = installStart(['timeout', { ok: true }]);
     renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
-    const button = () => screen.getByTitle('Trigger a full DAG run');
+    const button = () => screen.getByTitle('Start a manual run of the whole schedule');
 
     fireEvent.click(button());
     await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
@@ -928,12 +928,12 @@ describe('SchedulerCard — request id', () => {
   });
 
   it('requestId: a press after a 500 is a retry too, because the command may have committed', async () => {
-    const ids = installTrigger([{ ok: false, status: 500, body: { error: 'upstream timed out' } }, { ok: true }]);
+    const ids = installStart([{ ok: false, status: 500, body: { error: 'upstream timed out' } }, { ok: true }]);
     renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
 
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
     await waitFor(() => expect(screen.getByText(/upstream timed out/)).toBeInTheDocument());
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toBe(ids[0]);
@@ -944,16 +944,16 @@ describe('SchedulerCard — request id', () => {
     // does not wait for it.
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     try {
-      const ids = installTrigger([{ ok: true, body: { run_id: 'r2' } }, { ok: true, body: { run_id: 'r3' } }]);
+      const ids = installStart([{ ok: true, body: { run_id: 'r2' } }, { ok: true, body: { run_id: 'r3' } }]);
       renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
       const flush = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
 
-      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
       await flush();
       expect(ids).toHaveLength(1);
-      expect(screen.getByTitle('Trigger a full DAG run')).toHaveTextContent('Triggered');
+      expect(screen.getByTitle('Start a manual run of the whole schedule')).toHaveTextContent('Started');
       await act(async () => { vi.advanceTimersByTime(3000); });
-      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
       await flush();
 
       expect(ids).toHaveLength(2);
@@ -967,13 +967,13 @@ describe('SchedulerCard — request id', () => {
   it('requestId: a press hours after an unanswered one, with no newer run on the card, is a retry with the same id', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      const ids = installTrigger(['timeout', { ok: true, body: { run_id: 'r3' } }]);
+      const ids = installStart(['timeout', { ok: true, body: { run_id: 'r3' } }]);
       renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
 
-      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
       await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
       vi.setSystemTime(Date.now() + 6 * 60 * 60 * 1000);
-      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
 
       await waitFor(() => expect(ids).toHaveLength(2));
       expect(ids[1]).toBe(ids[0]);
@@ -983,14 +983,14 @@ describe('SchedulerCard — request id', () => {
   });
 
   it('requestId: a press after the card shows a newer run than the unanswered press saw is a new action', async () => {
-    const ids = installTrigger(['timeout', { ok: true, body: { run_id: 'r3' } }]);
+    const ids = installStart(['timeout', { ok: true, body: { run_id: 'r3' } }]);
     const view = renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
 
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
     await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
     // The schedule list's next poll names the run the unanswered press made.
     view.rerender(cardTree(baseSchedule({ has_active_run: false, last_run_id: 'r2' })));
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toMatch(UUID);
@@ -998,13 +998,13 @@ describe('SchedulerCard — request id', () => {
   });
 
   it('requestId: changing the operation mints a new id', async () => {
-    const ids = installTrigger(['timeout', { ok: true }]);
+    const ids = installStart(['timeout', { ok: true }]);
     renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
 
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
     await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'build' } });
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).not.toBe(ids[0]);

@@ -25,7 +25,7 @@ version: 1
 name: dbt-parse
 match: { cluster: single, source: parse }
 context: [failing_node_source]
-agent: { prompt: dbt-parse, tools: [], rounds: 3 }
+agent: { prompt: dbt-parse, tools: [], drafts: 3 }
 preflight: [content_changed]
 `)},
 		"fixtures/types/dbt-compile.yaml": {Data: []byte(fixtureOf("type: dbt-compile", "built-in-compile"))},
@@ -49,7 +49,7 @@ version: 1
 name: dbt-compile
 match: { cluster: single, source: compile, node_types: [dbt-model] }
 context: [failing_node_source]
-agent: { prompt: dbt-compile, tools: [], rounds: 1 }
+agent: { prompt: dbt-compile, tools: [], drafts: 1 }
 preflight: [content_changed]
 `
 
@@ -64,7 +64,7 @@ func TestLoadInstall_AnInstallFileReplacesTheBuiltInWhole(t *testing.T) {
 	require.NoError(t, err)
 	typ := set.Types["dbt-compile"]
 	assert.Equal(t, "my-compile.yaml", typ.File)
-	assert.Equal(t, 1, typ.Agent.Rounds)
+	assert.Equal(t, 1, typ.Agent.Drafts)
 	require.Len(t, typ.Preflight, 1, "the built-in's three pre-flight checks are not merged into the install's one")
 	assert.Equal(t, workflow.StepName("content_changed"), typ.Preflight[0].Name)
 	require.Len(t, typ.Context, 1, "the built-in's context steps are not merged into the install's")

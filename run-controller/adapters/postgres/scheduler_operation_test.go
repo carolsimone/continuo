@@ -47,7 +47,7 @@ func TestRunRow_OperationRoundTrip(t *testing.T) {
 	// sibling helper in scheduler_repository_test.go.
 	repo := NewRunRepository(db, discardLogger())
 
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "op-roundtrip", run.KindTrigger, nil, "user-1", model.OperationTest, run.ReleaseStamp{}, time.Now())
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "op-roundtrip", run.KindManual, nil, "user-1", model.OperationTest, run.ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewPendingRun: %v", err)
 	}

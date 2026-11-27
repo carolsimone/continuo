@@ -31,7 +31,7 @@ type Run struct {
 	// release is the release this run runs on; the zero stamp when the run
 	// names none.
 	release ReleaseStamp
-	// initiatedBy records the user who triggered this run, or the "system"
+	// initiatedBy records the user who started this run, or the "system"
 	// sentinel for cron / platform-initiated runs. Stamped at creation and
 	// immutable thereafter.
 	initiatedBy string
@@ -178,9 +178,9 @@ func (e scheduleNameTooLongError) Error() string {
 func (e scheduleNameTooLongError) Is(target error) bool { return target == ErrScheduleNameTooLong }
 
 // NewPendingRun creates the PENDING Run id of a schedule, fired by cron or
-// triggered. The caller chooses id, so a command can record the run it
+// started by hand. The caller chooses id, so a command can record the run it
 // creates before the run exists; a nil id is ErrRunIDRequired, and a schedule
-// name ValidateScheduleName refuses is its error. A trigger's caller flow:
+// name ValidateScheduleName refuses is its error. A manual run's caller flow:
 // ValidateScheduleName → SchedulePolicy.EnsureScheduleKnown →
 // SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start →
 // SaveRun. A cron fire calls neither ValidateScheduleName nor
@@ -921,7 +921,7 @@ func (r *Run) CanBeRebaseSource(ctx context.Context, tasks TaskCollection) error
 // FAILED or CANCELLED and carry at least one non-SUCCEEDED task. nothingErr
 // is the kind-specific sentinel (ErrNothingToRerun / ErrNothingToRebase)
 // returned when no non-SUCCEEDED task exists, so callers can tell the two
-// trigger paths apart.
+// commands apart.
 func (r *Run) canBeDerivedSource(ctx context.Context, tasks TaskCollection, nothingErr error) error {
 	if r.status != RunStatusFailed && r.status != RunStatusCancelled {
 		return ErrSourceMustBeTerminallyFailedOrCancelled
@@ -936,7 +936,7 @@ func (r *Run) canBeDerivedSource(ctx context.Context, tasks TaskCollection, noth
 	return nil
 }
 
-// HasTaskAt is used by TriggerSingleNodeRun's stale-mode precondition: the
+// HasTaskAt is used by StartSingleNodeRun's stale-mode precondition: the
 // source run must carry a task at the requested node.
 func (r *Run) HasTaskAt(ctx context.Context, tasks TaskCollection, node NodeID) (bool, error) {
 	_, err := tasks.GetByNode(ctx, r.runID, node)

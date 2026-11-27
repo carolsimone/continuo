@@ -35,8 +35,8 @@ func TestRemediationMetrics_CountersCarryTheirLabels(t *testing.T) {
 	m.Try("rejected-release", "dbt-compile", "passed")
 	m.Try("rejected-release", "dbt-compile", "passed")
 	m.Try("rejected-release", "dbt-validation", "gate_failed")
-	m.Round("rejected-release", "dbt-compile", "revised")
-	m.Round("rejected-release", "dbt-compile", "passed")
+	m.Draft("rejected-release", "dbt-compile", "revised")
+	m.Draft("rejected-release", "dbt-compile", "passed")
 	m.Outcome("rejected-release", "dbt-validation", "handed_over", "tries_spent")
 	m.Outcome("rejected-release", "dbt-compile", "fixed", "")
 	m.Outcome("rejected-release", "none", "handed_over", "no_type")
@@ -48,8 +48,8 @@ func TestRemediationMetrics_CountersCarryTheirLabels(t *testing.T) {
 	requireSeries(t, scrape(reg),
 		`continuo_remediation_tries_total{component="agent-remediation",flow="rejected-release",result="passed",type="dbt-compile"} 2`,
 		`continuo_remediation_tries_total{component="agent-remediation",flow="rejected-release",result="gate_failed",type="dbt-validation"} 1`,
-		`continuo_remediation_rounds_total{component="agent-remediation",flow="rejected-release",result="revised",type="dbt-compile"} 1`,
-		`continuo_remediation_rounds_total{component="agent-remediation",flow="rejected-release",result="passed",type="dbt-compile"} 1`,
+		`continuo_remediation_drafts_total{component="agent-remediation",flow="rejected-release",result="revised",type="dbt-compile"} 1`,
+		`continuo_remediation_drafts_total{component="agent-remediation",flow="rejected-release",result="passed",type="dbt-compile"} 1`,
 		`continuo_remediation_outcomes_total{component="agent-remediation",flow="rejected-release",outcome="handed_over",reason="tries_spent",type="dbt-validation"} 1`,
 		`continuo_remediation_outcomes_total{component="agent-remediation",flow="rejected-release",outcome="fixed",reason="",type="dbt-compile"} 1`,
 		`continuo_remediation_outcomes_total{component="agent-remediation",flow="rejected-release",outcome="handed_over",reason="no_type",type="none"} 1`,

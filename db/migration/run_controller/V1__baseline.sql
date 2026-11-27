@@ -128,7 +128,7 @@ CREATE TABLE runs (
     scheduled_for timestamptz,
     CONSTRAINT runs_pkey PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_failure_reason_check CHECK ((failure_reason IN ('stalled', 'empty_selection', 'invalid_node_type'))),
-    CONSTRAINT runs_kind_check CHECK ((kind IN ('cron', 'trigger', 'rerun', 'rebase', 'single_node_run', 'promote_seed'))),
+    CONSTRAINT runs_kind_check CHECK ((kind IN ('cron', 'manual', 'rerun', 'rebase', 'single_node_run', 'promote_seed'))),
     CONSTRAINT runs_operation_check CHECK ((operation IN ('run', 'test', 'build', 'full_refresh'))),
     CONSTRAINT runs_status_check CHECK ((status IN ('pending', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'skipped'))),
     CONSTRAINT valid_timestamps CHECK ((((started_at IS NULL) OR (started_at >= created_at)) AND ((completed_at IS NULL) OR (completed_at >= started_at))))
@@ -152,9 +152,9 @@ COMMENT ON COLUMN runs.run_id IS 'Unique identifier of the run';
 
 COMMENT ON COLUMN runs.last_progress_at IS 'The run''s progress clock: stamped when a task of the run is dispatched or moves; run-controller fails an active run with nothing in flight whose clock is more than five minutes old as stalled';
 
-COMMENT ON COLUMN runs.kind IS 'Run discriminator. Allowed: cron, trigger, rerun, rebase, single_node_run, promote_seed. Written once at activation time and immutable thereafter; a rerun/rebase mints a new row with its own kind rather than mutating the source.';
+COMMENT ON COLUMN runs.kind IS 'Run discriminator. Allowed: cron, manual, rerun, rebase, single_node_run, promote_seed. Written once at activation time and immutable thereafter; a rerun/rebase mints a new row with its own kind rather than mutating the source.';
 
-COMMENT ON COLUMN runs.source_run_id IS 'Lineage pointer to the run this one derives from (rerun, rebase, stale-mode single_node_run). NULL for cron/trigger. Not a foreign key — orphans are fine.';
+COMMENT ON COLUMN runs.source_run_id IS 'Lineage pointer to the run this one derives from (rerun, rebase, stale-mode single_node_run). NULL for cron and manual runs. Not a foreign key — orphans are fine.';
 
 COMMENT ON COLUMN runs.initiated_by IS 'User who initiated the run, or ''system'' for cron / platform-initiated runs. Stamped at creation from the gRPC initiating-user metadata header; immutable thereafter.';
 
@@ -270,7 +270,7 @@ COMMENT ON COLUMN command_requests.tenant_id IS 'Tenant that made the request; l
 
 COMMENT ON COLUMN command_requests.request_id IS 'Id the caller gave the request; a repeat of it returns the first call''s run';
 
-COMMENT ON COLUMN command_requests.command IS 'Name of the command: start_run, trigger_single_node_run, cancel_active_run and the like';
+COMMENT ON COLUMN command_requests.command IS 'Name of the command: start_run, start_single_node_run, cancel_active_run and the like';
 
 COMMENT ON COLUMN command_requests.fingerprint IS 'Hex SHA-256 of the command and its parsed parameters; another fingerprint under the same id is a reuse';
 

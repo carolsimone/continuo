@@ -36,7 +36,7 @@ func runFullRefresh(t *testing.T, fake client.RunClient, cfg *config.Config, arg
 }
 
 func TestFullRefreshNode_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeRunController{fullRefreshResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_fr", ScheduleName: "single-node-run-00ff00ff"}}
+	fake := &fakeNodeRunController{fullRefreshResp: &runv1.StartSingleNodeRunResponse{RunId: "run_fr", ScheduleName: "single-node-run-00ff00ff"}}
 	stdout, stderr, exit := runFullRefresh(t, fake, &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"},
 		[]string{"finance", "analytics", "orders", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"})
 
@@ -50,7 +50,7 @@ func TestFullRefreshNode_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestFullRefresh_SendsTheAcknowledgedObjects(t *testing.T) {
-	fake := &fakeNodeRunController{fullRefreshResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_fr"}}
+	fake := &fakeNodeRunController{fullRefreshResp: &runv1.StartSingleNodeRunResponse{RunId: "run_fr"}}
 
 	_, _, code := runFullRefresh(t, fake, &config.Config{Timeout: 2 * time.Second},
 		[]string{"service-1", "e2e_schema", "seed_table_1", "--acknowledge", "e2e_bi.seed_reader", "--acknowledge", "bi.other"})
@@ -60,7 +60,7 @@ func TestFullRefresh_SendsTheAcknowledgedObjects(t *testing.T) {
 }
 
 func TestFullRefresh_WithoutAcknowledgeSendsNone(t *testing.T) {
-	fake := &fakeNodeRunController{fullRefreshResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_fr"}}
+	fake := &fakeNodeRunController{fullRefreshResp: &runv1.StartSingleNodeRunResponse{RunId: "run_fr"}}
 
 	_, _, code := runFullRefresh(t, fake, &config.Config{Timeout: 2 * time.Second}, []string{"service-1", "e2e_schema", "seed_table_1"})
 

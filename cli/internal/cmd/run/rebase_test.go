@@ -15,7 +15,7 @@ import (
 
 func TestRunRebase_SendsTheRequestIDTheReleaseAndTheOption(t *testing.T) {
 	t.Setenv("CONTINUO_REQUEST_ID", testRequestID)
-	fake := &fakeRunClient{rebaseResp: &runv1.TriggerRebaseResponse{RunId: "new-run", ScheduleName: "daily"}}
+	fake := &fakeRunClient{rebaseResp: &runv1.StartRebaseResponse{RunId: "new-run", ScheduleName: "daily"}}
 
 	stdout, stderr, exit := executeAs(t, NewRebaseCommand, fake, "alice", testRunID, "rel-9", "true")
 
@@ -27,7 +27,7 @@ func TestRunRebase_SendsTheRequestIDTheReleaseAndTheOption(t *testing.T) {
 }
 
 func TestRunRebase_OmittedOptionIsFalse(t *testing.T) {
-	fake := &fakeRunClient{rebaseResp: &runv1.TriggerRebaseResponse{RunId: "new-run", ScheduleName: "daily"}}
+	fake := &fakeRunClient{rebaseResp: &runv1.StartRebaseResponse{RunId: "new-run", ScheduleName: "daily"}}
 
 	_, _, exit := execute(t, NewRebaseCommand, fake, testRunID, "rel-9")
 
@@ -121,7 +121,7 @@ func TestRunRebase_ErrorsKeepTheirExitCodes(t *testing.T) {
 }
 
 func TestRunRebase_HumanModeWritesToStderrOnly(t *testing.T) {
-	fake := &fakeRunClient{rebaseResp: &runv1.TriggerRebaseResponse{RunId: "new-run", ScheduleName: "daily"}}
+	fake := &fakeRunClient{rebaseResp: &runv1.StartRebaseResponse{RunId: "new-run", ScheduleName: "daily"}}
 
 	stdout, stderr, exit := executeHuman(t, NewRebaseCommand, fake, testRunID, "rel-9")
 
@@ -131,7 +131,7 @@ func TestRunRebase_HumanModeWritesToStderrOnly(t *testing.T) {
 }
 
 func TestRunRebase_OutputMatchesItsSchema(t *testing.T) {
-	fake := &fakeRunClient{rebaseResp: &runv1.TriggerRebaseResponse{RunId: "new-run", ScheduleName: "daily"}}
+	fake := &fakeRunClient{rebaseResp: &runv1.StartRebaseResponse{RunId: "new-run", ScheduleName: "daily"}}
 	cmd := NewRebaseCommand(nil, nil, nil, nil)
 
 	stdout, _, exit := execute(t, NewRebaseCommand, fake, testRunID, "rel-9")

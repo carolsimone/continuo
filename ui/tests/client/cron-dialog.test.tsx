@@ -144,7 +144,7 @@ describe('CronDialog', () => {
     await advance(1000);
 
     expect(screen.getByRole('heading', { name: 'Add cron · e2e-schedule' })).toBeInTheDocument();
-    expect(screen.getByText(/runs only when triggered\. A cron makes it also run on its own\./)).toBeInTheDocument();
+    expect(screen.getByText(/runs only when someone starts it\. A cron makes it also run on its own\./)).toBeInTheDocument();
     expect(screen.queryByRole('checkbox', { name: /Paused/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Remove cron' })).toBeNull();
     expect(screen.queryByText(/Last changed by/)).toBeNull();
@@ -343,7 +343,7 @@ describe('CronDialog', () => {
     const remove = screen.getByRole('button', { name: 'Remove cron' });
     expect(remove.className).toMatch(/\bbtn--danger\b/);
     expect(remove.closest('.dialog-actions')).toBeNull();
-    expect(remove.closest('.dialog-remove-row')).toHaveTextContent('daily then runs only when triggered.');
+    expect(remove.closest('.dialog-remove-row')).toHaveTextContent('daily then runs only when someone starts it.');
     fireEvent.click(remove);
     await advance();
 

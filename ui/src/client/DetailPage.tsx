@@ -28,7 +28,7 @@ import { useScheduleGraph } from './detail-page/useScheduleGraph';
 import { RUNS_PAGE_SIZE, useScheduleRuns } from './detail-page/useScheduleRuns';
 import { useSelectedRunGraph } from './detail-page/useSelectedRunGraph';
 import { useProjectTree } from './detail-page/useProjectTree';
-import { useTriggerRun } from './detail-page/useTriggerRun';
+import { useManualRun } from './detail-page/useManualRun';
 import RebaseDialog from './RebaseDialog';
 import RerunDialog from './RerunDialog';
 
@@ -38,7 +38,7 @@ interface DetailPageProps {
 
 // A schedule's page. Each schedule gets its own ScheduleDetail, so arriving
 // at another schedule starts from empty page state, while a navigation that
-// changes only the query string — a panel tab — keeps it. The trigger
+// changes only the query string — a panel tab — keeps it. The Start run
 // button's request id is held here, above that boundary: a press that got no
 // answer and is repeated after the page left the schedule and came back
 // still sends the same id.
@@ -71,7 +71,7 @@ function ScheduleDetail({ name, mode, requestId }: {
     lastRunId, selectedRunId, mode, onScheduler: setScheduler,
   });
   const { runGraph, readFailed: runGraphReadFailed } = useSelectedRunGraph(selectedRunId);
-  const trigger = useTriggerRun(name, lastRunId, requestId, refreshLastRun);
+  const manualRun = useManualRun(name, lastRunId, requestId, refreshLastRun);
   // Any read of this page is failing and being retried.
   const readFailed = lastRunReadFailed || graphState === 'error' || runsReadFailed || rowsReadFailed || runGraphReadFailed;
   const [rerunState, setRerunState] = useState<'idle' | 'success'>('idle');
@@ -168,7 +168,7 @@ function ScheduleDetail({ name, mode, requestId }: {
         <DetailActions
           name={name}
           liveRunExists={liveRunExists}
-          trigger={trigger}
+          manualRun={manualRun}
           rerun={actions.rerun}
           rebase={actions.rebase}
           rerunState={rerunState}

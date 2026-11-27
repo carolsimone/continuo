@@ -36,7 +36,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 	if tenantID == "" {
 		return fmt.Errorf("classify release %s: %w", evs[0].ReleaseID, outbox.ErrNoTenant)
 	}
-	round := evs[0].RemediationRound
+	round := evs[0].Round
 	if round < 1 {
 		round = 1
 	}
@@ -48,7 +48,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 	items := make([]classified, 0, len(evs))
 	for i := range evs {
 		ev := evs[i]
-		ev.RemediationRound = round
+		ev.Round = round
 		c, err := classify(ctx, deps, &ev)
 		if err != nil {
 			return err
@@ -65,7 +65,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 	var recorded []classified
 	for _, it := range items {
 		inserted, err := u.DecisionRepo().Upsert(ctx, repository.ClassificationDecision{
-			Source: it.ev.Source, ReleaseID: it.ev.ReleaseID, RemediationRound: it.ev.RemediationRound,
+			Source: it.ev.Source, ReleaseID: it.ev.ReleaseID, Round: it.ev.Round,
 			NodeID: it.ev.NodeID, Category: it.c.Category, ErrorSignature: it.c.Signature,
 			Decision: it.c.Decision, Reason: it.c.Reason, DBTLogURI: it.ev.DBTLogURI, CreatedAt: deps.Clock.Now(),
 		})
@@ -88,13 +88,13 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 		head := recorded[0].ev
 		eventID := event.RemediationEventID(head.ReleaseID, round).String()
 		payload := event.HealTriggered{
-			Source:           head.Source,
-			ReleaseID:        head.ReleaseID,
-			RemediationRound: round,
-			Repo:             head.Repo,
-			CommitSHA:        head.CommitSHA,
-			CodeBundleURI:    head.CodeBundleURI,
-			ClassifiedAt:     deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),
+			Source:        head.Source,
+			ReleaseID:     head.ReleaseID,
+			Round:         round,
+			Repo:          head.Repo,
+			CommitSHA:     head.CommitSHA,
+			CodeBundleURI: head.CodeBundleURI,
+			ClassifiedAt:  deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),
 		}
 		for _, it := range recorded {
 			node := event.FailingNode{

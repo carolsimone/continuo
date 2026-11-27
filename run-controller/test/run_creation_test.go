@@ -86,7 +86,7 @@ func TestRunCreation(t *testing.T) {
 		scheduledNode("mart", "creation_b", "dbt-model", "creation-daily", "raw.creation_a"),
 		scheduledNode("mart", "creation_c", "dbt-model", "creation-daily"))
 
-	t.Run("a triggered run is planned and dispatched in its creating transaction", func(t *testing.T) {
+	t.Run("a manual run is planned and dispatched in its creating transaction", func(t *testing.T) {
 		id, err := h.start(ctx, pkgevents.DefaultTenantID, "creation-daily", alice, model.OperationRun)
 		require.NoError(t, err)
 
@@ -114,7 +114,7 @@ func TestRunCreation(t *testing.T) {
 			h.created(t, id), "the run failed with no failed task, so it records why")
 	})
 
-	t.Run("a trigger of a schedule with a cron and no node in the live release creates no run, whatever its operation", func(t *testing.T) {
+	t.Run("a manual run of a schedule with a cron and no node in the live release creates no run, whatever its operation", func(t *testing.T) {
 		var before int
 		require.NoError(t, db.Get(&before, `SELECT count(*) FROM runs WHERE schedule_name = 'creation-empty'`))
 
@@ -152,7 +152,7 @@ func TestRunCreation(t *testing.T) {
 		require.NoError(t, err)
 		releaseLeasesOf(t, db, rerunID)
 
-		rebaseID, err := h.rebase(ctx, svchandlers.TriggerRebaseInput{
+		rebaseID, err := h.rebase(ctx, svchandlers.StartRebaseInput{
 			TenantID: pkgevents.DefaultTenantID, SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	})
 	var rebaseID uuid.UUID
 	t.Run("rebase", func(t *testing.T) {
-		id, err := h.rebase(ctx, svchandlers.TriggerRebaseInput{
+		id, err := h.rebase(ctx, svchandlers.StartRebaseInput{
 			TenantID: pkgevents.DefaultTenantID, SourceRunID: srcID, Initiator: alice,
 		})
 		require.NoError(t, err)
@@ -241,7 +241,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	})
 	t.Run("rebase of a rebase", func(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, rebaseID, "the rebase subtest created the source")
-		id, err := h.rebase(ctx, svchandlers.TriggerRebaseInput{
+		id, err := h.rebase(ctx, svchandlers.StartRebaseInput{
 			TenantID: pkgevents.DefaultTenantID, SourceRunID: rebaseID, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
@@ -296,14 +296,14 @@ func TestRunCommands_NeedOneConnection(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, started, res.RunID)
 	})
-	t.Run("TriggerSingleNodeRun from a snapshot", func(t *testing.T) {
+	t.Run("StartSingleNodeRun from a snapshot", func(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, started, "the StartRun subtest started the run")
 		_, err := db.Exec(`UPDATE runs SET status = 'cancelled', completed_at = now() WHERE run_id = $1`, started)
 		require.NoError(t, err)
 		releaseLeasesOf(t, db, started)
-		res, err := cmds.TriggerSingleNodeRun(ctx, svchandlers.TriggerSingleNodeRunCommand{
+		res, err := cmds.StartSingleNodeRun(ctx, svchandlers.StartSingleNodeRunCommand{
 			RequestID: uuid.New(),
-			TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
+			StartSingleNodeRunInput: svchandlers.StartSingleNodeRunInput{
 				TenantID:       pkgevents.DefaultTenantID,
 				Target:         run.NodeID{ProjectName: "service-1", SchemaName: "raw", TableName: "pool_cmd_a"},
 				MetadataSource: run.MetadataSourceSnapshotOfRun,

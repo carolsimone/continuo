@@ -48,9 +48,9 @@ type Callback = (err: any, res: any) => void;
 // its callback; a read does not.
 export interface GrpcClient {
   startRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
-  triggerRerun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
-  triggerRebase: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
-  triggerSingleNodeRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  startRerun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  startRebase: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  startSingleNodeRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
   cancelRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
   upsertSchedule: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
   deleteSchedule: (request: any, metadata: grpc.Metadata, callback: Callback) => void;

@@ -280,38 +280,38 @@ func TestRecordStageResults_ReplacesPerStage(t *testing.T) {
 	}
 }
 
-func TestStartRemediationRound_IncrementsUpToCap(t *testing.T) {
+func TestStartRound_IncrementsUpToCap(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	r := releasecheck.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToCompiling(now))
 	require.NoError(t, r.Fail("compile_failed", "", []string{"finance"}, now))
-	require.Equal(t, 1, r.RemediationRound())
+	require.Equal(t, 1, r.Round())
 
-	n, err := r.StartRemediationRound(now)
+	n, err := r.StartRound(now)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
-	n, err = r.StartRemediationRound(now)
+	n, err = r.StartRound(now)
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
-	_, err = r.StartRemediationRound(now)
+	_, err = r.StartRound(now)
 	require.ErrorIs(t, err, releasecheck.ErrRoundsExhausted)
 
 	last := r.Transitions()[len(r.Transitions())-1]
-	require.Equal(t, "remediation_retry", string(last.To))
+	require.Equal(t, "round_started", string(last.To))
 }
 
-func TestStartRemediationRound_RequiresRejected(t *testing.T) {
+func TestStartRound_RequiresRejected(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	r := releasecheck.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
-	_, err := r.StartRemediationRound(now)
+	_, err := r.StartRound(now)
 	require.ErrorIs(t, err, releasecheck.ErrNotRejected)
 }
 
 func TestRehydrate_CarriesRoundAndPayload(t *testing.T) {
-	r := releasecheck.Rehydrate(releasecheck.RehydrateInput{ID: "rel-1", Kind: releasecheck.KindCandidate, Status: releasecheck.StatusRejected, RemediationRound: 2, RejectionPayload: []byte(`{"a":1}`)})
-	require.Equal(t, 2, r.RemediationRound())
+	r := releasecheck.Rehydrate(releasecheck.RehydrateInput{ID: "rel-1", Kind: releasecheck.KindCandidate, Status: releasecheck.StatusRejected, Round: 2, RejectionPayload: []byte(`{"a":1}`)})
+	require.Equal(t, 2, r.Round())
 	require.JSONEq(t, `{"a":1}`, string(r.RejectionPayload()))
-	require.Equal(t, 1, releasecheck.Rehydrate(releasecheck.RehydrateInput{ID: "rel-2", Kind: releasecheck.KindCandidate, Status: releasecheck.StatusRejected}).RemediationRound(), "zero rehydrates as round 1")
+	require.Equal(t, 1, releasecheck.Rehydrate(releasecheck.RehydrateInput{ID: "rel-2", Kind: releasecheck.KindCandidate, Status: releasecheck.StatusRejected}).Round(), "zero rehydrates as round 1")
 }
 
 func TestNewCandidate_BootstrapFlag(t *testing.T) {

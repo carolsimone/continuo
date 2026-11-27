@@ -109,7 +109,7 @@ func TestDecisionRepositoryUpsertIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	repo := NewDecisionRepository(tx) // bound to the tx, matching the UnitOfWork
 	d := repository.ClassificationDecision{
-		Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", RemediationRound: 1, NodeID: "s.n",
+		Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", Round: 1, NodeID: "s.n",
 		Category: failure.CategoryLogic, ErrorSignature: "sig",
 		Decision: failure.DecisionEmit, Reason: "logic:x", CreatedAt: time.Now().UTC(),
 	}
@@ -123,7 +123,7 @@ func TestDecisionRepositoryUpsertIdempotent(t *testing.T) {
 }
 
 // TestDecisionRepositoryUpsertScopedByRound verifies that
-// remediation_round is part of the natural key: reclassifying the same
+// round is part of the natural key: reclassifying the same
 // (source, release, node) at a later round — a human's "try again" on the
 // rejected release — inserts a fresh row rather than colliding with the
 // earlier round's decision.
@@ -140,7 +140,7 @@ func TestDecisionRepositoryUpsertScopedByRound(t *testing.T) {
 	}
 
 	roundOne := base
-	roundOne.RemediationRound = 1
+	roundOne.Round = 1
 	inserted, err := repo.Upsert(context.Background(), roundOne)
 	require.NoError(t, err)
 	require.True(t, inserted, "round 1 inserts")
@@ -151,7 +151,7 @@ func TestDecisionRepositoryUpsertScopedByRound(t *testing.T) {
 	require.False(t, inserted, "redelivering round 1 is a no-op")
 
 	roundTwo := base
-	roundTwo.RemediationRound = 2
+	roundTwo.Round = 2
 	inserted, err = repo.Upsert(context.Background(), roundTwo)
 	require.NoError(t, err)
 	require.True(t, inserted, "round 2 is a fresh insert, not a conflict with round 1")

@@ -76,7 +76,7 @@ beforeEach(() => {
       const tasks = tasksFor(phase);
       return ok({ total_count: tasks.length, tasks });
     }
-    if (url === '/api/config') return ok({ cancellation_reasons: ['Incorrect trigger', 'Other'] });
+    if (url === '/api/config') return ok({ cancellation_reasons: ['Started by mistake', 'Other'] });
     if (url === `/api/runs/${RUN_ID}/cancel` && init?.method === 'POST') {
       phase = 'cancelling';
       return ok({ run_id: RUN_ID, status: 'cancelling' });
@@ -105,7 +105,7 @@ function summary(container: HTMLElement) {
 async function cancelThroughDialog() {
   fireEvent.click(screen.getByTitle('Cancel the active run'));
   await advance(0);
-  fireEvent.change(screen.getByRole('combobox', { name: /reason/i }), { target: { value: 'Incorrect trigger' } });
+  fireEvent.change(screen.getByRole('combobox', { name: /reason/i }), { target: { value: 'Started by mistake' } });
   fireEvent.click(screen.getByRole('button', { name: /cancel run/i }));
   await advance(0);
 }
@@ -142,7 +142,7 @@ describe('DashboardPage — the Runs card after a cancel', () => {
     await advance(POLL_MS);
     expect(releaseHeldPoll).not.toBeNull();
 
-    fireEvent.change(screen.getByRole('combobox', { name: /reason/i }), { target: { value: 'Incorrect trigger' } });
+    fireEvent.change(screen.getByRole('combobox', { name: /reason/i }), { target: { value: 'Started by mistake' } });
     fireEvent.click(screen.getByRole('button', { name: /cancel run/i }));
     await advance(0);
     expect(badge(container)).toHaveTextContent('cancelling');
@@ -153,19 +153,19 @@ describe('DashboardPage — the Runs card after a cancel', () => {
   });
 });
 
-describe('DashboardPage — the Runs card after a trigger', () => {
-  it('shows the new run as soon as the trigger succeeds', async () => {
+describe('DashboardPage — the Runs card after a manual run starts', () => {
+  it('shows the new run as soon as the manual run starts', async () => {
     phase = 'cancelled';
     const fetchMock = vi.mocked(fetch);
     const base = fetchMock.getMockImplementation()!;
-    let triggered = false;
+    let started = false;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === '/api/schedules/daily/trigger' && init?.method === 'POST') {
-        triggered = true;
+      if (url === '/api/schedules/daily/manual-run' && init?.method === 'POST') {
+        started = true;
         return ok({ run_id: 'run-2' });
       }
-      if (url === '/api/schedules' && triggered) {
+      if (url === '/api/schedules' && started) {
         return ok({ schedules: [{ ...scheduleNow(), has_active_run: true, last_run_status: 'running', last_run_id: 'run-2' }] });
       }
       if (url.startsWith('/api/runs/run-2/tasks')) {
@@ -179,7 +179,7 @@ describe('DashboardPage — the Runs card after a trigger', () => {
     await advance(0);
     expect(badge(container)).toHaveTextContent('cancelled');
 
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    fireEvent.click(screen.getByTitle('Start a manual run of the whole schedule'));
     await advance(0);
     expect(badge(container)).toHaveTextContent('running');
     expect(screen.getByText('0 of 41 nodes complete')).toBeInTheDocument();

@@ -39,10 +39,10 @@ assert "a correct label is not touched, and area/* is ignored" "[ $rc -eq 0 ] &&
 run 'feat(run-controller): add attempts' bug area/run-controller
 assert "a title edited from fix to feat swaps bug for enhancement" "[ \$(writes) = 2 ] && grep -q 'DELETE repos/o/r/issues/7/labels/bug' $tmp/log && grep -q 'labels\[\]=enhancement' $tmp/log"
 
-run 'feat(cli)!: rename node trigger' enhancement
+run 'feat(cli)!: drop the --json flag' enhancement
 assert "a ! title adds breaking-change" "[ \$(writes) = 1 ] && grep -q 'labels\[\]=breaking-change' $tmp/log"
 
-run 'feat(cli): rename node trigger' enhancement breaking-change
+run 'feat(cli): drop the --json flag' enhancement breaking-change
 assert "dropping the ! removes breaking-change" "[ \$(writes) = 1 ] && grep -q 'DELETE repos/o/r/issues/7/labels/breaking-change' $tmp/log"
 
 run 'chore: tidy' ci/cd

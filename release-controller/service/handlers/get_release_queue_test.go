@@ -35,6 +35,6 @@ func TestGetReleaseQueue_ReportsTheActiveFix(t *testing.T) {
 	assert.Equal(t, releasecheck.StatusCompiling, got.Active.Status)
 	assert.Equal(t, now.Add(time.Minute), got.Active.Since)
 	assert.Equal(t, "rel-1", got.Active.VerifiesReleaseID)
-	assert.Equal(t, 3, got.Active.RemediationRound)
+	assert.Equal(t, 3, got.Active.Round)
 	assert.Equal(t, 2, got.Active.Try)
 }

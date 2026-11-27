@@ -212,10 +212,10 @@ func main() {
 	// Start the release.rejected consumer in a goroutine; blocks until ctx is
 	// cancelled.
 	runConsumer("release_rejected", rredis.NewReleaseRejectedConsumer(rc, deps, logger))
-	// Start the remediation.retry_requested consumer — a human's "try again"
+	// Start the round.requested consumer — a human's "try again"
 	// replay of a rejected release's stored rejection — in a goroutine; blocks
 	// until ctx is cancelled.
-	runConsumer("remediation_retry", rredis.NewRemediationRetryConsumer(rc, deps, logger))
+	runConsumer("round_requested", rredis.NewRoundRequestedConsumer(rc, deps, logger))
 
 	// Everything is initialised and running: readiness may now turn true.
 	startup.Done()

@@ -71,7 +71,7 @@ Output (stdout, JSON):
    "has_active_run":bool,"last_run_id":string,"last_run_status":string,
    "last_run_at":string,"updated_by":string,"updated_at":string}]}
   A schedule is scheduled (has_cron true, paused false), paused (has_cron true,
-  paused true) or manual (has_cron false: it runs only when triggered, and
+  paused true) or manual (has_cron false: it runs only when someone starts it, and
   cron and timezone are empty). cron_words is the cron in English. cron and
   version are the fields "schedule set-cron", "schedule pause" and "schedule
   resume" print for the schedule they saved; version counts the edits of the

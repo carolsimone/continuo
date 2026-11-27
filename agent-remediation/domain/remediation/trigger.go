@@ -12,13 +12,13 @@ import (
 // Trigger is the decoded heal trigger that starts one remediation: the
 // release-level facts every fix needs, and one TriggerNode per failing node the
 // classifier recorded, the unfixable ones included. One rejected release yields
-// one trigger per remediation round, so a trigger names a whole failing set
+// one trigger per round, so a trigger names a whole failing set
 // rather than a single node.
 type Trigger struct {
 	TenantID  string
 	Source    string
 	ReleaseID string
-	// Round is the release's remediation round this trigger belongs to (1 for
+	// Round is the release's round this trigger belongs to (1 for
 	// the rejection itself).
 	Round     int
 	Repo      string

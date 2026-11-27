@@ -77,7 +77,7 @@ func (p Planner) LiveStamp(ctx context.Context, u uow.UnitOfWork, tenantID strin
 	return run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, nil
 }
 
-// Schedule selects a cron or triggered run of tenantID's scheduleName with
+// Schedule selects a cron or manual run of tenantID's scheduleName with
 // operation op on the tenant's live release. The selection carries the live
 // release even when the selector refuses it.
 func (p Planner) Schedule(ctx context.Context, u uow.UnitOfWork, tenantID, scheduleName string, op model.Operation) (Selection, error) {

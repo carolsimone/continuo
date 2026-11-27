@@ -6,7 +6,7 @@
     "occurred_at": "2026-11-12T14:05:33.000094Z",
     "payload": {
       "release_id": "rel_20261112_0042",
-      "remediation_round": 2,
+      "round": 2,
       "rejection": {
         "release_id": "rel_20261112_0042",
         "stage": "validation",
@@ -40,7 +40,7 @@
     "schema_version": "1",
     "payload": {
       "release_id": "rel_20261112_0042",
-      "remediation_round": 2,
+      "round": 2,
       "rejection": {
         "release_id": "rel_20261112_0042",
         "stage": "validation",

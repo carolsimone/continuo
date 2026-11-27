@@ -54,7 +54,7 @@ type Deps struct {
 	ReleaseCheckTimeout time.Duration
 	// StepTimeout bounds each step of a drive. Zero is ten minutes.
 	StepTimeout time.Duration
-	// Metrics counts the tries, rounds, outcomes, stages and model tokens of
+	// Metrics counts the tries, drafts, outcomes, stages and model tokens of
 	// the remediations the runner drives. Nil counts nothing.
 	Metrics ports.RemediationMetrics
 	// Flow names the flow Accept records on every remediation it creates,

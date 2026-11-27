@@ -183,20 +183,20 @@ streams:
         group: execution-controller-release-check-finished
         const: ExecutionControllerReleaseCheckFinished
 
-  - name: remediation.retry_requested:v1
-    const: RemediationRetryRequestedV1
-    description: An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
+  - name: round.requested:v1
+    const: RoundRequestedV1
+    description: An operator's "Try again" on a rejected release; release-controller sends the next round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
     producers: [release-controller]
     consumers:
       - component: remediation
-        group: remediation-retry-requested
-        const: RemediationRetryRequested
+        group: remediation-round-requested
+        const: RemediationRoundRequested
 
   # ---------------- remediation-classifier streams ----------------
 
   - name: heal.triggered:v1
     const: HealTriggeredV1
-    description: One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
+    description: One batched trigger per rejected release and round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
     producers: [remediation]
     consumers:
       - component: agent-remediation
@@ -301,7 +301,7 @@ vocabularies:
       fix's, short of promotion. Travels as `reason` on release.rejected:v1 and
       as the check's stored fail reason. `healable` marks the reasons the remediation
       classifier turns into a heal trigger; every other reason it drops, so a
-      retry of one would spend a remediation round for nothing.
+      retry of one would spend a round for nothing.
     values:
       - value: compile_failed
         const: CompileFailed
@@ -394,9 +394,9 @@ vocabularies:
       - value: tries_spent
         const: TriesSpent
         description: the tries are spent and the last try failed at the release checks.
-      - value: preflight_rounds_spent
-        const: PreflightRoundsSpent
-        description: the model's drafts for the node's cluster were refused by pre-flight in every round its type allows.
+      - value: drafts_spent
+        const: DraftsSpent
+        description: pre-flight refused every draft its type allows the node's cluster in one try.
       - value: declined
         const: Declined
         description: a context or prompt step found that no fix can reach the node, so no model call was made for it.

@@ -67,11 +67,11 @@ func TestReleaseParsedV1_FeedsReleaseController(t *testing.T) {
 	groupsOf(t, ReleaseParsedV1, ReleaseControllerReleaseParsed)
 }
 
-func TestRemediationRetryRequestedV1_FeedsTheClassifier(t *testing.T) {
-	if RemediationRetryRequestedV1 != "remediation.retry_requested:v1" {
-		t.Fatalf("RemediationRetryRequestedV1 = %q", RemediationRetryRequestedV1)
+func TestRoundRequestedV1_FeedsTheClassifier(t *testing.T) {
+	if RoundRequestedV1 != "round.requested:v1" {
+		t.Fatalf("RoundRequestedV1 = %q", RoundRequestedV1)
 	}
-	groupsOf(t, RemediationRetryRequestedV1, RemediationRetryRequested)
+	groupsOf(t, RoundRequestedV1, RemediationRoundRequested)
 }
 
 func TestTaskStatusUpdatedV1_FeedsRunController(t *testing.T) {

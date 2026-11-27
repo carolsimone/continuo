@@ -389,7 +389,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	defer cleanup()
 
 	t.Run("conforming node materializes its declared rows", func(t *testing.T) {
-		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_probe")
+		runID, scheduleName := startPythonNodeRun(t, ctx, clients, "py_probe")
 		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
 
 		verifySchedulerSucceeded(t, ctx, clients, runID)
@@ -411,7 +411,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	})
 
 	t.Run("non-conforming node fails with its error class on the wire", func(t *testing.T) {
-		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_bad_shape")
+		runID, scheduleName := startPythonNodeRun(t, ctx, clients, "py_bad_shape")
 		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
 
 		verifySchedulerFailed(t, ctx, clients, runID)
@@ -441,7 +441,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	})
 
 	t.Run("csv node materializes the seeded csv's rows", func(t *testing.T) {
-		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_csv")
+		runID, scheduleName := startPythonNodeRun(t, ctx, clients, "py_csv")
 		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
 
 		verifySchedulerSucceeded(t, ctx, clients, runID)
@@ -484,7 +484,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	t.Run("python-api node receives its Secret as env vars", func(t *testing.T) {
 		createAPISecret(t, ctx)
 		defer deleteAPISecret(t, ctx)
-		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_api")
+		runID, scheduleName := startPythonNodeRun(t, ctx, clients, "py_api")
 		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
 
 		verifySchedulerSucceeded(t, ctx, clients, runID)
@@ -498,7 +498,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 
 	t.Run("python-api node fails when its Secret is missing", func(t *testing.T) {
 		deleteAPISecret(t, ctx)
-		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_api")
+		runID, scheduleName := startPythonNodeRun(t, ctx, clients, "py_api")
 		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
 
 		verifySchedulerFailed(t, ctx, clients, runID)
@@ -525,18 +525,18 @@ func deleteAPISecret(t *testing.T, ctx context.Context) {
 	require.NoError(t, err, "delete %s: %s", pyAPISecret, out)
 }
 
-// triggerPythonNodeRun starts a single-node run of the named python fixture
+// startPythonNodeRun starts a single-node run of the named python fixture
 // node and returns its run id and schedule name.
-func triggerPythonNodeRun(t *testing.T, ctx context.Context, clients *testClients, table string) (uuid.UUID, string) {
+func startPythonNodeRun(t *testing.T, ctx context.Context, clients *testClients, table string) (uuid.UUID, string) {
 	t.Helper()
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    pyE2EProject,
 		SchemaName:     "e2e_schema",
 		TableName:      table,
 		MetadataSource: "latest",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(%s)", table)
-	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a run_id")
+	require.NoError(t, err, "StartSingleNodeRun(%s)", table)
+	require.NotEmpty(t, resp.RunId, "StartSingleNodeRun must return a run_id")
 	runID, err := uuid.Parse(resp.RunId)
 	require.NoError(t, err, "run_id must be a valid UUID")
 	t.Logf("python single-node run: node=%s run_id=%s", table, runID)

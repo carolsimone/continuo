@@ -26,7 +26,7 @@ carolsimone/continuo                    carolsimone/arch
 └── …one per component
 ```
 
-A term goes in the shared `GLOSSARY.md` when more than one component uses it (release, run, node), and in a component's `GLOSSARY.md` when only that component uses it (a remediation's round, run-controller's write lease). ADRs are never kept per component: they all live in `carolsimone/arch` `continuo/adr/`.
+A term goes in the shared `GLOSSARY.md` when more than one component uses it (release, run, node), and in a component's `GLOSSARY.md` when only that component uses it (agent-remediation's cluster, run-controller's write lease). ADRs are never kept per component: they all live in `carolsimone/arch` `continuo/adr/`.
 
 ## Writing an ADR
 

@@ -62,7 +62,7 @@ func TestPRClosedProjectAndEditsOmitempty(t *testing.T) {
 	}
 }
 
-const goldenFixProposed = `{"event_id":"e","source":"agent","release_id":"r","remediation_round":1,"node_id":"n","resolved_node_ids":["n"],"error_signature":"sig","proposed_sql_uri":"s3://sql","diff_uri":"s3://diff","edits":[{"path":"models/m.sql","content_uri":"s3://c","diff_uri":"s3://d","target_node_id":"n"}],"rationale":"why","confidence":"high","model":"claude","try":1,"source_resolved":true,"proposed_at":"2026-01-02T03:04:05Z"}`
+const goldenFixProposed = `{"event_id":"e","source":"agent","release_id":"r","round":1,"node_id":"n","resolved_node_ids":["n"],"error_signature":"sig","proposed_sql_uri":"s3://sql","diff_uri":"s3://diff","edits":[{"path":"models/m.sql","content_uri":"s3://c","diff_uri":"s3://d","target_node_id":"n"}],"rationale":"why","confidence":"high","model":"claude","try":1,"source_resolved":true,"proposed_at":"2026-01-02T03:04:05Z"}`
 
 func TestFixProposedRoundTrip(t *testing.T) {
 	var dto FixProposedDTO

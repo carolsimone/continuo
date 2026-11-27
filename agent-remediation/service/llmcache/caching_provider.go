@@ -3,8 +3,8 @@
 // transaction, so a step whose model call returned but whose transaction did not
 // commit runs again, re-paying the expensive LLM call. This decorator makes the
 // call effectively-once per idempotency key: the runner derives the key from
-// the remediation, try, cluster and round, so a repeat of the same call reuses
-// the prior completion, while a call of a later try or round always gets a
+// the remediation, try, cluster and draft, so a repeat of the same call reuses
+// the prior completion, while a call of a later try or draft always gets a
 // fresh provider call.
 //
 // The cache key is therefore scoped to the caller's idempotency key — supplied

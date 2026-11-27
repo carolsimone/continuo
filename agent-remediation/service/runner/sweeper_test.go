@@ -39,7 +39,7 @@ func (h *harness) drafting() uuid.UUID {
 // stepFailing records a step of the current try that has failed n times.
 func (h *harness) stepFailing(id uuid.UUID, step string, status remediation.StepStatus, n int) {
 	h.saveStep(remediation.StepRun{
-		RemediationID: id, Try: 1, Cluster: 1, Step: step, Kind: "context", Round: 1,
+		RemediationID: id, Try: 1, Cluster: 1, Step: step, Kind: "context", Draft: 1,
 		Status: status, Failures: n, LastError: "s3 is down", StartedAt: t0,
 	})
 }

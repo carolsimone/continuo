@@ -7,7 +7,7 @@ import { parseLimit, parseOffset } from './paging';
 import { requireRequestId } from './request-id';
 import { toISO } from './timestamp';
 
-// RELEASE_MOVED_MESSAGE is the exact text run-controller's TriggerRebase refuses with
+// RELEASE_MOVED_MESSAGE is the exact text run-controller's StartRebase refuses with
 // (FAILED_PRECONDITION) when the live release is no longer the one the caller
 // previewed. A deploycheck guard pins it to run-controller's copy.
 export const RELEASE_MOVED_MESSAGE = 'the live release changed; preview again';
@@ -40,7 +40,7 @@ function parseRebaseOptions(body: unknown): RebaseOptions | string {
   return { include_changed_upstream: include, expected_release_id: expected };
 }
 
-// isReleaseMoved reports whether a TriggerRebase failure is run-controller's refusal of
+// isReleaseMoved reports whether a StartRebase failure is run-controller's refusal of
 // a rebase whose previewed release is no longer live.
 function isReleaseMoved(err: any): boolean {
   return err?.code === grpc.status.FAILED_PRECONDITION && err?.details === RELEASE_MOVED_MESSAGE;
@@ -273,7 +273,7 @@ export function createRunsRouter(client: GrpcClient) {
   router.post('/:id/rerun', (req, res) => {
     const requestId = requireRequestId(req, res);
     if (requestId === null) return;
-    client.triggerRerun(
+    client.startRerun(
       { request_id: requestId, source_run_id: req.params.id },
       userMetadata(req),
       (err: any, response: any) => {
@@ -310,7 +310,7 @@ export function createRunsRouter(client: GrpcClient) {
     if (requestId === null) return;
     const options = parseRebaseOptions(req.body);
     if (typeof options === 'string') return res.status(400).json({ error: options });
-    client.triggerRebase(
+    client.startRebase(
       { request_id: requestId, source_run_id: req.params.id, ...options },
       userMetadata(req),
       (err: any, response: any) => {

@@ -1,5 +1,5 @@
 import type { RunAction } from '../detail-page-helpers';
-import type { useTriggerRun } from './useTriggerRun';
+import type { useManualRun } from './useManualRun';
 
 type PressState = 'idle' | 'success';
 
@@ -13,16 +13,16 @@ function actionClass(state: PressState): string {
   return ['btn', 'btn--secondary', state === 'success' ? 'is-success' : ''].filter(Boolean).join(' ');
 }
 
-// The action row under the header — Trigger run, Rerun and Rebase onto live
-// release — and the trigger's error. Rerun and Rebase are always shown; one
+// The action row under the header — Start run (a manual run), Rerun and Rebase onto live
+// release — and the manual run's error. Rerun and Rebase are always shown; one
 // that cannot act on the run on screen is greyed out and its hover title says
 // why.
 export default function DetailActions({
-  name, liveRunExists, trigger, rerun, rebase, rerunState, rebaseState, onOpenRerun, onOpenRebase,
+  name, liveRunExists, manualRun, rerun, rebase, rerunState, rebaseState, onOpenRerun, onOpenRebase,
 }: {
   name: string | undefined;
   liveRunExists: boolean;
-  trigger: ReturnType<typeof useTriggerRun>;
+  manualRun: ReturnType<typeof useManualRun>;
   rerun: RunAction;
   rebase: RunAction;
   rerunState: PressState;
@@ -30,18 +30,18 @@ export default function DetailActions({
   onOpenRerun: () => void;
   onOpenRebase: () => void;
 }) {
-  const { triggerState, triggerError, trigger: onTrigger } = trigger;
+  const { startState, startError, start: onStart } = manualRun;
 
-  const triggerBtnClass = [
+  const startBtnClass = [
     'btn', 'btn--secondary',
-    triggerState === 'loading' ? 'is-loading' : '',
-    triggerState === 'success' ? 'is-success' : '',
+    startState === 'loading' ? 'is-loading' : '',
+    startState === 'success' ? 'is-success' : '',
   ].filter(Boolean).join(' ');
 
-  const triggerLabel =
-    triggerState === 'loading' ? 'Triggering…' :
-    triggerState === 'success' ? 'Triggered' :
-    '▶ Trigger run';
+  const startLabel =
+    startState === 'loading' ? 'Starting…' :
+    startState === 'success' ? 'Started' :
+    '▶ Start run';
 
   return (
     <>
@@ -49,12 +49,12 @@ export default function DetailActions({
         {name && (
           <button
             type="button"
-            className={triggerBtnClass}
-            disabled={liveRunExists || triggerState === 'loading' || triggerState === 'success'}
-            onClick={onTrigger}
-            title={liveRunExists ? 'A run is already active' : 'Trigger a full DAG run'}
+            className={startBtnClass}
+            disabled={liveRunExists || startState === 'loading' || startState === 'success'}
+            onClick={onStart}
+            title={liveRunExists ? 'A run is already active' : 'Start a manual run of the whole schedule'}
           >
-            {triggerLabel}
+            {startLabel}
           </button>
         )}
         <button
@@ -77,8 +77,8 @@ export default function DetailActions({
         </button>
       </div>
 
-      {triggerState === 'error' && triggerError && (
-        <div className="info-strip info-strip--error">{triggerError}</div>
+      {startState === 'error' && startError && (
+        <div className="info-strip info-strip--error">{startError}</div>
       )}
     </>
   );

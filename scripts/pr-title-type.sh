@@ -49,7 +49,7 @@ fi
   echo "  <scope> is optional and lowercase, e.g. (run-controller) or (ui,cli)"
   echo "  '!' before the colon marks a breaking change"
   echo "Examples: 'fix(run-controller): stop double-dispatching a retried task'"
-  echo "          'feat(cli)!: rename node trigger to node run'"
+  echo "          'feat(cli)!: drop the --json flag'"
   echo "Got: '${title}'"
 } >&2
 exit 1

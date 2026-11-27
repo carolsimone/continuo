@@ -156,7 +156,7 @@ button joins a `.btn` to a chooser (see "Split button").
 Variant rules:
 
 - **`btn--secondary`** is the default. Use it for almost everything:
-  Trigger run, Rerun, Update Graph, Cancel-in-a-dialog.
+  Start run, Rerun, Update Graph, Cancel-in-a-dialog.
 - **`btn--primary`** only for the single confirming action inside a
   modal (e.g. the `Rerun` button in the Rerun dialog).
 - **`btn--danger`** for destructive actions (Cancel an active run).
@@ -178,14 +178,14 @@ State rules (apply to every action button without exception):
 
 | State | Label | Class |
 |---|---|---|
-| idle | `▶ Trigger run` / `Update Graph` / `↺ Rerun` / `↪ Rebase onto live release` (`Trigger run`, with no glyph, in a split button) | `.btn .btn--secondary` |
-| loading | `Triggering…` / `Updating…` | adds `.is-loading`, disabled |
-| success (~3s) | `Triggered` / `Updated` / `Reran` / `Rebased` | adds `.is-success` |
+| idle | `▶ Start run` / `Update Graph` / `↺ Rerun` / `↪ Rebase onto live release` (`Start run`, with no glyph, in a split button) | `.btn .btn--secondary` |
+| loading | `Starting…` / `Updating…` | adds `.is-loading`, disabled |
+| success (~3s) | `Started` / `Updated` / `Reran` / `Rebased` | adds `.is-success` |
 
 - **No checkmarks** in the success label. The green colour IS the cue.
-- **Past-tense single word** for success. Not "✓ Rerun triggered".
+- **Past-tense single word** for success. Not "✓ Rerun started".
 - **No separate text feedback element** next to a button to say "✓
-  triggered". The button colour says it.
+  started". The button colour says it.
 - Success state reverts to idle after ~3s (same timeout the homepage
   Update Graph already uses).
 - Errors do NOT live next to the button as inline text. They render
@@ -203,13 +203,13 @@ State rules (apply to every action button without exception):
 ### Split button
 
 An action and, joined to its right edge, the native `<select>` that chooses
-its variant. The schedule card's `Trigger run ⌄` is the reference: the same
+its variant. The schedule card's `Start run ⌄` is the reference: the same
 two steps as a labelled select and a button, in under half the width, and on a
 list the word `Operation` is not repeated on every row.
 
 ```jsx
 <div className="btn-group">
-  <button type="button" className="btn btn--secondary" title="Trigger a full DAG run">Trigger run</button>
+  <button type="button" className="btn btn--secondary" title="Start a manual run of the whole schedule">Start run</button>
   <label className="btn btn--secondary btn--caret" title="Operation">
     <span className="sr-only">Operation</span>
     <select value={operation} onChange={…}>
@@ -243,7 +243,7 @@ Rules:
   selector repeated on every item of a list is a split button.
 - The chooser is the native control, spread invisibly over a chevron, so a click
   opens the browser's own menu. Never a custom dropdown.
-- The button's label follows the choice (`Trigger test`), so the chosen variant
+- The button's label follows the choice (`Start test`), so the chosen variant
   is always on screen. A variant that needs explaining before it runs does not
   belong in a split button.
 - The label is `.sr-only` beside the control, and the same word is the `title`
@@ -344,7 +344,7 @@ Row 2: actions                                        [Action]  [Action]  [Actio
     request is in flight) and `.is-success` states. Escape and an overlay
     click close the modal unless its request is in flight.
 - The confirming verb is the action the modal performs (`Rerun`,
-  `Cancel run`, `Trigger`). Not "OK" or "Submit".
+  `Cancel run`, `Start run`). Not "OK" or "Submit".
 - The `.dialog` is 360px by default. A picker/list dialog that needs more
   room uses the `.dialog--wide` modifier (480px); it still caps at
   `calc(100vw - 32px)` so it never overflows a narrow viewport. Do not
@@ -701,7 +701,7 @@ top rule, with one muted line saying what is left once it is done.
 ```jsx
 <div className="dialog-remove-row">
   <button type="button" className="btn btn--danger">Remove cron</button>
-  <span className="dialog-remove-row__note">daily then runs only when triggered.</span>
+  <span className="dialog-remove-row__note">daily then runs only when someone starts it.</span>
 </div>
 ```
 
@@ -1485,7 +1485,7 @@ out.
     <span className="preview-facts__sep" aria-hidden="true">·</span>
     <span title="11/6/2026, 10:56:07 AM">started 2m ago</span>
   </div>
-  {/* no-models strip, trigger error strip */}
+  {/* no-models strip, start error strip */}
   <div className="scheduler-card-body">
     {/* TaskStatusBar */}
     <div className="scheduler-card-summary">
@@ -1528,7 +1528,7 @@ Rules:
   with no words, the raw cron in monospace (`.schedule-cron--raw`). Then its
   timezone, then `next 28 Oct 01:00` in that timezone, or
   `paused by bob@example.com · 27 Oct 14:02` in the viewer's. A manual schedule
-  shows `No cron: runs only when triggered`. `started 18m ago` (`formatRelative`,
+  shows `No cron: runs only when someone starts it`. `started 18m ago` (`formatRelative`,
   `started just now` under a minute) ends the line, with the exact time in `title`;
   it reads `started` because the time is when the run was created. A fact that is
   not known is absent. The line is the `.preview-facts` line of a list, set at the
@@ -1546,15 +1546,15 @@ Rules:
   copy a name, start the drag just left of it.
 - **One run control at a time.** While no run is active the card offers the split
   button (Run, Test, Build). While a run is active it offers `Cancel`
-  (`.btn--danger`): a run cannot be triggered then, so there is no disabled button
-  saying so. A press stays on screen until its request has answered and `Triggered`
+  (`.btn--danger`): a run cannot be started then, so there is no disabled button
+  saying so. A press stays on screen until its request has answered and `Started`
   has shown, and `Cancel` appears as soon as a run is active, so it is never hidden
-  while there is a run to cancel; for a moment both show. Their order is Trigger,
+  while there is a run to cancel; for a moment both show. Their order is Start,
   Cancel, Edit cron, so `Cancel` does not move once it appears.
 - **When the focused run control leaves**, the focus moves to the group of controls
   (`.scheduler-card-actions`, `role="group"`, `tabIndex={-1}`, no ring), which holds the
   keyboard's place: the next Tab reaches the control that remains. It never moves to
-  that control itself, because a key meant for `Cancel` must not land on Trigger, which
+  that control itself, because a key meant for `Cancel` must not land on Start, which
   has no confirmation. Focus the operator moved elsewhere stays there. Whether the focus
   is on a control that is leaving is read in the render before it goes: a removal fires
   `blur` too, so tracking blur cannot tell it from a move.
@@ -1573,9 +1573,9 @@ Rules:
   tag) carries an `.info-strip--warning` under the facts: "No model in the
   live release has the tag **daily**. Each fire records a failed run until a
   release brings them back, or you remove its cron." A paused or manual
-  schedule fires nothing and has no such strip. A refused trigger's
+  schedule fires nothing and has no such strip. A refused start's
   `.info-strip--error` sits in the same place, does not navigate, and goes once the
-  card shows a newer run, since there is no Trigger to press and clear it during that
+  card shows a newer run, since there is no Start to press and clear it during that
   run.
 - **The rows wrap** when they do not fit: the controls move to the next line as one
   group, right-aligned, and the facts and counts wrap between their items.

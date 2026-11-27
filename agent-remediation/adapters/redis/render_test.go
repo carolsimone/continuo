@@ -264,7 +264,7 @@ func TestPublish_ProposedRowXAddCarriesItsStoredTenant(t *testing.T) {
 func TestRender_HandedOverCarriesTheRowsTenant(t *testing.T) {
 	p := &agentRemediationOutboxPublisher{}
 	handed := pkgevents.RemediationHandedOver{
-		RemediationID: "0b6f8c4e-3a1d-4d2b-9f7e-5c8a1b2d3e4f", ReleaseID: "rel-1", RemediationRound: 1, Flow: "rejected-release", Tries: 3,
+		RemediationID: "0b6f8c4e-3a1d-4d2b-9f7e-5c8a1b2d3e4f", ReleaseID: "rel-1", Round: 1, Flow: "rejected-release", Tries: 3,
 		Nodes: []pkgevents.HandedOverNode{{NodeID: "model.a", Reason: string(model.HandoverReasonTriesSpent), Message: "tried 3 times"}},
 	}
 	body, err := json.Marshal(handed)
@@ -300,9 +300,9 @@ func TestRender_HandedOverCarriesTheRowsTenant(t *testing.T) {
 		"an unwrapped payload":            string(body),
 		"an empty tenant":                 `{"tenant_id":"","payload":{"release_id":"rel-1"}}`,
 		"a payload that is not the event": `{"tenant_id":"acme","payload":["not","the","event"]}`,
-		"a reason outside the vocabulary": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","remediation_round":1,"flow":"rejected-release","tries":1,` +
+		"a reason outside the vocabulary": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","round":1,"flow":"rejected-release","tries":1,` +
 			`"nodes":[{"node_id":"model.a","reason":"gave_up","message":"m"}]}}`,
-		"no remediation round": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","remediation_round":0,"flow":"rejected-release","tries":1,"nodes":[]}}`,
+		"no round": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","round":0,"flow":"rejected-release","tries":1,"nodes":[]}}`,
 	} {
 		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationHandedOverV1, Payload: []byte(payload)})
 		require.ErrorIs(t, err, pkgevents.ErrPermanent, name)

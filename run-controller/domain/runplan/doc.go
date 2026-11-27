@@ -1,6 +1,6 @@
 // Package runplan chooses the tasks of a new run from the slice of the release
 // the run reads. Each kind of run has a Selector: WholeDAG for a schedule's
-// cron or triggered run, Rerun, Rebase, SingleNode and Seeds. A Selector reads
+// cron or manual run, Rerun, Rebase, SingleNode and Seeds. A Selector reads
 // only the topology.Graph it is given and returns a Plan: every task of the
 // run, which of them are carried over from a source run as succeeded, and
 // which pending tasks are ready to dispatch when the run is created. A

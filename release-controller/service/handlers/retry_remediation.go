@@ -24,11 +24,11 @@ var (
 	ErrReleaseNotFound = errors.New("release not found")
 	ErrNotHealable     = errors.New("rejection reason is not healable")
 	ErrNotRetryable    = errors.New("release was rejected without a stored rejection payload")
-	// ErrRetryInProgress refuses a retry when the current remediation round has
+	// ErrRetryInProgress refuses a retry when the current round has
 	// not yet produced a fix row: either its trigger has not reached
 	// agent-remediation yet, or the classifier dropped it. Either way, spending
 	// another round now would race the round already in flight.
-	ErrRetryInProgress = errors.New("a remediation round is in progress")
+	ErrRetryInProgress = errors.New("a round is in progress")
 	// ErrFixReaderUnavailable wraps a failure of the gRPC read to
 	// agent-remediation, distinct from a legitimate "a try is open" answer.
 	ErrFixReaderUnavailable = errors.New("could not read remediation fixes")
@@ -47,19 +47,19 @@ func (e ErrFixOpen) Error() string { return "a fix is already open for this rele
 // into a heal trigger, which is the `healable` flag the reject_reason
 // vocabulary carries in pkg/streams/contract.yaml. Every other reason — and
 // any token this build does not declare — is dropped on the normal path too,
-// so a retry of it would only spend a remediation round for nothing.
+// so a retry of it would only spend a round for nothing.
 func IsHealableReason(reason string) bool {
 	return pkg_model.RejectReason(reason).Healable()
 }
 
 // RetryRemediationResult is the round the retry started.
 type RetryRemediationResult struct {
-	ReleaseID        string
-	RemediationRound int
+	ReleaseID string
+	Round     int
 }
 
-// RetryRemediation starts another remediation round on a rejected candidate:
-// it writes an outbox row for remediation.retry_requested:v1 whose payload is
+// RetryRemediation starts another round on a rejected candidate:
+// it writes an outbox row for round.requested:v1 whose payload is
 // the typed retry (the release id, the new round and the stored rejection,
 // unchanged), stored under events.DefaultTenantID. It refuses when the id
 // names a fix's release check rather than a candidate (a fix is not a
@@ -99,7 +99,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	if len(r.RejectionPayload()) == 0 {
 		return RetryRemediationResult{}, ErrNotRetryable
 	}
-	if r.RemediationRound() >= releasecheck.MaxRemediationRounds {
+	if r.Round() >= releasecheck.MaxRounds {
 		return RetryRemediationResult{}, releasecheck.ErrRoundsExhausted
 	}
 
@@ -107,7 +107,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	if err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("%w: %v", ErrFixReaderUnavailable, err)
 	}
-	current := currentRoundFixes(fixes, r.RemediationRound())
+	current := currentRoundFixes(fixes, r.Round())
 	if len(current) == 0 {
 		return RetryRemediationResult{}, ErrRetryInProgress
 	}
@@ -116,7 +116,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	}
 
 	now := deps.Clock.Now()
-	round, err := r.StartRemediationRound(now)
+	round, err := r.StartRound(now)
 	if err != nil {
 		return RetryRemediationResult{}, err
 	}
@@ -124,10 +124,10 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 		return RetryRemediationResult{}, fmt.Errorf("save release: %w", err)
 	}
 
-	retry, err := json.Marshal(events.RemediationRetryRequested{
-		ReleaseID:        releaseID,
-		RemediationRound: round,
-		Rejection:        r.RejectionPayload(),
+	retry, err := json.Marshal(events.RoundRequested{
+		ReleaseID: releaseID,
+		Round:     round,
+		Rejection: r.RejectionPayload(),
 	})
 	if err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("marshal retry payload: %w", err)
@@ -140,9 +140,9 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte("remediation-retry:"+releaseID+":"+strconv.Itoa(round))),
 		AggregateType: "release-controller",
 		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "remediation_retry_requested",
+		EventType:     "round_requested",
 		Payload:       payload,
-		StreamName:    streams.RemediationRetryRequestedV1,
+		StreamName:    streams.RoundRequestedV1,
 		Status:        "pending",
 	}); err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("outbox insert: %w", err)
@@ -151,16 +151,16 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 		return RetryRemediationResult{}, fmt.Errorf("commit: %w", err)
 	}
 	deps.Logger.Info("remediation retry started", "release", releaseID, "round", round)
-	return RetryRemediationResult{ReleaseID: releaseID, RemediationRound: round}, nil
+	return RetryRemediationResult{ReleaseID: releaseID, Round: round}, nil
 }
 
-// effectiveRound is the remediation round a fix belongs to: its own
-// RemediationRound field, or 1 for a fix that names no round.
+// effectiveRound is the round a fix belongs to: its own
+// Round field, or 1 for a fix that names no round.
 func effectiveRound(p ports.FixSummary) int {
-	if p.RemediationRound == 0 {
+	if p.Round == 0 {
 		return 1
 	}
-	return p.RemediationRound
+	return p.Round
 }
 
 // laterTry reports whether try a comes after try b: a later round, or a later

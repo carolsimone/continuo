@@ -121,8 +121,8 @@ describe('RemediationPanel — group list', () => {
 
   it('collapses several tries of one (release, round) into a single group row', async () => {
     const fixes = [
-      makeFix({ id: 'a1', release_id: 'rel-x', remediation_round: 1, try: 1, status: 'failed', created_at: '2026-06-24T10:00:00Z' }),
-      makeFix({ id: 'a2', release_id: 'rel-x', remediation_round: 1, try: 2, status: 'skipped', created_at: '2026-06-24T11:00:00Z' }),
+      makeFix({ id: 'a1', release_id: 'rel-x', round: 1, try: 1, status: 'failed', created_at: '2026-06-24T10:00:00Z' }),
+      makeFix({ id: 'a2', release_id: 'rel-x', round: 1, try: 2, status: 'skipped', created_at: '2026-06-24T11:00:00Z' }),
     ];
     mockFetchFixes.mockResolvedValue(fixes);
 
@@ -137,12 +137,12 @@ describe('RemediationPanel — group list', () => {
 
   it('names each try by its round and number, the hand-over row as such, and opens a skipped try on its reason', async () => {
     mockFetchFixes.mockResolvedValue([
-      makeFix({ id: 't1', release_id: 'rel-x', remediation_round: 2, try: 1, status: 'failed', confidence: 'low', created_at: '2026-06-24T10:00:00Z' }),
+      makeFix({ id: 't1', release_id: 'rel-x', round: 2, try: 1, status: 'failed', confidence: 'low', created_at: '2026-06-24T10:00:00Z' }),
       makeFix({
-        id: 't2', release_id: 'rel-x', remediation_round: 2, try: 2, status: 'skipped', confidence: '',
+        id: 't2', release_id: 'rel-x', round: 2, try: 2, status: 'skipped', confidence: '',
         rationale: 'maintenance mode is on', created_at: '2026-06-24T11:00:00Z',
       }),
-      makeFix({ id: 'h', release_id: 'rel-x', remediation_round: 2, try: 0, status: 'escalated', confidence: '', created_at: '2026-06-24T11:00:00Z' }),
+      makeFix({ id: 'h', release_id: 'rel-x', round: 2, try: 0, status: 'escalated', confidence: '', created_at: '2026-06-24T11:00:00Z' }),
     ]);
     renderPanel();
     await waitFor(() => screen.getByText('rel-x'));

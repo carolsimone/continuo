@@ -31,8 +31,8 @@ const (
 // that names an unknown class, a context step of a flow or of a type the flow
 // lists that provides evidence of a data class the flow's `model_may_see`
 // leaves out, a prompt step of a listed type that reads such evidence (or any
-// evidence with no class), `rounds` below 1 (a type runs at
-// least one pre-flight round), `tries` below 1, an output that is not
+// evidence with no class), `drafts` below 1 (a type runs at
+// least one draft), `tries` below 1, an output that is not
 // a pull request or a hand-over or that publishes an event outside the stream
 // contract, a flow with no approver or one that names a step that is not an
 // approver, an unsupported version or trigger, and two listed types that can
@@ -239,8 +239,8 @@ func (v *validator) typ(t workflow.Type) {
 	if t.Match.NodeTypes != nil && len(t.Match.NodeTypes) == 0 {
 		v.refuse(t.Match.Pos, "type %q has an empty match.node_types, so it matches no node type", t.Name)
 	}
-	if t.Agent.Rounds < 1 {
-		v.refuse(t.Agent.Pos, "type %q has rounds %d, and a type runs at least one pre-flight round, so rounds must be 1 or more", t.Name, t.Agent.Rounds)
+	if t.Agent.Drafts < 1 {
+		v.refuse(t.Agent.Pos, "type %q has drafts %d, and a type runs at least one draft, so drafts must be 1 or more", t.Name, t.Agent.Drafts)
 	}
 	for _, tool := range t.Agent.Tools {
 		v.refuse(tool.Pos, "type %q lists agent.tools, which is reserved and must be empty", t.Name)

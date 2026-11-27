@@ -3,7 +3,7 @@ Continuo {{ .Chart.AppVersion }} (chart {{ .Chart.Version }}) {{ if .Release.IsU
 {{- if eq (include "continuo.maintenance.enabled" .) "true" }}
 
 MAINTENANCE MODE IS ON
-  continuo accepts no new runs, triggers, releases, remediation retries,
+  continuo accepts no new runs, releases, remediation retries,
   schedule edits or dead-letter redrives, and cron fires are skipped. Work
   already running finishes. Turn it off with:
     helm upgrade {{ .Release.Name }} <chart> --reuse-values --set maintenance.enabled=false
@@ -48,7 +48,7 @@ UPGRADE NOTES
   or running that it did not plan (cancelled by "system", reason "the run's
   tasks were not planned by run-controller, so it cannot continue"). Their
   queued tasks never start, and the results of Jobs already running are
-  ignored. Such a run cannot be rerun: trigger its schedule again. To keep
+  ignored. Such a run cannot be rerun: start a manual run of its schedule again. To keep
   in-flight runs, upgrade with none active: turn maintenance on, wait until no
   run is pending or running, upgrade, then turn maintenance off.
 
@@ -95,8 +95,8 @@ UPGRADE NOTES
 {{- if .Release.IsUpgrade }}
 
 BREAKING: every Redis stream starts again at :v1. The heal trigger is
-heal.triggered:v1 and the result of a release's parse is release.parsed:v1,
-and no stream is retired, so dead-letter-controller deletes no stream key.
+heal.triggered:v1, the result of a release's parse is release.parsed:v1 and
+"Try again" is round.requested:v1, and no stream is retired, so dead-letter-controller deletes no stream key.
 Upgrade with an empty Redis, as with the empty databases: before the upgrade,
 delete every key under the prefix continuo: (FLUSHDB on a Redis database that
 only continuo uses). With your own Redis, apply the new rules from
@@ -122,6 +122,16 @@ deploy/redis-acl-rules.acl with the upgrade. A flow file of yours in
 agentRemediation.workflows.files names the gate step as release_check
 (gate: [release_check]) and its pull_request output emits fix.proposed
 (emits: fix.proposed), or agent-remediation refuses to start.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
+BREAKING: a type file counts the drafts a cluster gets in one try with the
+key drafts. If agentRemediation.workflows.files holds a type file, rename its
+agent.rounds to agent.drafts before the upgrade, and in a fixture write the
+trigger's round under the key round. agent-remediation refuses to start on a
+type file with rounds, naming the file and line, and remediation-check files
+refuses both.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}

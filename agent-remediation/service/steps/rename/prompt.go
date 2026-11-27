@@ -26,13 +26,13 @@ func (*Prompt) Meta() step.Meta {
 		Name: "duplicate-table",
 		Kind: step.KindPrompt,
 		Description: "Shows the model the planned rename of a dbt model whose relation another node builds, the model's file and every file that names it, " +
-			"and reads back the model's file at its new path and each other file with the model renamed. The first-round request carries the earlier tries at the failure, when there are any.",
+			"and reads back the model's file at its new path and each other file with the model renamed. The first-draft request carries the earlier tries at the failure, when there are any.",
 		Needs: []remediation.EvidenceKey{remediation.KeyModelRename, remediation.KeySourceFiles, remediation.KeyFailurePrecedents},
 	}
 }
 
 // Propose asks the model to apply the plan and reads its answer into a draft.
-// A round after the first revises the last round's request with its answer and
+// A draft after the first revises the last draft's request with its answer and
 // findings (step.RevisionRequest).
 func (p *Prompt) Propose(ctx context.Context, in step.PromptInput, m step.Model) (step.PromptOutput, error) {
 	plan, ok := remediation.Get[remediation.ModelRename](in.Evidence, remediation.KeyModelRename)
@@ -59,7 +59,7 @@ func (p *Prompt) Propose(ctx context.Context, in step.PromptInput, m step.Model)
 	return step.PromptOutput{Draft: draft(in.Failure, plan, files, res)}, nil
 }
 
-// request builds the first round's request, with the earlier tries at the
+// request builds the first draft's request, with the earlier tries at the
 // failure (step.WithPreviousTries).
 func request(in step.PromptInput, plan remediation.ModelRename, files remediation.SourceFiles) prompt.ProposeRequest {
 	references := make([]prompt.NamedFile, 0, len(plan.Order))
@@ -119,7 +119,7 @@ func draft(f remediation.Failure, plan remediation.ModelRename, files remediatio
 }
 
 // noPlanReason is why a cluster with no rename plan is handed over: it was
-// gathered before its type planned renames, and a new round gathers again.
+// gathered before its type planned renames, and a new draft gathers again.
 const noPlanReason = "This fix was gathered before continuo planned the rename of a duplicate model; use Try again to start it afresh."
 
 // editKeys are the keys under which the runner stores the content and diff of

@@ -28,7 +28,7 @@ func TestReceiveFix_PersistsAReceivedFix(t *testing.T) {
 	assert.Equal(t, releasecheck.KindFix, got.Kind())
 	assert.Equal(t, releasecheck.StatusReceived, got.Status())
 	assert.Equal(t, "rel-1", got.VerifiesReleaseID())
-	assert.Equal(t, 2, got.RemediationRound())
+	assert.Equal(t, 2, got.Round())
 	assert.Equal(t, 1, got.Try())
 	assert.Equal(t, release.ManifestKindDbt, got.ManifestKind())
 }
@@ -60,8 +60,8 @@ func TestReceiveFix_Validation(t *testing.T) {
 func TestReceiveFix_NamesTheTryAndRoundItRefuses(t *testing.T) {
 	deps, _ := newDeps(time.Unix(1_700_000_000, 0).UTC())
 	for want, mutate := range map[string]func(*handlers.ReceiveFixInput){
-		"try must be at least 1":               func(in *handlers.ReceiveFixInput) { in.Try = 0 },
-		"remediation_round must be at least 1": func(in *handlers.ReceiveFixInput) { in.Round = 0 },
+		"try must be at least 1":   func(in *handlers.ReceiveFixInput) { in.Try = 0 },
+		"round must be at least 1": func(in *handlers.ReceiveFixInput) { in.Round = 0 },
 	} {
 		t.Run(want, func(t *testing.T) {
 			in := validFix()

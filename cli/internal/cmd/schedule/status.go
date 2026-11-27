@@ -40,7 +40,7 @@ Output (stdout, JSON):
              "wait_reason":string,"waiting_on_run_id":string}]}
   Timestamps are RFC3339 in UTC. failure_reason, release_id, initiated_by, the
   timestamps other than created_at and the cancel fields are omitted when empty.
-  kind is one of cron|trigger|rerun|rebase|single_node_run|promote_seed;
+  kind is one of cron|manual|rerun|rebase|single_node_run|promote_seed;
   operation is one of run|test|build|full_refresh.
   The run status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.
   pending, running and cancelling mean the run still holds the schedule;

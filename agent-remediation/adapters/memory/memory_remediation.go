@@ -62,7 +62,7 @@ func (r *remediationRepository) Create(_ context.Context, rem remediation.Remedi
 			return err
 		}
 		if rem.Round < 1 {
-			return fmt.Errorf("remediation round %d violates its check constraint", rem.Round)
+			return fmt.Errorf("round %d violates its check constraint", rem.Round)
 		}
 		if rem.ID == uuid.Nil {
 			return errors.New("create remediation: the id is unset")
@@ -466,7 +466,7 @@ func (r *remediationRepository) SaveStep(_ context.Context, s remediation.StepRu
 		stored.StartedAt = orNow(stored.StartedAt)
 		for _, old := range d.steps {
 			if old.RemediationID == s.RemediationID && old.Try == s.Try && old.Cluster == s.Cluster &&
-				old.Step == s.Step && old.Round == s.Round {
+				old.Step == s.Step && old.Draft == s.Draft {
 				stored.ID = old.ID
 				*old = stored
 				return nil

@@ -10,7 +10,7 @@ import (
 
 func TestLaterTry_OrdersByRoundThenTryWithTheHandOverLast(t *testing.T) {
 	try := func(round, number int) ports.FixSummary {
-		return ports.FixSummary{NodeID: "finance", RemediationRound: round, Try: number}
+		return ports.FixSummary{NodeID: "finance", Round: round, Try: number}
 	}
 	cases := map[string]struct {
 		a, b ports.FixSummary

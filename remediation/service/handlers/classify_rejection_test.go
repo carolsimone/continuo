@@ -343,11 +343,11 @@ func TestClassifyFailure_InfraIsForwardedUnfixable(t *testing.T) {
 func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
 	// inserted=false → already classified in this round → no duplicate
 	// trigger. The natural key that makes this a no-op is now scoped to
-	// (source, release_id, remediation_round, node_id): a redelivery of the
+	// (source, release_id, round, node_id): a redelivery of the
 	// same round's rejection is a no-op, but a later round for the same node
 	// is a fresh insert (see TestClassifyFailure_DifferentRoundsBothInsertAndEmit).
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: false}, ob: &fakeOutbox{}}
-	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n", RemediationRound: 1}
+	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n", Round: 1}
 	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
@@ -358,11 +358,11 @@ func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
 }
 
 // TestClassifyFailure_DifferentRoundsBothInsertAndEmit verifies that a
-// remediation round is a human's "try again" on the same rejected release,
+// round is a human's "try again" on the same rejected release,
 // not a redelivery of the same message: reclassifying the same
 // (source, release, node) at round 1 and then round 2 must record two
 // decisions and enqueue two triggers, and the triggers must be
-// distinguishable — different remediation_round, different event_id — so the
+// distinguishable — different round, different event_id — so the
 // agent never conflates a retry's fix with the original attempt's.
 func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
@@ -374,11 +374,11 @@ func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 		DBTLogURI: "s3://b/k",
 	}
 
-	ev.RemediationRound = 1
+	ev.Round = 1
 	if err := ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
-	ev.RemediationRound = 2
+	ev.Round = 2
 	if err := ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
@@ -386,19 +386,19 @@ func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 	if len(u.dec.saved) != 2 {
 		t.Fatalf("expected 2 decisions recorded (one per round), got %d", len(u.dec.saved))
 	}
-	if u.dec.saved[0].RemediationRound != 1 || u.dec.saved[1].RemediationRound != 2 {
-		t.Fatalf("decision rounds = %d, %d; want 1, 2", u.dec.saved[0].RemediationRound, u.dec.saved[1].RemediationRound)
+	if u.dec.saved[0].Round != 1 || u.dec.saved[1].Round != 2 {
+		t.Fatalf("decision rounds = %d, %d; want 1, 2", u.dec.saved[0].Round, u.dec.saved[1].Round)
 	}
 
 	if len(u.ob.entries) != 2 {
 		t.Fatalf("expected 2 outbox triggers (one per round), got %d", len(u.ob.entries))
 	}
 	p1, p2 := triggerOf(t, u.ob.entries[0]), triggerOf(t, u.ob.entries[1])
-	if p1.RemediationRound != 1 {
-		t.Fatalf("first trigger remediation_round = %d, want 1", p1.RemediationRound)
+	if p1.Round != 1 {
+		t.Fatalf("first trigger round = %d, want 1", p1.Round)
 	}
-	if p2.RemediationRound != 2 {
-		t.Fatalf("second trigger remediation_round = %d, want 2", p2.RemediationRound)
+	if p2.Round != 2 {
+		t.Fatalf("second trigger round = %d, want 2", p2.Round)
 	}
 	if u.ob.entries[0].ID == u.ob.entries[1].ID {
 		t.Fatal("triggers from different rounds must be different outbox rows")

@@ -181,7 +181,7 @@ func (s *Service) Begin(ctx context.Context, id, project string) (fix.PRClaim, e
 	if !strings.Contains(v.Repo, "/") {
 		return fix.PRClaim{}, fmt.Errorf("%w: %q", ErrNoRepository, v.Repo)
 	}
-	branch := BuildBranch(v.ReleaseID, v.RemediationRound, v.Try, project)
+	branch := BuildBranch(v.ReleaseID, v.Round, v.Try, project)
 	claim, err := s.repo.BeginPR(ctx, id, project, branch, s.clock.Now())
 	if err != nil {
 		return fix.PRClaim{}, fmt.Errorf("begin pr: %w", err)
@@ -306,7 +306,7 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v fix.V
 		resolved = s.resolvedForProject(v, project)
 	}
 	prURL, prNumber := closingProjectPR(v, project)
-	eventID := event.PRClosedEventID(v.ReleaseID, v.RemediationRound, v.Try, project)
+	eventID := event.PRClosedEventID(v.ReleaseID, v.Round, v.Try, project)
 	payload := event.PRClosed{
 		FixID:           v.ID,
 		ReleaseID:       v.ReleaseID,
@@ -356,7 +356,7 @@ func closingProjectPR(v fix.View, project string) (string, int) {
 // call: recovering a stranded PR through the opening sweep resolves it long
 // after GitHub created it.
 func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v fix.View, in RecordInput, openedAt time.Time) error {
-	eventID := event.PROpenedEventID(v.ReleaseID, v.RemediationRound, v.Try, in.Project)
+	eventID := event.PROpenedEventID(v.ReleaseID, v.Round, v.Try, in.Project)
 	payload := event.PROpened{
 		FixID:           in.FixID,
 		ReleaseID:       v.ReleaseID,

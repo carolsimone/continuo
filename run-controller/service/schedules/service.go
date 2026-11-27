@@ -66,7 +66,7 @@ type UpsertInput struct {
 type Summary struct {
 	Name string
 	// Schedule is the name's cron; nil when it has none, so it runs only when
-	// triggered. A row whose stored cron no longer parses is shown as none.
+	// someone starts it. A row whose stored cron no longer parses is shown as none.
 	Schedule *schedule.Schedule
 	// Words is the cron in English words; empty when the name has no cron or
 	// the words library cannot read it.
@@ -203,7 +203,7 @@ func (s *Service) edit(ctx context.Context, tenantID string, in UpsertInput, cro
 }
 
 // Delete removes the cron of tenantID's schedule name, which then runs only
-// when triggered. A schedule with no cron is left as it is, and a run of it in
+// when someone starts it. A schedule with no cron is left as it is, and a run of it in
 // progress goes on. It returns ErrInvalid for an empty name.
 func (s *Service) Delete(ctx context.Context, tenantID, name string) error {
 	if name == "" {

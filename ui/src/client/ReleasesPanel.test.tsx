@@ -100,7 +100,7 @@ describe('ReleasesPanel — author column', () => {
 
 describe('ReleasesPanel — in-flight strip', () => {
   it('names a running fix\'s release check and links both the check and the release it verifies', async () => {
-    mockFetch([], { active: { check_id: 'verify-rel-1-core-r1-t2', check_kind: 'fix', status: 'compiling', project: 'core', since: '2026-09-02T10:01:00Z', verifies_release_id: 'rel-1', remediation_round: 1, try: 2 } });
+    mockFetch([], { active: { check_id: 'verify-rel-1-core-r1-t2', check_kind: 'fix', status: 'compiling', project: 'core', since: '2026-09-02T10:01:00Z', verifies_release_id: 'rel-1', round: 1, try: 2 } });
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
     const strip = await screen.findByText(/In flight · a fix's release check/);
     expect(strip.textContent).toContain('(round 1, try 2, project core)');

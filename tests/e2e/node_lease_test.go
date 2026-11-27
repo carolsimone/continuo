@@ -35,7 +35,7 @@ const (
 //
 //	StartRun(e2e-schedule) → the schedule run's table_a takes the node's
 //	write lease when it is dispatched, and runs
-//	→ TriggerSingleNodeRun(table_a) while it holds the lease → the single-node
+//	→ StartSingleNodeRun(table_a) while it holds the lease → the single-node
 //	  run's task is pending: ListTasks and GetRunGraph show
 //	  wait_reason node_lease, the schedule run as the run it waits on, and since
 //	  when
@@ -48,7 +48,7 @@ const (
 //
 // The single-node run is created while the schedule run's table_a holds the
 // node's lease (from its dispatch until the report that ends it), so the test
-// depends on that task holding it for longer than the trigger and the two
+// depends on that task holding it for longer than the start and the two
 // reads take: a dbt model's container runs for several seconds, the reads a
 // few milliseconds. When the schedule run's table_a has already ended by then, the
 // failure says so.
@@ -86,20 +86,20 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	t.Logf("the schedule run's %s holds the node's lease (task status %s)", leaseTable, scheduleRunStatus)
 
 	// ── A single-node run of the same node waits for it ──────────────────────
-	snResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	snResp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    leaseProject,
 		SchemaName:     testSchemaName,
 		TableName:      leaseTable,
 		MetadataSource: "latest",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(%s)", leaseTable)
+	require.NoError(t, err, "StartSingleNodeRun(%s)", leaseTable)
 	snID, err := uuid.Parse(snResp.RunId)
-	require.NoError(t, err, "TriggerSingleNodeRun must return the run's id")
+	require.NoError(t, err, "StartSingleNodeRun must return the run's id")
 	defer cleanupSingleNodeRun(t, ctx, clients, snID, snResp.ScheduleName)
-	t.Logf("single-node run %s of %s triggered", snID, leaseTable)
+	t.Logf("single-node run %s of %s started", snID, leaseTable)
 
 	// run-controller plans the run and makes its task wait in the transaction that
-	// creates it, so the wait is readable once the trigger has returned. The
+	// creates it, so the wait is readable once the start has returned. The
 	// run a task waits on is read from the node's lease when the task is read,
 	// so both reads are made at once, while the schedule run's table_a still runs.
 	waitingTask, err := readLeaseTask(ctx, clients, snID)

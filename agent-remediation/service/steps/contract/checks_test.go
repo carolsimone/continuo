@@ -674,11 +674,11 @@ func TestContractPackages(t *testing.T) {
 	}}, pk.calls, "the bundle records the package list the image_packages step left in the evidence")
 }
 
-// TestContractPackages_PacksEveryRoundWithTheListTheContextStepRead pins that
+// TestContractPackages_PacksEveryDraftWithTheListTheContextStepRead pins that
 // the package list is read once, by the image_packages context step, and each
-// pre-flight round packs with that evidence: the check itself reads no release
+// draft packs with that evidence: the check itself reads no release
 // and no bundle.
-func TestContractPackages_PacksEveryRoundWithTheListTheContextStepRead(t *testing.T) {
+func TestContractPackages_PacksEveryDraftWithTheListTheContextStepRead(t *testing.T) {
 	pk := &fakePackager{out: []byte(`{"bundle_version": 1}`)}
 	images := &fakeImages{}
 	check := contract.NewContractPackages(pk, images, "postgres")
