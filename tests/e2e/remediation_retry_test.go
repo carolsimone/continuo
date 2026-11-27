@@ -159,7 +159,7 @@ type retryFixRow struct {
 	ReleaseID        string `db:"release_id"`
 	NodeID           string `db:"node_id"`
 	Status           string `db:"status"`
-	Try          int    `db:"try"`
+	Try              int    `db:"try"`
 	RemediationRound int    `db:"remediation_round"`
 }
 

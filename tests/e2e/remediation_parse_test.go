@@ -334,7 +334,7 @@ type parseFixRow struct {
 	Status         string `db:"status"`
 	FilePath       string `db:"file_path"`
 	SourceResolved bool   `db:"source_resolved"`
-	Try        int    `db:"try"`
+	Try            int    `db:"try"`
 	VerifyError    string `db:"verify_error"`
 	ReleaseChecks  []byte `db:"release_checks"`
 }

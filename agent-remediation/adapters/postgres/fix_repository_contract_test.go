@@ -20,7 +20,7 @@ import (
 // Reopened verifying, it loses its verify error and keeps its edits, runs and
 // rationale, with the outcomes given. It changes no row of another
 // remediation, no row that belongs to no remediation and no row that is not failed.
-func TestFixRepository_ReopenTryTryMovesOnlyItsFailedRowBack(t *testing.T) {
+func TestFixRepository_ReopenFixRowMovesOnlyItsFailedRowBack(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		r := mustCreate(t, env, newRemediation("rel-reopen", 1, contractBase))
@@ -181,6 +181,24 @@ func TestFixRepository_KeepsApprovers(t *testing.T) {
 			"an upsert that carries no approvers keeps the row's")
 		require.NoError(t, env.fixes.Upsert(ctx, row(2, handedOver)))
 		require.Equal(t, handedOver, get(2).Approvers, "an upsert that carries approvers replaces the row's")
+	})
+}
+
+// CountTries counts the terminal tries of one round: a row in flight is no
+// finished try yet, and the round's hand-over row (fix.HandOverTry), written
+// once its tries are spent, is no try of its own.
+func TestFixRepository_CountTriesLeavesOutTheHandOverRow(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		for try, status := range map[int]fix.Status{1: fix.StatusFailed, 2: fix.StatusFailed, 3: fix.StatusVerifying, fix.HandOverTry: fix.StatusEscalated} {
+			require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
+				Source: "validation", ReleaseID: "rel-count", RemediationRound: 1, NodeID: "model.a",
+				Try: try, Status: status, CreatedAt: contractBase,
+			}))
+		}
+		n, err := env.fixes.CountTries(ctx, "rel-count", 1)
+		require.NoError(t, err)
+		require.Equal(t, 2, n, "the two failed tries count; the verifying try and the hand-over row do not")
 	})
 }
 

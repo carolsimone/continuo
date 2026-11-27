@@ -56,7 +56,7 @@ func (*PreviousTries) Meta() step.Meta {
 // try whose journal does not decode is left out and logged. The tries with
 // no remediation are the release's fix rows of the trigger's source that
 // belong to no remediation and name a member, except a row the startup sweep
-// failed (nothing judged it); a diff of theirs that cannot be read is left out
+// failed (nothing judged it) and a round's hand-over row (no try of its own); a diff of theirs that cannot be read is left out
 // and logged, since the try still shows with its error. An error reading
 // the journal or the fix rows is the step's, so the runner tries the step
 // again rather than show the model a partial history.
@@ -111,7 +111,7 @@ func (s *PreviousTries) triesWithNoRemediation(ctx context.Context, f remediatio
 	members := memberIDs(f)
 	var out []remediation.TryRecord
 	for _, v := range views {
-		if v.RemediationID != "" || sweptAtStartup(v) || !namesAny(v.ResolvedNodeIDs, members) {
+		if v.RemediationID != "" || v.Try == fix.HandOverTry || sweptAtStartup(v) || !namesAny(v.ResolvedNodeIDs, members) {
 			continue
 		}
 		rec := remediation.TryRecord{

@@ -238,3 +238,27 @@ func TestPreviousTries_LeavesOutAnTryTheStartupSweepFailed(t *testing.T) {
 		Gate:     []remediation.Finding{{Message: "judged and still broken"}},
 	}}, got, "only the row a gate judged is an earlier try")
 }
+
+// TestPreviousTries_LeavesOutARoundsHandOverRow: a round's hand-over row
+// (fix.HandOverTry), written escalated once the round's tries are spent, is no
+// try of its own, so a row of it that belongs to no remediation is not shown to
+// the model as an earlier try, while the round's tries are.
+func TestPreviousTries_LeavesOutARoundsHandOverRow(t *testing.T) {
+	fixes := &fakeFixes{views: []fix.View{
+		{
+			Try: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
+			VerifyError: "judged and still broken",
+		},
+		{
+			Try: fix.HandOverTry, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusEscalated,
+		},
+	}}
+
+	got := gatherPreviousTries(t, &fakeTries{}, fixes, nil)
+
+	assert.Equal(t, []remediation.TryRecord{{
+		Round: 1, Try: 1,
+		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
+		Gate:     []remediation.Finding{{Message: "judged and still broken"}},
+	}}, got, "the hand-over row is no earlier try")
+}

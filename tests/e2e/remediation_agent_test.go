@@ -556,7 +556,7 @@ type fixProposedPayload struct {
 	Rationale       string   `json:"rationale"`
 	Confidence      string   `json:"confidence"`
 	Model           string   `json:"model"`
-	Try         int      `json:"try"`
+	Try             int      `json:"try"`
 	SourceResolved  bool     `json:"source_resolved"`
 	ProposedAt      string   `json:"proposed_at"`
 }
@@ -567,7 +567,7 @@ type fixRow struct {
 	ReleaseID      string `db:"release_id"`
 	NodeID         string `db:"node_id"`
 	Status         string `db:"status"`
-	Try        int    `db:"try"`
+	Try            int    `db:"try"`
 	SourceResolved bool   `db:"source_resolved"`
 	ProposedSQLURI string `db:"proposed_sql_uri"`
 }

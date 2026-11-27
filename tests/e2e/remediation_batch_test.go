@@ -897,7 +897,7 @@ type batchFixRow struct {
 	ID              string `db:"id"`
 	NodeID          string `db:"node_id"`
 	Status          string `db:"status"`
-	Try         int    `db:"try"`
+	Try             int    `db:"try"`
 	Repo            string `db:"repo"`
 	VerifyError     string `db:"verify_error"`
 	ResolvedNodeIDs []byte `db:"resolved_node_ids"`
@@ -1046,7 +1046,7 @@ type batchProposedPayload struct {
 	ReleaseID       string         `json:"release_id"`
 	NodeID          string         `json:"node_id"`
 	ResolvedNodeIDs []string       `json:"resolved_node_ids"`
-	Try         int            `json:"try"`
+	Try             int            `json:"try"`
 	Edits           []proposedEdit `json:"edits"`
 }
 

@@ -475,7 +475,7 @@ func clearPythonProductionPointer(t *testing.T, ctx context.Context, clients *te
 // pyFixRow captures the release-check-related fields of a fix row.
 type pyFixRow struct {
 	Status         string `db:"status"`
-	Try        int    `db:"try"`
+	Try            int    `db:"try"`
 	ReleaseCheckID string `db:"release_check_id"`
 	VerifyError    string `db:"verify_error"`
 	FilePath       string `db:"file_path"`

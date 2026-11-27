@@ -17,7 +17,7 @@ import ReleaseCheckTimeline from './ReleaseCheckTimeline';
 import SeedReloadNotices from './SeedReloadNotices';
 import ReleaseRunsPanel from './ReleaseRunsPanel';
 
-// A remediation round is capped at this many tries; the release-controller
+// A release gets at most this many remediation rounds; the release-controller
 // enforces the same limit and answers 409 rounds_exhausted past it.
 const MAX_REMEDIATION_ROUNDS = 3;
 

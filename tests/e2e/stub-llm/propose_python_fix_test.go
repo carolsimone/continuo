@@ -138,7 +138,7 @@ func TestProposePythonFix_LoopFixture_CommentsCannotAnswerForTheModel(t *testing
 // applied and why the gate failed it.
 const earlierTriesSection = "\n\n## Earlier tries at this failure\n" +
 	"These tries at the same failure did not pass. Do not repeat a change that did not pass; correct what each try was refused for.\n" +
-	"\n### Try 1 (round 1)\n" +
+	"\n### Round 1, try 1\n" +
 	"Changed " + loopFixturePath + ":\n" +
 	"```diff\n" +
 	"-      missing: select id from public.loop_wrong_name\n" +
@@ -178,7 +178,7 @@ func TestProposePythonFix_LoopFixture_RetryShownTheEarlierTryBinds(t *testing.T)
 func TestProposePythonFix_LoopFixture_RetryWithoutTheEvidenceKeepsFailing(t *testing.T) {
 	const emptyTries = "\n\n## Earlier tries at this failure\n" +
 		"These tries at the same failure did not pass. Do not repeat a change that did not pass; correct what each try was refused for.\n" +
-		"\n### Try 1 (round 1)\nNothing was recorded for this try."
+		"\n### Round 1, try 1\nNothing was recorded for this try."
 
 	_, content := proposedFile(t, pythonFixPromptAfter(readLoopFixture(t), emptyTries))
 

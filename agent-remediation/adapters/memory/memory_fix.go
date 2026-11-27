@@ -64,13 +64,14 @@ func (d *data) checkRemediation(id string) error {
 	return nil
 }
 
-// CountTries counts the terminal tries of one round of a release.
+// CountTries counts the terminal tries of one round of a release. The round's
+// hand-over row (fix.HandOverTry) is no try of its own and is not counted.
 func (r *fixRepository) CountTries(_ context.Context, releaseID string, remediationRound int) (int, error) {
 	var n int
 	err := r.gate(func(d *data) error {
 		for _, row := range d.fixes {
 			p := row.p
-			if p.ReleaseID == releaseID && p.RemediationRound == remediationRound &&
+			if p.ReleaseID == releaseID && p.RemediationRound == remediationRound && p.Try != fix.HandOverTry &&
 				p.Status != fix.StatusGenerating && p.Status != fix.StatusVerifying {
 				n++
 			}
