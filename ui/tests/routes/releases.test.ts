@@ -2,11 +2,17 @@ import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createReleasesRouter } from '../../src/server/routes/releases';
+import { createLiveReleaseRouter } from '../../src/server/routes/live-release';
+import { createLogsRouter } from '../../src/server/routes/logs';
 
+// appWith mounts the release routes as app.ts does: the release list and
+// detail under /api/releases, the live release and stored logs beside it.
 function appWith(deps: any) {
   const app = express();
   app.use(express.json());
-  app.use('/api/releases', createReleasesRouter(deps.client, deps.getLog, deps.authorResolver));
+  app.use('/api/releases', createReleasesRouter(deps.client, deps.authorResolver));
+  app.use('/api/live-release', createLiveReleaseRouter(deps.client));
+  app.use('/api/logs', createLogsRouter(deps.getLog ?? vi.fn()));
   return app;
 }
 
@@ -20,6 +26,23 @@ describe('releases router', () => {
     expect(client.listReleases).toHaveBeenCalledWith(expect.objectContaining({ status: 'promoted' }));
   });
 
+  // Release ids may be any of [A-Za-z0-9._-], so "live-release" and "log" are
+  // release ids like any other: their detail must reach getRelease.
+  it.each(['live-release', 'log'])('serves the release whose id is %s', async (id) => {
+    const client = {
+      getRelease: vi.fn().mockResolvedValue({ release_id: id, status: 'promoted' }),
+      getLiveRelease: vi.fn(),
+    };
+    const getLog = vi.fn();
+    const app = appWith({ client, getLog });
+    const res = await request(app).get(`/api/releases/${id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.release_id).toBe(id);
+    expect(client.getRelease).toHaveBeenCalledWith(id);
+    expect(client.getLiveRelease).not.toHaveBeenCalled();
+    expect(getLog).not.toHaveBeenCalled();
+  });
+
   it('rate-limits the GitHub-backed list route but not the other release routes', async () => {
     const client = {
       listReleases: vi.fn().mockResolvedValue({ releases: [], next_cursor: '' }),
@@ -30,10 +53,10 @@ describe('releases router', () => {
     const list = await request(app).get('/api/releases');
     expect(list.headers['ratelimit-limit']).toBeDefined();
 
-    // live-release is polled every 5s and must not share the list's budget.
-    const cp = await request(app).get('/api/releases/live-release');
-    expect(cp.status).toBe(200);
-    expect(cp.headers['ratelimit-limit']).toBeUndefined();
+    // The live release is polled every 5s and must not share the list's budget.
+    const live = await request(app).get('/api/live-release');
+    expect(live.status).toBe(200);
+    expect(live.headers['ratelimit-limit']).toBeUndefined();
   });
 
   it('enriches each release with its commit author', async () => {
@@ -111,7 +134,7 @@ describe('releases router', () => {
   it('streams a per-node log by key', async () => {
     const getLog = vi.fn().mockResolvedValue('LOG CONTENT');
     const app = appWith({ client: {}, getLog });
-    const res = await request(app).get('/api/releases/log?key=k/a.log');
+    const res = await request(app).get('/api/logs?key=k/a.log');
     expect(res.status).toBe(200);
     expect(res.text).toBe('LOG CONTENT');
     expect(getLog).toHaveBeenCalledWith('k/a.log');
@@ -119,7 +142,7 @@ describe('releases router', () => {
 
   it('400s when the log key is missing', async () => {
     const app = appWith({ client: {}, getLog: vi.fn() });
-    const res = await request(app).get('/api/releases/log');
+    const res = await request(app).get('/api/logs');
     expect(res.status).toBe(400);
   });
 
@@ -213,7 +236,7 @@ describe('releases router — commit link', () => {
   it('attaches the commit page URL under the configured GitHub web host to a release detail', async () => {
     const client = { getRelease: vi.fn().mockResolvedValue({ release_id: 'r1', repo: 'acme/demo', commit_sha: 'abcdef1234567' }) };
     const app = express();
-    app.use('/api/releases', createReleasesRouter(client as any, vi.fn(), undefined, 'https://ghe.example.com'));
+    app.use('/api/releases', createReleasesRouter(client as any, undefined, 'https://ghe.example.com'));
     const res = await request(app).get('/api/releases/r1');
     expect(res.status).toBe(200);
     expect(res.body.commit_url).toBe('https://ghe.example.com/acme/demo/commit/abcdef1234567');

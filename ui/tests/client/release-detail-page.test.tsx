@@ -117,7 +117,7 @@ describe('ReleaseDetailPage', () => {
 
   it('toggles the log block and always shows a link-out', async () => {
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('/api/releases/log')) {
+      if (url.includes('/api/logs')) {
         return Promise.resolve({ ok: true, text: () => Promise.resolve('LOG CONTENT') });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve(DETAIL) });
@@ -127,7 +127,7 @@ describe('ReleaseDetailPage', () => {
 
     await waitFor(() => expect(screen.getByText('m.dim_x')).toBeInTheDocument());
 
-    expect(container.querySelector('a[href*="/api/releases/log"]')).toBeTruthy();
+    expect(container.querySelector('a[href*="/api/logs"]')).toBeTruthy();
     expect(container.querySelector('.log-block')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'view' }));
@@ -137,7 +137,7 @@ describe('ReleaseDetailPage', () => {
 
   it('renders a log fetch error as an info-strip, not as log text', async () => {
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('/api/releases/log')) {
+      if (url.includes('/api/logs')) {
         return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('') });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve(DETAIL) });

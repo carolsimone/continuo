@@ -10,7 +10,7 @@ export function LogView({ uri }: { uri: string }) {
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const logUrl = `/api/releases/log?key=${encodeURIComponent(uri)}`;
+  const logUrl = `/api/logs?key=${encodeURIComponent(uri)}`;
 
   const toggle = () => {
     if (open) { setOpen(false); return; }

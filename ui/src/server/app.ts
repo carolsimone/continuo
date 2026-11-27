@@ -9,6 +9,8 @@ import { createConfigRouter } from './routes/config';
 import { createFeaturesRouter } from './routes/features';
 import { createTopologyRouter } from './routes/topology';
 import { createReleasesRouter } from './routes/releases';
+import { createLiveReleaseRouter } from './routes/live-release';
+import { createLogsRouter } from './routes/logs';
 import { createV1Router } from './routes/v1';
 import { createReleaseChecksRouter } from './routes/release-checks';
 import { createReleaseQueueRouter } from './routes/release-queue';
@@ -61,7 +63,9 @@ export function createApp(
   const releaseClient = createReleaseClient(releaseControllerUrl);
   // Public, versioned API for CD pipelines; authorizes per action (see authorize.ts).
   app.use('/api/v1', createV1Router(releaseClient, publicUrl));
-  app.use('/api/releases', createReleasesRouter(releaseClient, getLogObject, commitAuthorResolver, githubWebBaseUrl));
+  app.use('/api/releases', createReleasesRouter(releaseClient, commitAuthorResolver, githubWebBaseUrl));
+  app.use('/api/live-release', createLiveReleaseRouter(releaseClient));
+  app.use('/api/logs', createLogsRouter(getLogObject));
   app.use('/api/release-checks', createReleaseChecksRouter(releaseClient));
   app.use('/api/release-queue', createReleaseQueueRouter(releaseClient));
   if (remediationClient) {

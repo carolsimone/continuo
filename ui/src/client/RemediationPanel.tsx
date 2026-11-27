@@ -12,14 +12,14 @@ import { useCurrentUser } from './auth/AuthContext';
 import CreatePrModal from './CreatePrModal';
 
 // DiffView mirrors the LogView component in ReleaseDetailPage: toggle view/hide,
-// fetch content from /api/releases/log?key=<uri>, and link out to the full source.
+// fetch content from /api/logs?key=<uri>, and link out to the full source.
 // The first edit of a fix opens by default — the diff is what a
 // reviewer judges first — and the rest stay one click away.
 function DiffView({ uri, defaultOpen = false }: { uri: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const [content, setContent] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const logUrl = `/api/releases/log?key=${encodeURIComponent(uri)}`;
+  const logUrl = `/api/logs?key=${encodeURIComponent(uri)}`;
 
   const load = () => {
     setErr(null);

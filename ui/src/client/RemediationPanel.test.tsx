@@ -80,7 +80,7 @@ const expandGroupByNodes = (nodesText: string) => fireEvent.click(screen.getByTe
 // an unambiguous handle for opening a single non-actionable attempt.
 const openAttemptByConfidence = (confidence = 'high') => fireEvent.click(screen.getByText(confidence));
 
-// mockFetch answers DiffView's GET against /api/releases/log?key=<uri> with
+// mockFetch answers DiffView's GET against /api/logs?key=<uri> with
 // body whenever the requested url matches pattern, and an empty 200
 // otherwise; DiffView is the component's only caller of the global fetch.
 function mockFetch(pattern: RegExp, body: string) {
@@ -332,7 +332,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('shows the diff view/hide toggle in the attempt card, open by default', async () => {
-    mockFetch(/\/api\/releases\/log/, '');
+    mockFetch(/\/api\/logs/, '');
     const fix = makeFix({ status: 'skipped', diff_uri: 's3://bucket/my.patch' });
     mockFetchFixes.mockResolvedValue([fix]);
 
@@ -349,7 +349,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('renders one labelled diff view per edit when the fix carries edits', async () => {
-    mockFetch(/\/api\/releases\/log/, '');
+    mockFetch(/\/api\/logs/, '');
     const fix = makeFix({
       status: 'skipped',
       diff_uri: 's3://bucket/legacy.patch',
@@ -379,7 +379,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('falls back to the single unlabelled diff view when the fix carries no edits', async () => {
-    mockFetch(/\/api\/releases\/log/, '');
+    mockFetch(/\/api\/logs/, '');
     const fix = makeFix({ status: 'skipped', diff_uri: 's3://bucket/candidate.patch', edits: [] });
     mockFetchFixes.mockResolvedValue([fix]);
 
@@ -394,7 +394,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('renders the first edit diff open and above the rationale', async () => {
-    mockFetch(/\/api\/releases\/log/, '--- a\n+++ b\n-select amount\n+select amount_eur');
+    mockFetch(/\/api\/logs/, '--- a\n+++ b\n-select amount\n+select amount_eur');
     const fix = makeFix({
       status: 'skipped',
       rationale: 'Failed: `svc.schema.my_model`\nModel\'s note: read amount_eur',

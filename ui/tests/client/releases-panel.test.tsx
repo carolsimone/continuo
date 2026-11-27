@@ -15,7 +15,7 @@ const REL = {
 
 function mockFetch(releases: any[], liveRelease: any) {
   return vi.fn((url: string) => {
-    if (url.startsWith('/api/releases/live-release')) {
+    if (url.startsWith('/api/live-release')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(liveRelease) });
     }
     return Promise.resolve({ ok: true, json: () => Promise.resolve({ releases, next_cursor: '' }) });
