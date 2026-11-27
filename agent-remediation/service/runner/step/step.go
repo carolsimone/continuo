@@ -11,8 +11,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -153,7 +153,7 @@ type ClusterDraft struct {
 // LongCheck is a check that starts work and answers later, such as the gate
 // that submits release checks and polls them. Submit starts the work and
 // returns a verdict whose result is waiting and whose ReleaseChecks are the
-// checks it started, so the runner can record them with the proposal. A Submit
+// checks it started, so the runner can record them with the fix. A Submit
 // that refuses the try returns a verdict whose result is not waiting and holds
 // the findings, with no check started. Poll reads the answer of a waiting result.
 type LongCheck interface {
@@ -162,7 +162,7 @@ type LongCheck interface {
 	Poll(ctx context.Context, in GateInput, waiting remediation.CheckResult) (GateVerdict, error)
 }
 
-// GateInput is what a gate reads: the try's checked drafts and the proposal
+// GateInput is what a gate reads: the try's checked drafts and the fix
 // they belong to. SubmittedAt is the StartedAt of the gate step's row, which
 // the runner takes before Submit runs, so it is no later than the submit; it is
 // zero for the Submit itself. A poll counts how long checks have been unreadable
@@ -172,7 +172,7 @@ type GateInput struct {
 	Try         remediation.Try
 	Trigger     remediation.Trigger
 	Drafts      []ClusterDraft
-	ProposalID  string
+	FixID       string
 	SubmittedAt time.Time
 }
 
@@ -181,12 +181,12 @@ type GateInput struct {
 // lists every check it started as queued, and a poll lists the checks whose
 // status it read, so a check it could not read keeps the values already
 // recorded. VerifyError is why the checks could not be judged, and Phases are
-// the checks seen queued or running in this call, for the proposal row.
+// the checks seen queued or running in this call, for the fix row.
 type GateVerdict struct {
 	Result        remediation.CheckResult
-	ReleaseChecks []proposal.ReleaseCheck
+	ReleaseChecks []fix.ReleaseCheck
 	VerifyError   string
-	Phases        []proposal.ReleaseCheck
+	Phases        []fix.ReleaseCheck
 }
 
 // Approver works out who must approve what a remediation did with each of its
@@ -196,7 +196,7 @@ type GateVerdict struct {
 // cannot read never stops an end.
 type Approver interface {
 	Meta() Meta
-	Approvers(ctx context.Context, in ApproverInput) ([]proposal.Approver, error)
+	Approvers(ctx context.Context, in ApproverInput) ([]fix.Approver, error)
 }
 
 // ApproverInput is what an approver reads: the trigger, the nodes to name an
@@ -208,7 +208,7 @@ type ApproverInput struct {
 	Nodes    []string
 }
 
-// PassOutput hands a verified proposal over, inside the unit of work that
+// PassOutput hands a verified fix over, inside the unit of work that
 // commits the pass.
 type PassOutput interface {
 	Meta() Meta
@@ -233,5 +233,5 @@ type OutputInput struct {
 	Trigger     remediation.Trigger
 	Snapshot    remediation.Snapshot
 	HandedOver  []remediation.HandOver
-	Approvers   []proposal.Approver
+	Approvers   []fix.Approver
 }

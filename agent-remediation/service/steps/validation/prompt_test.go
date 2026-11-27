@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -138,7 +138,7 @@ func TestDBTValidation_WritesTheCandidateArtifactsAndOffersASourceEdit(t *testin
 
 	assert.Equal(t, []artifactWrite{
 		{"proposed-fix/rel-1/model.svc.a/attempt-2.sql", fixedSQL, "text/plain"},
-		{"proposed-fix/rel-1/model.svc.a/attempt-2.diff", proposal.ComputeUnifiedDiff(candidateSQL, fixedSQL, "model.svc.a"), "text/plain"},
+		{"proposed-fix/rel-1/model.svc.a/attempt-2.diff", fix.ComputeUnifiedDiff(candidateSQL, fixedSQL, "model.svc.a"), "text/plain"},
 	}, w.writes)
 	assert.Equal(t, remediation.Draft{
 		Edits: []remediation.Edit{{

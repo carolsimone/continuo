@@ -523,8 +523,8 @@ func TestGetPrecedents_MapsEntries(t *testing.T) {
 				},
 				ResolutionDiff:          "-select 1 !\n+select 1\n",
 				ResolutionDiffTruncated: false,
-				Proposals: []casebase.ProposalView{
-					{ProposalID: "prop-1", PrURL: "https://github.com/acme/demo/pull/9", PrNumber: 9, PrState: "merged"},
+				Fixes: []casebase.FixView{
+					{FixID: "fix-1", PrURL: "https://github.com/acme/demo/pull/9", PrNumber: 9, PrState: "merged"},
 				},
 			},
 		},
@@ -550,11 +550,11 @@ func TestGetPrecedents_MapsEntries(t *testing.T) {
 	assert.Equal(t, "select 1", p.ResolvingVersion.RawCode)
 	assert.Equal(t, "-select 1 !\n+select 1\n", p.ResolutionDiff)
 	assert.False(t, p.ResolutionDiffTruncated)
-	require.Len(t, p.Proposals, 1)
-	assert.Equal(t, "prop-1", p.Proposals[0].ProposalId)
-	assert.Equal(t, "https://github.com/acme/demo/pull/9", p.Proposals[0].PrUrl)
-	assert.Equal(t, int32(9), p.Proposals[0].PrNumber)
-	assert.Equal(t, "merged", p.Proposals[0].PrState)
+	require.Len(t, p.Fixes, 1)
+	assert.Equal(t, "fix-1", p.Fixes[0].FixId)
+	assert.Equal(t, "https://github.com/acme/demo/pull/9", p.Fixes[0].PrUrl)
+	assert.Equal(t, int32(9), p.Fixes[0].PrNumber)
+	assert.Equal(t, "merged", p.Fixes[0].PrState)
 
 	assert.Equal(t, "sig-1", pr.gotSignature)
 	assert.Equal(t, int32(5), pr.gotLimit)

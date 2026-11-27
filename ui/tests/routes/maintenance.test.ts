@@ -45,7 +45,7 @@ describe('maintenanceGate', () => {
   });
   it.each([
     ['POST', '/api/runs/abc/cancel'],
-    ['POST', '/api/remediation/proposals/p1/pull-request'],
+    ['POST', '/api/remediation/fixes/p1/pull-request'],
     ['GET', '/api/schedules'],
     ['GET', '/api/v1/releases/r1'],
     ['GET', '/api/runs/abc/rebase-preview'],

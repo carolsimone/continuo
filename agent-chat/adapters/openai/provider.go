@@ -121,16 +121,16 @@ type streamChoice struct {
 
 // streamDelta carries incremental content for text or tool_calls.
 type streamDelta struct {
-	Content   string              `json:"content,omitempty"`
+	Content   string                `json:"content,omitempty"`
 	ToolCalls []streamToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 // streamToolCallDelta is an incremental tool_call fragment. The model sends id and
 // function.name only in the first delta for an index; subsequent deltas append to arguments.
 type streamToolCallDelta struct {
-	Index    int                      `json:"index"`
-	ID       string                   `json:"id,omitempty"`
-	Function streamToolFunctionDelta  `json:"function"`
+	Index    int                     `json:"index"`
+	ID       string                  `json:"id,omitempty"`
+	Function streamToolFunctionDelta `json:"function"`
 }
 
 // streamToolFunctionDelta carries incremental function call data.

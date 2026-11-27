@@ -14,9 +14,9 @@ import (
 
 // handleRetryRemediation starts another remediation round on a rejected
 // release. A refusal answers 409 with a machine-readable reason so the UI can
-// say what to do instead — open the proposal, wait for the round already in
+// say what to do instead — open the fix, wait for the round already in
 // flight, push a new commit — rather than retry. A failed read of remediation
-// proposals answers 502; any other failure answers 500.
+// fixes answers 502; any other failure answers 500.
 func (s *Server) handleRetryRemediation(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -41,14 +41,14 @@ func (s *Server) handleRetryRemediation(w http.ResponseWriter, r *http.Request) 
 		writeRefusal(w, "rounds_exhausted", nil)
 	case errors.Is(err, handlers.ErrRetryInProgress):
 		writeRefusal(w, "retry_in_progress", nil)
-	case errors.Is(err, handlers.ErrProposalReaderUnavailable):
+	case errors.Is(err, handlers.ErrFixReaderUnavailable):
 		s.log.Warn("retry remediation", "release", r.PathValue("id"), "error", err)
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "proposal_reader_unavailable"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "fix_reader_unavailable"})
 	default:
-		var open handlers.ErrProposalOpen
+		var open handlers.ErrFixOpen
 		if errors.As(err, &open) {
-			writeRefusal(w, "proposal_open", map[string]string{"proposal_id": open.ProposalID, "pr_url": open.PRURL})
+			writeRefusal(w, "fix_open", map[string]string{"fix_id": open.FixID, "pr_url": open.PRURL})
 			return
 		}
 		s.log.Warn("retry remediation", "release", r.PathValue("id"), "error", err)

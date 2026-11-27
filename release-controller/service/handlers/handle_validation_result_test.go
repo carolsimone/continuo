@@ -1440,7 +1440,7 @@ func TestHandleValidationResult_SeedBuildLegLeavesTheBuiltSeedOutOfTheValidation
 // contextRebuildFix seeds a fix's release check of service-3 and
 // advances it to Validating. The rejected release it verifies changed the
 // shared ancestor A, which validated ok, and broke A's readers B and C. The
-// fix fixes B, which also reads the unchanged upstream U. So B is the
+// fix repairs B, which also reads the unchanged upstream U. So B is the
 // fix's scope, A is rebuilt from the candidate for context as B's ancestor, U
 // is cloned from production, and C, still broken and left to its own check, is
 // not validated.

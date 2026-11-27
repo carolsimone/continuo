@@ -238,23 +238,23 @@ func assertDecision(t *testing.T, ctx context.Context, clients *testClients, rel
 	require.Equal(t, connectionRefusedRule, decision.Reason)
 }
 
-// assertSkippedAttempt waits for the release's proposal of round on the
-// agent-remediation proposals API, the surface release-controller and the UI
+// assertSkippedAttempt waits for the release's fix of round on the
+// agent-remediation fixes API, the surface release-controller and the UI
 // read, and checks that it is the round's one attempt, numbered attempt and
 // skipped: the fixture skipped with the classifier's code and detail as its
 // reason, no edit, no model and no release check. It also checks the
-// release holds exactly round proposals, one per round.
+// release holds exactly round fixes, one per round.
 func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClients, releaseID string, round, attempt int, detail string) {
 	t.Helper()
-	var found *remediationv1.Proposal
+	var found *remediationv1.Fix
 	var last string
 	pollUntilDescribed(t, ctx, handoverStageBudget, 2*time.Second, func() (bool, error) {
-		resp, err := clients.agentRemediationClient.ListProposals(ctx, &remediationv1.ListProposalsRequest{ReleaseId: releaseID})
+		resp, err := clients.agentRemediationClient.ListFixes(ctx, &remediationv1.ListFixesRequest{ReleaseId: releaseID})
 		if err != nil {
 			return false, err
 		}
 		last = ""
-		for _, p := range resp.GetProposals() {
+		for _, p := range resp.GetFixes() {
 			last += fmt.Sprintf("[round %d attempt %d %s] ", p.GetRemediationRound(), p.GetAttempt(), p.GetStatus())
 			if int(p.GetRemediationRound()) == round && p.GetStatus() == "skipped" {
 				found = p
@@ -262,12 +262,12 @@ func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClient
 		}
 		return found != nil, nil
 	}, func() string {
-		return fmt.Sprintf("timeout waiting for the skipped round-%d attempt of release %s; proposals: %s", round, releaseID, last)
+		return fmt.Sprintf("timeout waiting for the skipped round-%d attempt of release %s; fixes: %s", round, releaseID, last)
 	})
 
-	resp, err := clients.agentRemediationClient.ListProposals(ctx, &remediationv1.ListProposalsRequest{ReleaseId: releaseID})
+	resp, err := clients.agentRemediationClient.ListFixes(ctx, &remediationv1.ListFixesRequest{ReleaseId: releaseID})
 	require.NoError(t, err)
-	require.Len(t, resp.GetProposals(), round, "one attempt per round; got %s", last)
+	require.Len(t, resp.GetFixes(), round, "one attempt per round; got %s", last)
 
 	require.EqualValues(t, attempt, found.GetAttempt(), "the attempt continues the release's numbering")
 	require.Equal(t, []string{unfixableInfraUniqueID}, found.GetResolvedNodeIds())

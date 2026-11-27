@@ -7,13 +7,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
 
 // TestRunner_RowsAndEventsCarryTheTriggersTenant verifies that the tenant a
 // trigger arrives under is the one its remediation row is stored under and the
-// one the remediation.proposed:v1 entry it ends in is stored under, so the
+// one the fix.proposed:v1 entry it ends in is stored under, so the
 // event is published under that tenant and no other.
 func TestRunner_RowsAndEventsCarryTheTriggersTenant(t *testing.T) {
 	h := newHarness(t)
@@ -21,7 +21,7 @@ func TestRunner_RowsAndEventsCarryTheTriggersTenant(t *testing.T) {
 	trig.TenantID = "acme"
 	id := h.accept(trig)
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, "acme", h.remediation(id).TenantID)

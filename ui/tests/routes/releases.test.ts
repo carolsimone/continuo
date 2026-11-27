@@ -184,11 +184,11 @@ describe('releases router', () => {
   });
 
   it('POST /api/releases/:id/retry-remediation passes release-controller status and body through', async () => {
-    const client = { retryRemediation: vi.fn().mockResolvedValue({ status: 409, body: { error: 'proposal_open', pr_url: 'https://x/pr/7' } }) };
+    const client = { retryRemediation: vi.fn().mockResolvedValue({ status: 409, body: { error: 'fix_open', pr_url: 'https://x/pr/7' } }) };
     const app = appWith({ client, getLog: vi.fn() });
     const res = await request(app).post('/api/releases/rel-1/retry-remediation');
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'proposal_open', pr_url: 'https://x/pr/7' });
+    expect(res.body).toEqual({ error: 'fix_open', pr_url: 'https://x/pr/7' });
     expect(client.retryRemediation).toHaveBeenCalledWith('rel-1');
   });
 

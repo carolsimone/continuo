@@ -57,7 +57,7 @@ type Claimant struct {
 //   - CollisionIdentity: UniqueID is the declared identity two or more nodes
 //     share. It cannot be cleared by renaming a claimant's alias — alias
 //     changes ResolvedRelationID, not the declared model name UniqueID is
-//     keyed on — so a rename proposal can resolve a relation collision but
+//     keyed on — so a rename fix can resolve a relation collision but
 //     never an identity one.
 type DuplicateClaim struct {
 	Kind       CollisionKind
@@ -237,7 +237,7 @@ func sortClaimants(claimants []Claimant) {
 // competing claimant to name as the relation's other producer. Meaningful
 // only for a relation collision: the caller never invokes it for an identity
 // collision, because renaming a claimant's alias changes ResolvedRelationID,
-// not the shared UniqueID, so no rename proposal can clear one.
+// not the shared UniqueID, so no rename fix can clear one.
 //
 // The changed project's claimant wins when it has one: that is the source
 // being changed in this release, so renaming it never touches a project the

@@ -18,7 +18,7 @@ var _ ports.PullRequestBranchFinder = (*GitHub)(nil)
 
 // PRStatus returns the current state of repo's pull request #number via a
 // single read-only GET. Every non-2xx response (including 404) is an error so
-// the caller leaves the proposal untouched and retries on the next pass.
+// the caller leaves the fix untouched and retries on the next pass.
 func (g *GitHub) PRStatus(ctx context.Context, repo string, number int) (ports.PRStatus, error) {
 	u := fmt.Sprintf("%s/repos/%s/pulls/%d", g.baseURL, repo, number)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)

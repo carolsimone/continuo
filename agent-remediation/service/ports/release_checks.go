@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 )
 
 // ReleaseCheckRequest is a fix's release check to submit: the edited
@@ -42,7 +42,7 @@ const ODCSBundleName = "odcs-bundle.json"
 // error text the next attempt is shown, and CheckError is the check's own reason
 // and detail ("reason — detail"), the text of a failure that names no node.
 type ReleaseCheckStatus struct {
-	Phase       proposal.Phase
+	Phase       fix.Phase
 	ActivatedAt time.Time
 	NodeErrors  map[string]string
 	CheckError  string

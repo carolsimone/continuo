@@ -298,7 +298,7 @@ func f(ports struct{ LLMProvider int }) int { return ports.LLMProvider }
 		"agent-remediation/service/promptlog/promptlog.go":       true,
 		"agent-remediation/service/conformance/world.go":         true,
 		"agent-remediation/service/overlay/overlay.go":           false,
-		"agent-remediation/service/proposals/proposals.go":       false,
+		"agent-remediation/service/fixes/fixes.go":               false,
 		"agent-remediation/service/runnerx/x.go":                 false,
 		"agent-remediation/service/newpkg/x.go":                  false,
 	} {
@@ -326,8 +326,8 @@ func f() {
 	}
 
 	other := parseRemediationGuardSource(t, `package x
-import "github.com/carolsimone/continuo/agent-remediation/domain/proposal"
-func f() { _ = proposal.NewChecked }
+import "github.com/carolsimone/continuo/agent-remediation/domain/fix"
+func f() { _ = fix.NewChecked }
 `)
 	if u, _ := remediationCheckedConstructorUsesIn(other); len(u) != 0 {
 		t.Errorf("flagged %v, which is not the remediation package", u)

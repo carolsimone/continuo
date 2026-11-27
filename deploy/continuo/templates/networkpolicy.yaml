@@ -226,7 +226,7 @@ spec:
         - port: 8088
 ---
 # agent-remediation reaches release-controller's HTTP API (port 8088) to
-# submit fixes' release checks, poll their status, and read the failing
+# submit the release checks of fixes, poll their status, and read the failing
 # release's image tag. Only ui is admitted by allow-ui-upstreams above, so
 # without this edge every proposed fix stalls before it can be verified.
 apiVersion: networking.k8s.io/v1
@@ -253,9 +253,9 @@ spec:
 ---
 # release-controller reaches agent-remediation's gRPC server (port 50054) to
 # read remediation attempts before starting a retry round (RetryRemediation →
-# ListProposals). allow-ui-upstreams admits only ui to this port, so without
+# ListFixes). allow-ui-upstreams admits only ui to this port, so without
 # this edge a "try again" on a rejected release fails with
-# proposal_reader_unavailable.
+# fix_reader_unavailable.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

@@ -332,16 +332,16 @@ func main() {
 		}
 	})
 
-	// heal.triggered:v1 (rejections) + remediation.pr_opened:v1
-	// (proposals) + remediation.pr_closed:v1 (provenance) — the
+	// heal.triggered:v1 (rejections) + fix.pr_opened:v1
+	// (fixes) + fix.pr_closed:v1 (provenance) — the
 	// failure-precedent case base, written under the tenant each message names
 	// through the Neo4j unit of work. The rejections handler reuses the
-	// versions path's bundle reader to fetch the failing code; the proposals
+	// versions path's bundle reader to fetch the failing code; the fixes
 	// and provenance handlers need no bundle. The provenance handler draws the
 	// RESOLVED_BY/EDITED case-base edges on a merged PR and stamps every PR's
 	// terminal state. The catalog component remains the sole Neo4j writer.
 	rejectionsHandler := handlers.NewHealTriggeredRejectionsHandler(graphUnitOfWork, codeBundleReader, logger)
-	proposalsHandler := handlers.NewPrOpenedProposalsHandler(graphUnitOfWork, logger)
+	fixesHandler := handlers.NewPrOpenedFixesHandler(graphUnitOfWork, logger)
 	provenanceHandler := handlers.NewPrClosedProvenanceHandler(graphUnitOfWork, logger)
 
 	// Every catalog consumer is the same shape: a domain handler wrapped
@@ -360,8 +360,8 @@ func main() {
 		{"release_promoted_versions", streams.ReleasePromotedV1, streams.CatalogReleaseVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_contracts", streams.ReleasePromotedV1, streams.CatalogReleaseContracts, redis.NewReleasePromotedContractsBinding(releasePromotedContractsHandler, logger), topologyHandlerTimeout},
 		{"heal_triggered_rejections", streams.HealTriggeredV1, streams.CatalogHealTriggeredRejections, redis.NewHealTriggeredBinding(rejectionsHandler, logger), 0},
-		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.CatalogRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
-		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.CatalogRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
+		{"fix_pr_opened_fixes", streams.FixPrOpenedV1, streams.CatalogFixPrOpenedFixes, redis.NewPrOpenedBinding(fixesHandler, logger), 0},
+		{"fix_pr_closed_provenance", streams.FixPrClosedV1, streams.CatalogFixPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
 	}
 	for _, c := range consumers {
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger,

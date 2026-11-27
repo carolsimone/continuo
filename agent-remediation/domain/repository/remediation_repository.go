@@ -167,7 +167,7 @@ type RemediationRepository interface {
 	// DeleteFinishedOlderThan deletes at most limit done and system_failure
 	// remediations last updated more than retention ago by the store's own
 	// clock, oldest first, with their tries, clusters and steps, and returns how
-	// many it deleted. The proposals of a deleted remediation stay, with no
+	// many it deleted. The fixes of a deleted remediation stay, with no
 	// remediation. It has the shape of retention.PruneFunc.
 	DeleteFinishedOlderThan(ctx context.Context, retention time.Duration, limit int) (int64, error)
 }

@@ -16,13 +16,13 @@ import (
 
 // TestE2E_RemediationRetry_RoundTwo: a rejected release whose remediation
 // stopped can be retried from the API. The dead end is produced by marking the
-// first round's proposal failed directly in the agent's table — the outcome the
+// first round's fix failed directly in the agent's table — the outcome the
 // model reaches when it cannot fix the failure — so the test controls the state
 // without a second LLM fixture. Round 2 then reaches the model again: a new
-// trigger carries remediation_round=2 and the proposal continues the attempt
-// numbering. A retry while that proposal is open is refused with the link.
+// trigger carries remediation_round=2 and the fix continues the attempt
+// numbering. A retry while that fix is open is refused with the link.
 //
-// Each round's proposal reaches 'proposed' only after its own release check
+// Each round's fix reaches 'proposed' only after its own release check
 // has compiled and validated the proposed source, so both round waits below
 // cover a full release check rather than just a model call.
 func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
@@ -31,7 +31,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	}
 
 	// 35 minutes: strictly greater than the 34 this test's stage budgets sum to
-	// (rejection 10 + round-1 proposal 12 + round-2 proposal 12), each of the
+	// (rejection 10 + round-1 fix 12 + round-2 fix 12), each of the
 	// last two covering a release check of its own.
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
@@ -95,23 +95,23 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 
 	// 2. Round 1 proposes a fix (stub LLM answers high confidence) once the
 	//    release check judging it has passed.
-	var round1 retryProposalRow
+	var round1 retryFixRow
 	pollUntil(t, ctx, 12*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &round1,
-			`SELECT source, release_id, node_id, status, attempt, remediation_round FROM proposal
+			`SELECT source, release_id, node_id, status, attempt, remediation_round FROM fix
 			  WHERE release_id=$1 AND node_id=$2 AND status='proposed'`, releaseID, ftableEUniqueID)
 		return err == nil, nil
-	}, "round-1 proposal")
+	}, "round-1 fix")
 	require.Equal(t, 1, round1.RemediationRound)
 
-	// 3. While a proposal is open, a retry is refused and names it.
+	// 3. While a fix is open, a retry is refused and names it.
 	st, body := postRetry(t, clients, releaseID)
 	require.Equal(t, http.StatusConflict, st, "body=%v", body)
-	require.Equal(t, "proposal_open", body["error"])
+	require.Equal(t, "fix_open", body["error"])
 
 	// 4. Make the release a dead end: the round-1 attempt ends failed.
 	_, err := clients.agentRemediationDB.ExecContext(ctx,
-		`UPDATE proposal SET status='failed', rationale='e2e: forced dead end' WHERE release_id=$1`, releaseID)
+		`UPDATE fix SET status='failed', rationale='e2e: forced dead end' WHERE release_id=$1`, releaseID)
 	require.NoError(t, err)
 
 	// 5. Retry → round 2.
@@ -119,21 +119,21 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, st, "body=%v", body)
 	require.EqualValues(t, 2, body["remediation_round"])
 
-	// 6. The round has been started but its first proposal row has not landed
+	// 6. The round has been started but its first fix row has not landed
 	//    yet, so a second click cannot spend another round.
 	st, body = postRetry(t, clients, releaseID)
 	require.Equal(t, http.StatusConflict, st, "body=%v", body)
 	require.Equal(t, "retry_in_progress", body["error"])
 
-	// 7. A round-2 trigger reaches the agent and a new proposal continues the
+	// 7. A round-2 trigger reaches the agent and a new fix continues the
 	//    attempt numbering, once its own release check has passed.
-	var round2 retryProposalRow
+	var round2 retryFixRow
 	pollUntil(t, ctx, 12*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &round2,
-			`SELECT source, release_id, node_id, status, attempt, remediation_round FROM proposal
+			`SELECT source, release_id, node_id, status, attempt, remediation_round FROM fix
 			  WHERE release_id=$1 AND node_id=$2 AND remediation_round=2 AND status='proposed'`, releaseID, ftableEUniqueID)
 		return err == nil, nil
-	}, "round-2 proposal")
+	}, "round-2 fix")
 	require.Equal(t, round1.Attempt+1, round2.Attempt, "attempt numbering continues across rounds")
 
 	var decisions int
@@ -145,15 +145,15 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	detail := getReleaseDetail(t, clients, releaseID)
 	require.EqualValues(t, 2, detail["remediation_round"])
 
-	// 9. Fourth retry while round 2's proposal is open → refused again.
+	// 9. Fourth retry while round 2's fix is open → refused again.
 	st, body = postRetry(t, clients, releaseID)
 	require.Equal(t, http.StatusConflict, st, "body=%v", body)
-	require.Equal(t, "proposal_open", body["error"])
+	require.Equal(t, "fix_open", body["error"])
 }
 
-// retryProposalRow captures the round-scoped proposal fields asserted across
-// remediation retry rounds in continuo_agent_remediation.proposal.
-type retryProposalRow struct {
+// retryFixRow captures the round-scoped fix fields asserted across
+// remediation retry rounds in continuo_agent_remediation.fix.
+type retryFixRow struct {
 	Source           string `db:"source"`
 	ReleaseID        string `db:"release_id"`
 	NodeID           string `db:"node_id"`
@@ -165,7 +165,7 @@ type retryProposalRow struct {
 // postRetry issues POST /releases/{id}/retry-remediation against the
 // release-controller and returns the status code and decoded JSON body — a
 // 202 body carries release_id/remediation_round, a 409 body carries an error
-// reason and, for proposal_open, the open proposal's id and PR URL.
+// reason and, for fix_open, the open fix's id and PR URL.
 func postRetry(t *testing.T, clients *testClients, releaseID string) (int, map[string]any) {
 	t.Helper()
 	url := fmt.Sprintf("%s/releases/%s/retry-remediation", clients.releaseBase, releaseID)

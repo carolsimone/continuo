@@ -40,7 +40,7 @@ MATCH (rej:Rejection {tenant_id: $tenant_id})-[:HAS_SIGNATURE]->(sig:ErrorSignat
 WHERE ($signature <> '' AND sig.signature = $signature)
    OR ($signature = '' AND rej.category = $category AND rej.reason = $reason)
 OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res)
-WHERE res:NodeVersion OR res:Proposal
+WHERE res:NodeVersion OR res:Fix
 WITH rej, sig.signature AS signature, count(res) > 0 AS resolved
 ORDER BY resolved DESC, rej.at DESC
 LIMIT $limit
@@ -51,11 +51,11 @@ RETURN rej.release_id AS release_id, rej.node_id AS node_id, signature`
 // resolving version is the current version of its live :Node, and its fix
 // PRs. It ends with the failing code's column, which the caller appends.
 //
-// A proposal spanning several projects is shared by their rejections, and
-// each carries its own :PullRequest. The [:PROPOSED] edge stamps the
+// A fix spanning several projects is shared by their rejections, and
+// each project carries its own :PullRequest. The [:PROPOSED] edge stamps the
 // proposing project, so the PR join is scoped to it: a rejection surfaces
-// only its own project's PR facts, never a sibling project's. An edge with
-// no project falls back to matching any of the proposal's PRs.
+// only its own project's PR facts, never a sibling project's. The PR facts
+// are read from the :PullRequest alone.
 const precedentDetailsCypher = `
 UNWIND $keys AS k
 MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: k.release_id, node_id: k.node_id})
@@ -72,16 +72,16 @@ WITH rej, signature, res, prior,
      (cur IS NOT NULL AND res IS NOT NULL AND cur.content_hash = res.content_hash) AS res_is_current
   ORDER BY prior.promoted_at DESC
 WITH rej, signature, res, res_is_current, head(collect(prior)) AS prior
-OPTIONAL MATCH (rej)-[prop:PROPOSED]->(p:Proposal {tenant_id: $tenant_id})
+OPTIONAL MATCH (rej)-[pe:PROPOSED]->(p:Fix {tenant_id: $tenant_id})
 OPTIONAL MATCH (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id})
-  WHERE pl.project = prop.project OR prop.project IS NULL
+  WHERE pl.project = pe.project
 WITH rej, signature, res, prior, res_is_current,
      collect(DISTINCT p {
-       .proposal_id,
-       pr_url:    coalesce(pl.pr_url, p.pr_url),
-       pr_number: coalesce(pl.pr_number, p.pr_number),
-       pr_state:  coalesce(pl.pr_state, p.pr_state)
-     }) AS proposals
+       .fix_id,
+       pr_url:    pl.pr_url,
+       pr_number: pl.pr_number,
+       pr_state:  pl.pr_state
+     }) AS fixes
 RETURN rej.release_id AS release_id, rej.node_id AS node_id,
        signature,
        coalesce(rej.stage, '') AS stage,
@@ -91,31 +91,30 @@ RETURN rej.release_id AS release_id, rej.node_id AS node_id,
        coalesce(rej.dbt_log_uri, '') AS dbt_log_uri,
        rej.at AS at,
        coalesce(rej.content_hash, '') AS content_hash,
-       res { .* } AS res, prior { .* } AS prior, res_is_current, proposals,
-       exists { (rej)-[:RESOLVED_BY]->(:Proposal {tenant_id: $tenant_id}) } AS resolved_by_proposal,
+       res { .* } AS res, prior { .* } AS prior, res_is_current, fixes,
+       exists { (rej)-[:RESOLVED_BY]->(:Fix {tenant_id: $tenant_id}) } AS resolved_by_fix,
        `
 
 // precedentEditsCypher reads the edited-node provenance of each listed
 // rejection a merged PR resolved: for each rejection RESOLVED_BY a
-// :Proposal, its [:EDITED] edges to the touched :Node, a retired node
+// :Fix, its [:EDITED] edges to the touched :Node, a retired node
 // included. For an amended edit, it selects the promoted :NodeVersion
 // straddling the PR's close — the first version promoted after closed_at
 // (merged) and the newest before it (prior) — so the service can render the
 // merged-truth diff.
 //
-// A proposal spanning several projects is shared by their rejections, but
+// A fix spanning several projects is shared by their rejections, but
 // each RESOLVED_BY edge carries the resolving project, so the walk is scoped
 // to it: a rejection resolved by one project's PR surfaces only that
-// project's edits and reads only that project's :PullRequest closed_at. An
-// edge with no project falls back to the whole-proposal walk.
+// project's edits and reads only that project's :PullRequest closed_at.
 const precedentEditsCypher = `
 UNWIND $keys AS k
 MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: k.release_id, node_id: k.node_id})
-      -[rb:RESOLVED_BY]->(rp:Proposal {tenant_id: $tenant_id})
-MATCH (rp)-[ed:EDITED]->(t:Node {tenant_id: $tenant_id})
-  WHERE ed.project = rb.project OR rb.project IS NULL
-OPTIONAL MATCH (rp)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id})
-  WHERE pl.pr_state = 'merged' AND (pl.project = rb.project OR rb.project IS NULL)
+      -[rb:RESOLVED_BY]->(rf:Fix {tenant_id: $tenant_id})
+MATCH (rf)-[ed:EDITED]->(t:Node {tenant_id: $tenant_id})
+  WHERE ed.project = rb.project
+OPTIONAL MATCH (rf)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id})
+  WHERE pl.pr_state = 'merged' AND pl.project = rb.project
 OPTIONAL MATCH (mv:NodeVersion {tenant_id: $tenant_id, unique_id: t.unique_id})
   WHERE ed.amended AND pl.closed_at IS NOT NULL AND mv.promoted_at > pl.closed_at
 WITH rej, ed, t, pl, mv ORDER BY mv.promoted_at ASC
@@ -269,22 +268,22 @@ func precedentViewFromRecord(rec *neo4j.Record) casebase.PrecedentView {
 		v.ResolvingVersion.IsCurrent = recordBool(rec, "res_is_current")
 	}
 	v.PriorVersion = versionViewFromProps(rec, "prior")
-	v.ResolvedByProposal = recordBool(rec, "resolved_by_proposal")
-	if raw, ok := rec.Get("proposals"); ok {
+	v.ResolvedByFix = recordBool(rec, "resolved_by_fix")
+	if raw, ok := rec.Get("fixes"); ok {
 		if list, ok := raw.([]any); ok {
 			for _, item := range list {
 				m, ok := item.(map[string]any)
 				if !ok {
 					continue
 				}
-				pv := casebase.ProposalView{}
-				pv.ProposalID, _ = m["proposal_id"].(string)
-				pv.PrURL, _ = m["pr_url"].(string)
+				fv := casebase.FixView{}
+				fv.FixID, _ = m["fix_id"].(string)
+				fv.PrURL, _ = m["pr_url"].(string)
 				if n, ok := m["pr_number"].(int64); ok {
-					pv.PrNumber = int(n)
+					fv.PrNumber = int(n)
 				}
-				pv.PrState, _ = m["pr_state"].(string)
-				v.Proposals = append(v.Proposals, pv)
+				fv.PrState, _ = m["pr_state"].(string)
+				v.Fixes = append(v.Fixes, fv)
 			}
 		}
 	}

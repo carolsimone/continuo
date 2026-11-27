@@ -53,10 +53,10 @@ const parseFixBrokenProject = "service-2"
 //	→ remediation: ClassifyParse → heal.triggered:v1 (source=parse)
 //	→ agent-remediation's dbt-parse type: its failing_node_source step reads
 //	  the model from stub-github under service-2's repo prefix, its prompt asks
-//	  stub-llm → proposal row (source=parse)
+//	  stub-llm → fix row (source=parse)
 //	→ one fix's release check lays the corrected model over service-2's dbt
-//	  project, compiles and validates it, and passes → proposal proposed
-//	→ remediation.proposed:v1, and the retry endpoint accepts the reason as
+//	  project, compiles and validates it, and passes → fix proposed
+//	→ fix.proposed:v1, and the retry endpoint accepts the reason as
 //	  healable.
 //
 // ftable_e is the node under repair because the whole rest of the suite already
@@ -68,12 +68,12 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	}
 
 	// 40 minutes: strictly greater than the 38 this test's stage budgets sum to
-	// (rejection 10 + rejected event 2 + trigger 4 + proposal 20 + proposed
+	// (rejection 10 + rejected event 2 + trigger 4 + fix 20 + proposed
 	// event 2). The rejection budget covers service-1's compile Job and the
-	// parse leg; the proposal budget covers the fix's release check, which is
+	// parse leg; the fix budget covers the fix's release check, which is
 	// a whole second release check in kind — compile service-2 with the overlay,
 	// build the candidate schema, run the validation Jobs — and matches what
-	// the dbt-validation type's own trigger-to-terminal-proposal wait budgets for
+	// the dbt-validation type's own trigger-to-terminal-fix wait budgets for
 	// the same span (TestE2E_AgentRemediation_ProposesFixForRejection).
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
@@ -126,7 +126,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// consumed entries, so the checks below read what the taps recorded.
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
-	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.FixProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedLiveRelease(t, ctx, clients, prodNodes)
@@ -212,9 +212,9 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	assert.NotEmpty(t, trigger.Nodes[0].ErrorExcerpt)
 	assert.Empty(t, trigger.Nodes[0].DBTLogURI, "a parse failure has no log")
 
-	// 4. A proposal is produced, verified by a real fix's release check, and
+	// 4. A fix is produced, verified by a real release check, and
 	//    announced for human review.
-	var row parseProposalRow
+	var row parseFixRow
 	var last string
 	pollUntil(t, ctx, 20*time.Minute, 3*time.Second, func() (bool, error) {
 		// ORDER BY attempt DESC: a failed attempt is retried under a higher
@@ -223,27 +223,27 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 		// later one is still running.
 		err := clients.agentRemediationDB.GetContext(ctx, &row,
 			`SELECT source, release_id, node_id, status, file_path, source_resolved, attempt, verify_error, release_checks
-			   FROM proposal WHERE release_id = $1 AND node_id = $2
+			   FROM fix WHERE release_id = $1 AND node_id = $2
 			  ORDER BY attempt DESC LIMIT 1`, releaseID, ftableEUniqueID)
 		if err != nil {
 			return false, nil
 		}
 		if row.Status != last {
-			t.Logf("proposal %s/%s: attempt=%d status=%s", releaseID, ftableEUniqueID, row.Attempt, row.Status)
+			t.Logf("fix %s/%s: attempt=%d status=%s", releaseID, ftableEUniqueID, row.Attempt, row.Status)
 			last = row.Status
 		}
 		return row.Status == "proposed" || row.Status == "failed" || row.Status == "skipped" || row.Status == "escalated", nil
-	}, fmt.Sprintf("timeout waiting for a parse proposal for release %s", releaseID))
+	}, fmt.Sprintf("timeout waiting for a parse fix for release %s", releaseID))
 	require.Equal(t, "parse", row.Source)
 	require.Equal(t, "proposed", row.Status,
 		"the verified fix must be offered (latest attempt=%d, verify_error=%q, release_checks=%s)",
 		row.Attempt, row.VerifyError, row.ReleaseChecks)
-	require.True(t, strings.HasSuffix(row.FilePath, filePath), "proposal file_path %q must end with %q", row.FilePath, filePath)
+	require.True(t, strings.HasSuffix(row.FilePath, filePath), "fix file_path %q must end with %q", row.FilePath, filePath)
 	require.True(t, row.SourceResolved)
-	waitForRemediationProposed(t, ctx, proposedTap, releaseID, ftableEUniqueID, 2*time.Minute)
+	waitForFixProposed(t, ctx, proposedTap, releaseID, ftableEUniqueID, 2*time.Minute)
 
 	// 5. The retry endpoint no longer refuses the reason as unhealable. With a
-	//    proposal already open it answers 409 for that reason instead.
+	//    fix already open it answers 409 for that reason instead.
 	resp, err := http.Post(fmt.Sprintf("%s/releases/%s/retry-remediation", clients.releaseBase, releaseID), "application/json", nil)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -323,11 +323,11 @@ func ensureParseFixClonedProdRelations(t *testing.T, ctx context.Context, client
 	}
 }
 
-// parseProposalRow captures the proposal fields asserted for a parse-stage
+// parseFixRow captures the fix fields asserted for a parse-stage
 // fix, plus the release check diagnostics (attempt, verify_error,
 // release_checks) needed to explain a non-"proposed" terminal status from the
 // test log alone.
-type parseProposalRow struct {
+type parseFixRow struct {
 	Source         string `db:"source"`
 	ReleaseID      string `db:"release_id"`
 	NodeID         string `db:"node_id"`

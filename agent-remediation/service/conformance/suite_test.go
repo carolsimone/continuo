@@ -347,10 +347,10 @@ func TestSuite_TheUnfixableScenarioFailsWhenTheNodeIsNotMarkedUnfixable(t *testi
 
 // A fixture whose passing answer edits a file the model was never shown is
 // refused by pre-flight, so every round the scenario scripted to pass asks for
-// a revision instead, and each scenario that expects a proposal fails, most on
+// a revision instead, and each scenario that expects a fix fails, most on
 // the call its script holds no answer for: the suite judges what the files do,
 // not only that they run, and never answers a call twice.
-func TestSuite_AnAnswerPreflightRefusesFailsTheScenariosThatExpectAProposal(t *testing.T) {
+func TestSuite_AnAnswerPreflightRefusesFailsTheScenariosThatExpectAFix(t *testing.T) {
 	s := onlyTypes(builtinSuite(t), "dbt-compile")
 	for i, f := range s.Fixtures {
 		if f.Type == "dbt-compile" {

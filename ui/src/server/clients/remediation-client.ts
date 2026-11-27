@@ -17,27 +17,27 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 const proto = grpc.loadPackageDefinition(packageDefinition) as any;
 
 export interface RemediationClient {
-  listProposals: (request: any) => Promise<any>;
-  getProposal: (request: any) => Promise<any>;
+  listFixes: (request: any) => Promise<any>;
+  getFix: (request: any) => Promise<any>;
   beginPullRequest: (request: any) => Promise<any>;
   recordPullRequest: (request: any) => Promise<any>;
   failPullRequest: (request: any) => Promise<any>;
 }
 
 export function createRemediationClient(address: string): RemediationClient {
-  const stub = new proto.remediation.v1.RemediationProposals(
+  const stub = new proto.remediation.v1.RemediationFixes(
     address,
     grpc.credentials.createInsecure()
   );
 
   return {
-    listProposals: (request: any) =>
+    listFixes: (request: any) =>
       new Promise((resolve, reject) =>
-        stub.listProposals(request, (err: any, res: any) => (err ? reject(err) : resolve(res)))
+        stub.listFixes(request, (err: any, res: any) => (err ? reject(err) : resolve(res)))
       ),
-    getProposal: (request: any) =>
+    getFix: (request: any) =>
       new Promise((resolve, reject) =>
-        stub.getProposal(request, (err: any, res: any) => (err ? reject(err) : resolve(res)))
+        stub.getFix(request, (err: any, res: any) => (err ? reject(err) : resolve(res)))
       ),
     beginPullRequest: (request: any) =>
       new Promise((resolve, reject) =>

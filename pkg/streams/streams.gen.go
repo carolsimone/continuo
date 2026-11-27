@@ -44,14 +44,14 @@ const (
 	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
 	// HealTriggeredV1 — One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
 	HealTriggeredV1 = "heal.triggered:v1"
-	// RemediationProposedV1 — One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
-	RemediationProposedV1 = "remediation.proposed:v1"
+	// FixProposedV1 — One verified fix per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
+	FixProposedV1 = "fix.proposed:v1"
 	// RemediationHandedOverV1 — One event when a remediation ends with nodes a human must fix, each with its reason code and its owner; emitted by the remediation agent, read by people and not consumed by any component.
 	RemediationHandedOverV1 = "remediation.handed_over:v1"
-	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
-	RemediationPrOpenedV1 = "remediation.pr_opened:v1"
-	// RemediationPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
-	RemediationPrClosedV1 = "remediation.pr_closed:v1"
+	// FixPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base fixes group.
+	FixPrOpenedV1 = "fix.pr_opened:v1"
+	// FixPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
+	FixPrClosedV1 = "fix.pr_closed:v1"
 )
 
 // Consumer groups.
@@ -106,10 +106,10 @@ const (
 	AgentRemediationHealTriggered = "agent-remediation-heal-triggered"
 	// CatalogHealTriggeredRejections — catalog consumer group on heal.triggered:v1.
 	CatalogHealTriggeredRejections = "catalog-heal-triggered-rejections"
-	// CatalogRemediationPrOpenedProposals — catalog consumer group on remediation.pr_opened:v1.
-	CatalogRemediationPrOpenedProposals = "catalog-remediation-pr-opened-proposals"
-	// CatalogRemediationPrClosedProvenance — catalog consumer group on remediation.pr_closed:v1.
-	CatalogRemediationPrClosedProvenance = "catalog-remediation-pr-closed-provenance"
+	// CatalogFixPrOpenedFixes — catalog consumer group on fix.pr_opened:v1.
+	CatalogFixPrOpenedFixes = "catalog-fix-pr-opened-fixes"
+	// CatalogFixPrClosedProvenance — catalog consumer group on fix.pr_closed:v1.
+	CatalogFixPrClosedProvenance = "catalog-fix-pr-closed-provenance"
 )
 
 // All is every stream name from contract.yaml, in contract order — for callers
@@ -133,10 +133,10 @@ var All = []string{
 	ReleaseCheckFinishedV1,
 	RemediationRetryRequestedV1,
 	HealTriggeredV1,
-	RemediationProposedV1,
+	FixProposedV1,
 	RemediationHandedOverV1,
-	RemediationPrOpenedV1,
-	RemediationPrClosedV1,
+	FixPrOpenedV1,
+	FixPrClosedV1,
 }
 
 // Groups maps every contract stream to the consumer groups the contract
@@ -161,10 +161,10 @@ var Groups = map[string][]string{
 	ReleaseCheckFinishedV1:      {ExecutionControllerReleaseCheckFinished},
 	RemediationRetryRequestedV1: {RemediationRetryRequested},
 	HealTriggeredV1:             {AgentRemediationHealTriggered, CatalogHealTriggeredRejections},
-	RemediationProposedV1:       {},
+	FixProposedV1:               {},
 	RemediationHandedOverV1:     {},
-	RemediationPrOpenedV1:       {CatalogRemediationPrOpenedProposals},
-	RemediationPrClosedV1:       {CatalogRemediationPrClosedProvenance},
+	FixPrOpenedV1:               {CatalogFixPrOpenedFixes},
+	FixPrClosedV1:               {CatalogFixPrClosedProvenance},
 }
 
 // Retired lists the streams removed from the contract; their keys are deleted

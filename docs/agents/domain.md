@@ -38,7 +38,7 @@ An ADR is never rewritten. To reverse one, write a new ADR and set the old one's
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in the glossaries. Don't drift to synonyms a glossary explicitly avoids.
+When your output names a domain concept (in an issue title, a refactor plan, a hypothesis, a test name), use the term as defined in the glossaries. Don't drift to synonyms a glossary explicitly avoids.
 
 If the concept you need isn't in a glossary yet, that's a signal: either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/matt-domain-modeling`).
 

@@ -3,24 +3,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import RemediationPanel from './RemediationPanel';
-import { ProposalDTO } from './types';
+import { FixDTO } from './types';
 import { AuthContext } from './auth/AuthContext';
 import type { AuthUser } from './auth/useAuth';
 
 vi.mock('./remediation-api', () => ({
-  fetchProposals: vi.fn(),
+  fetchFixes: vi.fn(),
 }));
 
 vi.mock('./node-api', () => ({
   fetchNodeProjects: vi.fn(),
 }));
 
-import { fetchProposals } from './remediation-api';
+import { fetchFixes } from './remediation-api';
 import { fetchNodeProjects } from './node-api';
-const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
+const mockFetchFixes = fetchFixes as ReturnType<typeof vi.fn>;
 const mockFetchNodeProjects = fetchNodeProjects as ReturnType<typeof vi.fn>;
 
-const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
+const makeFix = (overrides: Partial<FixDTO> = {}): FixDTO => ({
   id: 'prop-1',
   source: 's3://bucket/key.sql',
   release_id: 'rel-abc',
@@ -99,11 +99,11 @@ describe('RemediationPanel — group list', () => {
   });
 
   it('renders one group row per (release, round), newest group first', async () => {
-    const proposals = [
-      makeProposal({ id: 'p1', node_id: 'svc.schema.model_a', release_id: 'rel-1', status: 'skipped', created_at: '2026-06-24T10:00:00Z' }),
-      makeProposal({ id: 'p2', node_id: 'svc.schema.model_b', release_id: 'rel-2', status: 'skipped', created_at: '2026-06-25T10:00:00Z' }),
+    const fixes = [
+      makeFix({ id: 'p1', node_id: 'svc.schema.model_a', release_id: 'rel-1', status: 'skipped', created_at: '2026-06-24T10:00:00Z' }),
+      makeFix({ id: 'p2', node_id: 'svc.schema.model_b', release_id: 'rel-2', status: 'skipped', created_at: '2026-06-25T10:00:00Z' }),
     ];
-    mockFetchProposals.mockResolvedValue(proposals);
+    mockFetchFixes.mockResolvedValue(fixes);
 
     renderPanel();
 
@@ -120,11 +120,11 @@ describe('RemediationPanel — group list', () => {
   });
 
   it('collapses several attempts of one (release, round) into a single group row', async () => {
-    const proposals = [
-      makeProposal({ id: 'a1', release_id: 'rel-x', remediation_round: 1, attempt: 1, status: 'failed', created_at: '2026-06-24T10:00:00Z' }),
-      makeProposal({ id: 'a2', release_id: 'rel-x', remediation_round: 1, attempt: 2, status: 'skipped', created_at: '2026-06-24T11:00:00Z' }),
+    const fixes = [
+      makeFix({ id: 'a1', release_id: 'rel-x', remediation_round: 1, attempt: 1, status: 'failed', created_at: '2026-06-24T10:00:00Z' }),
+      makeFix({ id: 'a2', release_id: 'rel-x', remediation_round: 1, attempt: 2, status: 'skipped', created_at: '2026-06-24T11:00:00Z' }),
     ];
-    mockFetchProposals.mockResolvedValue(proposals);
+    mockFetchFixes.mockResolvedValue(fixes);
 
     renderPanel();
 
@@ -136,13 +136,13 @@ describe('RemediationPanel — group list', () => {
   });
 
   it('shows the union of projects and nodes for a group', async () => {
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'skipped',
       node_id: 'core_schema.a',
       resolved_node_ids: ['core_schema.a', 'finance_schema.b'],
       projects: ['finance', 'core'],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -151,18 +151,18 @@ describe('RemediationPanel — group list', () => {
     expect(screen.getByText('core, finance')).toBeInTheDocument();
   });
 
-  it('reads the Projects column from the projects the proposal carries, never from its node ids', async () => {
+  it('reads the Projects column from the projects the fix carries, never from its node ids', async () => {
     // A remediation node id is "<schema>.<table>" — it names no project —
     // so the column shows the projects agent-remediation recorded for the
     // attempt (the same set the Project filter matches on), and a schema
     // never leaks into it.
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'skipped',
       node_id: 'e2e_schema.table_a',
       resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'],
       projects: ['service-1'],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -171,30 +171,30 @@ describe('RemediationPanel — group list', () => {
     expect(screen.queryByText(/e2e_schema(,|$)/)).toBeNull();
   });
 
-  it('shows the neutral info-strip when there are no proposals', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+  it('shows the neutral info-strip when there are no fixes', async () => {
+    mockFetchFixes.mockResolvedValue([]);
     renderPanel();
-    await waitFor(() => expect(screen.getByText('No proposals yet.')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('No fixes yet.')).toBeInTheDocument());
   });
 
   it('renders the merged chip in the group PR column without expanding', async () => {
-    const proposal = makeProposal({ status: 'skipped', pr_state: 'merged', pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped', pr_state: 'merged', pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
+    mockFetchFixes.mockResolvedValue([fix]);
     renderPanel();
     const chip = await screen.findByText('merged');
     expect(chip).toHaveClass('pr-chip', 'pr-chip--merged');
   });
 
   it('renders the rejected chip in the group PR column without expanding', async () => {
-    const proposal = makeProposal({ status: 'skipped', pr_state: 'rejected', pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped', pr_state: 'rejected', pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
+    mockFetchFixes.mockResolvedValue([fix]);
     renderPanel();
     const chip = await screen.findByText('rejected');
     expect(chip).toHaveClass('pr-chip', 'pr-chip--rejected');
   });
 
   it('reads a verifying group as an in-progress pill in the Latest status column, without expanding', async () => {
-    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'verifying' })]);
+    mockFetchFixes.mockResolvedValue([makeFix({ status: 'verifying' })]);
     renderPanel();
     const pill = await screen.findByText('verifying');
     expect(pill).toHaveClass('pill-sm', 'pill-sm--running');
@@ -217,14 +217,14 @@ describe('RemediationPanel — status pills', () => {
   ])('renders the %s status as a %s pill in the Latest status column', async (status, cls) => {
     // source_resolved=false keeps a 'proposed' attempt from auto-expanding,
     // so the only status text on screen is the group row's.
-    mockFetchProposals.mockResolvedValue([makeProposal({ status, source_resolved: false })]);
+    mockFetchFixes.mockResolvedValue([makeFix({ status, source_resolved: false })]);
     renderPanel();
     const pill = await screen.findByText(status);
     expect(pill).toHaveClass('pill-sm', cls);
   });
 
   it('renders the attempt row status as the same pill once the group is open', async () => {
-    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'failed' })]);
+    mockFetchFixes.mockResolvedValue([makeFix({ status: 'failed' })]);
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
@@ -242,7 +242,7 @@ describe('RemediationPanel — attempts are nested inside their group', () => {
   });
 
   it('renders the attempt rows and their column labels inside the group\'s contained block, not as a peer table', async () => {
-    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'skipped' })]);
+    mockFetchFixes.mockResolvedValue([makeFix({ status: 'skipped' })]);
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
@@ -258,9 +258,9 @@ describe('RemediationPanel — attempts are nested inside their group', () => {
   });
 
   it('reads the source column as resolved / unresolved rather than yes / no', async () => {
-    mockFetchProposals.mockResolvedValue([
-      makeProposal({ id: 'a', status: 'skipped', source_resolved: true, attempt: 1 }),
-      makeProposal({ id: 'b', status: 'skipped', source_resolved: false, attempt: 2, created_at: '2026-06-24T11:00:00Z' }),
+    mockFetchFixes.mockResolvedValue([
+      makeFix({ id: 'a', status: 'skipped', source_resolved: true, attempt: 1 }),
+      makeFix({ id: 'b', status: 'skipped', source_resolved: false, attempt: 2, created_at: '2026-06-24T11:00:00Z' }),
     ]);
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -280,8 +280,8 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('reveals attempt rows on group click, then the rationale on attempt click', async () => {
-    const proposal = makeProposal({ status: 'skipped', rationale: 'Fixes the JOIN clause that was missing a condition.' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped', rationale: 'Fixes the JOIN clause that was missing a condition.' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -300,8 +300,8 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('opens a collapsed group on Enter and closes it on Space', async () => {
-    const proposal = makeProposal({ status: 'skipped' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -320,21 +320,21 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('shows the source warning in the attempt card', async () => {
-    const proposal = makeProposal({ status: 'skipped', source_resolved: false });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped', source_resolved: false });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
     openAttemptByConfidence();
 
-    expect(screen.getByText(/No real-source fix — a PR cannot be opened for this proposal/)).toBeInTheDocument();
+    expect(screen.getByText(/No real-source fix — a PR cannot be opened for this fix/)).toBeInTheDocument();
   });
 
   it('shows the diff view/hide toggle in the attempt card, open by default', async () => {
     mockFetch(/\/api\/releases\/log/, '');
-    const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/my.patch' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped', diff_uri: 's3://bucket/my.patch' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -348,9 +348,9 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     expect(screen.getByRole('button', { name: /^view$/i })).toBeInTheDocument();
   });
 
-  it('renders one labelled diff view per edit when the proposal carries edits', async () => {
+  it('renders one labelled diff view per edit when the fix carries edits', async () => {
     mockFetch(/\/api\/releases\/log/, '');
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'skipped',
       diff_uri: 's3://bucket/legacy.patch',
       edits: [
@@ -358,7 +358,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
         { path: 'scripts/a.py', content_uri: 's3://bucket/a.py', diff_uri: 's3://bucket/py.diff' },
       ],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -378,10 +378,10 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     expect(links.some((l) => l.getAttribute('href')?.includes(encodeURIComponent('s3://bucket/legacy.patch')))).toBe(false);
   });
 
-  it('falls back to the single unlabelled diff view when the proposal carries no edits', async () => {
+  it('falls back to the single unlabelled diff view when the fix carries no edits', async () => {
     mockFetch(/\/api\/releases\/log/, '');
-    const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/candidate.patch', edits: [] });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped', diff_uri: 's3://bucket/candidate.patch', edits: [] });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -395,7 +395,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
 
   it('renders the first edit diff open and above the rationale', async () => {
     mockFetch(/\/api\/releases\/log/, '--- a\n+++ b\n-select amount\n+select amount_eur');
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'skipped',
       rationale: 'Failed: `svc.schema.my_model`\nModel\'s note: read amount_eur',
       edits: [
@@ -403,7 +403,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
         { path: 'models/b.sql', content_uri: 's3://bucket/b.sql', diff_uri: 's3://bucket/b.diff' },
       ],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -418,8 +418,8 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('keeps the rationale line breaks', async () => {
-    const proposal = makeProposal({ status: 'skipped', rationale: 'Failed: `x`\nEdited: `p`' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped', rationale: 'Failed: `x`\nEdited: `p`' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -432,8 +432,8 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('the attempt row within an expanded group carries the button role, the group row above it too', async () => {
-    const proposal = makeProposal({ status: 'skipped' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -445,15 +445,15 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 });
 
-describe('RemediationPanel — an actionable proposal', () => {
+describe('RemediationPanel — an actionable fix', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it('auto-expands the group and its card with no click', async () => {
-    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', rationale: 'Adds the missing GROUP BY column.' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'proposed', source_resolved: true, pr_url: '', rationale: 'Adds the missing GROUP BY column.' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -463,8 +463,8 @@ describe('RemediationPanel — an actionable proposal', () => {
   });
 
   it('an auto-expanded group row has no role or tabIndex', async () => {
-    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'proposed', source_resolved: true, pr_url: '' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
@@ -476,8 +476,8 @@ describe('RemediationPanel — an actionable proposal', () => {
   it.each(['', 'failed'])(
     'auto-expands and offers Create PR to an operator when pr_state is %j (retryable claim state)',
     async (pr_state) => {
-      const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', pr_state, rationale: 'Adds the missing GROUP BY column.' });
-      mockFetchProposals.mockResolvedValue([proposal]);
+      const fix = makeFix({ status: 'proposed', source_resolved: true, pr_url: '', pr_state, rationale: 'Adds the missing GROUP BY column.' });
+      mockFetchFixes.mockResolvedValue([fix]);
 
       renderPanelAsOperator();
 
@@ -486,20 +486,20 @@ describe('RemediationPanel — an actionable proposal', () => {
     }
   );
 
-  it('shows the no-repository banner instead of Create PR when the proposal records no repo', async () => {
-    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', repo: '', rationale: 'Adds the missing GROUP BY column.' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+  it('shows the no-repository banner instead of Create PR when the fix records no repo', async () => {
+    const fix = makeFix({ status: 'proposed', source_resolved: true, pr_url: '', repo: '', rationale: 'Adds the missing GROUP BY column.' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanelAsOperator();
 
     expect(await screen.findByText(/Adds the missing GROUP BY column/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
-    expect(screen.getByText(/No repository recorded for this proposal; a pull request cannot be opened\./)).toBeInTheDocument();
+    expect(screen.getByText(/No repository recorded for this fix; a pull request cannot be opened\./)).toBeInTheDocument();
   });
 
   it('does not auto-expand the card and offers no Create PR when pr_state is opening', async () => {
-    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', pr_state: 'opening', rationale: 'Adds the missing GROUP BY column.' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'proposed', source_resolved: true, pr_url: '', pr_state: 'opening', rationale: 'Adds the missing GROUP BY column.' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanelAsOperator();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -516,8 +516,8 @@ describe('RemediationPanel — an actionable proposal', () => {
     ['skipped', { status: 'skipped', source_resolved: true, pr_url: '' }],
     ['escalated', { status: 'escalated', source_resolved: true, pr_url: '' }],
   ])('keeps a %s group collapsed until clicked', async (_label, overrides) => {
-    const proposal = makeProposal({ rationale: 'Adds the missing GROUP BY column.', ...overrides });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ rationale: 'Adds the missing GROUP BY column.', ...overrides });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -536,7 +536,7 @@ describe('RemediationPanel — release checks on an attempt', () => {
   });
 
   it('lists each release check beneath its attempt with a link to its page', async () => {
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'verifying',
       resolved_node_ids: ['s.a', 's.b'],
       release_checks: [
@@ -544,7 +544,7 @@ describe('RemediationPanel — release checks on an attempt', () => {
         { project: 'ops', kind: 'python', check_id: 'verify-rel-1-ops-a1', phase: 'queued', activated_at: '', error: '' },
       ],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('s.a, s.b'));
@@ -562,8 +562,8 @@ describe('RemediationPanel — release checks on an attempt', () => {
   });
 
   it('falls back to the single release_check_id link when release_checks is empty', async () => {
-    const proposal = makeProposal({ status: 'verifying', release_check_id: 'verify-rel-abc-a1' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'verifying', release_check_id: 'verify-rel-abc-a1' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -576,12 +576,12 @@ describe('RemediationPanel — release checks on an attempt', () => {
   });
 
   it('shows why the release check failed in the attempt card', async () => {
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'failed',
       release_check_id: 'verify-rel-abc-a1',
       verify_error: 'column "revenue_total" does not exist',
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -599,7 +599,7 @@ describe('RemediationPanel — pull requests split across owning projects', () =
   });
 
   it('renders one labeled open PR link per pull_requests entry in the actionable card', async () => {
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'proposed',
       source_resolved: true,
       node_id: 'core.a',
@@ -610,7 +610,7 @@ describe('RemediationPanel — pull requests split across owning projects', () =
         { project: 'finance', repo: 'org/finance-repo', branch: 'b', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
       ],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     // Actionable (finance still '' → retryable), so the card is auto-shown.
@@ -621,7 +621,7 @@ describe('RemediationPanel — pull requests split across owning projects', () =
   });
 
   it('shows a per-project state chip labeled by project in the group PR column', async () => {
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'skipped',
       pr_projects: ['core', 'finance'],
       pull_requests: [
@@ -629,7 +629,7 @@ describe('RemediationPanel — pull requests split across owning projects', () =
         { project: 'finance', repo: '', branch: '', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'rejected', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
       ],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -641,7 +641,7 @@ describe('RemediationPanel — pull requests split across owning projects', () =
     expect(rejectedChip.closest('.pr-chip-labeled')).toHaveTextContent('finance rejected');
 
     // Both labelled chips share one wrapping row in the PR cell, so a
-    // proposal split across many projects stays one compact cell.
+    // fix split across many projects stays one compact cell.
     const row = mergedChip.closest('.remediation-prs')!;
     expect(row).not.toBeNull();
     expect(rejectedChip.closest('.remediation-prs')).toBe(row);
@@ -653,17 +653,17 @@ describe('RemediationPanel — pull requests split across owning projects', () =
     ['opening', 'pr-chip--opening'],
     ['failed',  'pr-chip--failed'],
   ])('renders a non-terminal %s pull-request state as a chip too, so the PR column reads uniformly', async (pr_state, cls) => {
-    const proposal = makeProposal({ status: 'skipped', pr_state, pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'skipped', pr_state, pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
+    mockFetchFixes.mockResolvedValue([fix]);
     renderPanel();
     const chip = await screen.findByText(pr_state);
     expect(chip).toHaveClass('pr-chip', cls);
-    // A legacy (unsplit) proposal's chip carries no project prefix.
+    // A legacy (unsplit) fix's chip carries no project prefix.
     expect(chip.closest('.pr-chip-labeled')).toBeNull();
   });
 
   it('stays actionable (auto-expanded) while one project still needs a PR', async () => {
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'proposed',
       source_resolved: true,
       pr_projects: ['core', 'finance'],
@@ -671,14 +671,14 @@ describe('RemediationPanel — pull requests split across owning projects', () =
         { project: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z' },
       ],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(1));
   });
 
   it('is not actionable once every owning project has a settled PR', async () => {
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'proposed',
       source_resolved: true,
       rationale: 'Adds the missing GROUP BY column.',
@@ -688,7 +688,7 @@ describe('RemediationPanel — pull requests split across owning projects', () =
         { project: 'finance', repo: '', branch: '', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z' },
       ],
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -700,7 +700,7 @@ describe('RemediationPanel — pull requests split across owning projects', () =
 describe('RemediationPanel — project filter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'skipped' })]);
+    mockFetchFixes.mockResolvedValue([makeFix({ status: 'skipped' })]);
   });
 
   it('populates the Project select from fetchNodeProjects and filters the fetch on change', async () => {
@@ -710,13 +710,13 @@ describe('RemediationPanel — project filter', () => {
 
     const select = await screen.findByLabelText('Project');
     await waitFor(() => expect(screen.getByRole('option', { name: 'billing' })).toBeInTheDocument());
-    expect(mockFetchProposals).toHaveBeenLastCalledWith({}); // initial fetch, no filter
+    expect(mockFetchFixes).toHaveBeenLastCalledWith({}); // initial fetch, no filter
 
     fireEvent.change(select, { target: { value: 'billing' } });
-    await waitFor(() => expect(mockFetchProposals).toHaveBeenLastCalledWith({ project: 'billing' }));
+    await waitFor(() => expect(mockFetchFixes).toHaveBeenLastCalledWith({ project: 'billing' }));
   });
 
-  it('renders the Project filter as a .form-field above the Proposals section header', async () => {
+  it('renders the Project filter as a .form-field above the Fixes section header', async () => {
     mockFetchNodeProjects.mockResolvedValue(['billing']);
 
     const { container } = renderPanel();
@@ -734,17 +734,17 @@ describe('RemediationPanel — project filter', () => {
     expect(field!.compareDocumentPosition(header!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('ignores a superseded (slower, earlier) proposals response so it cannot overwrite the current filter', async () => {
+  it('ignores a superseded (slower, earlier) fixes response so it cannot overwrite the current filter', async () => {
     mockFetchNodeProjects.mockResolvedValue(['billing', 'ledger']);
 
     // The initial unfiltered request is held open and resolves LAST; the
     // filtered request resolves first. The stale unfiltered result must not
     // win the race and clobber the filtered list.
-    let resolveInitial!: (p: ProposalDTO[]) => void;
-    const initial = new Promise<ProposalDTO[]>(r => { resolveInitial = r; });
-    const filtered = [makeProposal({ id: 'f1', node_id: 'billing.only', status: 'skipped' })];
-    const stale = [makeProposal({ id: 's1', node_id: 'stale.everything', status: 'skipped' })];
-    mockFetchProposals
+    let resolveInitial!: (p: FixDTO[]) => void;
+    const initial = new Promise<FixDTO[]>(r => { resolveInitial = r; });
+    const filtered = [makeFix({ id: 'f1', node_id: 'billing.only', status: 'skipped' })];
+    const stale = [makeFix({ id: 's1', node_id: 'stale.everything', status: 'skipped' })];
+    mockFetchFixes
       .mockReturnValueOnce(initial)                 // mount (project='')
       .mockResolvedValueOnce(filtered);             // after selecting billing
 
@@ -767,7 +767,7 @@ describe('RemediationPanel — project filter', () => {
 
     renderPanel();
 
-    // The proposals still render.
+    // The fixes still render.
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     // Only the default option exists.
     const options = screen.getAllByRole('option').map(o => o.textContent);

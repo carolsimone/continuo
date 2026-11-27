@@ -45,7 +45,7 @@ import (
 // pointer: it is rejected invalid_artifact with the kind-change refusal as its
 // detail.
 //
-// While maintenance mode is on it activates only fixes' release checks.
+// While maintenance mode is on it activates only the release checks of fixes.
 func AdvanceQueue(ctx context.Context, d *Deps) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {

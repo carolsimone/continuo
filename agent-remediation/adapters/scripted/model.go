@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
@@ -139,9 +139,9 @@ func (p *releaseChecks) Status(_ context.Context, checkID string) (ports.Release
 			for node, msg := range p.errors {
 				nodeErrors[node] = msg
 			}
-			return ports.ReleaseCheckStatus{Phase: proposal.PhaseFailed, ActivatedAt: p.clock.Now(), NodeErrors: nodeErrors}, nil
+			return ports.ReleaseCheckStatus{Phase: fix.PhaseFailed, ActivatedAt: p.clock.Now(), NodeErrors: nodeErrors}, nil
 		}
-		return ports.ReleaseCheckStatus{Phase: proposal.PhasePassed, ActivatedAt: p.clock.Now()}, nil
+		return ports.ReleaseCheckStatus{Phase: fix.PhasePassed, ActivatedAt: p.clock.Now()}, nil
 	}
 	return ports.ReleaseCheckStatus{}, fmt.Errorf("no release check %s was submitted", checkID)
 }

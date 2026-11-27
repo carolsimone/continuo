@@ -27,7 +27,7 @@ across_clusters: [edits_map_to_a_project]
 gate: [release_check]
 tries: 3
 output:
-  on_pass:    { action: pull_request, emits: remediation.proposed }
+  on_pass:    { action: pull_request, emits: fix.proposed }
   on_give_up: { action: hand_over }
 model_may_see: [code, logs]
 approver: node_owner
@@ -65,7 +65,7 @@ func TestLoad_ReadsAFlowAndATypeFromOneFolder(t *testing.T) {
 	assert.Equal(t, workflow.StepName("edits_map_to_a_project"), flow.AcrossClusters[0].Name)
 	assert.Equal(t, workflow.StepName("release_check"), flow.Gate[0].Name)
 	assert.Equal(t, workflow.OutputPullRequest, flow.OnPass.Action)
-	assert.Equal(t, "remediation.proposed", flow.OnPass.Emits)
+	assert.Equal(t, "fix.proposed", flow.OnPass.Emits)
 	assert.Equal(t, 11, flow.OnPass.Pos.Line)
 	assert.Equal(t, workflow.OutputHandOver, flow.OnGiveUp.Action)
 	assert.Empty(t, flow.OnGiveUp.Emits)

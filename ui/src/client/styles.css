@@ -516,7 +516,7 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
 /* Applied to whichever row sits directly above its own expanded detail
    card — auto-expanded or manually selected, either way — so the row and
    its card don't draw a hairline against each other. The card row itself
-   keeps its border, which is what separates it from the next proposal. */
+   keeps its border, which is what separates it from the next fix. */
 .nodes-table tbody tr.nodes-row--no-border { border-bottom: none; }
 
 .nodes-table tbody td {
@@ -1743,7 +1743,7 @@ a.release-author:hover { text-decoration: underline; }
 }
 .remediation-subrow__line { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #64748b; }
 
-/* The proposal detail card sits inside the attempts block, white on the
+/* The fix detail card sits inside the attempts block, white on the
    block's tint; scoped so other .detail-card usages are unaffected. */
 .remediation-detail { margin: 4px 0 6px; }
 
@@ -1797,7 +1797,7 @@ a.release-author:hover { text-decoration: underline; }
 .pr-chip-labeled { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .pr-chip-labeled__project { font-size: 11px; color: #64748b; }
 /* One wrapping row for a status pill and/or several labeled chips, so a
-   proposal split across many projects stays one compact cell. */
+   fix split across many projects stays one compact cell. */
 .remediation-prs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
 /* ---- Run progress: the status bar and counts of a run's tasks, on the run

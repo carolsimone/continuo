@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -44,10 +44,10 @@ func (h *harness) stepFailing(id uuid.UUID, step string, status remediation.Step
 	})
 }
 
-func (h *harness) inFlightRow() proposal.Proposal {
+func (h *harness) inFlightRow() fix.Fix {
 	h.t.Helper()
-	require.Len(h.t, h.proposals(), 1)
-	return h.proposals()[0].Proposal
+	require.Len(h.t, h.fixes(), 1)
+	return h.fixes()[0].Fix
 }
 
 func TestSweeper_FiveFailuresIsASystemFailure(t *testing.T) {
@@ -63,9 +63,9 @@ func TestSweeper_FiveFailuresIsASystemFailure(t *testing.T) {
 	assert.Empty(t, rem.LeaseOwner, "the sweeper lets go of the lease")
 	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status, "the try is left for a redrive to resume")
 	p := h.inFlightRow()
-	assert.Equal(t, proposal.StatusFailed, p.Status, "the in-flight row is failed with the reason")
+	assert.Equal(t, fix.StatusFailed, p.Status, "the in-flight row is failed with the reason")
 	assert.Equal(t, deadLetteredReason(rem), p.Rationale)
-	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["svc-a"].Status)
+	assert.Equal(t, fix.StatusFailed, p.NodeOutcomes["svc-a"].Status)
 }
 
 func TestSweeper_CountsAStepThatWaitsOnItsRuns(t *testing.T) {
@@ -87,7 +87,7 @@ func TestSweeper_LeavesFewerFailuresAndFinishedStepsAlone(t *testing.T) {
 	require.NoError(t, h.sweeper().Sweep(ctx))
 
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "a done row keeps the failures it counted and does not count")
-	assert.Equal(t, proposal.StatusGenerating, h.inFlightRow().Status)
+	assert.Equal(t, fix.StatusGenerating, h.inFlightRow().Status)
 }
 
 func TestSweeper_ActsOnlyOnARemediationItCanClaim(t *testing.T) {
@@ -102,7 +102,7 @@ func TestSweeper_ActsOnlyOnARemediationItCanClaim(t *testing.T) {
 
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "a live lease means a worker is on it")
 	assert.Equal(t, "worker-b", h.remediation(id).LeaseOwner)
-	assert.Equal(t, proposal.StatusGenerating, h.inFlightRow().Status)
+	assert.Equal(t, fix.StatusGenerating, h.inFlightRow().Status)
 
 	// Once the lease has ended, the next sweep takes it.
 	h.clock.set(t0.Add(lease + time.Second))
@@ -128,7 +128,7 @@ func TestSweeper_ADraftingTryPastItsDeadline(t *testing.T) {
 	assert.Contains(t, rem.Failure, "still drafting")
 	assert.Contains(t, rem.Failure, "deadline")
 	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status, "the try is left for a redrive to resume")
-	assert.Equal(t, proposal.StatusFailed, h.inFlightRow().Status)
+	assert.Equal(t, fix.StatusFailed, h.inFlightRow().Status)
 	assert.Equal(t, deadLetteredReason(rem), h.inFlightRow().Rationale)
 }
 
@@ -183,10 +183,10 @@ func TestSweeper_EndsAVerifyingTryWhoseGateKeepsFailing(t *testing.T) {
 	// The attempt row does not stay verifying: it is failed with the runs it
 	// had recorded, and until a redrive reopens it a later attempt of the
 	// release counts it.
-	p := h.attempt(1).Proposal
-	assert.Equal(t, proposal.StatusFailed, p.Status)
-	assert.Equal(t, []proposal.ReleaseCheck{{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseQueued}}, p.ReleaseChecks)
-	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["svc-a"].Status)
+	p := h.attempt(1).Fix
+	assert.Equal(t, fix.StatusFailed, p.Status)
+	assert.Equal(t, []fix.ReleaseCheck{{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: fix.PhaseQueued}}, p.ReleaseChecks)
+	assert.Equal(t, fix.StatusFailed, p.NodeOutcomes["svc-a"].Status)
 	assert.Equal(t, deadLetteredReason(h.remediation(id)), h.attempt(1).VerifyError, "the row carries the reason")
 }
 
@@ -202,13 +202,13 @@ func TestSweeper_TheFailureAndTheAttemptRowCommitTogether(t *testing.T) {
 	require.Error(t, h.sweeper().Sweep(ctx))
 
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
-	assert.Equal(t, proposal.StatusGenerating, h.inFlightRow().Status)
+	assert.Equal(t, fix.StatusGenerating, h.inFlightRow().Status)
 	assert.Empty(t, h.deadLetters())
 	assert.Empty(t, h.remediation(id).LeaseOwner, "the lease is let go after a failed sweep too")
 
 	require.NoError(t, h.sweeper().Sweep(ctx))
 	assert.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
-	assert.Equal(t, proposal.StatusFailed, h.inFlightRow().Status)
+	assert.Equal(t, fix.StatusFailed, h.inFlightRow().Status)
 	assert.Len(t, h.deadLetters(), 1, "the dead letter commits with them")
 }
 

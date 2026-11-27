@@ -392,9 +392,9 @@ func precedentToProto(p casebase.Precedent) *catalogv1.Precedent {
 	if p.ResolvingVersion != nil {
 		pb.ResolvingVersion = codeVersionViewToProto(*p.ResolvingVersion)
 	}
-	for _, pr := range p.Proposals {
-		pb.Proposals = append(pb.Proposals, &catalogv1.PrecedentProposal{
-			ProposalId: pr.ProposalID, PrUrl: pr.PrURL,
+	for _, pr := range p.Fixes {
+		pb.Fixes = append(pb.Fixes, &catalogv1.PrecedentFix{
+			FixId: pr.FixID, PrUrl: pr.PrURL,
 			PrNumber: num.ClampInt32(pr.PrNumber), PrState: pr.PrState,
 		})
 	}

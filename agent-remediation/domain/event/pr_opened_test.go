@@ -26,7 +26,7 @@ func TestPROpenedEventIDDiffersAcrossInputs(t *testing.T) {
 // TestPROpenedEventID_LegacyProjectMatchesPreChangeValue pins the legacy ""
 // project to the exact id the original two-argument PROpenedEventID(releaseID,
 // attempt) signature produced, so a pr_opened fact emitted for a
-// whole-proposal (unsplit) PR keeps deduping to the same downstream event id
+// whole-fix (unsplit) PR keeps deduping to the same downstream event id
 // across the signature change that added the per-project split's project
 // argument.
 func TestPROpenedEventID_LegacyProjectMatchesPreChangeValue(t *testing.T) {

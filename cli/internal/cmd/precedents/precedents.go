@@ -19,11 +19,11 @@ import (
 // returning a fake.
 type catalogClientFactory func(ctx context.Context, endpoint string) (client.CatalogClient, error)
 
-type proposalPayload struct {
-	ProposalID string `json:"proposal_id"`
-	PrURL      string `json:"pr_url"`
-	PrNumber   int32  `json:"pr_number"`
-	PrState    string `json:"pr_state"`
+type fixPayload struct {
+	FixID    string `json:"fix_id"`
+	PrURL    string `json:"pr_url"`
+	PrNumber int32  `json:"pr_number"`
+	PrState  string `json:"pr_state"`
 }
 
 type resolvingVersionPayload struct {
@@ -49,7 +49,7 @@ type precedentPayload struct {
 	ResolvingVersion        *resolvingVersionPayload `json:"resolving_version,omitempty"`
 	ResolutionDiff          string                   `json:"resolution_diff,omitempty"`
 	ResolutionDiffTruncated bool                     `json:"resolution_diff_truncated"`
-	Proposals               []proposalPayload        `json:"proposals"`
+	Fixes                   []fixPayload             `json:"fixes"`
 }
 
 // NewCommand builds `continuo precedents` — top-level: precedent is
@@ -100,11 +100,11 @@ Output (stdout, JSON):
    "release_id":string,"repo":string,"commit_sha":string,
    "promoted_at":string,"raw_code":string},"resolution_diff":string,
    "resolution_diff_truncated":bool,
-   "proposals":[{"proposal_id":string,"pr_url":string,"pr_number":number,
+   "fixes":[{"fix_id":string,"pr_url":string,"pr_number":number,
    "pr_state":string}]}]}
   failing_code and resolving_version.raw_code are only populated when
   --include-code is set. resolving_version is omitted when resolved is false.
-  proposals[].pr_state records the proposal's state when the PR was opened
+  fixes[].pr_state records the fix's state when the PR was opened
   (e.g. "open") — it is NOT updated when the PR is later merged or closed, so
   it must not be read as the PR's current state.
 
@@ -230,7 +230,7 @@ func toPrecedentPayload(p *catalogv1.Precedent) precedentPayload {
 		Resolved:                p.GetResolved(),
 		ResolutionDiff:          p.GetResolutionDiff(),
 		ResolutionDiffTruncated: p.GetResolutionDiffTruncated(),
-		Proposals:               toProposalPayloads(p.GetProposals()),
+		Fixes:                   toFixPayloads(p.GetFixes()),
 	}
 	if p.GetResolved() && p.GetResolvingVersion() != nil {
 		payload.ResolvingVersion = toResolvingVersionPayload(p.GetResolvingVersion())
@@ -250,14 +250,14 @@ func toResolvingVersionPayload(v *catalogv1.VersionView) *resolvingVersionPayloa
 	}
 }
 
-func toProposalPayloads(proposals []*catalogv1.PrecedentProposal) []proposalPayload {
-	out := make([]proposalPayload, 0, len(proposals))
-	for _, pr := range proposals {
-		out = append(out, proposalPayload{
-			ProposalID: pr.GetProposalId(),
-			PrURL:      pr.GetPrUrl(),
-			PrNumber:   pr.GetPrNumber(),
-			PrState:    pr.GetPrState(),
+func toFixPayloads(fixes []*catalogv1.PrecedentFix) []fixPayload {
+	out := make([]fixPayload, 0, len(fixes))
+	for _, pr := range fixes {
+		out = append(out, fixPayload{
+			FixID:    pr.GetFixId(),
+			PrURL:    pr.GetPrUrl(),
+			PrNumber: pr.GetPrNumber(),
+			PrState:  pr.GetPrState(),
 		})
 	}
 	return out
@@ -269,8 +269,8 @@ func toProposalPayloads(proposals []*catalogv1.PrecedentProposal) []proposalPayl
 func humanPrecedents(stderr io.Writer, precedents []*catalogv1.Precedent) error {
 	for _, p := range precedents {
 		pr := "-"
-		if proposals := p.GetProposals(); len(proposals) > 0 {
-			pr = proposals[0].GetPrUrl()
+		if fixes := p.GetFixes(); len(fixes) > 0 {
+			pr = fixes[0].GetPrUrl()
 		}
 		if _, err := fmt.Fprintf(stderr, "%s [%s] resolved=%t pr=%s\n", p.GetNodeId(), p.GetReason(), p.GetResolved(), pr); err != nil {
 			return err

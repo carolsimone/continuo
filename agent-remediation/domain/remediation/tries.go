@@ -6,7 +6,7 @@ import (
 )
 
 // TryRecord is one earlier try at a release's failing set, as a later try is
-// shown it: the remediation round and try it was, its proposal attempt, what
+// shown it: the remediation round and try it was, its attempt, what
 // each of its clusters proposed and why it was refused, what the checks across
 // clusters found, and why the gate failed it. An attempt that
 // belongs to no remediation numbers no try, so it has Try 0 and orders before

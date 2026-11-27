@@ -9,7 +9,7 @@ import (
 )
 
 // recordRejectionCypher upserts one rejection of the tenant. In one statement
-// it: fills the rejection's properties (plain SET, so a proposal-created stub
+// it: fills the rejection's properties (plain SET, so a fix-created stub
 // is completed), MERGEs the tenant's signature hub and its edge, anchors
 // [:FAILED] only when the tenant holds the node's :Node (FOREACH-guarded: a
 // retired node still exists and takes the link, and this writer never creates
@@ -18,7 +18,7 @@ import (
 //
 // The existing-edge guard is scoped to that target-label family: RESOLVED_BY
 // is a shared relationship type, and a merged fix PR can draw its own
-// RESOLVED_BY->(:Proposal) provenance edge (RecordPullRequestOutcome) before
+// RESOLVED_BY->(:Fix) provenance edge (RecordPullRequestOutcome) before
 // the rejection lands through this path, so that edge's presence must not
 // suppress this own-timeline link. Two branches feed the back-link, and the
 // first to match wins:
@@ -66,12 +66,12 @@ WITH rej, coalesce(v, curV) AS resolved
 FOREACH (_ IN CASE WHEN resolved IS NULL THEN [] ELSE [1] END |
   MERGE (rej)-[:RESOLVED_BY]->(resolved))`
 
-// recordProposalCypher upserts one proposal of the tenant, its [:PROPOSED]
+// recordFixCypher upserts one fix of the tenant, its [:PROPOSED]
 // edge, and the PR facts on the linked :PullRequest. When the rejection has
 // not landed yet, a stub :Rejection is MERGEd so the edge has an anchor; the
-// stub's at is the proposal's opened_at (approximate) and RecordRejection
+// stub's at is the fix's opened_at (approximate) and RecordRejection
 // later corrects it when the rejection itself arrives. The PR facts land on
-// :PullRequest rather than inline on :Proposal, MERGEd on (proposal_id,
+// :PullRequest rather than inline on :Fix, MERGEd on (fix_id,
 // project) so a redelivery converges onto the one PR node.
 //
 // The open event and the close event are consumed by independent groups, so
@@ -83,18 +83,18 @@ FOREACH (_ IN CASE WHEN resolved IS NULL THEN [] ELSE [1] END |
 // 'open'.
 //
 // The [:PROPOSED] edge carries the proposing project, so a precedent read of a
-// proposal that spans projects can scope each rejection's PR facts to the
-// project that proposed the fix for it: a proposal shared by several
-// rejections links them all to the one :Proposal, but each rejection's PR
+// fix that spans projects can scope each rejection's PR facts to the
+// project that proposed the fix for it: a fix shared by several
+// rejections links them all to the one :Fix, but each rejection's PR
 // facts live on its own project's :PullRequest, and the edge's project selects
 // the right one.
-const recordProposalCypher = `
+const recordFixCypher = `
 MERGE (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 ON CREATE SET rej.at = $opened_at, rej.stub = true
-MERGE (prop:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
-MERGE (rej)-[pe:PROPOSED]->(prop)
+MERGE (fx:Fix {tenant_id: $tenant_id, fix_id: $fix_id})
+MERGE (rej)-[pe:PROPOSED]->(fx)
 SET pe.project = $project
-MERGE (prop)-[:HAS_PR]->(pull:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: $project})
+MERGE (fx)-[:HAS_PR]->(pull:PullRequest {tenant_id: $tenant_id, fix_id: $fix_id, project: $project})
 ON CREATE SET pull.pr_url = $pr_url,
               pull.pr_number = $pr_number,
               pull.pr_state = $pr_state,
@@ -106,8 +106,8 @@ ON MATCH SET pull.opened_by = $opened_by,
              pull.pr_number = CASE WHEN pull.pr_number IS NULL OR pull.pr_number = 0 THEN $pr_number ELSE pull.pr_number END`
 
 // recordPullRequestOutcomeCypher stamps a fix PR's terminal state on the
-// tenant's :PullRequest — the node RecordProposal opened, matched through
-// [:HAS_PR] on (proposal_id, project). When this close arrives before the PR's
+// tenant's :PullRequest — the node RecordFix opened, matched through
+// [:HAS_PR] on (fix_id, project). When this close arrives before the PR's
 // open event, the MERGE creates the :PullRequest and ON CREATE fills the
 // pr_url/pr_number the close event also carries, so a close-first node is not
 // left blank until the open event's later ON MATCH fills its opened_by and
@@ -115,35 +115,35 @@ ON MATCH SET pull.opened_by = $opened_by,
 //
 // It then draws the provenance edges $resolved and $edits name, which the
 // caller leaves empty for a rejected outcome: [:RESOLVED_BY] from each
-// resolved :Rejection to the shared :Proposal (a stub :Rejection is MERGEd
-// when the rejection has not landed yet, as RecordProposal does), and
-// [:EDITED] from that :Proposal to each edit's :Node, only when the tenant
+// resolved :Rejection to the shared :Fix (a stub :Rejection is MERGEd
+// when the rejection has not landed yet, as RecordFix does), and
+// [:EDITED] from that :Fix to each edit's :Node, only when the tenant
 // holds the node: a retired node still exists and takes the link, and this
 // writer never creates a :Node. Every [:RESOLVED_BY] carries the same
 // amended flag and the resolving project; every [:EDITED] carries its own
 // edit's amended flag, diff and the project.
 //
-// FOREACH over $resolved keeps the single (pr) row even when the list is
+// FOREACH over $resolved keeps the single (fx) row even when the list is
 // empty, so the [:EDITED] UNWIND that follows runs against one row rather than
 // the per-resolved-node fan-out. Writes made before an empty UNWIND persist,
 // so the :PullRequest state lands for an outcome with neither resolved nodes
 // nor edits.
 const recordPullRequestOutcomeCypher = `
-MERGE (pr:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
-MERGE (pr)-[:HAS_PR]->(pull:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: $project})
+MERGE (fx:Fix {tenant_id: $tenant_id, fix_id: $fix_id})
+MERGE (fx)-[:HAS_PR]->(pull:PullRequest {tenant_id: $tenant_id, fix_id: $fix_id, project: $project})
 ON CREATE SET pull.pr_url = $pr_url, pull.pr_number = $pr_number
 SET pull.pr_state = $outcome, pull.closed_at = $closed_at
-WITH pr
+WITH fx
 FOREACH (nid IN $resolved |
   MERGE (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: nid})
   ON CREATE SET rej.at = $closed_at, rej.stub = true
-  MERGE (rej)-[rb:RESOLVED_BY]->(pr)
+  MERGE (rej)-[rb:RESOLVED_BY]->(fx)
   SET rb.amended = $amended_any, rb.project = $project)
-WITH pr
+WITH fx
 UNWIND $edits AS e
 OPTIONAL MATCH (n:Node {tenant_id: $tenant_id, unique_id: e.target_node_id})
 FOREACH (_ IN CASE WHEN n IS NULL THEN [] ELSE [1] END |
-  MERGE (pr)-[ed:EDITED {path: e.path}]->(n)
+  MERGE (fx)-[ed:EDITED {path: e.path}]->(n)
   SET ed.amended = e.amended, ed.diff = e.diff, ed.project = $project)`
 
 // caseBaseRepository writes one tenant's case base on the open transaction of
@@ -182,25 +182,25 @@ func (r *caseBaseRepository) RecordRejection(ctx context.Context, tenantID strin
 	return nil
 }
 
-// RecordProposal upserts one proposal of tenantID, its [:PROPOSED] edge and
-// its PR facts (recordProposalCypher). It refuses a tenantID other than the
+// RecordFix upserts one fix of tenantID, its [:PROPOSED] edge and
+// its PR facts (recordFixCypher). It refuses a tenantID other than the
 // transaction's.
-func (r *caseBaseRepository) RecordProposal(ctx context.Context, tenantID string, p casebase.Proposal, pr casebase.PullRequest) error {
+func (r *caseBaseRepository) RecordFix(ctx context.Context, tenantID string, p casebase.Fix, pr casebase.PullRequest) error {
 	if err := r.run.requireTenant(tenantID); err != nil {
 		return err
 	}
-	if err := execCypher(ctx, r.run, recordProposalCypher, map[string]any{
-		"release_id":  p.ReleaseID,
-		"node_id":     p.NodeID,
-		"proposal_id": p.ProposalID,
-		"project":     pr.Project,
-		"pr_url":      pr.PrURL,
-		"pr_number":   pr.PrNumber,
-		"pr_state":    pr.State,
-		"opened_by":   pr.OpenedBy,
-		"opened_at":   pr.OpenedAt.UTC(),
+	if err := execCypher(ctx, r.run, recordFixCypher, map[string]any{
+		"release_id": p.ReleaseID,
+		"node_id":    p.NodeID,
+		"fix_id":     p.FixID,
+		"project":    pr.Project,
+		"pr_url":     pr.PrURL,
+		"pr_number":  pr.PrNumber,
+		"pr_state":   pr.State,
+		"opened_by":  pr.OpenedBy,
+		"opened_at":  pr.OpenedAt.UTC(),
 	}); err != nil {
-		return fmt.Errorf("record proposal %s: %w", p.ProposalID, err)
+		return fmt.Errorf("record fix %s: %w", p.FixID, err)
 	}
 	return nil
 }
@@ -230,7 +230,7 @@ func (r *caseBaseRepository) RecordPullRequestOutcome(ctx context.Context, tenan
 		}
 	}
 	if err := execCypher(ctx, r.run, recordPullRequestOutcomeCypher, map[string]any{
-		"proposal_id": o.ProposalID,
+		"fix_id":      o.FixID,
 		"release_id":  o.ReleaseID,
 		"project":     o.Project,
 		"outcome":     o.Outcome,
@@ -241,7 +241,7 @@ func (r *caseBaseRepository) RecordPullRequestOutcome(ctx context.Context, tenan
 		"edits":       edits,
 		"amended_any": amendedAny,
 	}); err != nil {
-		return fmt.Errorf("record pull request outcome %s/%s: %w", o.ReleaseID, o.ProposalID, err)
+		return fmt.Errorf("record pull request outcome %s/%s: %w", o.ReleaseID, o.FixID, err)
 	}
 	return nil
 }

@@ -110,7 +110,7 @@ const baseInput: CreatePRInput = {
   files: [{ path: 'models/orders_d.sql', content: 'SELECT 1' }],
   commitMessage: 'fix: remediation for orders_d',
   title: 'Remediation fix for orders_d',
-  body: 'Auto-generated fix proposal.',
+  body: 'Auto-generated fix.',
 };
 
 describe('makePullRequestCreator', () => {

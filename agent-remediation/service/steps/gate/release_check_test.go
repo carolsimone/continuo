@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/overlay"
@@ -218,9 +218,9 @@ func TestSubmit_DbtProjectSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, remediation.CheckResult{Check: "release_check", Waiting: true, CheckIDs: []string{"verify-rel-1-sales-a2"}}, res.Result)
-	assert.Equal(t, []proposal.ReleaseCheck{
-		{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
-	}, res.ReleaseChecks, "the runner records the checks with the proposal as submitReleaseChecks returned them")
+	assert.Equal(t, []fix.ReleaseCheck{
+		{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a2", Phase: fix.PhaseQueued},
+	}, res.ReleaseChecks, "the runner records the checks with the fix as submitReleaseChecks returned them")
 	require.Len(t, r.checks.submitted, 1)
 	assert.Equal(t, ports.ReleaseCheckRequest{
 		CheckID:           "verify-rel-1-sales-a2",
@@ -280,8 +280,8 @@ func TestReleaseCheck_UploadsAnODCSBundle(t *testing.T) {
 
 	assert.Equal(t, []string{"verify-rel-1-ledger-a2"}, res.Result.CheckIDs)
 	assert.True(t, res.Result.Waiting)
-	assert.Equal(t, []proposal.ReleaseCheck{
-		{Project: "ledger", Kind: "python", CheckID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+	assert.Equal(t, []fix.ReleaseCheck{
+		{Project: "ledger", Kind: "python", CheckID: "verify-rel-1-ledger-a2", Phase: fix.PhaseQueued},
 	}, res.ReleaseChecks)
 	assert.Equal(t, []ports.ReleaseCheckRequest{{
 		CheckID:           "verify-rel-1-ledger-a2",
@@ -390,9 +390,9 @@ func TestSubmit_TwoProjectsSubmitOneRunEachInProjectOrder(t *testing.T) {
 	res, err := r.step.Submit(context.Background(), gateInput(dbtCluster(), pythonCluster()))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"verify-rel-1-ledger-a2", "verify-rel-1-sales-a2"}, res.Result.CheckIDs)
-	assert.Equal(t, []proposal.ReleaseCheck{
-		{Project: "ledger", Kind: "python", CheckID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
-		{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
+	assert.Equal(t, []fix.ReleaseCheck{
+		{Project: "ledger", Kind: "python", CheckID: "verify-rel-1-ledger-a2", Phase: fix.PhaseQueued},
+		{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a2", Phase: fix.PhaseQueued},
 	}, res.ReleaseChecks)
 	require.Len(t, r.checks.submitted, 2)
 	assert.Equal(t, "python", r.checks.submitted[0].Kind)
@@ -470,7 +470,7 @@ func TestSubmit_ReturnsTheErrorOfEachCollaborator(t *testing.T) {
 
 // --- Poll ---
 
-func status(phase proposal.Phase, activated time.Time, nodeErrors map[string]string) ports.ReleaseCheckStatus {
+func status(phase fix.Phase, activated time.Time, nodeErrors map[string]string) ports.ReleaseCheckStatus {
 	return ports.ReleaseCheckStatus{Phase: phase, ActivatedAt: activated, NodeErrors: nodeErrors}
 }
 
@@ -505,26 +505,26 @@ const (
 
 func TestPoll_QueuedAndRunningRunsKeepTheGateWaiting(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[ledgerCheck] = status(proposal.PhaseRunning, t0.Add(30*time.Second), nil)
-	r.checks.statuses[salesCheck] = status(proposal.PhaseQueued, time.Time{}, nil)
+	r.checks.statuses[ledgerCheck] = status(fix.PhaseRunning, t0.Add(30*time.Second), nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseQueued, time.Time{}, nil)
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 
 	assert.Equal(t, remediation.CheckResult{Check: "release_check", Waiting: true, CheckIDs: []string{ledgerCheck, salesCheck}}, v.Result)
 	assert.Empty(t, v.VerifyError)
 	act := t0.Add(30 * time.Second)
-	want := []proposal.ReleaseCheck{
-		{Project: "ledger", Kind: "python", CheckID: ledgerCheck, Phase: proposal.PhaseRunning, ActivatedAt: &act},
-		{Project: "sales", Kind: "dbt", CheckID: salesCheck, Phase: proposal.PhaseQueued},
+	want := []fix.ReleaseCheck{
+		{Project: "ledger", Kind: "python", CheckID: ledgerCheck, Phase: fix.PhaseRunning, ActivatedAt: &act},
+		{Project: "sales", Kind: "dbt", CheckID: salesCheck, Phase: fix.PhaseQueued},
 	}
 	assert.Equal(t, want, v.ReleaseChecks)
-	assert.Equal(t, want, v.Phases, "every check seen queued or running is reported for the proposal row")
+	assert.Equal(t, want, v.Phases, "every check seen queued or running is reported for the fix row")
 }
 
 func TestPoll_EveryRunPassedPassesTheGate(t *testing.T) {
 	r := newRig()
 	act := t0.Add(time.Minute)
-	r.checks.statuses[ledgerCheck] = status(proposal.PhasePassed, act, nil)
-	r.checks.statuses[salesCheck] = status(proposal.PhasePassed, act, nil)
+	r.checks.statuses[ledgerCheck] = status(fix.PhasePassed, act, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhasePassed, act, nil)
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 
 	assert.True(t, v.Result.Passed())
@@ -533,7 +533,7 @@ func TestPoll_EveryRunPassedPassesTheGate(t *testing.T) {
 	assert.Empty(t, v.Phases, "a terminal phase is written with the outcome, not as progress")
 	require.Len(t, v.ReleaseChecks, 2)
 	for _, ver := range v.ReleaseChecks {
-		assert.Equal(t, proposal.PhasePassed, ver.Phase)
+		assert.Equal(t, fix.PhasePassed, ver.Phase)
 		assert.Equal(t, &act, ver.ActivatedAt)
 		assert.Empty(t, ver.Error)
 	}
@@ -541,8 +541,8 @@ func TestPoll_EveryRunPassedPassesTheGate(t *testing.T) {
 
 func TestPoll_APassedRunWaitsForTheOtherOne(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[ledgerCheck] = status(proposal.PhasePassed, t0, nil)
-	r.checks.statuses[salesCheck] = status(proposal.PhaseRunning, t0, nil)
+	r.checks.statuses[ledgerCheck] = status(fix.PhasePassed, t0, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseRunning, t0, nil)
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 	assert.True(t, v.Result.Waiting)
 	require.Len(t, v.Phases, 1)
@@ -551,8 +551,8 @@ func TestPoll_APassedRunWaitsForTheOtherOne(t *testing.T) {
 
 func TestPoll_AFailedRunFailsTheGateWithAFindingPerNode(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[ledgerCheck] = status(proposal.PhasePassed, t0, nil)
-	r.checks.statuses[salesCheck] = status(proposal.PhaseFailed, t0, map[string]string{
+	r.checks.statuses[ledgerCheck] = status(fix.PhasePassed, t0, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseFailed, t0, map[string]string{
 		"model.sales.orders": "column x does not exist",
 		"model.finance.up":   "downstream broke",
 	})
@@ -568,13 +568,13 @@ func TestPoll_AFailedRunFailsTheGateWithAFindingPerNode(t *testing.T) {
 	assert.Equal(t, "model.sales.orders: column x does not exist", v.VerifyError)
 	require.Len(t, v.ReleaseChecks, 2)
 	assert.Equal(t, "model.finance.up: downstream broke; model.sales.orders: column x does not exist", v.ReleaseChecks[1].Error)
-	assert.Equal(t, proposal.PhaseFailed, v.ReleaseChecks[1].Phase)
+	assert.Equal(t, fix.PhaseFailed, v.ReleaseChecks[1].Phase)
 	assert.Empty(t, v.ReleaseChecks[0].Error)
 }
 
 func TestPoll_WhenEveryOwnNodePassedEveryFailingNodeIsNamed(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[salesCheck] = status(proposal.PhaseFailed, t0, map[string]string{
+	r.checks.statuses[salesCheck] = status(fix.PhaseFailed, t0, map[string]string{
 		"model.zeta.b":  "b broke",
 		"model.alpha.a": "a broke",
 	})
@@ -584,8 +584,8 @@ func TestPoll_WhenEveryOwnNodePassedEveryFailingNodeIsNamed(t *testing.T) {
 
 func TestPoll_AFailureWithNoErrorAtAllNamesTheFailedRun(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[ledgerCheck] = status(proposal.PhasePassed, t0, nil)
-	r.checks.statuses[salesCheck] = status(proposal.PhaseFailed, t0, nil)
+	r.checks.statuses[ledgerCheck] = status(fix.PhasePassed, t0, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseFailed, t0, nil)
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 
 	assert.Equal(t, "release check "+salesCheck+" failed without a per-node error", v.VerifyError)
@@ -600,9 +600,9 @@ func TestPoll_AFailureWithNoErrorAtAllNamesTheFailedRun(t *testing.T) {
 // and detail, not a sentence that only says it failed.
 func TestPoll_AFailureThatNamesNoNodeCarriesTheRunsOwnError(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[ledgerCheck] = status(proposal.PhasePassed, t0, nil)
+	r.checks.statuses[ledgerCheck] = status(fix.PhasePassed, t0, nil)
 	r.checks.statuses[salesCheck] = ports.ReleaseCheckStatus{
-		Phase: proposal.PhaseFailed, ActivatedAt: t0,
+		Phase: fix.PhaseFailed, ActivatedAt: t0,
 		CheckError: "nothing_to_validate — the release changes no node",
 	}
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
@@ -616,8 +616,8 @@ func TestPoll_AFailureThatNamesNoNodeCarriesTheRunsOwnError(t *testing.T) {
 
 func TestPoll_AFailedRunWinsOverARunStillRunning(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[ledgerCheck] = status(proposal.PhaseRunning, t0, nil)
-	r.checks.statuses[salesCheck] = status(proposal.PhaseFailed, t0, map[string]string{"model.sales.orders": "bad"})
+	r.checks.statuses[ledgerCheck] = status(fix.PhaseRunning, t0, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseFailed, t0, map[string]string{"model.sales.orders": "bad"})
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 	assert.False(t, v.Result.Waiting)
 	assert.Equal(t, "model.sales.orders: bad", v.VerifyError)
@@ -628,7 +628,7 @@ func TestPoll_AFailedRunWinsOverARunStillRunning(t *testing.T) {
 func TestPoll_ARunRunningPastTheBudgetTimesOut(t *testing.T) {
 	r := newRig()
 	started := t0.Add(time.Minute)
-	r.checks.statuses[salesCheck] = status(proposal.PhaseRunning, started, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseRunning, started, nil)
 
 	r.clock.now = started.Add(timeout - time.Second)
 	assert.True(t, poll(t, r, gateInput(dbtCluster())).Result.Waiting, "inside the budget the check is left alone")
@@ -639,12 +639,12 @@ func TestPoll_ARunRunningPastTheBudgetTimesOut(t *testing.T) {
 	assert.Equal(t, "release check timed out", v.VerifyError)
 	assert.Equal(t, []remediation.Finding{{Code: "release_check_timed_out", Message: "release check timed out"}}, v.Result.Findings)
 	require.Len(t, v.ReleaseChecks, 1)
-	assert.Equal(t, proposal.PhaseRunning, v.ReleaseChecks[0].Phase)
+	assert.Equal(t, fix.PhaseRunning, v.ReleaseChecks[0].Phase)
 }
 
 func TestPoll_AQueuedRunNeverTimesOutHoweverLongTheTryHasWaited(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[salesCheck] = status(proposal.PhaseQueued, time.Time{}, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseQueued, time.Time{}, nil)
 	r.clock.now = t0.Add(10 * timeout)
 	assert.True(t, poll(t, r, gateInput(dbtCluster())).Result.Waiting)
 }
@@ -652,8 +652,8 @@ func TestPoll_AQueuedRunNeverTimesOutHoweverLongTheTryHasWaited(t *testing.T) {
 func TestPoll_TheBudgetOfARunCountsFromItsOwnStart(t *testing.T) {
 	r := newRig()
 	// The first check finished long ago; the second started just now.
-	r.checks.statuses[ledgerCheck] = status(proposal.PhasePassed, t0, nil)
-	r.checks.statuses[salesCheck] = status(proposal.PhaseRunning, t0.Add(2*timeout), nil)
+	r.checks.statuses[ledgerCheck] = status(fix.PhasePassed, t0, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseRunning, t0.Add(2*timeout), nil)
 	r.clock.now = t0.Add(2*timeout + time.Minute)
 	assert.True(t, poll(t, r, gateInput(dbtCluster(), pythonCluster())).Result.Waiting)
 }
@@ -708,7 +708,7 @@ func TestPoll_RefusesAnInputWithNoSubmitTime(t *testing.T) {
 
 func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[ledgerCheck] = status(proposal.PhaseRunning, t0, nil)
+	r.checks.statuses[ledgerCheck] = status(fix.PhaseRunning, t0, nil)
 	r.checks.statusErrs[salesCheck] = errBoom
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 	assert.True(t, v.Result.Waiting)
@@ -716,7 +716,7 @@ func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
 	// Only the check that was read is reported: writing the unread one as queued
 	// would reset the phase and activation time recorded for it.
 	act := t0
-	want := []proposal.ReleaseCheck{{Project: "ledger", Kind: "python", CheckID: ledgerCheck, Phase: proposal.PhaseRunning, ActivatedAt: &act}}
+	want := []fix.ReleaseCheck{{Project: "ledger", Kind: "python", CheckID: ledgerCheck, Phase: fix.PhaseRunning, ActivatedAt: &act}}
 	assert.Equal(t, want, v.ReleaseChecks)
 	assert.Equal(t, want, v.Phases)
 }
@@ -724,7 +724,7 @@ func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
 func TestPoll_WhenTheFirstRunIsUnreadableNothingIsReportedForAnyRun(t *testing.T) {
 	r := newRig()
 	r.checks.statusErrs[ledgerCheck] = errBoom
-	r.checks.statuses[salesCheck] = status(proposal.PhaseRunning, t0, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhaseRunning, t0, nil)
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 	assert.True(t, v.Result.Waiting)
 	assert.Empty(t, v.ReleaseChecks)
@@ -739,7 +739,7 @@ func TestPoll_WhenNoDraftedNodeFailsEveryFailingNodeIsNamed(t *testing.T) {
 	// carried: neither is the try's own, so every failing node is named.
 	narrow := dbtCluster()
 	narrow.Cluster.Members = []string{"model.sales.orders"}
-	r.checks.statuses[salesCheck] = status(proposal.PhaseFailed, t0, map[string]string{
+	r.checks.statuses[salesCheck] = status(fix.PhaseFailed, t0, map[string]string{
 		"model.sales.margins": "margins broke",
 		"model.zeta.other":    "other broke",
 	})
@@ -759,7 +759,7 @@ func TestPoll_ASettledNodesErrorDoesNotLeadTheReason(t *testing.T) {
 		return d
 	}())
 	in.Trigger.Nodes[1].Unfixable = &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "could not connect to server: connection refused"}
-	r.checks.statuses[salesCheck] = status(proposal.PhaseFailed, t0, map[string]string{
+	r.checks.statuses[salesCheck] = status(fix.PhaseFailed, t0, map[string]string{
 		"model.sales.margins": "connection refused",
 		"model.sales.orders":  "column x does not exist",
 	})
@@ -777,8 +777,8 @@ func TestPoll_RefusesRunsThatAreNotTheOnesTheWaitingResultNames(t *testing.T) {
 
 func TestPoll_ReadsEachRunOncePerPoll(t *testing.T) {
 	r := newRig()
-	r.checks.statuses[ledgerCheck] = status(proposal.PhasePassed, t0, nil)
-	r.checks.statuses[salesCheck] = status(proposal.PhasePassed, t0, nil)
+	r.checks.statuses[ledgerCheck] = status(fix.PhasePassed, t0, nil)
+	r.checks.statuses[salesCheck] = status(fix.PhasePassed, t0, nil)
 	poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 	assert.Equal(t, []string{ledgerCheck, salesCheck}, r.checks.statusReads)
 }

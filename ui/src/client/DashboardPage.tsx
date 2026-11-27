@@ -7,7 +7,7 @@ import Tabs, { useActiveTab } from './Tabs';
 import ReleasesPanel from './ReleasesPanel';
 import NodesCatalogPanel from './NodesCatalogPanel';
 import RemediationPanel from './RemediationPanel';
-import { fetchProposals } from './remediation-api';
+import { fetchFixes } from './remediation-api';
 import PageHeader from './PageHeader';
 import { readJson } from './read-json';
 
@@ -82,14 +82,14 @@ export default function DashboardPage() {
       .catch(() => {});
   }, [activeTab]);
 
-  // Remediation-tab count badge: open remediation PRs — proposals whose PR is
+  // Remediation-tab count badge: open remediation PRs — fixes whose PR is
   // up on GitHub and awaiting a human (pr_state='open'). The server filters, so
   // the count is the returned list length. The pill is omitted when it is zero.
   // Fetched on mount only; no poll — open-PR counts change only when the
-  // close-loop reconciler runs, and proposal arrivals are infrequent.
+  // close-loop reconciler runs, and fix arrivals are infrequent.
   useEffect(() => {
-    fetchProposals({ pr_state: 'open' })
-      .then(proposals => setOpenPrCount((proposals || []).length))
+    fetchFixes({ pr_state: 'open' })
+      .then(fixes => setOpenPrCount((fixes || []).length))
       .catch(() => {});
   }, []);
 

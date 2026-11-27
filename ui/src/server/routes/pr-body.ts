@@ -68,7 +68,7 @@ function fileLine({ path, renamed_from, target_node_id }: PullRequestFile): stri
 
 export function buildPullRequestBody(input: PullRequestBodyInput): string {
   const lines: (string | null)[] = [
-    `## Automated remediation proposal`,
+    `## Automated fix`,
     ``,
     `**Nodes:** ${input.nodeIds.map((n) => `\`${n}\``).join(', ')}`,
     `**Release:** \`${input.releaseId}\``,

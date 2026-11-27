@@ -11,8 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -166,12 +166,12 @@ var _ ports.EvidenceReader = (*fakeEvidence)(nil)
 
 // fakeAttempts lists the recorded attempts and records every filter.
 type fakeAttempts struct {
-	views   []proposal.View
+	views   []fix.View
 	err     error
-	filters []repository.ProposalFilter
+	filters []repository.FixFilter
 }
 
-func (f *fakeAttempts) List(_ context.Context, filter repository.ProposalFilter) ([]proposal.View, error) {
+func (f *fakeAttempts) List(_ context.Context, filter repository.FixFilter) ([]fix.View, error) {
 	f.filters = append(f.filters, filter)
 	return f.views, f.err
 }

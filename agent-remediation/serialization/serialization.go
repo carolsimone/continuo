@@ -1,6 +1,6 @@
 // Package serialization holds the wire-facing DTOs for agent-remediation's
-// json-tagged domain events (remediation.proposed:v1, remediation.pr_opened:v1,
-// remediation.pr_closed:v1), the mapping between the heal.triggered:v1
+// json-tagged domain events (fix.proposed:v1, fix.pr_opened:v1,
+// fix.pr_closed:v1), the mapping between the heal.triggered:v1
 // heal trigger it consumes (pkg/events) and the domain trigger, and the records
 // the runner's journal stores as each step's output, keeping the domain
 // packages free of struct tags. It sits outside adapters/ so the services
@@ -14,9 +14,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 )
 
-// PROpenedDTO is the JSON shape of the remediation.pr_opened:v1 payload.
+// PROpenedDTO is the JSON shape of the fix.pr_opened:v1 payload.
 type PROpenedDTO struct {
-	ProposalID      string   `json:"proposal_id"`
+	FixID           string   `json:"fix_id"`
 	ReleaseID       string   `json:"release_id"`
 	NodeID          string   `json:"node_id"`
 	ResolvedNodeIDs []string `json:"resolved_node_ids"`
@@ -30,7 +30,7 @@ type PROpenedDTO struct {
 // PROpenedFromDomain maps the domain event to its DTO.
 func PROpenedFromDomain(e event.PROpened) PROpenedDTO {
 	return PROpenedDTO{
-		ProposalID:      e.ProposalID,
+		FixID:           e.FixID,
 		ReleaseID:       e.ReleaseID,
 		NodeID:          e.NodeID,
 		ResolvedNodeIDs: e.ResolvedNodeIDs,
@@ -45,7 +45,7 @@ func PROpenedFromDomain(e event.PROpened) PROpenedDTO {
 // ToDomain maps a decoded DTO back to the domain event.
 func (d PROpenedDTO) ToDomain() event.PROpened {
 	return event.PROpened{
-		ProposalID:      d.ProposalID,
+		FixID:           d.FixID,
 		ReleaseID:       d.ReleaseID,
 		NodeID:          d.NodeID,
 		ResolvedNodeIDs: d.ResolvedNodeIDs,
@@ -65,9 +65,9 @@ type ClosedEditDTO struct {
 	Diff         string `json:"diff,omitempty"`
 }
 
-// PRClosedDTO is the JSON shape of the remediation.pr_closed:v1 payload.
+// PRClosedDTO is the JSON shape of the fix.pr_closed:v1 payload.
 type PRClosedDTO struct {
-	ProposalID      string          `json:"proposal_id"`
+	FixID           string          `json:"fix_id"`
 	ReleaseID       string          `json:"release_id"`
 	NodeID          string          `json:"node_id"`
 	ResolvedNodeIDs []string        `json:"resolved_node_ids"`
@@ -89,7 +89,7 @@ func PRClosedFromDomain(e event.PRClosed) PRClosedDTO {
 		}
 	}
 	return PRClosedDTO{
-		ProposalID:      e.ProposalID,
+		FixID:           e.FixID,
 		ReleaseID:       e.ReleaseID,
 		NodeID:          e.NodeID,
 		ResolvedNodeIDs: e.ResolvedNodeIDs,
@@ -112,7 +112,7 @@ func (d PRClosedDTO) ToDomain() event.PRClosed {
 		}
 	}
 	return event.PRClosed{
-		ProposalID:      d.ProposalID,
+		FixID:           d.FixID,
 		ReleaseID:       d.ReleaseID,
 		NodeID:          d.NodeID,
 		ResolvedNodeIDs: d.ResolvedNodeIDs,
@@ -133,8 +133,8 @@ type ProposedEditDTO struct {
 	TargetNodeID string `json:"target_node_id"`
 }
 
-// RemediationProposedDTO is the JSON shape of the remediation.proposed:v1 payload.
-type RemediationProposedDTO struct {
+// FixProposedDTO is the JSON shape of the fix.proposed:v1 payload.
+type FixProposedDTO struct {
 	EventID          string            `json:"event_id"`
 	Source           string            `json:"source"`
 	ReleaseID        string            `json:"release_id"`
@@ -153,8 +153,8 @@ type RemediationProposedDTO struct {
 	ProposedAt       string            `json:"proposed_at"`
 }
 
-// RemediationProposedFromDomain maps the domain event to its DTO.
-func RemediationProposedFromDomain(e event.RemediationProposed) RemediationProposedDTO {
+// FixProposedFromDomain maps the domain event to its DTO.
+func FixProposedFromDomain(e event.FixProposed) FixProposedDTO {
 	var edits []ProposedEditDTO
 	if e.Edits != nil {
 		edits = make([]ProposedEditDTO, len(e.Edits))
@@ -162,7 +162,7 @@ func RemediationProposedFromDomain(e event.RemediationProposed) RemediationPropo
 			edits[i] = ProposedEditDTO(ed)
 		}
 	}
-	return RemediationProposedDTO{
+	return FixProposedDTO{
 		EventID:          e.EventID,
 		Source:           e.Source,
 		ReleaseID:        e.ReleaseID,
@@ -183,7 +183,7 @@ func RemediationProposedFromDomain(e event.RemediationProposed) RemediationPropo
 }
 
 // ToDomain maps a decoded DTO back to the domain event.
-func (d RemediationProposedDTO) ToDomain() event.RemediationProposed {
+func (d FixProposedDTO) ToDomain() event.FixProposed {
 	var edits []event.ProposedEdit
 	if d.Edits != nil {
 		edits = make([]event.ProposedEdit, len(d.Edits))
@@ -191,7 +191,7 @@ func (d RemediationProposedDTO) ToDomain() event.RemediationProposed {
 			edits[i] = event.ProposedEdit(ed)
 		}
 	}
-	return event.RemediationProposed{
+	return event.FixProposed{
 		EventID:          d.EventID,
 		Source:           d.Source,
 		ReleaseID:        d.ReleaseID,

@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
@@ -33,16 +33,16 @@ import (
 type contractEnv struct {
 	// remediations is the remediation repository outside a unit of work.
 	remediations repository.RemediationRepository
-	// proposals is the proposal repository outside a unit of work.
-	proposals repository.ProposalRepository
+	// fixes is the fix repository outside a unit of work.
+	fixes repository.FixRepository
 	// newUoW opens a fresh, not yet begun unit of work.
 	newUoW func() uow.UnitOfWork
 	// childRows counts the try, cluster and step rows of a remediation.
 	childRows func(t *testing.T, id uuid.UUID) int
-	// proposalRemediation returns the remediation id of a proposal ("" when none).
-	proposalRemediation func(t *testing.T, proposalID string) string
-	// proposalIDs lists the ids of every stored proposal.
-	proposalIDs func(t *testing.T) []string
+	// fixRemediation returns the remediation id of a fix ("" when none).
+	fixRemediation func(t *testing.T, fixID string) string
+	// fixIDs lists the ids of every stored fix.
+	fixIDs func(t *testing.T) []string
 }
 
 type contractImpl struct {
@@ -65,7 +65,7 @@ func postgresEnv(t *testing.T) contractEnv {
 		"run the agent_remediation Flyway migrations before integration tests")
 	require.Zero(t, existing, "refusing non-empty test database: remediation contains pre-existing rows")
 	// The empty-table guard makes this serial test the owner of every remediation
-	// row. Cleanup runs before newTestDB's, so the proposals' foreign key clears
+	// row. Cleanup runs before newTestDB's, so the fix rows' foreign key clears
 	// first; the try, cluster and step rows go with their remediation.
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -81,7 +81,7 @@ func postgresEnv(t *testing.T) contractEnv {
 	})
 	return contractEnv{
 		remediations: NewRemediationRepository(db),
-		proposals:    NewProposalRepository(db, nil),
+		fixes:        NewFixRepository(db, nil),
 		newUoW: func() uow.UnitOfWork {
 			return NewUnitOfWork(db, slog.New(slog.DiscardHandler), nil)
 		},
@@ -93,20 +93,20 @@ func postgresEnv(t *testing.T) contractEnv {
 				(SELECT count(*) FROM remediation_step WHERE remediation_id = $1)`, id))
 			return n
 		},
-		proposalRemediation: func(t *testing.T, proposalID string) string {
-			return proposalRemediationOf(t, db, proposalID)
+		fixRemediation: func(t *testing.T, fixID string) string {
+			return fixRemediationOf(t, db, fixID)
 		},
-		proposalIDs: func(t *testing.T) []string {
+		fixIDs: func(t *testing.T) []string {
 			var ids []string
-			require.NoError(t, db.SelectContext(ctx, &ids, `SELECT id FROM proposal`))
+			require.NoError(t, db.SelectContext(ctx, &ids, `SELECT id FROM fix`))
 			return ids
 		},
 	}
 }
 
-func proposalRemediationOf(t *testing.T, db *sqlx.DB, proposalID string) string {
+func fixRemediationOf(t *testing.T, db *sqlx.DB, fixID string) string {
 	var id *string
-	require.NoError(t, db.GetContext(context.Background(), &id, `SELECT remediation_id FROM proposal WHERE id = $1`, proposalID))
+	require.NoError(t, db.GetContext(context.Background(), &id, `SELECT remediation_id FROM fix WHERE id = $1`, fixID))
 	if id == nil {
 		return ""
 	}
@@ -117,23 +117,23 @@ func memoryEnv(t *testing.T) contractEnv {
 	store := memory.NewStore()
 	return contractEnv{
 		remediations: store.RemediationRepository(),
-		proposals:    store.ProposalRepository(),
+		fixes:        store.FixRepository(),
 		newUoW:       func() uow.UnitOfWork { return memory.NewUnitOfWork(store) },
 		childRows: func(t *testing.T, id uuid.UUID) int {
 			return len(store.Tries(id)) + len(store.Clusters(id)) + len(store.Steps(id))
 		},
-		proposalRemediation: func(t *testing.T, proposalID string) string {
-			for _, p := range store.Proposals() {
-				if p.ID == proposalID {
-					return p.Proposal.RemediationID
+		fixRemediation: func(t *testing.T, fixID string) string {
+			for _, p := range store.Fixes() {
+				if p.ID == fixID {
+					return p.Fix.RemediationID
 				}
 			}
-			require.Failf(t, "proposal not found", "id %s", proposalID)
+			require.Failf(t, "fix not found", "id %s", fixID)
 			return ""
 		},
-		proposalIDs: func(t *testing.T) []string {
+		fixIDs: func(t *testing.T) []string {
 			var ids []string
-			for _, p := range store.Proposals() {
+			for _, p := range store.Fixes() {
 				ids = append(ids, p.ID)
 			}
 			return ids
@@ -549,7 +549,7 @@ func TestRemediationRepository_GetReturnsTheCurrentTryWithOrderedChildren(t *tes
 		second := newTry(r.ID, 2, remediation.TryDrafting, contractBase.Add(2*time.Hour))
 		second.FileRevisions = map[string]string{"a.sql": "r1", "b.sql": "r2"}
 		require.NoError(t, env.remediations.SaveTry(ctx, second))
-		outcome := &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "no fix", Code: model.HandoverReasonDeclined}
+		outcome := &fix.NodeOutcome{Status: fix.StatusSkipped, Reason: "no fix", Code: model.HandoverReasonDeclined}
 		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 			RemediationID: r.ID, Try: 2, Cluster: 2, Kind: workflow.ClusterSharedUpstream, TargetNodeID: "up",
 			Members: []string{"a", "b"}, TypeName: "dbt", Status: remediation.ClusterHandedOver, Round: 3, Outcome: outcome,
@@ -804,7 +804,7 @@ func TestRemediationRepository_ListFailingSteps(t *testing.T) {
 	})
 }
 
-func TestRemediationRepository_DeleteFinishedOlderThanCascadesAndClearsProposals(t *testing.T) {
+func TestRemediationRepository_DeleteFinishedOlderThanCascadesAndClearsFixes(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		// The store's own clock decides what is old, so the cases are placed
@@ -837,9 +837,9 @@ func TestRemediationRepository_DeleteFinishedOlderThanCascadesAndClearsProposals
 		running.UpdatedAt = cutoff.Add(-time.Hour)
 		require.NoError(t, env.remediations.SaveRemediation(ctx, running))
 
-		// A proposal the runner wrote for the deleted remediation survives it.
-		insertRunnerProposal(t, env, "rel-old-done", 1, oldDone.ID)
-		keptProposal := insertRunnerProposal(t, env, "rel-recent-done", 1, recentDone.ID)
+		// A fix the runner wrote for the deleted remediation survives it.
+		insertRunnerFix(t, env, "rel-old-done", 1, oldDone.ID)
+		keptFix := insertRunnerFix(t, env, "rel-recent-done", 1, recentDone.ID)
 		require.NotZero(t, env.childRows(t, oldDone.ID))
 
 		n, err := env.remediations.DeleteFinishedOlderThan(ctx, retention, 1)
@@ -865,12 +865,12 @@ func TestRemediationRepository_DeleteFinishedOlderThanCascadesAndClearsProposals
 		}
 		require.NotZero(t, env.childRows(t, recentDone.ID))
 
-		require.Len(t, env.proposalIDs(t), 2, "no proposal is deleted")
-		for _, id := range env.proposalIDs(t) {
-			if id == keptProposal {
-				require.Equal(t, recentDone.ID.String(), env.proposalRemediation(t, id))
+		require.Len(t, env.fixIDs(t), 2, "no fix is deleted")
+		for _, id := range env.fixIDs(t) {
+			if id == keptFix {
+				require.Equal(t, recentDone.ID.String(), env.fixRemediation(t, id))
 			} else {
-				require.Empty(t, env.proposalRemediation(t, id), "the proposal of a deleted remediation has no remediation")
+				require.Empty(t, env.fixRemediation(t, id), "the fix of a deleted remediation has no remediation")
 			}
 		}
 	})
@@ -954,99 +954,99 @@ func TestRemediationRepository_LoadInsideAUnitOfWorkReadsItsOwnWrites(t *testing
 	})
 }
 
-// insertRunnerProposal stores an in-flight proposal that belongs to a
+// insertRunnerFix stores an in-flight fix that belongs to a
 // remediation and returns its id.
-func insertRunnerProposal(t *testing.T, env contractEnv, release string, attempt int, remediationID uuid.UUID) string {
+func insertRunnerFix(t *testing.T, env contractEnv, release string, attempt int, remediationID uuid.UUID) string {
 	t.Helper()
-	before := env.proposalIDs(t)
-	require.NoError(t, env.proposals.InsertGenerating(context.Background(), proposal.Proposal{
+	before := env.fixIDs(t)
+	require.NoError(t, env.fixes.InsertGenerating(context.Background(), fix.Fix{
 		Source:        "validation",
 		ReleaseID:     release,
 		RemediationID: remediationID.String(),
 		NodeID:        "model.a",
 		Attempt:       attempt,
-		Status:        proposal.StatusGenerating,
+		Status:        fix.StatusGenerating,
 		CreatedAt:     contractBase,
 	}))
 	var added []string
-	for _, id := range env.proposalIDs(t) {
+	for _, id := range env.fixIDs(t) {
 		if !slices.Contains(before, id) {
 			added = append(added, id)
 		}
 	}
-	require.Len(t, added, 1, "the insert adds exactly one proposal")
+	require.Len(t, added, 1, "the insert adds exactly one fix")
 	return added[0]
 }
 
-func TestProposalRepository_UpsertAndInsertGeneratingRecordTheRemediation(t *testing.T) {
+func TestFixRepository_UpsertAndInsertGeneratingRecordTheRemediation(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		r := mustCreate(t, env, newRemediation("rel-rid", 1, contractBase))
-		id := insertRunnerProposal(t, env, "rel-rid", 1, r.ID)
-		require.Equal(t, r.ID.String(), env.proposalRemediation(t, id))
+		id := insertRunnerFix(t, env, "rel-rid", 1, r.ID)
+		require.Equal(t, r.ID.String(), env.fixRemediation(t, id))
 
-		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
-			Source: "validation", ReleaseID: "rel-rid", NodeID: "model.a", Attempt: 1, Status: proposal.StatusProposed,
+		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
+			Source: "validation", ReleaseID: "rel-rid", NodeID: "model.a", Attempt: 1, Status: fix.StatusProposed,
 			CreatedAt: contractBase,
 		}))
-		require.Equal(t, r.ID.String(), env.proposalRemediation(t, id), "finalizing without a remediation keeps it")
+		require.Equal(t, r.ID.String(), env.fixRemediation(t, id), "finalizing without a remediation keeps it")
 
-		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
-			Source: "validation", ReleaseID: "rel-plain", NodeID: "model.b", Attempt: 1, Status: proposal.StatusFailed,
+		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
+			Source: "validation", ReleaseID: "rel-plain", NodeID: "model.b", Attempt: 1, Status: fix.StatusFailed,
 			CreatedAt: contractBase,
 		}))
-		for _, got := range env.proposalIDs(t) {
+		for _, got := range env.fixIDs(t) {
 			if got != id {
-				require.Empty(t, env.proposalRemediation(t, got), "a row written with no remediation belongs to no remediation")
+				require.Empty(t, env.fixRemediation(t, got), "a row written with no remediation belongs to no remediation")
 			}
 		}
 
-		err := env.proposals.Upsert(ctx, proposal.Proposal{
+		err := env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-unknown", RemediationID: uuid.NewString(), NodeID: "model.c",
-			Attempt: 1, Status: proposal.StatusFailed, CreatedAt: contractBase,
+			Attempt: 1, Status: fix.StatusFailed, CreatedAt: contractBase,
 		})
-		require.Error(t, err, "a proposal names a remediation that exists")
+		require.Error(t, err, "a fix names a remediation that exists")
 	})
 }
 
-func TestProposalRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
+func TestFixRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		r := mustCreate(t, env, newRemediation("rel-fix", 1, contractBase))
-		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
+		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-fix", RemediationID: r.ID.String(), NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, Status: proposal.StatusVerifying,
-			NodeOutcomes:  map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}},
-			ReleaseChecks: []proposal.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1"}},
+			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, Status: fix.StatusVerifying,
+			NodeOutcomes:  map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusVerifying}},
+			ReleaseChecks: []fix.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1"}},
 			CreatedAt:     contractBase,
 		}))
-		ids := env.proposalIDs(t)
+		ids := env.fixIDs(t)
 		require.Len(t, ids, 1)
 		id := ids[0]
 
-		hit, err := env.proposals.MarkFixVerified(ctx, remediation.Verified{})
+		hit, err := env.fixes.MarkFixVerified(ctx, remediation.Verified{})
 		require.Error(t, err)
 		require.False(t, hit)
-		view, err := env.proposals.Get(ctx, id)
+		view, err := env.fixes.Get(ctx, id)
 		require.NoError(t, err)
-		require.Equal(t, proposal.StatusVerifying, view.Status, "a refused call writes nothing")
+		require.Equal(t, fix.StatusVerifying, view.Status, "a refused call writes nothing")
 
 		checked, err := remediation.NewChecked(remediation.Draft{}, nil)
 		require.NoError(t, err)
-		final := []proposal.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1", Phase: proposal.PhasePassed}}
+		final := []fix.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1", Phase: fix.PhasePassed}}
 		verified, err := remediation.NewVerified(id, []remediation.Checked{checked}, nil, final)
 		require.NoError(t, err)
 
-		hit, err = env.proposals.MarkFixVerified(ctx, verified)
+		hit, err = env.fixes.MarkFixVerified(ctx, verified)
 		require.NoError(t, err)
 		require.True(t, hit)
-		view, err = env.proposals.Get(ctx, id)
+		view, err = env.fixes.Get(ctx, id)
 		require.NoError(t, err)
-		require.Equal(t, proposal.StatusProposed, view.Status)
-		require.Equal(t, proposal.StatusProposed, view.NodeOutcomes["model.a"].Status)
+		require.Equal(t, fix.StatusProposed, view.Status)
+		require.Equal(t, fix.StatusProposed, view.NodeOutcomes["model.a"].Status)
 		require.Equal(t, final, view.ReleaseChecks)
 
-		hit, err = env.proposals.MarkFixVerified(ctx, verified)
+		hit, err = env.fixes.MarkFixVerified(ctx, verified)
 		require.NoError(t, err)
 		require.False(t, hit, "the compare-and-set fires once")
 	})
@@ -1195,17 +1195,17 @@ func TestRemediationRepository_ListTriesOfReleaseOrderDoesNotFollowTheSaveOrder(
 	})
 }
 
-func TestProposalRepository_ListNamesTheRemediationOfEachRow(t *testing.T) {
+func TestFixRepository_ListNamesTheRemediationOfEachRow(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		r := mustCreate(t, env, newRemediation("rel-named", 1, contractBase))
-		insertRunnerProposal(t, env, "rel-named", 2, r.ID)
-		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
-			Source: "validation", ReleaseID: "rel-named", NodeID: "model.a", Attempt: 1, Status: proposal.StatusFailed,
+		insertRunnerFix(t, env, "rel-named", 2, r.ID)
+		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
+			Source: "validation", ReleaseID: "rel-named", NodeID: "model.a", Attempt: 1, Status: fix.StatusFailed,
 			CreatedAt: contractBase,
 		}))
 
-		views, err := env.proposals.List(ctx, repository.ProposalFilter{ReleaseID: "rel-named"})
+		views, err := env.fixes.List(ctx, repository.FixFilter{ReleaseID: "rel-named"})
 		require.NoError(t, err)
 		byAttempt := map[int]string{}
 		for _, v := range views {

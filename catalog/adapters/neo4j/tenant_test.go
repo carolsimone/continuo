@@ -117,9 +117,9 @@ func TestCaseBase_RefusesAnotherTenantsCall(t *testing.T) {
 
 	assert.ErrorIs(t, tx.CaseBase().RecordRejection(ctx, "tenant-b",
 		casebase.Rejection{ReleaseID: "r1", NodeID: "a", Signature: "sig"}), errTenantMismatch)
-	assert.ErrorIs(t, tx.CaseBase().RecordProposal(ctx, "tenant-b",
-		casebase.Proposal{ProposalID: "p", ReleaseID: "r1", NodeID: "a"}, casebase.PullRequest{ProposalID: "p"}), errTenantMismatch)
+	assert.ErrorIs(t, tx.CaseBase().RecordFix(ctx, "tenant-b",
+		casebase.Fix{FixID: "p", ReleaseID: "r1", NodeID: "a"}, casebase.PullRequest{FixID: "p"}), errTenantMismatch)
 	assert.ErrorIs(t, tx.CaseBase().RecordPullRequestOutcome(ctx, "tenant-b",
-		casebase.PullRequestOutcome{ProposalID: "p", ReleaseID: "r1", Outcome: "merged"}), errTenantMismatch)
+		casebase.PullRequestOutcome{FixID: "p", ReleaseID: "r1", Outcome: "merged"}), errTenantMismatch)
 	assert.Zero(t, rec.calls, "no statement is sent for another tenant")
 }

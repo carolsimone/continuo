@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
@@ -92,7 +92,7 @@ func TestRunner_AFailedCheckGoesBackToTheModelInTheSameTry(t *testing.T) {
 	require.Len(t, passes, 2)
 	assert.Equal(t, []remediation.Finding{lowConfidenceFinding}, passes[1].Findings)
 	assert.Empty(t, passes[2].Findings)
-	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status, "the revised draft goes on to the gate")
+	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status, "the revised draft goes on to the gate")
 }
 
 func TestRunner_EveryFindingGoesBackInOneRound(t *testing.T) {
@@ -125,10 +125,10 @@ func TestRunner_RoundsSpentHandsTheClusterOver(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 	assert.Equal(t, 3, c.Round)
-	want := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: lowConfidenceFinding.Message, Code: model.HandoverReasonPreflightRoundsSpent}
+	want := fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceFinding.Message, Code: model.HandoverReasonPreflightRoundsSpent}
 	assert.Equal(t, &want, c.Outcome)
-	p := h.attempt(1).Proposal
-	assert.Equal(t, proposal.StatusFailed, p.Status)
+	p := h.attempt(1).Fix
+	assert.Equal(t, fix.StatusFailed, p.Status)
 	assert.Equal(t, want, p.NodeOutcomes["svc-a"])
 	assert.Empty(t, h.checks.requests())
 }
@@ -157,7 +157,7 @@ func TestRunner_AnUpstreamClusterWhoseRoundsAreSpentFallsBack(t *testing.T) {
 	assert.Equal(t, workflow.ClusterCrossProject, clusters[0].Kind)
 	assert.Equal(t, remediation.ClusterFellBack, clusters[0].Status)
 	require.NotNil(t, clusters[0].Outcome)
-	assert.Equal(t, proposal.StatusSkipped, clusters[0].Outcome.Status)
+	assert.Equal(t, fix.StatusSkipped, clusters[0].Outcome.Status)
 	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, clusters[0].Outcome.Code, "the members of a cross-project cluster whose rounds are spent are handed over as such")
 	assert.Contains(t, clusters[0].Outcome.Reason, "the change that broke this node lives in project core; "+
 		"a fix in this node's own project cannot ship before it: ")

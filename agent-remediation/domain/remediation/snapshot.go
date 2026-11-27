@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 )
 
@@ -49,7 +49,7 @@ type Remediation struct {
 type Try struct {
 	RemediationID uuid.UUID
 	Try           int
-	// Attempt is the proposal attempt number of the try.
+	// Attempt is the number of the try's attempt, which keys its fix row.
 	Attempt int
 	Status  TryStatus
 	// FileRevisions maps each file name to the revision the try read it at.
@@ -72,7 +72,7 @@ type Cluster struct {
 	// Round is the cluster's revision round.
 	Round int
 	// Outcome is the cluster's result once it is handed over or fell back.
-	Outcome   *proposal.NodeOutcome
+	Outcome   *fix.NodeOutcome
 	UpdatedAt time.Time
 }
 

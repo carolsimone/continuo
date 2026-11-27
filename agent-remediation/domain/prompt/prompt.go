@@ -1,4 +1,4 @@
-// Package prompt assembles the LLM request for a fix proposal from failure
+// Package prompt assembles the LLM request for a fix from failure
 // evidence. It is pure: it produces a provider-agnostic ProposeRequest that the
 // LLM adapters translate to their wire format. The propose_fix tool schema is
 // defined here so every provider forces the same structured result.
@@ -230,7 +230,7 @@ func renderPrecedentResolution(b *strings.Builder, p Precedent) {
 
 // renderEditedDiff writes one Edited entry's diff, preceded by the amended
 // caveat. The caveat's wording depends on whether the diff is the merged-truth
-// (shipped) diff or the proposal-time fallback.
+// (shipped) diff or the fallback, the diff the fix proposed.
 func renderEditedDiff(b *strings.Builder, e EditedPrecedent) {
 	renderDiffBlock(b, e.Diff, e.Amended, e.DiffIsShipped)
 }

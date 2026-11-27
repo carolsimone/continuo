@@ -1,7 +1,7 @@
 -- continuo_agent_remediation: agent-remediation's database.
 --
 -- Each remediation with its tries, clusters and journal of steps, the
--- proposals and their pull requests, the messages it consumed and its outbox.
+-- fixes and their pull requests, the messages it consumed and its outbox.
 --
 -- Each table is one block: its columns and constraints, then its indexes,
 -- triggers and comments.
@@ -119,9 +119,9 @@ CREATE INDEX idx_agent_remediation_outbox_open_by_aggregate ON agent_remediation
 
 CREATE TRIGGER agent_remediation_outbox_notify AFTER INSERT ON agent_remediation_outbox FOR EACH STATEMENT EXECUTE FUNCTION continuo_outbox_notify();
 
--- proposal
+-- fix
 
-CREATE TABLE proposal (
+CREATE TABLE fix (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     source text NOT NULL,
     release_id text NOT NULL,
@@ -159,21 +159,21 @@ CREATE TABLE proposal (
     projects text[] DEFAULT '{}'::text[] NOT NULL,
     remediation_id uuid,
     approvers jsonb DEFAULT '[]'::jsonb NOT NULL,
-    CONSTRAINT proposal_pkey PRIMARY KEY (id),
-    CONSTRAINT proposal_uniq UNIQUE (release_id, attempt),
-    CONSTRAINT proposal_status_check CHECK ((status IN ('generating', 'verifying', 'proposed', 'skipped', 'failed', 'escalated'))),
-    CONSTRAINT proposal_remediation_id_fkey FOREIGN KEY (remediation_id) REFERENCES remediation(id) ON DELETE SET NULL
+    CONSTRAINT fix_pkey PRIMARY KEY (id),
+    CONSTRAINT fix_uniq UNIQUE (release_id, attempt),
+    CONSTRAINT fix_status_check CHECK ((status IN ('generating', 'verifying', 'proposed', 'skipped', 'failed', 'escalated'))),
+    CONSTRAINT fix_remediation_id_fkey FOREIGN KEY (remediation_id) REFERENCES remediation(id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_proposal_release_round ON proposal (release_id, remediation_round);
+CREATE INDEX idx_fix_release_round ON fix (release_id, remediation_round);
 
-CREATE INDEX idx_proposal_resolved_node_ids ON proposal USING gin (resolved_node_ids);
+CREATE INDEX idx_fix_resolved_node_ids ON fix USING gin (resolved_node_ids);
 
-CREATE INDEX idx_proposal_projects ON proposal USING gin (projects);
+CREATE INDEX idx_fix_projects ON fix USING gin (projects);
 
-CREATE INDEX proposal_remediation_id ON proposal (remediation_id) WHERE remediation_id IS NOT NULL;
+CREATE INDEX idx_fix_remediation_id ON fix (remediation_id) WHERE remediation_id IS NOT NULL;
 
-CREATE TRIGGER proposal_stamp_pr_claimed_at BEFORE UPDATE ON proposal FOR EACH ROW EXECUTE FUNCTION stamp_pr_claimed_at_on_opening();
+CREATE TRIGGER fix_stamp_pr_claimed_at BEFORE UPDATE ON fix FOR EACH ROW EXECUTE FUNCTION stamp_pr_claimed_at_on_opening();
 
 -- remediation_try
 
@@ -192,10 +192,10 @@ CREATE TABLE remediation_try (
     CONSTRAINT remediation_try_remediation_id_fkey FOREIGN KEY (remediation_id) REFERENCES remediation(id) ON DELETE CASCADE
 );
 
--- proposal_pull_request
+-- fix_pull_request
 
-CREATE TABLE proposal_pull_request (
-    proposal_id uuid NOT NULL,
+CREATE TABLE fix_pull_request (
+    fix_id uuid NOT NULL,
     project text DEFAULT '' NOT NULL,
     repo text DEFAULT '' NOT NULL,
     branch text DEFAULT '' NOT NULL,
@@ -206,11 +206,11 @@ CREATE TABLE proposal_pull_request (
     pr_opened_at timestamptz,
     pr_opened_by text DEFAULT '' NOT NULL,
     pr_closed_at timestamptz,
-    CONSTRAINT proposal_pull_request_pkey PRIMARY KEY (proposal_id, project),
-    CONSTRAINT proposal_pull_request_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES proposal(id) ON DELETE CASCADE
+    CONSTRAINT fix_pull_request_pkey PRIMARY KEY (fix_id, project),
+    CONSTRAINT fix_pull_request_fix_id_fkey FOREIGN KEY (fix_id) REFERENCES fix(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_ppr_live ON proposal_pull_request (pr_state) WHERE pr_state IN ('opening', 'open');
+CREATE INDEX idx_fix_pull_request_live ON fix_pull_request (pr_state) WHERE pr_state IN ('opening', 'open');
 
 -- remediation_cluster
 

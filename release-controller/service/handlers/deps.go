@@ -19,7 +19,7 @@ type Deps struct {
 	Telemetry ports.Telemetry
 	Logger    *slog.Logger
 	Bucket    string
-	Proposals ports.ProposalReader // lists a release's remediation attempts for the retry decision
+	Fixes     ports.FixReader // lists a release's remediation attempts for the retry decision
 
 	// Topologies reads and writes topology artifacts: every handler that needs
 	// a check's candidate topology loads it through here by the check's reference.
@@ -30,9 +30,9 @@ type Deps struct {
 	Rejections ports.ReleaseRejectedEncoder
 
 	// Maintenance is MAINTENANCE_ENABLED. While true, release intake and
-	// remediation retries are refused and the queue activates only
-	// fixes' release checks, so candidates wait and fixes already being verified
-	// finish.
+	// remediation retries are refused and the queue activates only the
+	// release checks of fixes, so candidates wait and fixes already being
+	// verified finish.
 	Maintenance bool
 
 	// OntologyEnabled is ONTOLOGY_ENABLED, the install's ontology switch.

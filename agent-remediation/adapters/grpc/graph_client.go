@@ -136,7 +136,7 @@ func MapCurrentVersion(resp *catalogv1.GetNodeVersionsResponse) (ports.CurrentVe
 }
 
 // MapPrecedents converts a GetPrecedentsResponse to prompt values; only the
-// first proposal's PR URL is carried (one fix PR per rejection in practice).
+// first fix's PR URL is carried (one fix PR per rejection in practice).
 func MapPrecedents(resp *catalogv1.GetPrecedentsResponse) []prompt.Precedent {
 	out := make([]prompt.Precedent, 0, len(resp.Precedents))
 	for _, p := range resp.Precedents {
@@ -146,8 +146,8 @@ func MapPrecedents(resp *catalogv1.GetPrecedentsResponse) []prompt.Precedent {
 			RejectedAt: p.RejectedAt, Resolved: p.Resolved,
 			ResolutionDiff: p.ResolutionDiff, DiffTruncated: p.ResolutionDiffTruncated,
 		}
-		if len(p.Proposals) > 0 {
-			pr.PRURL = p.Proposals[0].PrUrl
+		if len(p.Fixes) > 0 {
+			pr.PRURL = p.Fixes[0].PrUrl
 		}
 		for _, e := range p.Edited {
 			pr.Edited = append(pr.Edited, prompt.EditedPrecedent{

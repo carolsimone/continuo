@@ -145,10 +145,10 @@ func (s *spyRepo) ListPastDeadline(context.Context, time.Time, int) ([]uuid.UUID
 	return nil, nil
 }
 
-// inFlightRepo is a proposal repository that records the reason
+// inFlightRepo is a fix repository that records the reason
 // FailLegacyInFlight is called with and answers with moved and err.
 type inFlightRepo struct {
-	repository.ProposalRepository
+	repository.FixRepository
 	reasons []string
 	moved   int
 	err     error
@@ -414,7 +414,7 @@ gate: [no_such_gate]
 tries: 1
 model_may_see: [code, logs]
 output:
-  on_pass: { action: pull_request, emits: remediation.proposed }
+  on_pass: { action: pull_request, emits: fix.proposed }
   on_give_up: { action: hand_over }
 approver: node_owner
 `)},
@@ -472,8 +472,8 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 			ports.ReleaseReader
 			ports.ReleaseChecks
 		}{},
-		proposals: struct{ repository.AttemptLister }{},
-		tries:     struct{ repository.TryLister }{},
+		fixes: struct{ repository.AttemptLister }{},
+		tries: struct{ repository.TryLister }{},
 	}, logger)
 
 	v := reflect.ValueOf(collab)

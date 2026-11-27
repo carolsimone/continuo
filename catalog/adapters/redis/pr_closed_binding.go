@@ -15,12 +15,12 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParsePRClosed decodes a remediation.pr_closed:v1 entry into the tenant its
+// ParsePRClosed decodes a fix.pr_closed:v1 entry into the tenant its
 // tenant_id field names and the case-base event. A missing or undecodable
 // payload, and an entry without a tenant, are events.ErrPermanent: the
 // consumer dead-letters the entry, so nothing is written under no tenant.
 func ParsePRClosed(msg goredis.XMessage) (string, event.PRClosed, error) {
-	tenantID, err := tenantField(msg, "remediation.pr_closed")
+	tenantID, err := tenantField(msg, "fix.pr_closed")
 	if err != nil {
 		return "", event.PRClosed{}, err
 	}
@@ -30,7 +30,7 @@ func ParsePRClosed(msg goredis.XMessage) (string, event.PRClosed, error) {
 	}
 	var dto serialization.PRClosedDTO
 	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
-		return "", event.PRClosed{}, fmt.Errorf("%w: unmarshal remediation.pr_closed payload (message %s): %v", events.ErrPermanent, msg.ID, err)
+		return "", event.PRClosed{}, fmt.Errorf("%w: unmarshal fix.pr_closed payload (message %s): %v", events.ErrPermanent, msg.ID, err)
 	}
 	return tenantID, dto.ToDomain(), nil
 }
@@ -47,7 +47,7 @@ func NewPrClosedBinding(
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		tenantID, evt, err := ParsePRClosed(msg)
 		if err != nil {
-			logger.Error("remediation.pr_closed (provenance): parse failure — dead-lettering",
+			logger.Error("fix.pr_closed (provenance): parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

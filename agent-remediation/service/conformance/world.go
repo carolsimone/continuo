@@ -3,8 +3,8 @@ package conformance
 import (
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -66,7 +66,7 @@ type World interface {
 	Clusters(id uuid.UUID) []remediation.Cluster
 	// Steps is every journal row of the remediation.
 	Steps(id uuid.UUID) []remediation.StepRun
-	// Attempts is every proposal row the store holds.
+	// Attempts is every fix row the store holds.
 	Attempts() []Attempt
 	// Outbox is every outbox entry the store holds.
 	Outbox() []outbox.Entry
@@ -84,9 +84,9 @@ type ModelCall struct {
 	Request prompt.ProposeRequest
 }
 
-// Attempt is one proposal row as the store holds it, with the error its
+// Attempt is one fix row as the store holds it, with the error its
 // release check reported.
 type Attempt struct {
-	Proposal    proposal.Proposal
+	Fix         fix.Fix
 	VerifyError string
 }

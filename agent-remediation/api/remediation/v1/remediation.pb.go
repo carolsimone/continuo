@@ -21,9 +21,9 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Proposal is a read-only projection of a remediation proposal row, including
-// all PR-lifecycle columns. Fields mirror proposal.View (snake_case).
-type Proposal struct {
+// Fix is a read-only projection of a remediation fix row, including
+// all PR-lifecycle columns. Fields mirror fix.View (snake_case).
+type Fix struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Source         string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
@@ -34,10 +34,10 @@ type Proposal struct {
 	Status         string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
 	Confidence     string                 `protobuf:"bytes,8,opt,name=confidence,proto3" json:"confidence,omitempty"`
 	Rationale      string                 `protobuf:"bytes,9,opt,name=rationale,proto3" json:"rationale,omitempty"`
-	// single-file view of the proposal: edits[0]'s content_uri when edits is
+	// single-file view of the fix: edits[0]'s content_uri when edits is
 	// non-empty, otherwise the candidate-only fix artifact
 	ProposedSqlUri string `protobuf:"bytes,10,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
-	// single-file view of the proposal: edits[0]'s diff_uri when edits is
+	// single-file view of the fix: edits[0]'s diff_uri when edits is
 	// non-empty, otherwise the diff of the candidate-only fix artifact
 	DiffUri             string `protobuf:"bytes,11,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
 	CandidateFixSqlUri  string `protobuf:"bytes,12,opt,name=candidate_fix_sql_uri,json=candidateFixSqlUri,proto3" json:"candidate_fix_sql_uri,omitempty"`
@@ -45,8 +45,8 @@ type Proposal struct {
 	SourceResolved      bool   `protobuf:"varint,14,opt,name=source_resolved,json=sourceResolved,proto3" json:"source_resolved,omitempty"`
 	Repo                string `protobuf:"bytes,15,opt,name=repo,proto3" json:"repo,omitempty"`
 	CommitSha           string `protobuf:"bytes,16,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
-	// single-file view of the proposal: edits[0]'s path when edits is
-	// non-empty, empty when the proposal carries only a candidate fix
+	// single-file view of the fix: edits[0]'s path when edits is
+	// non-empty, empty when only candidate_fix_sql_uri is set
 	FilePath string `protobuf:"bytes,17,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
 	Model    string `protobuf:"bytes,18,opt,name=model,proto3" json:"model,omitempty"`
 	// created_at is an RFC3339-formatted timestamp string.
@@ -81,17 +81,17 @@ type Proposal struct {
 	// release_checks holds one release check of the fix per edited project; the
 	// first entry is the view mirrored onto release_check_id.
 	ReleaseChecks []*ReleaseCheck `protobuf:"bytes,32,rep,name=release_checks,json=releaseChecks,proto3" json:"release_checks,omitempty"`
-	// pull_requests is one entry per (proposal, project) pull request; empty
-	// for a proposal that never entered the PR lifecycle. project = "" is the
-	// legacy whole-proposal group. The singular pr_* fields above mirror
+	// pull_requests is one entry per (fix, project) pull request; empty
+	// for a fix that never entered the PR lifecycle. project = "" is the
+	// legacy whole-fix group. The singular pr_* fields above mirror
 	// pull_requests[0] for old readers that predate the per-project split.
 	PullRequests []*PullRequest `protobuf:"bytes,33,rep,name=pull_requests,json=pullRequests,proto3" json:"pull_requests,omitempty"`
-	// pr_projects is the sorted owning-project groups this proposal's pull
-	// requests split into; [""] for a legacy (unsplit) proposal.
+	// pr_projects is the sorted owning-project groups this fix's pull
+	// requests split into; [""] for a legacy (unsplit) fix.
 	PrProjects []string `protobuf:"bytes,34,rep,name=pr_projects,json=prProjects,proto3" json:"pr_projects,omitempty"`
 	// projects is every project this attempt touched — the failing nodes'
 	// projects plus the edited ones, sorted — the same set the
-	// ListProposalsRequest.project filter matches a proposal on.
+	// ListFixesRequest.project filter matches a fix on.
 	Projects []string `protobuf:"bytes,35,rep,name=projects,proto3" json:"projects,omitempty"`
 	// approvers is who must approve what this attempt did with each node a
 	// remediation settled at its end, the fixed nodes and the handed-over ones,
@@ -102,20 +102,20 @@ type Proposal struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Proposal) Reset() {
-	*x = Proposal{}
+func (x *Fix) Reset() {
+	*x = Fix{}
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Proposal) String() string {
+func (x *Fix) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Proposal) ProtoMessage() {}
+func (*Fix) ProtoMessage() {}
 
-func (x *Proposal) ProtoReflect() protoreflect.Message {
+func (x *Fix) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -127,289 +127,289 @@ func (x *Proposal) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Proposal.ProtoReflect.Descriptor instead.
-func (*Proposal) Descriptor() ([]byte, []int) {
+// Deprecated: Use Fix.ProtoReflect.Descriptor instead.
+func (*Fix) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Proposal) GetId() string {
+func (x *Fix) GetId() string {
 	if x != nil {
 		return x.Id
 	}
 	return ""
 }
 
-func (x *Proposal) GetSource() string {
+func (x *Fix) GetSource() string {
 	if x != nil {
 		return x.Source
 	}
 	return ""
 }
 
-func (x *Proposal) GetReleaseId() string {
+func (x *Fix) GetReleaseId() string {
 	if x != nil {
 		return x.ReleaseId
 	}
 	return ""
 }
 
-func (x *Proposal) GetNodeId() string {
+func (x *Fix) GetNodeId() string {
 	if x != nil {
 		return x.NodeId
 	}
 	return ""
 }
 
-func (x *Proposal) GetErrorSignature() string {
+func (x *Fix) GetErrorSignature() string {
 	if x != nil {
 		return x.ErrorSignature
 	}
 	return ""
 }
 
-func (x *Proposal) GetAttempt() int32 {
+func (x *Fix) GetAttempt() int32 {
 	if x != nil {
 		return x.Attempt
 	}
 	return 0
 }
 
-func (x *Proposal) GetStatus() string {
+func (x *Fix) GetStatus() string {
 	if x != nil {
 		return x.Status
 	}
 	return ""
 }
 
-func (x *Proposal) GetConfidence() string {
+func (x *Fix) GetConfidence() string {
 	if x != nil {
 		return x.Confidence
 	}
 	return ""
 }
 
-func (x *Proposal) GetRationale() string {
+func (x *Fix) GetRationale() string {
 	if x != nil {
 		return x.Rationale
 	}
 	return ""
 }
 
-func (x *Proposal) GetProposedSqlUri() string {
+func (x *Fix) GetProposedSqlUri() string {
 	if x != nil {
 		return x.ProposedSqlUri
 	}
 	return ""
 }
 
-func (x *Proposal) GetDiffUri() string {
+func (x *Fix) GetDiffUri() string {
 	if x != nil {
 		return x.DiffUri
 	}
 	return ""
 }
 
-func (x *Proposal) GetCandidateFixSqlUri() string {
+func (x *Fix) GetCandidateFixSqlUri() string {
 	if x != nil {
 		return x.CandidateFixSqlUri
 	}
 	return ""
 }
 
-func (x *Proposal) GetCandidateFixDiffUri() string {
+func (x *Fix) GetCandidateFixDiffUri() string {
 	if x != nil {
 		return x.CandidateFixDiffUri
 	}
 	return ""
 }
 
-func (x *Proposal) GetSourceResolved() bool {
+func (x *Fix) GetSourceResolved() bool {
 	if x != nil {
 		return x.SourceResolved
 	}
 	return false
 }
 
-func (x *Proposal) GetRepo() string {
+func (x *Fix) GetRepo() string {
 	if x != nil {
 		return x.Repo
 	}
 	return ""
 }
 
-func (x *Proposal) GetCommitSha() string {
+func (x *Fix) GetCommitSha() string {
 	if x != nil {
 		return x.CommitSha
 	}
 	return ""
 }
 
-func (x *Proposal) GetFilePath() string {
+func (x *Fix) GetFilePath() string {
 	if x != nil {
 		return x.FilePath
 	}
 	return ""
 }
 
-func (x *Proposal) GetModel() string {
+func (x *Fix) GetModel() string {
 	if x != nil {
 		return x.Model
 	}
 	return ""
 }
 
-func (x *Proposal) GetCreatedAt() string {
+func (x *Fix) GetCreatedAt() string {
 	if x != nil {
 		return x.CreatedAt
 	}
 	return ""
 }
 
-func (x *Proposal) GetPrUrl() string {
+func (x *Fix) GetPrUrl() string {
 	if x != nil {
 		return x.PrUrl
 	}
 	return ""
 }
 
-func (x *Proposal) GetPrNumber() int32 {
+func (x *Fix) GetPrNumber() int32 {
 	if x != nil {
 		return x.PrNumber
 	}
 	return 0
 }
 
-func (x *Proposal) GetPrState() string {
+func (x *Fix) GetPrState() string {
 	if x != nil {
 		return x.PrState
 	}
 	return ""
 }
 
-func (x *Proposal) GetPrOpenedAt() string {
+func (x *Fix) GetPrOpenedAt() string {
 	if x != nil {
 		return x.PrOpenedAt
 	}
 	return ""
 }
 
-func (x *Proposal) GetPrOpenedBy() string {
+func (x *Fix) GetPrOpenedBy() string {
 	if x != nil {
 		return x.PrOpenedBy
 	}
 	return ""
 }
 
-func (x *Proposal) GetPrClosedAt() string {
+func (x *Fix) GetPrClosedAt() string {
 	if x != nil {
 		return x.PrClosedAt
 	}
 	return ""
 }
 
-func (x *Proposal) GetEdits() []*FileEdit {
+func (x *Fix) GetEdits() []*FileEdit {
 	if x != nil {
 		return x.Edits
 	}
 	return nil
 }
 
-func (x *Proposal) GetReleaseCheckId() string {
+func (x *Fix) GetReleaseCheckId() string {
 	if x != nil {
 		return x.ReleaseCheckId
 	}
 	return ""
 }
 
-func (x *Proposal) GetVerifyError() string {
+func (x *Fix) GetVerifyError() string {
 	if x != nil {
 		return x.VerifyError
 	}
 	return ""
 }
 
-func (x *Proposal) GetRemediationRound() int32 {
+func (x *Fix) GetRemediationRound() int32 {
 	if x != nil {
 		return x.RemediationRound
 	}
 	return 0
 }
 
-func (x *Proposal) GetResolvedNodeIds() []string {
+func (x *Fix) GetResolvedNodeIds() []string {
 	if x != nil {
 		return x.ResolvedNodeIds
 	}
 	return nil
 }
 
-func (x *Proposal) GetNodeOutcomes() map[string]*NodeOutcome {
+func (x *Fix) GetNodeOutcomes() map[string]*NodeOutcome {
 	if x != nil {
 		return x.NodeOutcomes
 	}
 	return nil
 }
 
-func (x *Proposal) GetReleaseChecks() []*ReleaseCheck {
+func (x *Fix) GetReleaseChecks() []*ReleaseCheck {
 	if x != nil {
 		return x.ReleaseChecks
 	}
 	return nil
 }
 
-func (x *Proposal) GetPullRequests() []*PullRequest {
+func (x *Fix) GetPullRequests() []*PullRequest {
 	if x != nil {
 		return x.PullRequests
 	}
 	return nil
 }
 
-func (x *Proposal) GetPrProjects() []string {
+func (x *Fix) GetPrProjects() []string {
 	if x != nil {
 		return x.PrProjects
 	}
 	return nil
 }
 
-func (x *Proposal) GetProjects() []string {
+func (x *Fix) GetProjects() []string {
 	if x != nil {
 		return x.Projects
 	}
 	return nil
 }
 
-func (x *Proposal) GetApprovers() []*Approver {
+func (x *Fix) GetApprovers() []*Approver {
 	if x != nil {
 		return x.Approvers
 	}
 	return nil
 }
 
-// ListProposalsRequest filters the proposal list. Empty fields are ignored.
-type ListProposalsRequest struct {
+// ListFixesRequest filters the fix list. Empty fields are ignored.
+type ListFixesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	PrState       string                 `protobuf:"bytes,2,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
-	ReleaseId     string                 `protobuf:"bytes,4,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"` // when set, only proposals of this release
-	Project       string                 `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`                      // when set, only proposals whose projects contain it
+	ReleaseId     string                 `protobuf:"bytes,4,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"` // when set, only fixes of this release
+	Project       string                 `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`                      // when set, only fixes whose projects contain it
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListProposalsRequest) Reset() {
-	*x = ListProposalsRequest{}
+func (x *ListFixesRequest) Reset() {
+	*x = ListFixesRequest{}
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListProposalsRequest) String() string {
+func (x *ListFixesRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListProposalsRequest) ProtoMessage() {}
+func (*ListFixesRequest) ProtoMessage() {}
 
-func (x *ListProposalsRequest) ProtoReflect() protoreflect.Message {
+func (x *ListFixesRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -421,67 +421,67 @@ func (x *ListProposalsRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListProposalsRequest.ProtoReflect.Descriptor instead.
-func (*ListProposalsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ListFixesRequest.ProtoReflect.Descriptor instead.
+func (*ListFixesRequest) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *ListProposalsRequest) GetStatus() string {
+func (x *ListFixesRequest) GetStatus() string {
 	if x != nil {
 		return x.Status
 	}
 	return ""
 }
 
-func (x *ListProposalsRequest) GetPrState() string {
+func (x *ListFixesRequest) GetPrState() string {
 	if x != nil {
 		return x.PrState
 	}
 	return ""
 }
 
-func (x *ListProposalsRequest) GetLimit() int32 {
+func (x *ListFixesRequest) GetLimit() int32 {
 	if x != nil {
 		return x.Limit
 	}
 	return 0
 }
 
-func (x *ListProposalsRequest) GetReleaseId() string {
+func (x *ListFixesRequest) GetReleaseId() string {
 	if x != nil {
 		return x.ReleaseId
 	}
 	return ""
 }
 
-func (x *ListProposalsRequest) GetProject() string {
+func (x *ListFixesRequest) GetProject() string {
 	if x != nil {
 		return x.Project
 	}
 	return ""
 }
 
-type ListProposalsResponse struct {
+type ListFixesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Proposals     []*Proposal            `protobuf:"bytes,1,rep,name=proposals,proto3" json:"proposals,omitempty"`
+	Fixes         []*Fix                 `protobuf:"bytes,1,rep,name=fixes,proto3" json:"fixes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListProposalsResponse) Reset() {
-	*x = ListProposalsResponse{}
+func (x *ListFixesResponse) Reset() {
+	*x = ListFixesResponse{}
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListProposalsResponse) String() string {
+func (x *ListFixesResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListProposalsResponse) ProtoMessage() {}
+func (*ListFixesResponse) ProtoMessage() {}
 
-func (x *ListProposalsResponse) ProtoReflect() protoreflect.Message {
+func (x *ListFixesResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -493,39 +493,39 @@ func (x *ListProposalsResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListProposalsResponse.ProtoReflect.Descriptor instead.
-func (*ListProposalsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ListFixesResponse.ProtoReflect.Descriptor instead.
+func (*ListFixesResponse) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *ListProposalsResponse) GetProposals() []*Proposal {
+func (x *ListFixesResponse) GetFixes() []*Fix {
 	if x != nil {
-		return x.Proposals
+		return x.Fixes
 	}
 	return nil
 }
 
-type GetProposalRequest struct {
+type GetFixRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetProposalRequest) Reset() {
-	*x = GetProposalRequest{}
+func (x *GetFixRequest) Reset() {
+	*x = GetFixRequest{}
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetProposalRequest) String() string {
+func (x *GetFixRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetProposalRequest) ProtoMessage() {}
+func (*GetFixRequest) ProtoMessage() {}
 
-func (x *GetProposalRequest) ProtoReflect() protoreflect.Message {
+func (x *GetFixRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -537,24 +537,24 @@ func (x *GetProposalRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetProposalRequest.ProtoReflect.Descriptor instead.
-func (*GetProposalRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetFixRequest.ProtoReflect.Descriptor instead.
+func (*GetFixRequest) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *GetProposalRequest) GetId() string {
+func (x *GetFixRequest) GetId() string {
 	if x != nil {
 		return x.Id
 	}
 	return ""
 }
 
-// BeginPullRequestRequest identifies the proposal to claim for PR creation.
+// BeginPullRequestRequest identifies the fix to claim for PR creation.
 type BeginPullRequestRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// project is the owning-project group to claim; "" is the legacy
-	// whole-proposal group. Must be one of the proposal's pr_projects.
+	// whole-fix group. Must be one of the fix's pr_projects.
 	Project       string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -606,17 +606,17 @@ func (x *BeginPullRequestRequest) GetProject() string {
 
 // BeginPullRequestResponse carries all data needed to open a GitHub pull-request.
 type BeginPullRequestResponse struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	ProposalId string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
-	Repo       string                 `protobuf:"bytes,2,opt,name=repo,proto3" json:"repo,omitempty"`
-	CommitSha  string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
-	// single-file view of the proposal: edits[0]'s path when edits is
-	// non-empty, empty when the proposal carries only a candidate fix
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	FixId     string                 `protobuf:"bytes,1,opt,name=fix_id,json=fixId,proto3" json:"fix_id,omitempty"`
+	Repo      string                 `protobuf:"bytes,2,opt,name=repo,proto3" json:"repo,omitempty"`
+	CommitSha string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	// single-file view of the fix: edits[0]'s path when edits is
+	// non-empty, empty when only candidate_fix_sql_uri is set
 	FilePath string `protobuf:"bytes,4,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	// single-file view of the proposal: edits[0]'s content_uri when edits is
+	// single-file view of the fix: edits[0]'s content_uri when edits is
 	// non-empty, otherwise the candidate-only fix artifact
 	ProposedSqlUri string `protobuf:"bytes,5,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
-	// single-file view of the proposal: edits[0]'s diff_uri when edits is
+	// single-file view of the fix: edits[0]'s diff_uri when edits is
 	// non-empty, otherwise the diff of the candidate-only fix artifact
 	DiffUri    string `protobuf:"bytes,6,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
 	ReleaseId  string `protobuf:"bytes,7,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
@@ -637,10 +637,10 @@ type BeginPullRequestResponse struct {
 	// node_id is their representative.
 	ResolvedNodeIds []string `protobuf:"bytes,16,rep,name=resolved_node_ids,json=resolvedNodeIds,proto3" json:"resolved_node_ids,omitempty"`
 	// project is the owning-project group this claim covers, echoing the
-	// request's project; "" is the legacy whole-proposal group.
+	// request's project; "" is the legacy whole-fix group.
 	Project string `protobuf:"bytes,17,opt,name=project,proto3" json:"project,omitempty"`
-	// approvers is who must approve the claim's fix: the proposal's approvers of
-	// the nodes in resolved_node_ids, sorted by node_id. A node the proposal
+	// approvers is who must approve the claim's fix: the fix's approvers of
+	// the nodes in resolved_node_ids, sorted by node_id. A node the fix
 	// records no approver for has no entry.
 	Approvers     []*Approver `protobuf:"bytes,18,rep,name=approvers,proto3" json:"approvers,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -677,9 +677,9 @@ func (*BeginPullRequestResponse) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *BeginPullRequestResponse) GetProposalId() string {
+func (x *BeginPullRequestResponse) GetFixId() string {
 	if x != nil {
-		return x.ProposalId
+		return x.FixId
 	}
 	return ""
 }
@@ -811,7 +811,7 @@ type RecordPullRequestRequest struct {
 	PrNumber int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
 	OpenedBy string                 `protobuf:"bytes,4,opt,name=opened_by,json=openedBy,proto3" json:"opened_by,omitempty"`
 	// project is the owning-project group this PR covers; "" is the legacy
-	// whole-proposal group.
+	// whole-fix group.
 	Project       string `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -918,7 +918,7 @@ func (*RecordPullRequestResponse) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{7}
 }
 
-// FailPullRequestRequest identifies the proposal whose PR attempt failed.
+// FailPullRequestRequest identifies the fix whose PR attempt failed.
 type FailPullRequestRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -929,7 +929,7 @@ type FailPullRequestRequest struct {
 	// instead of being reset out from under its new owner.
 	ClaimedAt string `protobuf:"bytes,2,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
 	// project is the owning-project group this claim covers; "" is the legacy
-	// whole-proposal group.
+	// whole-fix group.
 	Project       string `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1334,9 +1334,9 @@ func (x *ReleaseCheck) GetError() string {
 	return ""
 }
 
-// PullRequest is one pull request opened from a proposal, mirroring
-// proposal.PullRequest. One entry per (proposal, project) split; project =
-// "" is the legacy whole-proposal group.
+// PullRequest is one pull request opened from a fix, mirroring
+// fix.PullRequest. One entry per (fix, project) split; project =
+// "" is the legacy whole-fix group.
 type PullRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Project  string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
@@ -1455,8 +1455,8 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x94\v\n" +
-	"\bProposal\x12\x0e\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x8a\v\n" +
+	"\x03Fix\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
 	"\n" +
@@ -1495,8 +1495,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x10release_check_id\x18\x1b \x01(\tR\x0ereleaseCheckId\x12!\n" +
 	"\fverify_error\x18\x1c \x01(\tR\vverifyError\x12+\n" +
 	"\x11remediation_round\x18\x1d \x01(\x05R\x10remediationRound\x12*\n" +
-	"\x11resolved_node_ids\x18\x1e \x03(\tR\x0fresolvedNodeIds\x12O\n" +
-	"\rnode_outcomes\x18\x1f \x03(\v2*.remediation.v1.Proposal.NodeOutcomesEntryR\fnodeOutcomes\x12C\n" +
+	"\x11resolved_node_ids\x18\x1e \x03(\tR\x0fresolvedNodeIds\x12J\n" +
+	"\rnode_outcomes\x18\x1f \x03(\v2%.remediation.v1.Fix.NodeOutcomesEntryR\fnodeOutcomes\x12C\n" +
 	"\x0erelease_checks\x18  \x03(\v2\x1c.remediation.v1.ReleaseCheckR\rreleaseChecks\x12@\n" +
 	"\rpull_requests\x18! \x03(\v2\x1b.remediation.v1.PullRequestR\fpullRequests\x12\x1f\n" +
 	"\vpr_projects\x18\" \x03(\tR\n" +
@@ -1505,24 +1505,23 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\tapprovers\x18$ \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\x1a\\\n" +
 	"\x11NodeOutcomesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
-	"\x05value\x18\x02 \x01(\v2\x1b.remediation.v1.NodeOutcomeR\x05value:\x028\x01\"\x98\x01\n" +
-	"\x14ListProposalsRequest\x12\x16\n" +
+	"\x05value\x18\x02 \x01(\v2\x1b.remediation.v1.NodeOutcomeR\x05value:\x028\x01\"\x94\x01\n" +
+	"\x10ListFixesRequest\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x19\n" +
 	"\bpr_state\x18\x02 \x01(\tR\aprState\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x1d\n" +
 	"\n" +
 	"release_id\x18\x04 \x01(\tR\treleaseId\x12\x18\n" +
-	"\aproject\x18\x05 \x01(\tR\aproject\"O\n" +
-	"\x15ListProposalsResponse\x126\n" +
-	"\tproposals\x18\x01 \x03(\v2\x18.remediation.v1.ProposalR\tproposals\"$\n" +
-	"\x12GetProposalRequest\x12\x0e\n" +
+	"\aproject\x18\x05 \x01(\tR\aproject\">\n" +
+	"\x11ListFixesResponse\x12)\n" +
+	"\x05fixes\x18\x01 \x03(\v2\x13.remediation.v1.FixR\x05fixes\"\x1f\n" +
+	"\rGetFixRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"C\n" +
 	"\x17BeginPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
-	"\aproject\x18\x02 \x01(\tR\aproject\"\xdb\x04\n" +
-	"\x18BeginPullRequestResponse\x12\x1f\n" +
-	"\vproposal_id\x18\x01 \x01(\tR\n" +
-	"proposalId\x12\x12\n" +
+	"\aproject\x18\x02 \x01(\tR\aproject\"\xd1\x04\n" +
+	"\x18BeginPullRequestResponse\x12\x15\n" +
+	"\x06fix_id\x18\x01 \x01(\tR\x05fixId\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x1d\n" +
 	"\n" +
 	"commit_sha\x18\x03 \x01(\tR\tcommitSha\x12\x1b\n" +
@@ -1594,10 +1593,10 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\fpr_opened_by\x18\b \x01(\tR\n" +
 	"prOpenedBy\x12 \n" +
 	"\fpr_closed_at\x18\t \x01(\tR\n" +
-	"prClosedAt2\xf6\x03\n" +
-	"\x14RemediationProposals\x12\\\n" +
-	"\rListProposals\x12$.remediation.v1.ListProposalsRequest\x1a%.remediation.v1.ListProposalsResponse\x12K\n" +
-	"\vGetProposal\x12\".remediation.v1.GetProposalRequest\x1a\x18.remediation.v1.Proposal\x12e\n" +
+	"prClosedAt2\xd7\x03\n" +
+	"\x10RemediationFixes\x12P\n" +
+	"\tListFixes\x12 .remediation.v1.ListFixesRequest\x1a!.remediation.v1.ListFixesResponse\x12<\n" +
+	"\x06GetFix\x12\x1d.remediation.v1.GetFixRequest\x1a\x13.remediation.v1.Fix\x12e\n" +
 	"\x10BeginPullRequest\x12'.remediation.v1.BeginPullRequestRequest\x1a(.remediation.v1.BeginPullRequestResponse\x12h\n" +
 	"\x11RecordPullRequest\x12(.remediation.v1.RecordPullRequestRequest\x1a).remediation.v1.RecordPullRequestResponse\x12b\n" +
 	"\x0fFailPullRequest\x12&.remediation.v1.FailPullRequestRequest\x1a'.remediation.v1.FailPullRequestResponseBTZRgithub.com/carolsimone/continuo/agent-remediation/api/remediation/v1;remediationv1b\x06proto3"
@@ -1616,10 +1615,10 @@ func file_proto_remediation_v1_remediation_proto_rawDescGZIP() []byte {
 
 var file_proto_remediation_v1_remediation_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_proto_remediation_v1_remediation_proto_goTypes = []any{
-	(*Proposal)(nil),                  // 0: remediation.v1.Proposal
-	(*ListProposalsRequest)(nil),      // 1: remediation.v1.ListProposalsRequest
-	(*ListProposalsResponse)(nil),     // 2: remediation.v1.ListProposalsResponse
-	(*GetProposalRequest)(nil),        // 3: remediation.v1.GetProposalRequest
+	(*Fix)(nil),                       // 0: remediation.v1.Fix
+	(*ListFixesRequest)(nil),          // 1: remediation.v1.ListFixesRequest
+	(*ListFixesResponse)(nil),         // 2: remediation.v1.ListFixesResponse
+	(*GetFixRequest)(nil),             // 3: remediation.v1.GetFixRequest
 	(*BeginPullRequestRequest)(nil),   // 4: remediation.v1.BeginPullRequestRequest
 	(*BeginPullRequestResponse)(nil),  // 5: remediation.v1.BeginPullRequestResponse
 	(*RecordPullRequestRequest)(nil),  // 6: remediation.v1.RecordPullRequestRequest
@@ -1631,28 +1630,28 @@ var file_proto_remediation_v1_remediation_proto_goTypes = []any{
 	(*Approver)(nil),                  // 12: remediation.v1.Approver
 	(*ReleaseCheck)(nil),              // 13: remediation.v1.ReleaseCheck
 	(*PullRequest)(nil),               // 14: remediation.v1.PullRequest
-	nil,                               // 15: remediation.v1.Proposal.NodeOutcomesEntry
+	nil,                               // 15: remediation.v1.Fix.NodeOutcomesEntry
 }
 var file_proto_remediation_v1_remediation_proto_depIdxs = []int32{
-	10, // 0: remediation.v1.Proposal.edits:type_name -> remediation.v1.FileEdit
-	15, // 1: remediation.v1.Proposal.node_outcomes:type_name -> remediation.v1.Proposal.NodeOutcomesEntry
-	13, // 2: remediation.v1.Proposal.release_checks:type_name -> remediation.v1.ReleaseCheck
-	14, // 3: remediation.v1.Proposal.pull_requests:type_name -> remediation.v1.PullRequest
-	12, // 4: remediation.v1.Proposal.approvers:type_name -> remediation.v1.Approver
-	0,  // 5: remediation.v1.ListProposalsResponse.proposals:type_name -> remediation.v1.Proposal
+	10, // 0: remediation.v1.Fix.edits:type_name -> remediation.v1.FileEdit
+	15, // 1: remediation.v1.Fix.node_outcomes:type_name -> remediation.v1.Fix.NodeOutcomesEntry
+	13, // 2: remediation.v1.Fix.release_checks:type_name -> remediation.v1.ReleaseCheck
+	14, // 3: remediation.v1.Fix.pull_requests:type_name -> remediation.v1.PullRequest
+	12, // 4: remediation.v1.Fix.approvers:type_name -> remediation.v1.Approver
+	0,  // 5: remediation.v1.ListFixesResponse.fixes:type_name -> remediation.v1.Fix
 	10, // 6: remediation.v1.BeginPullRequestResponse.edits:type_name -> remediation.v1.FileEdit
 	12, // 7: remediation.v1.BeginPullRequestResponse.approvers:type_name -> remediation.v1.Approver
-	11, // 8: remediation.v1.Proposal.NodeOutcomesEntry.value:type_name -> remediation.v1.NodeOutcome
-	1,  // 9: remediation.v1.RemediationProposals.ListProposals:input_type -> remediation.v1.ListProposalsRequest
-	3,  // 10: remediation.v1.RemediationProposals.GetProposal:input_type -> remediation.v1.GetProposalRequest
-	4,  // 11: remediation.v1.RemediationProposals.BeginPullRequest:input_type -> remediation.v1.BeginPullRequestRequest
-	6,  // 12: remediation.v1.RemediationProposals.RecordPullRequest:input_type -> remediation.v1.RecordPullRequestRequest
-	8,  // 13: remediation.v1.RemediationProposals.FailPullRequest:input_type -> remediation.v1.FailPullRequestRequest
-	2,  // 14: remediation.v1.RemediationProposals.ListProposals:output_type -> remediation.v1.ListProposalsResponse
-	0,  // 15: remediation.v1.RemediationProposals.GetProposal:output_type -> remediation.v1.Proposal
-	5,  // 16: remediation.v1.RemediationProposals.BeginPullRequest:output_type -> remediation.v1.BeginPullRequestResponse
-	7,  // 17: remediation.v1.RemediationProposals.RecordPullRequest:output_type -> remediation.v1.RecordPullRequestResponse
-	9,  // 18: remediation.v1.RemediationProposals.FailPullRequest:output_type -> remediation.v1.FailPullRequestResponse
+	11, // 8: remediation.v1.Fix.NodeOutcomesEntry.value:type_name -> remediation.v1.NodeOutcome
+	1,  // 9: remediation.v1.RemediationFixes.ListFixes:input_type -> remediation.v1.ListFixesRequest
+	3,  // 10: remediation.v1.RemediationFixes.GetFix:input_type -> remediation.v1.GetFixRequest
+	4,  // 11: remediation.v1.RemediationFixes.BeginPullRequest:input_type -> remediation.v1.BeginPullRequestRequest
+	6,  // 12: remediation.v1.RemediationFixes.RecordPullRequest:input_type -> remediation.v1.RecordPullRequestRequest
+	8,  // 13: remediation.v1.RemediationFixes.FailPullRequest:input_type -> remediation.v1.FailPullRequestRequest
+	2,  // 14: remediation.v1.RemediationFixes.ListFixes:output_type -> remediation.v1.ListFixesResponse
+	0,  // 15: remediation.v1.RemediationFixes.GetFix:output_type -> remediation.v1.Fix
+	5,  // 16: remediation.v1.RemediationFixes.BeginPullRequest:output_type -> remediation.v1.BeginPullRequestResponse
+	7,  // 17: remediation.v1.RemediationFixes.RecordPullRequest:output_type -> remediation.v1.RecordPullRequestResponse
+	9,  // 18: remediation.v1.RemediationFixes.FailPullRequest:output_type -> remediation.v1.FailPullRequestResponse
 	14, // [14:19] is the sub-list for method output_type
 	9,  // [9:14] is the sub-list for method input_type
 	9,  // [9:9] is the sub-list for extension type_name

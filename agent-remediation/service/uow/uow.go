@@ -10,15 +10,15 @@ import (
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
 
-// UnitOfWork groups the writes of one operation (a proposal attempt, or one
+// UnitOfWork groups the writes of one operation (an attempt's fix row, or one
 // step commit of a remediation) into one transaction. Begin must be called
 // before any repo method; Commit or Rollback closes the transaction.
 type UnitOfWork interface {
 	Begin(ctx context.Context) error
 	Commit() error
 	Rollback() error
-	// ProposalRepo returns the ProposalRepository bound to the active transaction.
-	ProposalRepo() repository.ProposalRepository
+	// FixRepo returns the FixRepository bound to the active transaction.
+	FixRepo() repository.FixRepository
 	// RemediationRepo returns the RemediationRepository bound to the active
 	// transaction.
 	RemediationRepo() repository.RemediationRepository

@@ -8,7 +8,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 )
 
-const goldenPROpened = `{"proposal_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n"],"project":"svc","pr_url":"http://x","pr_number":5,"opened_by":"bot","opened_at":"2026-01-02T03:04:05Z"}`
+const goldenPROpened = `{"fix_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n"],"project":"svc","pr_url":"http://x","pr_number":5,"opened_by":"bot","opened_at":"2026-01-02T03:04:05Z"}`
 
 func TestPROpenedRoundTrip(t *testing.T) {
 	var dto PROpenedDTO
@@ -28,13 +28,13 @@ func TestPROpenedRoundTrip(t *testing.T) {
 }
 
 func TestPROpenedProjectOmitempty(t *testing.T) {
-	out, _ := json.Marshal(PROpenedFromDomain(event.PROpened{ProposalID: "p"}))
+	out, _ := json.Marshal(PROpenedFromDomain(event.PROpened{FixID: "p"}))
 	if strings.Contains(string(out), `"project"`) {
 		t.Fatalf("project must be omitted when empty: %s", out)
 	}
 }
 
-const goldenPRClosed = `{"proposal_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n"],"project":"svc","pr_url":"http://x","pr_number":5,"outcome":"merged","closed_at":"2026-01-02T03:04:05Z","edits":[{"path":"models/m.sql","target_node_id":"n","amended":true,"diff":"d"}]}`
+const goldenPRClosed = `{"fix_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n"],"project":"svc","pr_url":"http://x","pr_number":5,"outcome":"merged","closed_at":"2026-01-02T03:04:05Z","edits":[{"path":"models/m.sql","target_node_id":"n","amended":true,"diff":"d"}]}`
 
 func TestPRClosedRoundTrip(t *testing.T) {
 	var dto PRClosedDTO
@@ -55,26 +55,26 @@ func TestPRClosedRoundTrip(t *testing.T) {
 }
 
 func TestPRClosedProjectAndEditsOmitempty(t *testing.T) {
-	out, _ := json.Marshal(PRClosedFromDomain(event.PRClosed{ProposalID: "p", Outcome: "rejected"}))
+	out, _ := json.Marshal(PRClosedFromDomain(event.PRClosed{FixID: "p", Outcome: "rejected"}))
 	s := string(out)
 	if strings.Contains(s, `"project"`) || strings.Contains(s, `"edits"`) {
 		t.Fatalf("project/edits must be omitted when empty: %s", s)
 	}
 }
 
-const goldenRemediationProposed = `{"event_id":"e","source":"agent","release_id":"r","remediation_round":1,"node_id":"n","resolved_node_ids":["n"],"error_signature":"sig","proposed_sql_uri":"s3://sql","diff_uri":"s3://diff","edits":[{"path":"models/m.sql","content_uri":"s3://c","diff_uri":"s3://d","target_node_id":"n"}],"rationale":"why","confidence":"high","model":"claude","attempt":1,"source_resolved":true,"proposed_at":"2026-01-02T03:04:05Z"}`
+const goldenFixProposed = `{"event_id":"e","source":"agent","release_id":"r","remediation_round":1,"node_id":"n","resolved_node_ids":["n"],"error_signature":"sig","proposed_sql_uri":"s3://sql","diff_uri":"s3://diff","edits":[{"path":"models/m.sql","content_uri":"s3://c","diff_uri":"s3://d","target_node_id":"n"}],"rationale":"why","confidence":"high","model":"claude","attempt":1,"source_resolved":true,"proposed_at":"2026-01-02T03:04:05Z"}`
 
-func TestRemediationProposedRoundTrip(t *testing.T) {
-	var dto RemediationProposedDTO
-	if err := json.Unmarshal([]byte(goldenRemediationProposed), &dto); err != nil {
+func TestFixProposedRoundTrip(t *testing.T) {
+	var dto FixProposedDTO
+	if err := json.Unmarshal([]byte(goldenFixProposed), &dto); err != nil {
 		t.Fatalf("unmarshal golden: %v", err)
 	}
-	out, err := json.Marshal(RemediationProposedFromDomain(dto.ToDomain()))
+	out, err := json.Marshal(FixProposedFromDomain(dto.ToDomain()))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if string(out) != goldenRemediationProposed {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenRemediationProposed)
+	if string(out) != goldenFixProposed {
+		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenFixProposed)
 	}
 	d := dto.ToDomain()
 	if d.EventID != "e" || len(d.Edits) != 1 || d.Edits[0].ContentURI != "s3://c" || !d.SourceResolved {

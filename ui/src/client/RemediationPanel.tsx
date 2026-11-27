@@ -1,19 +1,19 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { ProposalDTO, PullRequestDTO } from './types';
-import { fetchProposals } from './remediation-api';
+import { FixDTO, PullRequestDTO } from './types';
+import { fetchFixes } from './remediation-api';
 import { fetchNodeProjects } from './node-api';
 import type { CreatePullRequestResponse } from './remediation-api';
 import {
-  proposalNodeIds, proposalPrProjects, proposalPullRequests, proposalPillClass,
-  effectiveRound, groupProposals, ProposalGroup,
+  fixNodeIds, fixPrProjects, fixPullRequests, fixPillClass,
+  effectiveRound, groupFixes, FixGroup,
 } from './release-helpers';
 import { useCurrentUser } from './auth/AuthContext';
 import CreatePrModal from './CreatePrModal';
 
 // DiffView mirrors the LogView component in ReleaseDetailPage: toggle view/hide,
 // fetch content from /api/releases/log?key=<uri>, and link out to the full source.
-// The first edit of a proposal opens by default — the diff is what a
+// The first edit of a fix opens by default — the diff is what a
 // reviewer judges first — and the rest stay one click away.
 function DiffView({ uri, defaultOpen = false }: { uri: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -73,14 +73,14 @@ function releaseCheckPhaseLabel(phase: string): string {
 }
 
 // StatusPill renders an attempt's lifecycle status in the same small pill the
-// Releases list uses for a release status, coloured by proposalPillClass so
+// Releases list uses for a release status, coloured by fixPillClass so
 // the two surfaces share one vocabulary. A status still in flight (a fix
 // being generated or verified) is marked busy for assistive tech.
 function StatusPill({ status }: { status: string }) {
   const busy = status === 'verifying' || status === 'generating';
   return (
     <span
-      className={`pill-sm ${proposalPillClass(status).replace('pill--', 'pill-sm--')}`}
+      className={`pill-sm ${fixPillClass(status).replace('pill--', 'pill-sm--')}`}
       aria-busy={busy ? 'true' : undefined}
     >
       {status}
@@ -93,15 +93,15 @@ function StatusPill({ status }: { status: string }) {
 // <activated_at>", each linking to that release check's page. A legacy
 // attempt with only the singular release_check_id shows the one link; an
 // attempt judged without a release check renders nothing.
-function ReleaseChecks({ proposal }: { proposal: ProposalDTO }) {
-  const checks = proposal.release_checks && proposal.release_checks.length > 0
-    ? proposal.release_checks.map((c) => ({
+function ReleaseChecks({ fix }: { fix: FixDTO }) {
+  const checks = fix.release_checks && fix.release_checks.length > 0
+    ? fix.release_checks.map((c) => ({
         key: c.check_id || c.project,
         checkId: c.check_id,
         text: `${c.project} · ${c.kind} · ${releaseCheckPhaseLabel(c.phase)}${c.activated_at ? ` · since ${c.activated_at}` : ''}`,
       }))
-    : proposal.release_check_id
-      ? [{ key: proposal.release_check_id, checkId: proposal.release_check_id, text: `release check ${proposal.release_check_id}` }]
+    : fix.release_check_id
+      ? [{ key: fix.release_check_id, checkId: fix.release_check_id, text: `release check ${fix.release_check_id}` }]
       : [];
   if (checks.length === 0) return null;
   return (
@@ -121,7 +121,7 @@ function ReleaseChecks({ proposal }: { proposal: ProposalDTO }) {
 
 // hasReleaseChecks mirrors ReleaseChecks' empty case so the row that
 // hosts it is only rendered when there is something to show.
-function hasReleaseChecks(p: ProposalDTO): boolean {
+function hasReleaseChecks(p: FixDTO): boolean {
   return (p.release_checks?.length ?? 0) > 0 || Boolean(p.release_check_id);
 }
 
@@ -133,7 +133,7 @@ function prStateBadge(prState: string) {
 }
 
 // prStateBadgeLabeled renders one pull request's state chip, prefixed by
-// its owning project in small muted type when the proposal is split across
+// its owning project in small muted type when the fix is split across
 // several — the legacy (project '') group keeps the bare chip, unwrapped so
 // its own text content is still just the state word.
 function prStateBadgeLabeled(pr: PullRequestDTO) {
@@ -147,40 +147,40 @@ function prStateBadgeLabeled(pr: PullRequestDTO) {
 }
 
 // prStateChips renders every recorded per-project pull-request state for one
-// proposal as a run of chips, laid out by the .remediation-prs row they
+// fix as a run of chips, laid out by the .remediation-prs row they
 // sit in.
-function prStateChips(proposal: ProposalDTO) {
-  return proposalPullRequests(proposal)
+function prStateChips(fix: FixDTO) {
+  return fixPullRequests(fix)
     .filter((pr) => pr.pr_state)
     .map((pr) => (
       <Fragment key={pr.project || 'legacy'}> {prStateBadgeLabeled(pr)}</Fragment>
     ));
 }
 
-// isActionable is the predicate for a proposal that still needs a human
+// isActionable is the predicate for a fix that still needs a human
 // decision: it has a source to fix, and at least one of its owning-project
 // groups is in a retryable claim state — the same precondition the server's
 // BeginPullRequest CAS enforces per project ('' or 'failed'). A project
 // group whose pr_state is 'opening' already has an in-flight or
 // previously-recorded claim, and 'open'/'merged'/'rejected' are settled —
 // offering another Create PR for those would just fail the claim. Such a
-// proposal renders its detail card expanded in place instead of waiting
+// fix renders its detail card expanded in place instead of waiting
 // for a click, as long as any group still needs a PR.
-function isActionable(p: ProposalDTO): boolean {
+function isActionable(p: FixDTO): boolean {
   if (!(p.status === 'proposed' && p.source_resolved)) return false;
-  const pullRequests = proposalPullRequests(p);
-  return proposalPrProjects(p).some((project) => {
+  const pullRequests = fixPullRequests(p);
+  return fixPrProjects(p).some((project) => {
     const state = pullRequests.find((pr) => pr.project === project)?.pr_state ?? '';
     return state === '' || state === 'failed';
   });
 }
 
-function ProposalDetailCard({
-  proposal,
+function FixDetailCard({
+  fix,
   isOperator,
   onCreatePr,
 }: {
-  proposal: ProposalDTO;
+  fix: FixDTO;
   isOperator: boolean;
   onCreatePr: () => void;
 }) {
@@ -188,49 +188,49 @@ function ProposalDetailCard({
     <div className="detail-card remediation-detail">
       <div className="section-header">
         <div className="section-header__main">
-          <span className="section-header__title">{proposalNodeIds(proposal).join(', ')}</span>
+          <span className="section-header__title">{fixNodeIds(fix).join(', ')}</span>
         </div>
         <div className="section-header__sub">
-          release {proposal.release_id} · confidence {proposal.confidence}
+          release {fix.release_id} · confidence {fix.confidence}
         </div>
       </div>
 
       <div className="detail-card__body">
         {/* The diff is what a reviewer judges first, so it leads the card;
             the first edit opens by default and the rest stay one click away. */}
-        {proposal.edits && proposal.edits.length > 0
-          ? proposal.edits.map((edit, index) => (
+        {fix.edits && fix.edits.length > 0
+          ? fix.edits.map((edit, index) => (
               <div className="detail-card__row" key={edit.path}>
                 <span className="detail-card__edit-path">{edit.path}</span>{' '}
                 {edit.diff_uri && <DiffView uri={edit.diff_uri} defaultOpen={index === 0} />}
               </div>
             ))
-          : proposal.diff_uri && (
+          : fix.diff_uri && (
               <div className="detail-card__row">
-                <DiffView uri={proposal.diff_uri} defaultOpen />
+                <DiffView uri={fix.diff_uri} defaultOpen />
               </div>
             )}
 
         {/* Why the release rejected this fix. It is the whole reason a fix
             put through a release check reached 'failed', so a card that
             omitted it would leave the operator with the word alone. */}
-        {proposal.verify_error && (
+        {fix.verify_error && (
           <div className="info-strip info-strip--error detail-card__row">
             <span className="info-strip__icon">⚠</span>
-            Release check failed: {proposal.verify_error}
+            Release check failed: {fix.verify_error}
           </div>
         )}
 
-        <pre className="detail-card__rationale">{proposal.rationale}</pre>
+        <pre className="detail-card__rationale">{fix.rationale}</pre>
 
-        {!proposal.source_resolved && (
+        {!fix.source_resolved && (
           <div className="info-strip info-strip--warning detail-card__row">
             <span className="info-strip__icon">⚠</span>
-            No real-source fix — a PR cannot be opened for this proposal.
+            No real-source fix — a PR cannot be opened for this fix.
           </div>
         )}
 
-        {proposalPullRequests(proposal)
+        {fixPullRequests(fix)
           .filter((pr) => pr.pr_url)
           .map((pr) => (
             <a
@@ -244,8 +244,8 @@ function ProposalDetailCard({
             </a>
           ))}
 
-        {isOperator && isActionable(proposal) && (
-          proposal.repo ? (
+        {isOperator && isActionable(fix) && (
+          fix.repo ? (
             <button
               type="button"
               className="btn btn--secondary"
@@ -255,11 +255,11 @@ function ProposalDetailCard({
             </button>
           ) : (
             // Nowhere to open a pull request: agent-remediation refuses the
-            // claim for a proposal with no repository, so the button is not
+            // claim for a fix with no repository, so the button is not
             // offered and the reason is shown in its place.
             <div className="info-strip info-strip--warning detail-card__row">
               <span className="info-strip__icon">⚠</span>
-              No repository recorded for this proposal; a pull request cannot be opened.
+              No repository recorded for this fix; a pull request cannot be opened.
             </div>
           )
         )}
@@ -283,11 +283,11 @@ function AttemptRows({
   onCreatePr,
   detailRef,
 }: {
-  group: ProposalGroup;
+  group: FixGroup;
   isOperator: boolean;
   selectedId: string | null;
-  onToggleAttempt: (p: ProposalDTO) => void;
-  onCreatePr: (p: ProposalDTO) => void;
+  onToggleAttempt: (p: FixDTO) => void;
+  onCreatePr: (p: FixDTO) => void;
   detailRef: (el: HTMLTableRowElement | null) => void;
 }) {
   return (
@@ -336,7 +336,7 @@ function AttemptRows({
 
               {showRuns && (
                 <tr className={`remediation-subrow nodes-row--static${showCard ? ' nodes-row--no-border' : ''}`}>
-                  <td colSpan={4}><ReleaseChecks proposal={p} /></td>
+                  <td colSpan={4}><ReleaseChecks fix={p} /></td>
                 </tr>
               )}
 
@@ -346,8 +346,8 @@ function AttemptRows({
                   ref={el => { if (isSelected) detailRef(el); }}
                 >
                   <td colSpan={4}>
-                    <ProposalDetailCard
-                      proposal={p}
+                    <FixDetailCard
+                      fix={p}
                       isOperator={isOperator}
                       onCreatePr={() => onCreatePr(p)}
                     />
@@ -364,40 +364,40 @@ function AttemptRows({
 
 export default function RemediationPanel() {
   const currentUser = useCurrentUser();
-  const [proposals, setProposals] = useState<ProposalDTO[]>([]);
+  const [fixes, setFixes] = useState<FixDTO[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState('');
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState<ProposalDTO | null>(null);
+  const [selected, setSelected] = useState<FixDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [createPrProposalId, setCreatePrProposalId] = useState<string | null>(null);
+  const [createPrFixId, setCreatePrFixId] = useState<string | null>(null);
   const detailRef = useRef<HTMLTableRowElement | null>(null);
-  // Monotonic id of the most recently issued proposals fetch. Changing the
+  // Monotonic id of the most recently issued fixes fetch. Changing the
   // Project filter fires a new fetch before earlier ones settle; only the
   // latest request may write state, so a slower earlier response (or a stale
   // failure) can never overwrite the current filter's results.
-  const proposalsReqSeq = useRef(0);
+  const fixesReqSeq = useRef(0);
 
-  // loadProposals is the single path that populates the list from the
+  // loadFixes is the single path that populates the list from the
   // server, used both on filter change and to refresh authoritative state
   // after an action (e.g. creating a PR) — never a bespoke fetch. It honours
   // the current project filter and ignores any response that a newer request
   // has superseded.
-  const loadProposals = useCallback(() => {
-    const seq = ++proposalsReqSeq.current;
-    fetchProposals(project ? { project } : {})
+  const loadFixes = useCallback(() => {
+    const seq = ++fixesReqSeq.current;
+    fetchFixes(project ? { project } : {})
       .then(data => {
-        if (seq !== proposalsReqSeq.current) return;
-        setProposals(data);
+        if (seq !== fixesReqSeq.current) return;
+        setFixes(data);
         setError(null);
       })
       .catch(e => {
-        if (seq !== proposalsReqSeq.current) return;
+        if (seq !== fixesReqSeq.current) return;
         setError(e.message);
       });
   }, [project]);
 
-  useEffect(() => { loadProposals(); }, [loadProposals]);
+  useEffect(() => { loadFixes(); }, [loadFixes]);
 
   // The Project filter's options are the projects of the live release's
   // nodes (fetchNodeProjects), fetched once on mount. A failure leaves the
@@ -415,8 +415,8 @@ export default function RemediationPanel() {
     }
   }, [selected]);
 
-  const createPrProposal = proposals.find(p => p.id === createPrProposalId) ?? null;
-  const groups = groupProposals(proposals);
+  const createPrFix = fixes.find(p => p.id === createPrFixId) ?? null;
+  const groups = groupFixes(fixes);
 
   const toggleGroup = (key: string) => setOpenGroups(prev => {
     const next = new Set(prev);
@@ -425,7 +425,7 @@ export default function RemediationPanel() {
     return next;
   });
 
-  const toggleAttempt = (p: ProposalDTO) => setSelected(prev => (prev?.id === p.id ? null : p));
+  const toggleAttempt = (p: FixDTO) => setSelected(prev => (prev?.id === p.id ? null : p));
 
   return (
     <>
@@ -443,8 +443,8 @@ export default function RemediationPanel() {
 
       <div className="section-header">
         <div className="section-header__main">
-          <span className="section-header__title">Proposals</span>
-          <span className="section-header__count">{proposals.length}</span>
+          <span className="section-header__title">Fixes</span>
+          <span className="section-header__count">{fixes.length}</span>
         </div>
       </div>
 
@@ -456,7 +456,7 @@ export default function RemediationPanel() {
 
       {groups.length === 0 && !error && (
         <div className="info-strip info-strip--neutral">
-          <span className="info-strip__icon">○</span>No proposals yet.
+          <span className="info-strip__icon">○</span>No fixes yet.
         </div>
       )}
 
@@ -512,8 +512,8 @@ export default function RemediationPanel() {
                     <td><StatusPill status={g.latest.status} /></td>
                     <td><span className="remediation-group__count">{g.attempts.length}</span></td>
                     <td className="remediation-group__prs">
-                      {g.latestPrProposal
-                        ? <div className="remediation-prs">{prStateChips(g.latestPrProposal)}</div>
+                      {g.latestPrFix
+                        ? <div className="remediation-prs">{prStateChips(g.latestPrFix)}</div>
                         : <span className="nodes-dash">—</span>}
                     </td>
                   </tr>
@@ -526,7 +526,7 @@ export default function RemediationPanel() {
                             isOperator={currentUser?.role === 'operator'}
                             selectedId={selected?.id ?? null}
                             onToggleAttempt={toggleAttempt}
-                            onCreatePr={(p) => setCreatePrProposalId(p.id)}
+                            onCreatePr={(p) => setCreatePrFixId(p.id)}
                             detailRef={(el) => { detailRef.current = el; }}
                           />
                         </div>
@@ -540,20 +540,20 @@ export default function RemediationPanel() {
         </table>
       )}
 
-      {createPrProposal && (
+      {createPrFix && (
         <CreatePrModal
-          proposal={createPrProposal}
-          onClose={() => setCreatePrProposalId(null)}
+          fix={createPrFix}
+          onClose={() => setCreatePrFixId(null)}
           onCreated={(result: CreatePullRequestResponse) => {
             // Every GitHub PR in result.pull_requests is confirmed — show its
-            // link right away. Recording it against the proposal is
+            // link right away. Recording it against the fix is
             // best-effort server side, so 'open' is not guaranteed yet;
             // 'opening' is the one state the claim step already guarantees.
             // A project the server didn't touch this call (already settled,
             // or one that failed and is still listed as an error) keeps its
             // prior entry untouched. A refetch right after replaces all of
             // this with whatever the server actually recorded.
-            const priorPRs = proposalPullRequests(createPrProposal);
+            const priorPRs = fixPullRequests(createPrFix);
             const newByProject = new Map(result.pull_requests.map(r => [r.project, r]));
             const mergedPRs: PullRequestDTO[] = priorPRs.map(pr => {
               const created = newByProject.get(pr.project);
@@ -575,22 +575,22 @@ export default function RemediationPanel() {
               }
             }
             const first = mergedPRs[0];
-            const updated: ProposalDTO = {
-              ...createPrProposal,
+            const updated: FixDTO = {
+              ...createPrFix,
               pull_requests: mergedPRs,
-              pr_url: first?.pr_url ?? createPrProposal.pr_url,
-              pr_number: first?.pr_number ?? createPrProposal.pr_number,
-              pr_state: first?.pr_state ?? createPrProposal.pr_state,
+              pr_url: first?.pr_url ?? createPrFix.pr_url,
+              pr_number: first?.pr_number ?? createPrFix.pr_number,
+              pr_state: first?.pr_state ?? createPrFix.pr_state,
             };
-            setProposals(prev => prev.map(p => (p.id === updated.id ? updated : p)));
-            // The proposal may have just left the retryable-claim state
+            setFixes(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+            // The fix may have just left the retryable-claim state
             // (isActionable goes false when every project settled), so its
             // group might no longer auto-expand. Pin the group open and
             // select the attempt so its row stays open and shows the new
             // link(s) instead of collapsing.
             setOpenGroups(prev => new Set(prev).add(`${updated.release_id} ${effectiveRound(updated)}`));
             setSelected(updated);
-            loadProposals();
+            loadFixes();
           }}
         />
       )}

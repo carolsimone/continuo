@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -65,7 +65,7 @@ func (stubCheck) Check(context.Context, step.CheckInput) (step.CheckOutput, erro
 
 type stubApprover struct{ stubStep }
 
-func (stubApprover) Approvers(context.Context, step.ApproverInput) ([]proposal.Approver, error) {
+func (stubApprover) Approvers(context.Context, step.ApproverInput) ([]fix.Approver, error) {
 	return nil, nil
 }
 
@@ -121,7 +121,7 @@ func validFlow() workflow.Flow {
 		AcrossClusters: []workflow.StepRef{ref(flowFile, 7, "edits_map_to_a_project")},
 		Gate:           []workflow.StepRef{ref(flowFile, 8, "release_check")},
 		Tries:          3,
-		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: "remediation.proposed", Pos: pos(flowFile, 11)},
+		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: "fix.proposed", Pos: pos(flowFile, 11)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Pos: pos(flowFile, 12)},
 		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
 		ModelMaySeePos: pos(flowFile, 13),

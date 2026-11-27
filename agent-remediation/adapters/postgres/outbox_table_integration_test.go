@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/service/fixes"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
-	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -82,12 +82,12 @@ func TestOutboxTableIsAgentRemediationOutbox(t *testing.T) {
 // Every row the component writes to its outbox carries the aggregate type
 // event.AggregateType, so a release's events share one relay lane. The rows
 // here come from the PR-lifecycle service on the real unit of work: the
-// remediation.pr_opened:v1 and remediation.pr_closed:v1 entries it commits.
+// fix.pr_opened:v1 and fix.pr_closed:v1 entries it commits.
 func TestNoOutboxRowKeepsTheOldAggregateType(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, nil)
-	svc := proposals.New(proposals.Deps{
+	repo := NewFixRepository(db, nil)
+	svc := fixes.New(fixes.Deps{
 		Repo:   repo,
 		NewUoW: func() uow.UnitOfWork { return NewUnitOfWork(db, slog.Default(), nil) },
 		Clock:  ports.SystemClock{},
@@ -95,13 +95,13 @@ func TestNoOutboxRowKeepsTheOldAggregateType(t *testing.T) {
 
 	assert.Equal(t, "agent_remediation", event.AggregateType)
 
-	id := seedProposal(t, repo, db, proposal.Proposal{
+	id := seedFix(t, repo, db, fix.Fix{
 		Source:         "validation",
 		ReleaseID:      "r-outbox-lane",
 		NodeID:         "model.p.orders",
 		ErrorSignature: "sig",
 		Attempt:        1,
-		Status:         proposal.StatusProposed,
+		Status:         fix.StatusProposed,
 		SourceResolved: true,
 		Repo:           "acme/dbt-repo",
 		CommitSHA:      "abc123",
@@ -110,8 +110,8 @@ func TestNoOutboxRowKeepsTheOldAggregateType(t *testing.T) {
 	})
 	_, err := repo.BeginPR(ctx, id, "", "remediation/r-outbox-lane/attempt1", time.Now().UTC())
 	require.NoError(t, err)
-	require.NoError(t, svc.Record(ctx, proposals.RecordInput{ProposalID: id, PrURL: "https://gh/pr/1", PrNumber: 1, OpenedBy: "dev"}))
-	require.NoError(t, svc.RecordOutcome(ctx, id, "", proposal.PROutcomeMerged, time.Now().UTC(), nil, nil))
+	require.NoError(t, svc.Record(ctx, fixes.RecordInput{FixID: id, PrURL: "https://gh/pr/1", PrNumber: 1, OpenedBy: "dev"}))
+	require.NoError(t, svc.RecordOutcome(ctx, id, "", fix.PROutcomeMerged, time.Now().UTC(), nil, nil))
 
 	var rows int
 	require.NoError(t, db.GetContext(ctx, &rows, `SELECT count(*) FROM agent_remediation_outbox`))
@@ -144,7 +144,7 @@ func TestOutboxWakerWakesOnAgentRemediationOutbox(t *testing.T) {
 		AggregateID:   aggregateID,
 		EventType:     event.PROpenedEventType,
 		Payload:       []byte(`{}`),
-		StreamName:    streams.RemediationPrOpenedV1,
+		StreamName:    streams.FixPrOpenedV1,
 		Status:        "pending",
 	}))
 	require.NoError(t, u.Commit())

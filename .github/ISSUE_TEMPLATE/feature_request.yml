@@ -11,7 +11,7 @@ body:
       required: true
 
   - type: textarea
-    id: proposal
+    id: outcome
     attributes:
       label: What you would like to happen
     validations:

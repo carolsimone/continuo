@@ -34,11 +34,11 @@ var pyRemediationRepo embed.FS
 const (
 	// pyRemediationRepoRoot is the embedded fixture's prefix. The paths below
 	// are relative to it and are also the paths inside the served tarball,
-	// which is what makes the assertions on a proposal's edited file readable.
+	// which is what makes the assertions on a fix's edited file readable.
 	pyRemediationRepoRoot = "fixtures/py-remediation-repo"
 
 	// The single-node project whose declared read cannot bind, and the file
-	// that declares it. One fix attempt repairs it.
+	// that declares it. One attempt repairs it.
 	pyBadReadProject  = "svc-py-e2e"
 	pyBadReadUniqueID = "e2e_schema.py_bad_read"
 	pyBadReadContract = "services/svc-py-e2e/contracts/py_bad_read.odcs.yaml"
@@ -103,7 +103,7 @@ const (
 	// submission.
 	pyAttemptStartBudget = 3 * time.Minute
 	// pyAttemptFinalizeBudget covers a release check's terminal verdict reaching
-	// the proposal row: one tick of the runner's gate poller, 5s in this compose
+	// the fix row: one tick of the runner's gate poller, 5s in this compose
 	// stack.
 	pyAttemptFinalizeBudget = 2 * time.Minute
 	// pyRecordVisibleBudget covers a write becoming readable through another
@@ -125,11 +125,11 @@ const (
 //	  prompt has the model correct it, its contract_packages check packs the
 //	  directory with continuo-runtime, and its release_check gate uploads
 //	  the bundle and POSTs it back as a release check
-//	→ the proposal parks in 'verifying' naming that release check
+//	→ the fix parks in 'verifying' naming that release check
 //	→ the release check runs the real parse, candidate-schema and validation
 //	  legs and stops at 'passed' — it never promotes and is never readable as a release
-//	→ the runner's gate poller finalizes the proposal to 'proposed' and emits
-//	  remediation.proposed:v1
+//	→ the runner's gate poller finalizes the fix to 'proposed' and emits
+//	  fix.proposed:v1
 //
 // It is the feature's definition of done: every stage above has to work for it
 // to pass. It also asserts the two things that must NOT happen — the
@@ -169,7 +169,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.FixProposedV1)
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyBadReadProject, releaseID)
@@ -179,16 +179,16 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	//    release check. The check id is read off the row rather than
 	//    re-derived here, so the naming rule is asserted as the system's, not
 	//    the test's.
-	verifying := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "verifying", pyAttemptStartBudget)
+	verifying := waitForFix(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "verifying", pyAttemptStartBudget)
 	checkID := verifying.ReleaseCheckID
-	require.NotEmpty(t, checkID, "a verifying proposal must name the release check that is judging it")
+	require.NotEmpty(t, checkID, "a verifying fix must name the release check that is judging it")
 	require.True(t, strings.HasPrefix(checkID, "verify-"),
 		"a release check id must be recognisable as one in every log line and UI row; got %q", checkID)
 	require.Contains(t, checkID, releaseID,
 		"a release check id must name the release it is repairing; got %q", checkID)
 	require.True(t, strings.HasSuffix(checkID, "-a1"),
 		"the first attempt's release check id must name attempt 1; got %q", checkID)
-	t.Logf("proposal attempt 1 is verifying under release check %s", checkID)
+	t.Logf("attempt 1 is verifying under release check %s", checkID)
 
 	// 2. That release check is not a release: it 404s at GET /releases/{id}
 	//    and is absent from GET /releases. The release queue names it while it
@@ -200,7 +200,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	waitForReleaseCheckStatus(t, ctx, clients, checkID, "passed", pyVerifyVerdictBudget)
 
 	// 4. The gate poller turns the verified attempt into a reviewable fix.
-	proposed := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
+	proposed := waitForFix(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
 	require.Empty(t, proposed.VerifyError, "a verified fix records no release check error")
 	require.Equal(t, checkID, proposed.ReleaseCheckID,
 		"finalizing an attempt must not change which release check verified it")
@@ -230,7 +230,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 5. The fix is announced for human review.
-	waitForRemediationProposed(t, ctx, proposedTap, releaseID, pyBadReadUniqueID, pyRecordVisibleBudget)
+	waitForFixProposed(t, ctx, proposedTap, releaseID, pyBadReadUniqueID, pyRecordVisibleBudget)
 
 	// 6. Nothing from the release check reached production. The proof that
 	//    the no-promote gate held is the check reaching "passed" above rather
@@ -308,7 +308,7 @@ func TestE2E_PythonValidationFailure_ReleaseCheckErrorFeedsNextAttempt(t *testin
 
 	// 1. Attempt 1's release check fails the fix, and its error is
 	//    recorded on the attempt as the evidence attempt 2 will be shown.
-	firstVerifying := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "verifying", pyAttemptStartBudget)
+	firstVerifying := waitForFix(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "verifying", pyAttemptStartBudget)
 	firstCheckID := firstVerifying.ReleaseCheckID
 	require.NotEmpty(t, firstCheckID)
 	require.True(t, strings.HasSuffix(firstCheckID, "-a1"),
@@ -317,7 +317,7 @@ func TestE2E_PythonValidationFailure_ReleaseCheckErrorFeedsNextAttempt(t *testin
 	assertReleaseQueueNamedFix(t, ctx, clients, firstCheckID, pyVerifyVerdictBudget)
 	waitForReleaseCheckStatus(t, ctx, clients, firstCheckID, "failed", pyVerifyVerdictBudget)
 
-	firstFailed := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "failed", pyAttemptFinalizeBudget)
+	firstFailed := waitForFix(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "failed", pyAttemptFinalizeBudget)
 	require.NotEmpty(t, firstFailed.VerifyError,
 		"a failed attempt must record why, or the next attempt has nothing new to learn from")
 	require.NotContains(t, firstFailed.VerifyError, "timed out",
@@ -328,7 +328,7 @@ func TestE2E_PythonValidationFailure_ReleaseCheckErrorFeedsNextAttempt(t *testin
 	t.Logf("attempt 1 failed its release check: %s", firstFailed.VerifyError)
 
 	// 2. Attempt 2 runs against a second release check and this one passes.
-	secondVerifying := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "verifying", pyAttemptStartBudget)
+	secondVerifying := waitForFix(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "verifying", pyAttemptStartBudget)
 	secondCheckID := secondVerifying.ReleaseCheckID
 	require.NotEmpty(t, secondCheckID)
 	require.NotEqual(t, firstCheckID, secondCheckID,
@@ -338,7 +338,7 @@ func TestE2E_PythonValidationFailure_ReleaseCheckErrorFeedsNextAttempt(t *testin
 	assertNotListedAsRelease(t, ctx, clients, secondCheckID)
 	waitForReleaseCheckStatus(t, ctx, clients, secondCheckID, "passed", pyVerifyVerdictBudget)
 
-	secondProposed := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "proposed", pyAttemptFinalizeBudget)
+	secondProposed := waitForFix(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "proposed", pyAttemptFinalizeBudget)
 	edits := decodeFileEdits(t, secondProposed.FileEdits)
 	require.Len(t, edits, 1)
 	require.Equal(t, pyLoopContract, edits[0].Path)
@@ -472,8 +472,8 @@ func clearPythonProductionPointer(t *testing.T, ctx context.Context, clients *te
 	}
 }
 
-// pyProposalRow captures the release-check-related fields of a proposal row.
-type pyProposalRow struct {
+// pyFixRow captures the release-check-related fields of a fix row.
+type pyFixRow struct {
 	Status         string `db:"status"`
 	Attempt        int    `db:"attempt"`
 	ReleaseCheckID string `db:"release_check_id"`
@@ -483,39 +483,39 @@ type pyProposalRow struct {
 	ReleaseChecks  []byte `db:"release_checks"`
 }
 
-// waitForProposal polls the agent-remediation's proposal table until the named
+// waitForFix polls the agent-remediation's fix table until the named
 // attempt for a node reaches want, and returns the row. Every status change it
 // observes is logged, so an attempt that stalls in 'generating' or 'verifying' is
 // distinguishable from one that never produced an attempt at all — the timeout
 // message itself cannot carry that, since pollUntil evaluates it before any
 // polling happens.
-func waitForProposal(
+func waitForFix(
 	t *testing.T, ctx context.Context, clients *testClients,
 	releaseID, nodeID string, attempt int, want string, timeout time.Duration,
-) pyProposalRow {
+) pyFixRow {
 	t.Helper()
-	var row pyProposalRow
+	var row pyFixRow
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row, `
 			SELECT status, attempt, release_check_id, verify_error, file_path, file_edits, release_checks
-			  FROM proposal
+			  FROM fix
 			 WHERE release_id = $1 AND node_id = $2 AND attempt = $3`,
 			releaseID, nodeID, attempt)
 		if err != nil {
 			return false, nil
 		}
 		if row.Status != last {
-			t.Logf("proposal %s/%s attempt %d: status=%s", releaseID, nodeID, attempt, row.Status)
+			t.Logf("fix %s/%s attempt %d: status=%s", releaseID, nodeID, attempt, row.Status)
 			last = row.Status
 		}
 		return row.Status == want, nil
-	}, fmt.Sprintf("timeout waiting for proposal %s/%s attempt %d to reach %q (see the logged status changes above)",
+	}, fmt.Sprintf("timeout waiting for fix %s/%s attempt %d to reach %q (see the logged status changes above)",
 		releaseID, nodeID, attempt, want))
 	return row
 }
 
-// pyFileEdit mirrors one element of the proposal's file_edits column.
+// pyFileEdit mirrors one element of the fix's file_edits column.
 // TargetNodeID names the node whose source the edit changes, which for a
 // batched attempt is the only thing that says which file repairs which
 // failure — the representative node_id column cannot stand for all of them.
@@ -526,15 +526,15 @@ type pyFileEdit struct {
 	TargetNodeID string `json:"target_node_id"`
 }
 
-// decodeFileEdits reads the proposal row's file_edits column.
+// decodeFileEdits reads the fix row's file_edits column.
 func decodeFileEdits(t *testing.T, raw []byte) []pyFileEdit {
 	t.Helper()
 	var edits []pyFileEdit
-	require.NoError(t, json.Unmarshal(raw, &edits), "decode proposal file_edits: %s", raw)
+	require.NoError(t, json.Unmarshal(raw, &edits), "decode fix file_edits: %s", raw)
 	return edits
 }
 
-// pyReleaseCheck mirrors one element of the proposal's release_checks column:
+// pyReleaseCheck mirrors one element of the fix's release_checks column:
 // the project whose edits a release check judged, the manifest kind it was
 // submitted under, that check's id, and its last-read phase. An attempt posts
 // one per edited project, so the list is how a reader tells which verdict
@@ -546,11 +546,11 @@ type pyReleaseCheck struct {
 	Phase   string `json:"phase"`
 }
 
-// decodeReleaseChecks reads the proposal row's release_checks column.
+// decodeReleaseChecks reads the fix row's release_checks column.
 func decodeReleaseChecks(t *testing.T, raw []byte) []pyReleaseCheck {
 	t.Helper()
 	var releaseChecks []pyReleaseCheck
-	require.NoError(t, json.Unmarshal(raw, &releaseChecks), "decode proposal release_checks: %s", raw)
+	require.NoError(t, json.Unmarshal(raw, &releaseChecks), "decode fix release_checks: %s", raw)
 	return releaseChecks
 }
 
@@ -649,11 +649,11 @@ func assertReleaseQueueNamedFix(t *testing.T, ctx context.Context, clients *test
 	}, fmt.Sprintf("timeout waiting for the release queue to name release check %s", checkID))
 }
 
-// waitForRemediationProposed polls remediation.proposed:v1 for the fix a
+// waitForFixProposed polls fix.proposed:v1 for the fix a
 // verified attempt announces. The runner's gate poller writes the row and
 // enqueues this event in one transaction, so its arrival is what proves the announcement was
 // not lost between the two.
-func waitForRemediationProposed(
+func waitForFixProposed(
 	t *testing.T, ctx context.Context, proposedTap *streamTap, releaseID, nodeID string, timeout time.Duration,
 ) {
 	t.Helper()
@@ -664,7 +664,7 @@ func waitForRemediationProposed(
 			if raw == "" {
 				continue
 			}
-			var p remediationProposedPayload
+			var p fixProposedPayload
 			if json.Unmarshal([]byte(raw), &p) != nil {
 				continue
 			}
@@ -673,12 +673,12 @@ func waitForRemediationProposed(
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationProposedV1, releaseID, nodeID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.FixProposedV1, releaseID, nodeID))
 }
 
 // assertNoRemediationTriggerFor fails if any remediation trigger names the
 // given release check: a trigger for one would mean
-// a failed fix attempt had been handed back to the runner as a fresh failure to
+// a failed attempt had been handed back to the runner as a fresh failure to
 // heal, which is a loop with no exit.
 func assertNoRemediationTriggerFor(t *testing.T, requestedTap *streamTap, checkID string) {
 	t.Helper()
@@ -727,7 +727,7 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	  check
 //	→ the release check's own parse leg accepts the repaired SQL, its validation leg binds
 //	  the now-qualified read, and it stops at 'passed'
-//	→ the runner's gate poller finalizes the proposal to 'proposed'
+//	→ the runner's gate poller finalizes the fix to 'proposed'
 //
 // The validation-stage sibling above proves the python-validation type; this
 // test proves the parse stage reaches the python-parse type for a python node,
@@ -758,7 +758,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
-	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.FixProposedV1)
 
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyParseProject, releaseID)
 	defer clearProd()
@@ -769,12 +769,12 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	assertRejectedPythonParseStage(t, ctx, rejectedTap, releaseID)
 
 	// 2. The runner's try produced an attempt and parked it on a release check.
-	verifying := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "verifying", pyAttemptStartBudget)
+	verifying := waitForFix(t, ctx, clients, releaseID, pyParseUniqueID, 1, "verifying", pyAttemptStartBudget)
 	checkID := verifying.ReleaseCheckID
-	require.NotEmpty(t, checkID, "a verifying proposal must name the release check that is judging it")
+	require.NotEmpty(t, checkID, "a verifying fix must name the release check that is judging it")
 	require.True(t, strings.HasSuffix(checkID, "-a1"),
 		"the first attempt's release check id must name attempt 1; got %q", checkID)
-	t.Logf("proposal attempt 1 is verifying under release check %s", checkID)
+	t.Logf("attempt 1 is verifying under release check %s", checkID)
 
 	// 3. The release check's own parse leg is the judge of a parse fix: it re-parses the
 	//    packed contract, then validates, and stops at passed.
@@ -782,7 +782,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	waitForReleaseCheckStatus(t, ctx, clients, checkID, "passed", pyVerifyVerdictBudget)
 
 	// 4. The gate poller turns the verified attempt into a reviewable fix.
-	proposed := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
+	proposed := waitForFix(t, ctx, clients, releaseID, pyParseUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
 	require.Empty(t, proposed.VerifyError, "a verified fix records no release check error")
 
 	releaseChecks := decodeReleaseChecks(t, proposed.ReleaseChecks)
@@ -803,7 +803,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 5. The fix is announced for human review, and nothing reached production.
-	waitForRemediationProposed(t, ctx, proposedTap, releaseID, pyParseUniqueID, pyRecordVisibleBudget)
+	waitForFixProposed(t, ctx, proposedTap, releaseID, pyParseUniqueID, pyRecordVisibleBudget)
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
 		`SELECT count(*) FROM production_pointers WHERE project_name = $1`, pyParseProject))

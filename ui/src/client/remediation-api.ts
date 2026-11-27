@@ -1,4 +1,4 @@
-import { ProposalDTO } from './types';
+import { FixDTO } from './types';
 
 // One pull request the server opened (or already had open) for one owning
 // project, as returned by POST .../pull-request.
@@ -40,28 +40,28 @@ export interface CreatePullRequestError {
   errors?: CreatePullRequestErrorEntry[];
 }
 
-export function fetchProposals(filter: { status?: string; pr_state?: string; project?: string } = {}): Promise<ProposalDTO[]> {
+export function fetchFixes(filter: { status?: string; pr_state?: string; project?: string } = {}): Promise<FixDTO[]> {
   const qs = new URLSearchParams();
   if (filter.status) qs.set('status', filter.status);
   if (filter.pr_state) qs.set('pr_state', filter.pr_state);
   if (filter.project) qs.set('project', filter.project);
   const query = qs.toString();
   const url = query
-    ? `/api/remediation/proposals?${query}`
-    : '/api/remediation/proposals';
+    ? `/api/remediation/fixes?${query}`
+    : '/api/remediation/fixes';
   return fetch(url)
     .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-    .then((data: { proposals: ProposalDTO[] }) => data.proposals);
+    .then((data: { fixes: FixDTO[] }) => data.fixes);
 }
 
-// createPullRequest opens one pull request per owning project the proposal
+// createPullRequest opens one pull request per owning project the fix
 // still needs one for. r.ok covers both 200 (every project succeeded) and
 // 207 (a partial success) — both resolve with the full {pull_requests,
 // errors} body so the caller can show whichever projects still failed. Only
 // a response with no successes at all (503 unconfigured, 404 not found, or
 // the 502 issued when every project failed) rejects.
 export function createPullRequest(id: string): Promise<CreatePullRequestResponse> {
-  return fetch(`/api/remediation/proposals/${encodeURIComponent(id)}/pull-request`, {
+  return fetch(`/api/remediation/fixes/${encodeURIComponent(id)}/pull-request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   }).then(async r => {

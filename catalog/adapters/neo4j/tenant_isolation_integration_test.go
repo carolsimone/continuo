@@ -50,7 +50,7 @@ const (
 	isoOnlyBUnit = "svc:iso_only_b_macro"
 	isoSig       = "sig-iso"
 	isoOnlyBSig  = "sig-iso-only-b"
-	isoProposal  = "prop-iso"
+	isoFix       = "fix-iso"
 	isoHolder    = "iso-holder"
 )
 
@@ -261,11 +261,11 @@ func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB b
 	if withOnlyB {
 		f.recordRejection(rejectionOf("r-failed", isoOnlyB, isoOnlyBSig, promotedAtOf(1).Add(30*time.Minute)))
 	}
-	pr := openPullRequest(isoProposal, "svc", 7, promotedAtOf(2))
+	pr := openPullRequest(isoFix, "svc", 7, promotedAtOf(2))
 	pr.PrURL = "https://github.com/org/repo/pull/" + mark
-	f.recordProposal(casebase.Proposal{ProposalID: isoProposal, ReleaseID: "r-failed", NodeID: isoDown}, pr)
+	f.recordFix(casebase.Fix{FixID: isoFix, ReleaseID: "r-failed", NodeID: isoDown}, pr)
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: isoProposal, ReleaseID: "r-failed", Project: "svc", Outcome: "merged",
+		FixID: isoFix, ReleaseID: "r-failed", Project: "svc", Outcome: "merged",
 		ClosedAt: promotedAtOf(2), ResolvedNodeIDs: []string{isoDown},
 		Edits: []casebase.EditOutcome{{Path: "models/up-" + mark + ".sql", TargetNodeID: isoUp, Diff: "diff-" + mark}},
 	})
@@ -405,7 +405,7 @@ func (f *isolationFixture) rows() []isolationRow {
 			require.NoError(t, err)
 			require.Len(t, bySig, 1)
 			require.NotNil(t, bySig[0].ResolvingVersion)
-			require.Len(t, bySig[0].Proposals, 1)
+			require.Len(t, bySig[0].Fixes, 1)
 			require.Len(t, bySig[0].Edited, 1)
 			onlyA(t, bySig)
 			byReason, err := f.precedents.Precedents(ctx, tenant(), "", "cat", "reason", 10, true)
@@ -508,17 +508,17 @@ func (f *isolationFixture) rows() []isolationRow {
 			f.a.recordRejection(rejectionOf("r-failed-again", isoOnlyB, isoOnlyBSig, promotedAtOf(3)))
 			assert.Equal(t, int64(1), f.a.failedEdges("r-failed-again", isoOnlyB))
 		}},
-		{"caseBaseRepository.RecordProposal", func(t *testing.T) {
-			f.a.recordProposal(casebase.Proposal{ProposalID: isoProposal, ReleaseID: "r-failed-again", NodeID: isoOnlyB},
-				openPullRequest(isoProposal, "svc", 8, promotedAtOf(3)))
+		{"caseBaseRepository.RecordFix", func(t *testing.T) {
+			f.a.recordFix(casebase.Fix{FixID: isoFix, ReleaseID: "r-failed-again", NodeID: isoOnlyB},
+				openPullRequest(isoFix, "svc", 8, promotedAtOf(3)))
 		}},
 		{"caseBaseRepository.RecordPullRequestOutcome", func(t *testing.T) {
 			f.a.recordOutcome(casebase.PullRequestOutcome{
-				ProposalID: isoProposal, ReleaseID: "r-failed-again", Project: "svc", Outcome: "merged",
+				FixID: isoFix, ReleaseID: "r-failed-again", Project: "svc", Outcome: "merged",
 				ClosedAt: promotedAtOf(3), ResolvedNodeIDs: []string{isoOnlyB},
 				Edits: []casebase.EditOutcome{{Path: "models/only_b.sql", TargetNodeID: isoOnlyB, Diff: "d"}},
 			})
-			assert.Equal(t, int64(2), f.a.editedEdges(isoProposal))
+			assert.Equal(t, int64(2), f.a.editedEdges(isoFix))
 		}},
 		{"unitOfWork.Processed", func(t *testing.T) {
 			done, err := f.a.uow.Processed(ctx, f.topologyMarker(tenant()))

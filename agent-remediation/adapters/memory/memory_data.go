@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -17,7 +17,7 @@ import (
 // data is every table of the in-memory database. A unit of work works on a
 // copy, made by clone.
 type data struct {
-	proposals    []*proposalRow
+	fixes        []*fixRow
 	outbox       []*outbox.Entry
 	messages     []*messageprocessing.MessageProcessing
 	remediations map[uuid.UUID]*remediation.Remediation
@@ -38,10 +38,10 @@ type clusterKey struct {
 	cluster       int
 }
 
-// proposalRow is one row of the proposal table.
-type proposalRow struct {
+// fixRow is one row of the fix table.
+type fixRow struct {
 	id          string
-	p           proposal.Proposal
+	p           fix.Fix
 	verifyError string
 }
 
@@ -57,8 +57,8 @@ func newData() *data {
 func (d *data) clone() *data {
 	c := newData()
 	c.lastStepID = d.lastStepID
-	for _, row := range d.proposals {
-		c.proposals = append(c.proposals, &proposalRow{id: row.id, p: cloneProposal(row.p), verifyError: row.verifyError})
+	for _, row := range d.fixes {
+		c.fixes = append(c.fixes, &fixRow{id: row.id, p: cloneFix(row.p), verifyError: row.verifyError})
 	}
 	for _, e := range d.outbox {
 		entry := cloneOutboxEntry(*e)
@@ -111,14 +111,14 @@ func cloneTimePtr(t *time.Time) *time.Time {
 	return &c
 }
 
-func cloneProposal(p proposal.Proposal) proposal.Proposal {
+func cloneFix(p fix.Fix) fix.Fix {
 	p.ResolvedNodeIDs = slices.Clone(p.ResolvedNodeIDs)
 	p.NodeOutcomes = maps.Clone(p.NodeOutcomes)
 	p.Projects = slices.Clone(p.Projects)
 	p.ReleaseChecks = cloneReleaseChecks(p.ReleaseChecks)
 	p.Approvers = slices.Clone(p.Approvers)
 	if p.Edits != nil {
-		edits := make([]proposal.FileEdit, len(p.Edits))
+		edits := make([]fix.FileEdit, len(p.Edits))
 		for i, e := range p.Edits {
 			e.MemberNodeIDs = slices.Clone(e.MemberNodeIDs)
 			edits[i] = e
@@ -128,11 +128,11 @@ func cloneProposal(p proposal.Proposal) proposal.Proposal {
 	return p
 }
 
-func cloneReleaseChecks(vs []proposal.ReleaseCheck) []proposal.ReleaseCheck {
+func cloneReleaseChecks(vs []fix.ReleaseCheck) []fix.ReleaseCheck {
 	if vs == nil {
 		return nil
 	}
-	out := make([]proposal.ReleaseCheck, len(vs))
+	out := make([]fix.ReleaseCheck, len(vs))
 	for i, v := range vs {
 		v.ActivatedAt = cloneTimePtr(v.ActivatedAt)
 		out[i] = v

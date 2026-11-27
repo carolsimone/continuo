@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// PrClosedProvenanceHandler consumes remediation.pr_closed:v1 on the
+// PrClosedProvenanceHandler consumes fix.pr_closed:v1 on the
 // provenance group and records each PR's terminal outcome in the message's
 // tenant, in one write transaction with the message's processed-message
 // marker. A merged outcome draws the case-base provenance edges (RESOLVED_BY
@@ -31,9 +31,9 @@ func NewPrClosedProvenanceHandler(u uow.UnitOfWork, logger *slog.Logger) *PrClos
 	return &PrClosedProvenanceHandler{uow: u, logger: logger}
 }
 
-// Handle processes one remediation.pr_closed:v1 message of tenantID on the
+// Handle processes one fix.pr_closed:v1 message of tenantID on the
 // provenance group. Steps:
-//  1. Refuse as permanent a message lacking its proposal or release, or a
+//  1. Refuse as permanent a message lacking its fix or release, or a
 //     parseable closed_at.
 //  2. Look the group's marker up, by messageID or by outboxEntryID; a
 //     processed message is acknowledged.
@@ -45,19 +45,19 @@ func (h *PrClosedProvenanceHandler) Handle(
 	outboxEntryID *uuid.UUID,
 	in event.PRClosed,
 ) error {
-	if in.ProposalID == "" || in.ReleaseID == "" {
-		return fmt.Errorf("%w: remediation.pr_closed message %s lacks proposal_id/release_id",
+	if in.FixID == "" || in.ReleaseID == "" {
+		return fmt.Errorf("%w: fix.pr_closed message %s lacks fix_id/release_id",
 			pkgevents.ErrPermanent, messageID)
 	}
 	closedAt, err := time.Parse(time.RFC3339, in.ClosedAt)
 	if err != nil {
-		return fmt.Errorf("%w: remediation.pr_closed message %s has unparseable closed_at %q: %v",
+		return fmt.Errorf("%w: fix.pr_closed message %s has unparseable closed_at %q: %v",
 			pkgevents.ErrPermanent, messageID, in.ClosedAt, err)
 	}
 
 	marker := uow.Marker{
 		TenantID:      tenantID,
-		Group:         streams.CatalogRemediationPrClosedProvenance,
+		Group:         streams.CatalogFixPrClosedProvenance,
 		MessageID:     messageID,
 		OutboxEntryID: outboxEntryID,
 	}
@@ -66,8 +66,8 @@ func (h *PrClosedProvenanceHandler) Handle(
 		return fmt.Errorf("look up the processed-message marker: %w", err)
 	}
 	if processed {
-		h.logger.Info("remediation.pr_closed already processed by the provenance group; acknowledged",
-			"message_id", messageID, "tenant_id", tenantID, "proposal_id", in.ProposalID)
+		h.logger.Info("fix.pr_closed already processed by the provenance group; acknowledged",
+			"message_id", messageID, "tenant_id", tenantID, "fix_id", in.FixID)
 		return nil
 	}
 
@@ -85,7 +85,7 @@ func (h *PrClosedProvenanceHandler) Handle(
 		})
 	}
 	outcome := casebase.PullRequestOutcome{
-		ProposalID:      in.ProposalID,
+		FixID:           in.FixID,
 		ReleaseID:       in.ReleaseID,
 		Project:         in.Project,
 		Outcome:         in.Outcome,
@@ -103,16 +103,16 @@ func (h *PrClosedProvenanceHandler) Handle(
 	if err != nil {
 		// The outcome and the marker roll back together, so the message
 		// replays.
-		return fmt.Errorf("remediation.pr_closed of release %s: %w", in.ReleaseID, err)
+		return fmt.Errorf("fix.pr_closed of release %s: %w", in.ReleaseID, err)
 	}
 	if !wrote {
-		h.logger.Info("remediation.pr_closed processed by another delivery of the provenance group meanwhile; acknowledged",
-			"message_id", messageID, "tenant_id", tenantID, "proposal_id", in.ProposalID)
+		h.logger.Info("fix.pr_closed processed by another delivery of the provenance group meanwhile; acknowledged",
+			"message_id", messageID, "tenant_id", tenantID, "fix_id", in.FixID)
 		return nil
 	}
 
 	h.logger.Info("pull request outcome recorded in case base",
-		"tenant_id", tenantID, "release_id", in.ReleaseID, "proposal_id", in.ProposalID, "project", in.Project,
+		"tenant_id", tenantID, "release_id", in.ReleaseID, "fix_id", in.FixID, "project", in.Project,
 		"outcome", in.Outcome, "resolved_nodes", in.ResolvedNodeIDs, "edits", len(edits))
 	return nil
 }

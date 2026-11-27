@@ -115,8 +115,8 @@ func TestPrecedents_EmitsMatchesAsJSON(t *testing.T) {
 				},
 				ResolutionDiff:          "--- a\n+++ b\n",
 				ResolutionDiffTruncated: false,
-				Proposals: []*catalogv1.PrecedentProposal{
-					{ProposalId: "p1", PrUrl: "https://github.com/org/repo/pull/1", PrNumber: 1, PrState: "merged"},
+				Fixes: []*catalogv1.PrecedentFix{
+					{FixId: "p1", PrUrl: "https://github.com/org/repo/pull/1", PrNumber: 1, PrState: "merged"},
 				},
 			},
 		},
@@ -156,14 +156,14 @@ func TestPrecedents_EmitsMatchesAsJSON(t *testing.T) {
 
 	assert.Equal(t, "--- a\n+++ b\n", p["resolution_diff"])
 
-	proposals, ok := p["proposals"].([]any)
+	fixes, ok := p["fixes"].([]any)
 	require.True(t, ok)
-	require.Len(t, proposals, 1)
-	proposal := proposals[0].(map[string]any)
-	assert.Equal(t, "p1", proposal["proposal_id"])
-	assert.Equal(t, "https://github.com/org/repo/pull/1", proposal["pr_url"])
-	assert.Equal(t, float64(1), proposal["pr_number"])
-	assert.Equal(t, "merged", proposal["pr_state"])
+	require.Len(t, fixes, 1)
+	fix := fixes[0].(map[string]any)
+	assert.Equal(t, "p1", fix["fix_id"])
+	assert.Equal(t, "https://github.com/org/repo/pull/1", fix["pr_url"])
+	assert.Equal(t, float64(1), fix["pr_number"])
+	assert.Equal(t, "merged", fix["pr_state"])
 }
 
 func TestPrecedents_RequiresSelector(t *testing.T) {
@@ -245,7 +245,7 @@ func TestPrecedents_HumanModeWritesStderrOnly(t *testing.T) {
 				NodeId:   "analytics.orders",
 				Reason:   "logic:missing_object",
 				Resolved: true,
-				Proposals: []*catalogv1.PrecedentProposal{
+				Fixes: []*catalogv1.PrecedentFix{
 					{PrUrl: "https://github.com/org/repo/pull/1"},
 				},
 			},

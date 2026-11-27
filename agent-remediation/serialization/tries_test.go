@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
@@ -45,10 +45,10 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 		Clusters: []remediation.Cluster{
 			{Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 2},
 			{Cluster: 2, Kind: workflow.ClusterSingle, TargetNodeID: "model.b", Members: []string{"model.b"}, TypeName: "dbt-validation",
-				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "the model declined"}},
+				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &fix.NodeOutcome{Status: fix.StatusSkipped, Reason: "the model declined"}},
 			{Cluster: 3, Kind: workflow.ClusterSingle, TargetNodeID: "model.c", Members: []string{"model.c"}, TypeName: "dbt-validation",
-				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &proposal.NodeOutcome{
-					Status: proposal.StatusSkipped, Reason: "the node's source is not in the release's code bundle", Code: model.HandoverReasonDeclined,
+				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &fix.NodeOutcome{
+					Status: fix.StatusSkipped, Reason: "the node's source is not in the release's code bundle", Code: model.HandoverReasonDeclined,
 				}},
 		},
 		Steps: []remediation.StepRun{
@@ -86,7 +86,7 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 		Clusters: []remediation.ClusterRecord{
 			{
 				Type: "dbt-validation", TargetNodeID: "model.a", Members: []string{"model.a"},
-				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: proposal.ComputeUnifiedDiff("select a\n", "select b\n", "models/a.sql")}},
+				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: fix.ComputeUnifiedDiff("select a\n", "select b\n", "models/a.sql")}},
 				Rounds: [][]remediation.Finding{{unchanged}, nil},
 			},
 			{

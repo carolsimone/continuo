@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -134,7 +134,7 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 		return step.PromptOutput{}, fmt.Errorf("write candidate sql: %w", err)
 	}
 	draft.CandidateFixDiffURI, err = p.artifacts.Write(ctx, candDiffKey,
-		proposal.ComputeUnifiedDiff(string(candidateSQL), res.ProposedSQL, nodeID), "text/plain")
+		fix.ComputeUnifiedDiff(string(candidateSQL), res.ProposedSQL, nodeID), "text/plain")
 	if err != nil {
 		return step.PromptOutput{}, fmt.Errorf("write candidate diff: %w", err)
 	}

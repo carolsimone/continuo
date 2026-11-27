@@ -3,15 +3,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import DashboardPage from './DashboardPage';
-import { ProposalDTO } from './types';
+import { FixDTO } from './types';
 
 // Mock all API calls the Dashboard makes
 vi.mock('./remediation-api', () => ({
-  fetchProposals: vi.fn(),
+  fetchFixes: vi.fn(),
 }));
 
-import { fetchProposals } from './remediation-api';
-const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
+import { fetchFixes } from './remediation-api';
+const mockFetchFixes = fetchFixes as ReturnType<typeof vi.fn>;
 
 // Stub global fetch for non-remediation endpoints (schedules, topology, nodes)
 const mockFetch = vi.fn();
@@ -32,7 +32,7 @@ beforeEach(() => {
   global.fetch = mockFetch;
 });
 
-const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
+const makeFix = (overrides: Partial<FixDTO> = {}): FixDTO => ({
   id: 'prop-1',
   source: 's3://bucket/key.sql',
   release_id: 'rel-abc',
@@ -71,7 +71,7 @@ function renderDashboard() {
 
 describe('DashboardPage — liveness badge', () => {
   it('shows "Live" (no timestamp) once the schedules poll succeeds', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+    mockFetchFixes.mockResolvedValue([]);
 
     const { container } = renderDashboard();
 
@@ -88,7 +88,7 @@ describe('DashboardPage — liveness badge', () => {
   });
 
   it('shows "Reconnecting" when the schedules poll fails', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+    mockFetchFixes.mockResolvedValue([]);
     mockFetch.mockImplementation((url: string) => {
       if (url === '/api/schedules') return Promise.reject(new Error('network error'));
       if (url === '/api/topology/schedules') {
@@ -107,7 +107,7 @@ describe('DashboardPage — liveness badge', () => {
   });
 
   it('says how a schedule appears once the first poll answers with none', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+    mockFetchFixes.mockResolvedValue([]);
     renderDashboard();
 
     const strip = (await screen.findByText(/No schedules yet/)).closest('.info-strip');
@@ -116,7 +116,7 @@ describe('DashboardPage — liveness badge', () => {
   });
 
   it('does not say there are no schedules before the first poll has answered', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+    mockFetchFixes.mockResolvedValue([]);
     mockFetch.mockImplementation((url: string) => {
       if (url === '/api/schedules') return new Promise(() => {});
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ schedules: [], total_count: 0 }) });
@@ -131,7 +131,7 @@ describe('DashboardPage — liveness badge', () => {
   });
 
   it('treats a backend error on the schedules poll as a failed poll, not an empty list', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+    mockFetchFixes.mockResolvedValue([]);
     mockFetch.mockImplementation((url: string) => {
       if (url === '/api/schedules') {
         return Promise.resolve({
@@ -152,7 +152,7 @@ describe('DashboardPage — liveness badge', () => {
   });
 
   it('shows "Connecting" before the first poll resolves', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+    mockFetchFixes.mockResolvedValue([]);
     mockFetch.mockImplementation((url: string) => {
       if (url === '/api/schedules') return new Promise(() => {}); // never resolves
       if (url === '/api/topology/schedules') return new Promise(() => {});
@@ -168,16 +168,16 @@ describe('DashboardPage — liveness badge', () => {
 });
 
 describe('DashboardPage — Remediation tab count badge', () => {
-  it('counts proposals with an open PR (pr_state=open)', async () => {
-    const proposals = [
-      makeProposal({ id: 'p1', pr_state: 'open' }),
-      makeProposal({ id: 'p2', pr_state: 'open' }),
+  it('counts fixes with an open PR (pr_state=open)', async () => {
+    const fixes = [
+      makeFix({ id: 'p1', pr_state: 'open' }),
+      makeFix({ id: 'p2', pr_state: 'open' }),
     ];
-    mockFetchProposals.mockResolvedValue(proposals);
+    mockFetchFixes.mockResolvedValue(fixes);
 
     renderDashboard();
 
-    // The server returns only open-PR proposals; the badge is the list length.
+    // The server returns only open-PR fixes; the badge is the list length.
     await waitFor(() => {
       const remediationTab = screen.getByRole('tab', { name: /remediation/i });
       expect(remediationTab).toBeInTheDocument();
@@ -186,12 +186,12 @@ describe('DashboardPage — Remediation tab count badge', () => {
       expect(badge?.textContent).toBe('2');
     });
 
-    // The badge fetches only open-PR proposals.
-    expect(mockFetchProposals).toHaveBeenCalledWith({ pr_state: 'open' });
+    // The badge fetches only open-PR fixes.
+    expect(mockFetchFixes).toHaveBeenCalledWith({ pr_state: 'open' });
   });
 
   it('omits the count badge on the Remediation tab when there are no open PRs', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+    mockFetchFixes.mockResolvedValue([]);
 
     renderDashboard();
 
@@ -204,7 +204,7 @@ describe('DashboardPage — Remediation tab count badge', () => {
   });
 
   it('omits the count badge on the Remediation tab when the fetch fails (best-effort, no crash)', async () => {
-    mockFetchProposals.mockRejectedValue(new Error('network error'));
+    mockFetchFixes.mockRejectedValue(new Error('network error'));
 
     renderDashboard();
 

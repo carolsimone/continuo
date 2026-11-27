@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
@@ -111,17 +111,17 @@ type checkResponse struct {
 	PerNodeResults []checkNodeResult `json:"per_node_results"`
 }
 
-// phaseOf maps a check status onto the phase the proposal records.
-func phaseOf(status string) proposal.Phase {
+// phaseOf maps a check status onto the phase the fix records.
+func phaseOf(status string) fix.Phase {
 	switch status {
 	case "received":
-		return proposal.PhaseQueued
+		return fix.PhaseQueued
 	case "passed":
-		return proposal.PhasePassed
+		return fix.PhasePassed
 	case "failed":
-		return proposal.PhaseFailed
+		return fix.PhaseFailed
 	default: // compiling, parsing, seed_building, validating
-		return proposal.PhaseRunning
+		return fix.PhaseRunning
 	}
 }
 
@@ -141,7 +141,7 @@ func (g *Gateway) Status(ctx context.Context, checkID string) (ports.ReleaseChec
 		}
 		st.ActivatedAt = at
 	}
-	if st.Phase == proposal.PhaseFailed {
+	if st.Phase == fix.PhaseFailed {
 		st.NodeErrors = g.nodeErrors(ctx, check)
 		st.CheckError = failFallback(check)
 	}

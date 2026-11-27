@@ -28,8 +28,8 @@ import (
 type fakeCaseBaseRepository struct {
 	tenants              []string
 	recordRejectionCalls []casebase.Rejection
-	recordProposalCalls  []casebase.Proposal
-	recordProposalPRs    []casebase.PullRequest
+	recordFixCalls       []casebase.Fix
+	recordFixPRs         []casebase.PullRequest
 	recordOutcomeCalls   []casebase.PullRequestOutcome
 	err                  error
 }
@@ -40,10 +40,10 @@ func (f *fakeCaseBaseRepository) RecordRejection(_ context.Context, tenantID str
 	return f.err
 }
 
-func (f *fakeCaseBaseRepository) RecordProposal(_ context.Context, tenantID string, p casebase.Proposal, pr casebase.PullRequest) error {
+func (f *fakeCaseBaseRepository) RecordFix(_ context.Context, tenantID string, p casebase.Fix, pr casebase.PullRequest) error {
 	f.tenants = append(f.tenants, tenantID)
-	f.recordProposalCalls = append(f.recordProposalCalls, p)
-	f.recordProposalPRs = append(f.recordProposalPRs, pr)
+	f.recordFixCalls = append(f.recordFixCalls, p)
+	f.recordFixPRs = append(f.recordFixPRs, pr)
 	return f.err
 }
 

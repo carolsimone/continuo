@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
@@ -93,10 +93,10 @@ func TestSubmit_NonAcceptedStatusIsAnError(t *testing.T) {
 }
 
 func TestStatus_PhaseFromRunStatus(t *testing.T) {
-	for status, want := range map[string]proposal.Phase{
-		"received": proposal.PhaseQueued, "compiling": proposal.PhaseRunning, "parsing": proposal.PhaseRunning,
-		"seed_building": proposal.PhaseRunning, "validating": proposal.PhaseRunning,
-		"passed": proposal.PhasePassed, "failed": proposal.PhaseFailed,
+	for status, want := range map[string]fix.Phase{
+		"received": fix.PhaseQueued, "compiling": fix.PhaseRunning, "parsing": fix.PhaseRunning,
+		"seed_building": fix.PhaseRunning, "validating": fix.PhaseRunning,
+		"passed": fix.PhasePassed, "failed": fix.PhaseFailed,
 	} {
 		t.Run(status, func(t *testing.T) {
 			srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
@@ -130,7 +130,7 @@ func TestStatus_FailedCarriesNodeErrorsFromRunResults(t *testing.T) {
 	g := NewGateway(srv.URL, ev, nil)
 	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
-	assert.Equal(t, proposal.PhaseFailed, st.Phase)
+	assert.Equal(t, fix.PhaseFailed, st.Phase)
 	assert.Equal(t, map[string]string{"model.core.orders": "column x does not exist"}, st.NodeErrors)
 }
 
@@ -351,7 +351,7 @@ func TestStatus_FailedParseStageCarriesInlineDetail(t *testing.T) {
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
-	assert.Equal(t, proposal.PhaseFailed, st.Phase)
+	assert.Equal(t, fix.PhaseFailed, st.Phase)
 	assert.Equal(t, detail, st.NodeErrors["analytics.py_daily_kpis"],
 		"a parse-stage failure's inline detail is the node's error text; no Job ran, so there is no run_results_uri to read")
 }

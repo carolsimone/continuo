@@ -110,7 +110,7 @@ func TestProposeFix_SingleFileToolRoutesOnThePromptHeading(t *testing.T) {
 			t.Errorf("%s: wrong proposed_content:\ngot:\n%s\nwant:\n%s", name, got, tc.wantContent)
 		}
 		if args["confidence"] != "high" {
-			t.Errorf("%s: a low-confidence answer is never turned into a proposal; got %q", name, args["confidence"])
+			t.Errorf("%s: a low-confidence answer is never turned into a fix; got %q", name, args["confidence"])
 		}
 		if args["rationale"] == "" {
 			t.Errorf("%s: the tool requires a rationale", name)

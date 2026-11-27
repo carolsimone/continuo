@@ -40,8 +40,8 @@ var oldSchemaStatements = []string{
 	"CREATE INDEX rejection_category_reason FOR (r:Rejection) ON (r.category, r.reason)",
 	"CREATE CONSTRAINT error_signature_unique FOR (s:ErrorSignature) REQUIRE s.signature IS UNIQUE",
 	"CREATE INDEX error_signature_category_reason FOR (s:ErrorSignature) ON (s.category, s.reason)",
-	"CREATE CONSTRAINT proposal_unique FOR (p:Proposal) REQUIRE p.proposal_id IS UNIQUE",
-	"CREATE CONSTRAINT pull_request_unique FOR (p:PullRequest) REQUIRE (p.proposal_id, p.project) IS UNIQUE",
+	"CREATE CONSTRAINT fix_unique FOR (p:Fix) REQUIRE p.fix_id IS UNIQUE",
+	"CREATE CONSTRAINT pull_request_unique FOR (p:PullRequest) REQUIRE (p.fix_id, p.project) IS UNIQUE",
 	"CREATE CONSTRAINT node_unique FOR (n:Node) REQUIRE n.unique_id IS UNIQUE",
 }
 
@@ -84,11 +84,11 @@ CREATE (rej:Rejection {release_id: 'r6', node_id: d.unique_id, category: 'compil
 CREATE (sig:ErrorSignature {signature: $m + '-signature', category: 'compile', reason: 'syntax', test_marker: $m})
 CREATE (rej)-[:HAS_SIGNATURE]->(sig)
 CREATE (d)-[:FAILED {release_id: 'r6'}]->(rej)
-CREATE (prop:Proposal {proposal_id: $m + '-proposal', test_marker: $m})
-CREATE (rej)-[:PROPOSED {project: 'svc'}]->(prop)
-CREATE (pr:PullRequest {proposal_id: prop.proposal_id, project: 'svc', state: 'merged', test_marker: $m})
-CREATE (prop)-[:HAS_PR]->(pr)
-CREATE (prop)-[:EDITED {path: 'models/table_d.sql'}]->(d)
+CREATE (fx:Fix {fix_id: $m + '-fix', test_marker: $m})
+CREATE (rej)-[:PROPOSED {project: 'svc'}]->(fx)
+CREATE (pr:PullRequest {fix_id: fx.fix_id, project: 'svc', state: 'merged', test_marker: $m})
+CREATE (fx)-[:HAS_PR]->(pr)
+CREATE (fx)-[:EDITED {path: 'models/table_d.sql'}]->(d)
 CREATE (rej)-[:RESOLVED_BY]->(vd)
 WITH 1 AS seeded
 UNWIND range(1, $bulk) AS i
@@ -226,7 +226,7 @@ func (f *oldShapeFixture) assertMigrated(when string) {
 
 	assert.Equal(t, map[string]int64{
 		"Node": 3 + bulkTables, "Meta": 1, "NodeVersion": 2, "CodeUnit": 1, "CodeUnitVersion": 1,
-		"Rejection": 1, "ErrorSignature": 1, "Proposal": 1, "PullRequest": 1,
+		"Rejection": 1, "ErrorSignature": 1, "Fix": 1, "PullRequest": 1,
 	}, f.labelCounts(), "%s: the test's nodes per label", when)
 	for _, label := range []string{"Table", "Run", "TopologyRoot"} {
 		row := f.one(fmt.Sprintf("MATCH (n:%s) RETURN count(n) AS n", label))
@@ -268,7 +268,7 @@ func (f *oldShapeFixture) assertMigrated(when string) {
 		RETURN d.active AS active, d.retired_at IS NOT NULL AS retired,
 		       COUNT { (d)-[:CURRENT]->(:NodeVersion) } AS current,
 		       COUNT { (d)-[:FAILED]->(:Rejection) } AS failed,
-		       COUNT { (:Proposal)-[:EDITED]->(d) } AS edited,
+		       COUNT { (:Fix)-[:EDITED]->(d) } AS edited,
 		       COUNT { (d)-[:DEPENDS_ON]->() } AS depends_on`)
 	assert.Equal(t, false, retired["active"], when)
 	assert.Equal(t, true, retired["retired"], when)
@@ -311,7 +311,7 @@ func TestMigrate_ResumesAfterPartialRun(t *testing.T) {
 
 	assert.Equal(t, map[string]int64{
 		"Node": 3 + bulkTables, "Meta": 1, "NodeVersion": 2, "CodeUnit": 1, "CodeUnitVersion": 1,
-		"Rejection": 1, "ErrorSignature": 1, "Proposal": 1, "PullRequest": 1,
+		"Rejection": 1, "ErrorSignature": 1, "Fix": 1, "PullRequest": 1,
 	}, f.labelCounts(), "the partial run relabelled :Table and deleted the run history")
 	tenants := f.one(`MATCH (n) WHERE n.test_marker = $m
 		RETURN count(n) AS total, count(CASE WHEN n.tenant_id = 'default' THEN 1 END) AS in_default`)

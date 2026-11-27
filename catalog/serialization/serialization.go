@@ -8,9 +8,9 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/event"
 )
 
-// PROpenedDTO is the JSON shape of the remediation.pr_opened:v1 payload.
+// PROpenedDTO is the JSON shape of the fix.pr_opened:v1 payload.
 type PROpenedDTO struct {
-	ProposalID      string   `json:"proposal_id"`
+	FixID           string   `json:"fix_id"`
 	ReleaseID       string   `json:"release_id"`
 	NodeID          string   `json:"node_id"`
 	ResolvedNodeIDs []string `json:"resolved_node_ids"`
@@ -24,7 +24,7 @@ type PROpenedDTO struct {
 // ToDomain maps a decoded DTO back to the domain event.
 func (d PROpenedDTO) ToDomain() event.PROpened {
 	return event.PROpened{
-		ProposalID:      d.ProposalID,
+		FixID:           d.FixID,
 		ReleaseID:       d.ReleaseID,
 		NodeID:          d.NodeID,
 		ResolvedNodeIDs: d.ResolvedNodeIDs,
@@ -44,9 +44,9 @@ type PRClosedEditDTO struct {
 	Diff         string `json:"diff,omitempty"`
 }
 
-// PRClosedDTO is the JSON shape of the remediation.pr_closed:v1 payload.
+// PRClosedDTO is the JSON shape of the fix.pr_closed:v1 payload.
 type PRClosedDTO struct {
-	ProposalID      string            `json:"proposal_id"`
+	FixID           string            `json:"fix_id"`
 	ReleaseID       string            `json:"release_id"`
 	NodeID          string            `json:"node_id"`
 	ResolvedNodeIDs []string          `json:"resolved_node_ids"`
@@ -68,7 +68,7 @@ func (d PRClosedDTO) ToDomain() event.PRClosed {
 		}
 	}
 	return event.PRClosed{
-		ProposalID:      d.ProposalID,
+		FixID:           d.FixID,
 		ReleaseID:       d.ReleaseID,
 		NodeID:          d.NodeID,
 		ResolvedNodeIDs: d.ResolvedNodeIDs,

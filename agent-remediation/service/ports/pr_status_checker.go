@@ -24,12 +24,12 @@ type PRStatus struct {
 	ClosedAt time.Time
 	// MergeCommitSHA is the commit a merged PR produced on the base branch; the
 	// amend compare reads each edited file at this ref to check it against the
-	// proposal. Empty for an unmerged (rejected) PR.
+	// fix. Empty for an unmerged (rejected) PR.
 	MergeCommitSHA string
 }
 
 // PullRequestStatusChecker reads the current state of a pull request so the
-// reconciler can mirror terminal outcomes onto the proposal row.
+// reconciler can mirror terminal outcomes onto the fix row.
 type PullRequestStatusChecker interface {
 	PRStatus(ctx context.Context, repo string, number int) (PRStatus, error)
 }

@@ -53,7 +53,7 @@ class ValidationOp(StrEnum):
 
 
 class HandoverReason(StrEnum):
-    """Why a failing node of a rejected release is left to a human instead of a fix proposal. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it."""
+    """Why a failing node of a rejected release is left to a human instead of a fix. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it."""
     TRIES_SPENT = "tries_spent"
     PREFLIGHT_ROUNDS_SPENT = "preflight_rounds_spent"
     DECLINED = "declined"
@@ -65,7 +65,7 @@ class HandoverReason(StrEnum):
 
 
 class ApproverSource(StrEnum):
-    """Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a proposal, which the gRPC reads carry to the release page."""
+    """Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a fix, which the gRPC reads carry to the release page."""
     BUNDLE = "bundle"
     CONTRACT_FILE = "contract_file"
     NONE = "none"

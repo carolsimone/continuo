@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react';
-import { ProposalDTO } from './types';
+import { FixDTO } from './types';
 import { createPullRequest, CreatePullRequestResponse } from './remediation-api';
-import { proposalNodeIds } from './release-helpers';
+import { fixNodeIds } from './release-helpers';
 
 interface Props {
-  proposal: ProposalDTO;
+  fix: FixDTO;
   onClose: () => void;
   onCreated: (result: CreatePullRequestResponse) => void;
 }
 
 type ButtonState = 'idle' | 'loading' | 'success';
 
-export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
+export default function CreatePrModal({ fix, onClose, onCreated }: Props) {
   const [buttonState, setButtonState] = useState<ButtonState>('idle');
   const [error, setError] = useState<string | null>(null);
   // result holds the last response this modal received, so a partial
@@ -31,7 +31,7 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
     setButtonState('loading');
     setError(null);
     try {
-      const res = await createPullRequest(proposal.id);
+      const res = await createPullRequest(fix.id);
       setResult(res);
       onCreated(res);
       if (res.errors.length === 0 && (res.warnings ?? []).length === 0) {
@@ -76,7 +76,7 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
         <h2 className="dialog-title" id="create-pr-dialog-title">Create Pull Request</h2>
 
         <p>
-          <strong>{proposalNodeIds(proposal).join(', ')}</strong> · release {proposal.release_id}
+          <strong>{fixNodeIds(fix).join(', ')}</strong> · release {fix.release_id}
         </p>
         <p>This opens a GitHub PR applying the proposed fix; it will not be merged.</p>
 

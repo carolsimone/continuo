@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/pkg/sanitize"
 )
@@ -36,5 +36,5 @@ func (d ChangeDiffer) Diff(ctx context.Context, nodeID, candidateSource string) 
 	if !ok {
 		return ""
 	}
-	return prompt.TruncateDiff(proposal.ComputeUnifiedDiff(sanitize.Text(cur.RawCode), sanitize.Text(candidateSource), nodeID), maxChangeDiffBytes)
+	return prompt.TruncateDiff(fix.ComputeUnifiedDiff(sanitize.Text(cur.RawCode), sanitize.Text(candidateSource), nodeID), maxChangeDiffBytes)
 }

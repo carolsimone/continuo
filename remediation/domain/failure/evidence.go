@@ -16,7 +16,7 @@ const (
 	CategoryInfraTransient Category = "infra_transient"
 )
 
-// Decision is the routing outcome: emit a failure a fix proposal can reach, or
+// Decision is the routing outcome: emit a failure a fix can reach, or
 // drop one no change to the release's source fixes. A dropped failure is
 // recorded and forwarded on the trigger, marked unfixable.
 type Decision string

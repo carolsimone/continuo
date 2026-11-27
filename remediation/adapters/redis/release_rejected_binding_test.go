@@ -306,7 +306,7 @@ func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(evs) != 0 {
-			t.Errorf("%s: want 0 evidence, got %d — not a model defect a heal proposal could fix", reason, len(evs))
+			t.Errorf("%s: want 0 evidence, got %d — not a model defect a fix could repair", reason, len(evs))
 		}
 	}
 }

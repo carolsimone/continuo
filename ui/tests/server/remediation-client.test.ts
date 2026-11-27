@@ -6,8 +6,8 @@ import { createRemediationClient } from '../../src/server/clients/remediation-cl
 describe('createRemediationClient', () => {
   it('constructs a client with all five promise-returning methods', () => {
     const client = createRemediationClient('localhost:50054');
-    expect(typeof client.listProposals).toBe('function');
-    expect(typeof client.getProposal).toBe('function');
+    expect(typeof client.listFixes).toBe('function');
+    expect(typeof client.getFix).toBe('function');
     expect(typeof client.beginPullRequest).toBe('function');
     expect(typeof client.recordPullRequest).toBe('function');
     expect(typeof client.failPullRequest).toBe('function');
@@ -15,7 +15,7 @@ describe('createRemediationClient', () => {
 });
 
 // The ui loads remediation.proto at runtime with the options the client uses,
-// so the field set of its copy decides which fields of a proposal reach the
+// so the field set of its copy decides which fields of a fix reach the
 // browser: a field the copy lacks is dropped on decode.
 describe('proto wire: remediation.proto', () => {
   const PROTO_DIR = path.join(process.cwd(), 'proto');
@@ -28,18 +28,18 @@ describe('proto wire: remediation.proto', () => {
     includeDirs: [PROTO_DIR],
   });
 
-  // getProposalRoundTrip drives the production GetProposal response
+  // getFixRoundTrip drives the production GetFix response
   // serializer/deserializer pair, the code path @grpc/grpc-js uses to decode
   // the server's reply.
-  function getProposalRoundTrip(proposal: Record<string, unknown>): Record<string, any> {
-    const method = (packageDefinition as Record<string, any>)['remediation.v1.RemediationProposals'].GetProposal;
-    expect(method, 'missing rpc method: GetProposal').toBeTruthy();
-    const buf: Buffer = method.responseSerialize(proposal);
+  function getFixRoundTrip(fix: Record<string, unknown>): Record<string, any> {
+    const method = (packageDefinition as Record<string, any>)['remediation.v1.RemediationFixes'].GetFix;
+    expect(method, 'missing rpc method: GetFix').toBeTruthy();
+    const buf: Buffer = method.responseSerialize(fix);
     return method.responseDeserialize(buf) as Record<string, any>;
   }
 
-  it('GetProposal carries the reason code of each node outcome beside its status and reason', () => {
-    const result = getProposalRoundTrip({
+  it('GetFix carries the reason code of each node outcome beside its status and reason', () => {
+    const result = getFixRoundTrip({
       id: 'p1',
       node_outcomes: {
         's.handed': { status: 'escalated', reason: 'no type matches', code: 'no_type' },
@@ -50,8 +50,8 @@ describe('proto wire: remediation.proto', () => {
     expect(result.node_outcomes['s.fixed']).toEqual({ status: 'proposed', reason: '', code: '' });
   });
 
-  it('GetProposal carries who must approve each node', () => {
-    const result = getProposalRoundTrip({
+  it('GetFix carries who must approve each node', () => {
+    const result = getFixRoundTrip({
       id: 'p1',
       approvers: [
         { node_id: 's.a', owner: 'finance', source: 'bundle' },
@@ -65,10 +65,10 @@ describe('proto wire: remediation.proto', () => {
   });
 
   it('BeginPullRequest carries the approvers of the claim nodes', () => {
-    const method = (packageDefinition as Record<string, any>)['remediation.v1.RemediationProposals'].BeginPullRequest;
+    const method = (packageDefinition as Record<string, any>)['remediation.v1.RemediationFixes'].BeginPullRequest;
     expect(method, 'missing rpc method: BeginPullRequest').toBeTruthy();
     const buf: Buffer = method.responseSerialize({
-      proposal_id: 'p1',
+      fix_id: 'p1',
       resolved_node_ids: ['s.a'],
       approvers: [{ node_id: 's.a', owner: 'finance', source: 'contract_file' }],
     });

@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -80,7 +80,7 @@ func TestRunner_RestoresRedactedValuesInTheDraft(t *testing.T) {
 	require.NotNil(t, rec.LastRequest)
 	assert.Contains(t, rec.LastRequest.Request().User, "[redacted:email:1]", "the prompt row keeps the request as sent")
 	assert.Equal(t, "select '[redacted:email:1]' as owner, 2", rec.Draft.Edits[0].Content, "the prompt row keeps the answer as received")
-	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
 }
 
 func TestRunner_AnUnknownPlaceholderIsAFinding(t *testing.T) {
@@ -113,7 +113,7 @@ func TestRunner_AnUnknownPlaceholderIsAFinding(t *testing.T) {
 			assert.Equal(t, message, findings[0].Message)
 			c := h.cluster(id, 1, 1)
 			assert.Equal(t, remediation.ClusterHandedOver, c.Status, "the round fails like on any other finding")
-			want := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: message, Code: model.HandoverReasonPreflightRoundsSpent}
+			want := fix.NodeOutcome{Status: fix.StatusFailed, Reason: message, Code: model.HandoverReasonPreflightRoundsSpent}
 			assert.Equal(t, &want, c.Outcome)
 			assert.Empty(t, h.checks.requests(), "no draft that holds a placeholder is verified")
 		})
@@ -339,14 +339,14 @@ func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 	id := h.accept(trigger("compile", node))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, "kept ops@acme.com; the log said [redacted:secret:1]", h.preflightDraft(id, 1).Rationale,
 		"no finding: a marker in the rationale is harmless")
 	assert.Empty(t, h.roundRows(id, 1, "preflight")[1].Findings)
-	p := h.attempt(1).Proposal
-	require.Equal(t, proposal.StatusProposed, p.Status)
+	p := h.attempt(1).Fix
+	require.Equal(t, fix.StatusProposed, p.Status)
 	assert.Contains(t, fmt.Sprint(p), "the log said [redacted:secret:1]", "the pull request shows the marker")
 	require.Len(t, h.proposedEvents(), 1)
 
@@ -361,7 +361,7 @@ func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 	assert.NotContains(t, fmt.Sprint(h.artifacts.objects), "hunter2", "no stored artifact")
 	h.artifacts.mu.Unlock()
 	assert.NotContains(t, fmt.Sprint(h.checks.requests()), "hunter2", "no release check")
-	assert.NotContains(t, fmt.Sprint(h.proposals()), "hunter2", "no proposal row")
+	assert.NotContains(t, fmt.Sprint(h.fixes()), "hunter2", "no fix row")
 	for _, e := range h.store.OutboxEntries() {
 		assert.NotContains(t, string(e.Payload), "hunter2", "no outbox entry on %s", e.StreamName)
 	}
@@ -404,7 +404,7 @@ func TestRunner_AValueSeenOnlyInALogNeverNamesAFile(t *testing.T) {
 		assert.NotContains(t, fmt.Sprint(s.Findings), "hunter2", "step %s", s.Step)
 	}
 	assert.NotContains(t, fmt.Sprint(h.checks.requests()), "hunter2", "no release check")
-	assert.NotContains(t, fmt.Sprint(h.proposals()), "hunter2", "no proposal row")
+	assert.NotContains(t, fmt.Sprint(h.fixes()), "hunter2", "no fix row")
 	for _, e := range h.store.OutboxEntries() {
 		assert.NotContains(t, string(e.Payload), "hunter2", "no outbox entry on %s", e.StreamName)
 	}

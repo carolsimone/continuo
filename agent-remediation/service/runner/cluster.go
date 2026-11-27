@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
@@ -350,16 +350,16 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 			err = moveCluster(&next, remediation.ClusterProposing)
 		} else {
 			round = ports.RoundSpent
-			added, err = r.settle(run, &next, proposal.NodeOutcome{
-				Status: proposal.StatusFailed, Reason: first.Message, Code: pkg_model.HandoverReasonPreflightRoundsSpent,
+			added, err = r.settle(run, &next, fix.NodeOutcome{
+				Status: fix.StatusFailed, Reason: first.Message, Code: pkg_model.HandoverReasonPreflightRoundsSpent,
 			})
 		}
 		if err != nil {
 			return err
 		}
 	} else if len(draft.Edits) == 0 {
-		if added, err = r.settle(run, &next, proposal.NodeOutcome{
-			Status: proposal.StatusFailed, Reason: noEditReason, Code: pkg_model.HandoverReasonDeclined,
+		if added, err = r.settle(run, &next, fix.NodeOutcome{
+			Status: fix.StatusFailed, Reason: noEditReason, Code: pkg_model.HandoverReasonDeclined,
 		}); err != nil {
 			return err
 		}
@@ -457,7 +457,7 @@ func (r *Runner) writeArtifacts(ctx context.Context, d remediation.Draft) (remed
 		if err != nil {
 			return d, fmt.Errorf("write the content of %s: %w", e.Path, err)
 		}
-		diffURI, err := r.d.Collab.Artifacts.Write(ctx, e.DiffKey, proposal.EditDiff(e.Original, e.Content, e.Path, e.RenamedFrom), artifactContentType)
+		diffURI, err := r.d.Collab.Artifacts.Write(ctx, e.DiffKey, fix.EditDiff(e.Original, e.Content, e.Path, e.RenamedFrom), artifactContentType)
 		if err != nil {
 			return d, fmt.Errorf("write the diff of %s: %w", e.Path, err)
 		}
@@ -477,7 +477,7 @@ func (r *Runner) writeArtifacts(ctx context.Context, d remediation.Draft) (remed
 // draft declined it, which settles the members for good, and
 // preflight_rounds_spent when pre-flight refused every round, which leaves
 // them to be grouped again in the next try.
-func (r *Runner) settle(run tryRun, c *remediation.Cluster, o proposal.NodeOutcome) ([]remediation.Cluster, error) {
+func (r *Runner) settle(run tryRun, c *remediation.Cluster, o fix.NodeOutcome) ([]remediation.Cluster, error) {
 	switch c.Kind {
 	case workflow.ClusterSharedUpstream:
 		if err := moveCluster(c, remediation.ClusterFellBack); err != nil {
@@ -491,8 +491,8 @@ func (r *Runner) settle(run tryRun, c *remediation.Cluster, o proposal.NodeOutco
 			return nil, err
 		}
 		_, project := ancestorLocation(run.trigger, c.TargetNodeID)
-		c.Outcome = &proposal.NodeOutcome{
-			Status: proposal.StatusSkipped,
+		c.Outcome = &fix.NodeOutcome{
+			Status: fix.StatusSkipped,
 			Reason: fmt.Sprintf("the change that broke this node lives in %s; a fix in this node's own project cannot ship before it: %s",
 				describeProject(project), o.Reason),
 			Code: o.Code,
@@ -528,11 +528,11 @@ func (r *Runner) memberClusters(run tryRun, c remediation.Cluster) []remediation
 // for reason: skipped, with the code declined. A step that gives no reason is
 // recorded as having declined the fix, so a hand-over never carries an empty
 // message.
-func declined(name workflow.StepName, reason string) proposal.NodeOutcome {
+func declined(name workflow.StepName, reason string) fix.NodeOutcome {
 	if strings.TrimSpace(reason) == "" {
 		reason = fmt.Sprintf("step %s declined the fix", name)
 	}
-	return proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: reason, Code: pkg_model.HandoverReasonDeclined}
+	return fix.NodeOutcome{Status: fix.StatusSkipped, Reason: reason, Code: pkg_model.HandoverReasonDeclined}
 }
 
 // moveCluster moves c to the status to, refusing a move the cluster's states do

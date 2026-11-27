@@ -508,24 +508,24 @@ func (fakeMessageProcessing) DeleteOlderThan(_ context.Context, _ time.Duration,
 
 var _ messageprocessing.Repository = (*fakeMessageProcessing)(nil)
 
-// --- fakeProposals ---
+// --- fakeFixes ---
 
-// fakeProposals is a stub ports.ProposalReader. items is returned verbatim
+// fakeFixes is a stub ports.FixReader. items is returned verbatim
 // unless err is set, in which case err is returned instead — letting tests
 // simulate the agent-remediation gRPC call being unavailable.
-type fakeProposals struct {
-	items []ports.ProposalSummary
+type fakeFixes struct {
+	items []ports.FixSummary
 	err   error
 }
 
-func (f *fakeProposals) ListProposalsForRelease(_ context.Context, _ string) ([]ports.ProposalSummary, error) {
+func (f *fakeFixes) ListFixesForRelease(_ context.Context, _ string) ([]ports.FixSummary, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.items, nil
 }
 
-var _ ports.ProposalReader = (*fakeProposals)(nil)
+var _ ports.FixReader = (*fakeFixes)(nil)
 
 // --- fakeTopologies ---
 
@@ -688,7 +688,7 @@ func newDeps(now time.Time) (*handlers.Deps, *fakeStore) {
 		Clock:     &fakeClock{t: now},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.Default(),
-		Proposals: &fakeProposals{},
+		Fixes:     &fakeFixes{},
 
 		Topologies: store.topologies,
 

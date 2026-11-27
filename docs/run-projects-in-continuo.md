@@ -1017,14 +1017,14 @@ A rejected release tells you something broke. continuo can also try to fix it.
 
 💡 `remediation` classifies the rejection, and for a fixable one `agent-remediation`
 reads the failing model's source, asks an LLM for a fix, and surfaces
-the proposal for a human to approve. It never writes to your repository on its
+the fix for a human to approve. It never writes to your repository on its
 own — the output is a diff you review, and a pull request you choose to open.
 
-![The rejected release's detail view with no LLM credentials configured: the failure is classified but no fix proposal is offered](img/validation-rejected-details-remediation-absent.png)
+![The rejected release's detail view with no LLM credentials configured: the failure is classified but no fix is offered](img/validation-rejected-details-remediation-absent.png)
 
 **Where the agent reads your source.** For a dbt model that failed validation —
 this chapter's case — it reads the code continuo captured when it compiled the
-release, so nothing has to be on GitHub to get a proposal. For failures caught
+release, so nothing has to be on GitHub to get a fix. For failures caught
 before validation (compile errors, seeds, duplicate tables) and for python
 nodes, it reads your fork through the GitHub API at `repo@commit_sha`. That read
 works without a token on a public fork; a read-only token is what lets it read
@@ -1038,11 +1038,11 @@ There are **two credential tiers**, and they unlock two different things:
 | GitHub App (id, installation id, private key) | **Open the PR** from the UI | `github.appId`, `github.installationId`, `github.appPrivateKey` |
 
 Do the first tier now. The second is its own section below, and you can stop
-after the first if you only want to see the proposal.
+after the first if you only want to see the fix.
 
-### See the proposal
+### See the fix
 
-The proposal is anchored to a commit in your repository, and the pull request in
+The fix is anchored to a commit in your repository, and the pull request in
 the next section is opened against it, so commit and push your broken change to
 your fork:
 
@@ -1107,14 +1107,14 @@ rejected earlier, at the parse stage as `invalid_sql`, and healed by the parse
 lane instead (this is the comma trap from chapter 7). About a minute after
 `rel-finance-v3` is rejected, the proposed fix appears in the UI against it: a
 diff that restores `amount_eur`, already proven by a real release check.
-`rel-finance-v2` from chapter 7 gets a proposal too — its rejection was waiting
+`rel-finance-v2` from chapter 7 gets a fix too — its rejection was waiting
 for the agent to have a key.
 
 ![The agent's proposed fix on the rejected release: a diff verified by a real validation run, ready for a human to review and open as a PR](img/llm-remediation-succesful-and-validated.png)
 
 ### Open the PR (GitHub App)
 
-Seeing the proposal needs only the read PAT above. **Creating** the PR from the UI
+Seeing the fix needs only the read PAT above. **Creating** the PR from the UI
 needs a GitHub App: the UI's *Open PR* action returns 503 until one is configured.
 A PAT cannot do this — the PR is opened as an App installation, not as you.
 
@@ -1156,7 +1156,7 @@ deployment, not the agent:
 kubectl -n continuo rollout restart deploy/ui
 ```
 
-The **Open PR** button on the proposal now opens a real pull request against your
+The **Open PR** button on the fix now opens a real pull request against your
 fork.
 
 ---

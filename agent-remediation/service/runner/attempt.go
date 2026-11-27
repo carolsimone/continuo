@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -102,13 +102,13 @@ func draftsDigest(drafts []step.ClusterDraft) (string, error) {
 // handed-over or fallen-back cluster recorded for its members. A
 // shared-upstream cluster that fell back records none: each of its members is
 // the target of a cluster of its own.
-func nodeOutcomes(clusters []remediation.Cluster) map[string]proposal.NodeOutcome {
-	out := map[string]proposal.NodeOutcome{}
+func nodeOutcomes(clusters []remediation.Cluster) map[string]fix.NodeOutcome {
+	out := map[string]fix.NodeOutcome{}
 	for _, c := range clusters {
-		var o proposal.NodeOutcome
+		var o fix.NodeOutcome
 		switch {
 		case c.Status == remediation.ClusterChecked:
-			o = proposal.NodeOutcome{Status: proposal.StatusVerifying}
+			o = fix.NodeOutcome{Status: fix.StatusVerifying}
 		case c.Outcome != nil:
 			o = *c.Outcome
 		default:
@@ -124,24 +124,24 @@ func nodeOutcomes(clusters []remediation.Cluster) map[string]proposal.NodeOutcom
 // settledStatus is the attempt's status when no cluster produced an edit: a
 // skip when every node was skipped, and a failure as soon as one node was
 // actually attempted and did not yield a change.
-func settledStatus(outcomes map[string]proposal.NodeOutcome) proposal.Status {
+func settledStatus(outcomes map[string]fix.NodeOutcome) fix.Status {
 	for _, o := range outcomes {
-		if o.Status != proposal.StatusSkipped {
-			return proposal.StatusFailed
+		if o.Status != fix.StatusSkipped {
+			return fix.StatusFailed
 		}
 	}
-	return proposal.StatusSkipped
+	return fix.StatusSkipped
 }
 
-// verifyingAttempt is the attempt's proposal row once the gate started its
+// verifyingAttempt is the attempt's fix row once the gate started its
 // release checks: every edit of the checked drafts, each naming the members of its
 // cluster, the release checks that verify them, the weakest cluster's confidence, one
 // composed rationale per cluster, the first model that answered, and the
 // repository and commit the edits apply to.
-func verifyingAttempt(run tryRun, checked []checkedCluster, releaseChecks []proposal.ReleaseCheck) proposal.Proposal {
+func verifyingAttempt(run tryRun, checked []checkedCluster, releaseChecks []fix.ReleaseCheck) fix.Fix {
 	t := run.trigger
-	p := proposal.Proposal{
-		Status:         proposal.StatusVerifying,
+	p := fix.Fix{
+		Status:         fix.StatusVerifying,
 		NodeOutcomes:   nodeOutcomes(run.snap.Clusters),
 		ReleaseChecks:  releaseChecks,
 		SourceResolved: true,
@@ -155,7 +155,7 @@ func verifyingAttempt(run tryRun, checked []checkedCluster, releaseChecks []prop
 			if target == "" {
 				target = d.Cluster.TargetNodeID
 			}
-			p.Edits = append(p.Edits, proposal.FileEdit{
+			p.Edits = append(p.Edits, fix.FileEdit{
 				Path:          e.Path,
 				RenamedFrom:   e.RenamedFrom,
 				ContentURI:    e.ContentURI,
@@ -164,7 +164,7 @@ func verifyingAttempt(run tryRun, checked []checkedCluster, releaseChecks []prop
 				MemberNodeIDs: append([]string(nil), d.Cluster.Members...),
 			})
 		}
-		rationales = append(rationales, proposal.ComposeRationale(rationaleFactsFor(t, d.Cluster, d.Draft)))
+		rationales = append(rationales, fix.ComposeRationale(rationaleFactsFor(t, d.Cluster, d.Draft)))
 		c := normalizeConfidence(d.Draft.Confidence)
 		if p.Confidence == "" || confidenceRank(c) < confidenceRank(p.Confidence) {
 			p.Confidence = c
@@ -179,25 +179,25 @@ func verifyingAttempt(run tryRun, checked []checkedCluster, releaseChecks []prop
 
 // normalizeConfidence maps the model's free-form confidence to the domain enum,
 // defaulting to medium on unrecognised values.
-func normalizeConfidence(c string) proposal.Confidence {
+func normalizeConfidence(c string) fix.Confidence {
 	switch c {
 	case "low":
-		return proposal.ConfidenceLow
+		return fix.ConfidenceLow
 	case "high":
-		return proposal.ConfidenceHigh
+		return fix.ConfidenceHigh
 	default:
-		return proposal.ConfidenceMedium
+		return fix.ConfidenceMedium
 	}
 }
 
 // confidenceRank orders the confidence values so an attempt can report the
 // weakest cluster's: a reviewer judges the whole change at once, so the least
 // confident part of it is what the value has to reflect.
-func confidenceRank(c proposal.Confidence) int {
+func confidenceRank(c fix.Confidence) int {
 	switch c {
-	case proposal.ConfidenceLow:
+	case fix.ConfidenceLow:
 		return 0
-	case proposal.ConfidenceHigh:
+	case fix.ConfidenceHigh:
 		return 2
 	default:
 		return 1

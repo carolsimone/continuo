@@ -15,12 +15,12 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParsePROpened decodes a remediation.pr_opened:v1 entry into the tenant its
+// ParsePROpened decodes a fix.pr_opened:v1 entry into the tenant its
 // tenant_id field names and the case-base event. A missing or undecodable
 // payload, and an entry without a tenant, are events.ErrPermanent: the
 // consumer dead-letters the entry, so nothing is written under no tenant.
 func ParsePROpened(msg goredis.XMessage) (string, event.PROpened, error) {
-	tenantID, err := tenantField(msg, "remediation.pr_opened")
+	tenantID, err := tenantField(msg, "fix.pr_opened")
 	if err != nil {
 		return "", event.PROpened{}, err
 	}
@@ -30,24 +30,24 @@ func ParsePROpened(msg goredis.XMessage) (string, event.PROpened, error) {
 	}
 	var dto serialization.PROpenedDTO
 	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
-		return "", event.PROpened{}, fmt.Errorf("%w: unmarshal remediation.pr_opened payload (message %s): %v", events.ErrPermanent, msg.ID, err)
+		return "", event.PROpened{}, fmt.Errorf("%w: unmarshal fix.pr_opened payload (message %s): %v", events.ErrPermanent, msg.ID, err)
 	}
 	return tenantID, dto.ToDomain(), nil
 }
 
-// NewPrOpenedBinding wires ParsePROpened into the proposals handler, which
+// NewPrOpenedBinding wires ParsePROpened into the fixes handler, which
 // records the entry under its tenant. outbox_entry_id is extracted from the
 // entry's fields and threaded to the handler, whose processed-message marker
 // then also recognises a re-XADD of the same upstream outbox row under a fresh
 // Redis message ID.
 func NewPrOpenedBinding(
-	handler *handlers.PrOpenedProposalsHandler,
+	handler *handlers.PrOpenedFixesHandler,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		tenantID, evt, err := ParsePROpened(msg)
 		if err != nil {
-			logger.Error("remediation.pr_opened (proposals): parse failure — dead-lettering",
+			logger.Error("fix.pr_opened (fixes): parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

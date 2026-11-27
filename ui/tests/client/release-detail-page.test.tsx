@@ -17,7 +17,7 @@ const DETAIL = {
   image_tags: { 'service-1': 'sha123' },
 };
 
-// Release with a failed node eligible for a remediation proposal.
+// Release with a failed node eligible for a remediation fix.
 const DETAIL_FAILED = {
   release_id: 'rel_abc',
   status: 'rejected',
@@ -32,7 +32,7 @@ const DETAIL_FAILED = {
   image_tags: {},
 };
 
-// Healthy release: no failed nodes, so no node is eligible for a proposal.
+// Healthy release: no failed nodes, so no node is eligible for a fix.
 const DETAIL_OK = {
   ...DETAIL_FAILED,
   status: 'promoted',
@@ -43,15 +43,15 @@ const DETAIL_OK = {
   ],
 };
 
-// A ready proposal for the failed node: the FIX cell is status-aware, so only a
+// A ready fix for the failed node: the FIX cell is status-aware, so only a
 // 'proposed' row surfaces the "Proposed fix available →" link.
-const PROPOSAL_G = { release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'proposed' };
+const FIX_G = { release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'proposed' };
 
 // A fix being verified: the FIX cell splits its 'verifying' chip on the phase
 // agent-remediation recorded for the release check judging it — 'Queued for
 // its release check' while it waits its turn in the global release queue,
 // 'Checking the fix…' once it starts.
-function proposalVerifying(phase: 'queued' | 'running') {
+function fixVerifying(phase: 'queued' | 'running') {
   return {
     release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'verifying',
     release_checks: [{ project: '', kind: '', check_id: 'verify-1', phase, activated_at: '', error: '' }],
@@ -68,20 +68,20 @@ function renderDetail() {
   );
 }
 
-// fetch mock: release detail for /api/releases/:id, and the current proposal set
-// (read live from proposalsRef) for /api/remediation/proposals.
-function mockFetch(detail: any, proposalsRef: { current: any[] }) {
+// fetch mock: release detail for /api/releases/:id, and the current fix set
+// (read live from fixesRef) for /api/remediation/fixes.
+function mockFetch(detail: any, fixesRef: { current: any[] }) {
   return vi.fn((url: any) => {
     const u = String(url);
-    if (u.includes('/api/remediation/proposals')) {
-      return Promise.resolve({ ok: true, json: async () => ({ proposals: proposalsRef.current }) });
+    if (u.includes('/api/remediation/fixes')) {
+      return Promise.resolve({ ok: true, json: async () => ({ fixes: fixesRef.current }) });
     }
     return Promise.resolve({ ok: true, json: async () => detail });
   });
 }
 
-function proposalCallCount(fetchMock: ReturnType<typeof vi.fn>): number {
-  return fetchMock.mock.calls.filter(c => String(c[0]).includes('/api/remediation/proposals')).length;
+function fixCallCount(fetchMock: ReturnType<typeof vi.fn>): number {
+  return fetchMock.mock.calls.filter(c => String(c[0]).includes('/api/remediation/fixes')).length;
 }
 
 // Flush pending microtasks + zero-delay timers so React applies state updates.
@@ -163,54 +163,54 @@ describe('ReleaseDetailPage', () => {
   });
 });
 
-describe('ReleaseDetailPage — proposal link polling', () => {
+describe('ReleaseDetailPage — fix link polling', () => {
   it('surfaces the fix link on a later poll without a manual refresh', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [] as any[] };
-    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    const fixes = { current: [] as any[] };
+    const fetchMock = mockFetch(DETAIL_FAILED, fixes);
     vi.stubGlobal('fetch', fetchMock);
 
     renderDetail();
     await flush();
     expect(screen.queryByText(/Proposed fix available/)).not.toBeInTheDocument();
 
-    // Proposal lands after the page is already open.
-    proposals.current = [PROPOSAL_G];
+    // Fix lands after the page is already open.
+    fixes.current = [FIX_G];
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     await flush();
 
     expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
   });
 
-  it('stops polling once every failed node has a proposal', async () => {
+  it('stops polling once every failed node has a fix', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [PROPOSAL_G] };
-    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    const fixes = { current: [FIX_G] };
+    const fetchMock = mockFetch(DETAIL_FAILED, fixes);
     vi.stubGlobal('fetch', fetchMock);
 
     renderDetail();
     await flush();
     expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
-    const settled = proposalCallCount(fetchMock);
+    const settled = fixCallCount(fetchMock);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(30000); }); // 6 poll intervals
-    expect(proposalCallCount(fetchMock)).toBe(settled); // no further polling
+    expect(fixCallCount(fetchMock)).toBe(settled); // no further polling
   });
 
-  it('stops polling at the cap when the failed node never gets a proposal', async () => {
+  it('stops polling at the cap when the failed node never gets a fix', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [] as any[] };
-    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    const fixes = { current: [] as any[] };
+    const fetchMock = mockFetch(DETAIL_FAILED, fixes);
     vi.stubGlobal('fetch', fetchMock);
 
     renderDetail();
     await flush();
     await act(async () => { await vi.advanceTimersByTimeAsync(190000); }); // past the 180s cap
-    const capped = proposalCallCount(fetchMock);
+    const capped = fixCallCount(fetchMock);
     expect(capped).toBeGreaterThanOrEqual(36); // interval delivered the full cap, not a short-circuit
 
     await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
-    expect(proposalCallCount(fetchMock)).toBe(capped); // capped, no more polling
+    expect(fixCallCount(fetchMock)).toBe(capped); // capped, no more polling
   });
 
   it('keeps polling past the cap while a release check is still judging a fix', async () => {
@@ -219,72 +219,72 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     // three-minute cap that exists for failures which will never be healed. A
     // node whose fix is 'verifying' is not one of those: a verdict IS coming,
     // and stopping early leaves the page stuck on "Checking the fix…" with the
-    // proposal link only a manual reload away.
+    // fix link only a manual reload away.
     vi.useFakeTimers();
-    const proposals = { current: [{ ...PROPOSAL_G, status: 'verifying' }] };
-    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    const fixes = { current: [{ ...FIX_G, status: 'verifying' }] };
+    const fetchMock = mockFetch(DETAIL_FAILED, fixes);
     vi.stubGlobal('fetch', fetchMock);
 
     renderDetail();
     await flush();
     await act(async () => { await vi.advanceTimersByTimeAsync(190000); }); // past the 180s cap
-    const atCap = proposalCallCount(fetchMock);
+    const atCap = fixCallCount(fetchMock);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
-    expect(proposalCallCount(fetchMock)).toBeGreaterThan(atCap); // still polling
+    expect(fixCallCount(fetchMock)).toBeGreaterThan(atCap); // still polling
 
     // The verdict lands: the link appears without a reload, and polling stops.
-    proposals.current = [PROPOSAL_G];
+    fixes.current = [FIX_G];
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     await flush();
     expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
-    const settled = proposalCallCount(fetchMock);
+    const settled = fixCallCount(fetchMock);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
-    expect(proposalCallCount(fetchMock)).toBe(settled);
+    expect(fixCallCount(fetchMock)).toBe(settled);
   });
 
   it('does not poll when the release has no failed nodes', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [] as any[] };
-    const fetchMock = mockFetch(DETAIL_OK, proposals);
+    const fixes = { current: [] as any[] };
+    const fetchMock = mockFetch(DETAIL_OK, fixes);
     vi.stubGlobal('fetch', fetchMock);
 
     renderDetail();
     await flush();
-    const afterMount = proposalCallCount(fetchMock);
+    const afterMount = fixCallCount(fetchMock);
     expect(afterMount).toBeLessThanOrEqual(1); // single best-effort fetch, no interval
 
     await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
-    expect(proposalCallCount(fetchMock)).toBe(afterMount);
+    expect(fixCallCount(fetchMock)).toBe(afterMount);
   });
 
   it('stops polling after the page unmounts', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [] as any[] };
-    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    const fixes = { current: [] as any[] };
+    const fetchMock = mockFetch(DETAIL_FAILED, fixes);
     vi.stubGlobal('fetch', fetchMock);
 
     const { unmount } = renderDetail();
     await flush();
-    const beforeUnmount = proposalCallCount(fetchMock);
+    const beforeUnmount = fixCallCount(fetchMock);
 
     unmount();
     await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
-    expect(proposalCallCount(fetchMock)).toBe(beforeUnmount); // no polling after unmount
+    expect(fixCallCount(fetchMock)).toBe(beforeUnmount); // no polling after unmount
   });
 
-  it('discards a stale proposal response that resolves after a newer poll stopped polling', async () => {
+  it('discards a stale fix response that resolves after a newer poll stopped polling', async () => {
     vi.useFakeTimers();
-    // Manually-resolvable responses for the proposals endpoint, so overlapping
+    // Manually-resolvable responses for the fixes endpoint, so overlapping
     // polls can be made to resolve out of order.
-    const deferreds: Array<(proposals: any[]) => void> = [];
+    const deferreds: Array<(fixes: any[]) => void> = [];
     const fetchMock = vi.fn((url: any) => {
-      if (String(url).includes('/api/remediation/proposals')) {
+      if (String(url).includes('/api/remediation/fixes')) {
         let resolveResponse!: (v: any) => void;
         const p = new Promise<any>(res => { resolveResponse = res; });
-        deferreds.push((proposals: any[]) =>
-          resolveResponse({ ok: true, json: async () => ({ proposals }) }));
+        deferreds.push((fixes: any[]) =>
+          resolveResponse({ ok: true, json: async () => ({ fixes }) }));
         return p;
       }
       return Promise.resolve({ ok: true, json: async () => DETAIL_FAILED });
@@ -294,7 +294,7 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     renderDetail();
     await flush();
 
-    // Resolve the initial fetch with no proposal yet — link hidden, polling continues.
+    // Resolve the initial fetch with no fix yet — link hidden, polling continues.
     deferreds[deferreds.length - 1]([]);
     await flush();
     expect(screen.queryByText(/Proposed fix available/)).not.toBeInTheDocument();
@@ -305,8 +305,8 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); }); // poll B (newer)
     const pollB = deferreds[deferreds.length - 1];
 
-    // Newer poll B resolves first: finds the proposal, shows the link, stops polling.
-    pollB([PROPOSAL_G]);
+    // Newer poll B resolves first: finds the fix, shows the link, stops polling.
+    pollB([FIX_G]);
     await flush();
     expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
 
@@ -321,8 +321,8 @@ describe('ReleaseDetailPage — proposal link polling', () => {
 describe('ReleaseDetailPage — verify chip: queued vs running', () => {
   it('reads a phase recorded as queued as "Queued for its release check"', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [proposalVerifying('queued')] };
-    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, proposals));
+    const fixes = { current: [fixVerifying('queued')] };
+    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, fixes));
 
     renderDetail();
     await flush();
@@ -333,8 +333,8 @@ describe('ReleaseDetailPage — verify chip: queued vs running', () => {
 
   it('reads a phase recorded as running as "Checking the fix…"', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [proposalVerifying('running')] };
-    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, proposals));
+    const fixes = { current: [fixVerifying('running')] };
+    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, fixes));
 
     renderDetail();
     await flush();
@@ -343,18 +343,18 @@ describe('ReleaseDetailPage — verify chip: queued vs running', () => {
     expect(screen.queryByText('Queued for its release check')).not.toBeInTheDocument();
   });
 
-  it('flips from queued to running once the next proposal poll observes the updated phase', async () => {
+  it('flips from queued to running once the next fix poll observes the updated phase', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [proposalVerifying('queued')] };
-    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, proposals));
+    const fixes = { current: [fixVerifying('queued')] };
+    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, fixes));
 
     renderDetail();
     await flush();
     expect(screen.getByText('Queued for its release check')).toBeInTheDocument();
 
-    // The release check leaves the queue and starts; the next proposal poll observes
+    // The release check leaves the queue and starts; the next fix poll observes
     // the updated phase and the chip flips without a reload.
-    proposals.current = [proposalVerifying('running')];
+    fixes.current = [fixVerifying('running')];
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     await flush();
 
@@ -364,8 +364,8 @@ describe('ReleaseDetailPage — verify chip: queued vs running', () => {
 
   it('falls back to "Checking the fix…" when the attempt carries no recorded release check phase', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [{ release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'verifying' }] };
-    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, proposals));
+    const fixes = { current: [{ release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'verifying' }] };
+    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, fixes));
 
     renderDetail();
     await flush();

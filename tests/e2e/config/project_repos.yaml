@@ -9,7 +9,7 @@
 # Every project the compose stack can produce a fix for must appear here: a
 # release check is routed by the project root that owns the edited file,
 # so a project missing from the map has its fix recorded as unverifiable rather
-# than being verified, and compile, seed, and duplicate-table proposals for it
+# than being verified, and compile, seed, and duplicate-table fixes for it
 # are skipped outright. Add a project here when a new e2e test proposes a fix
 # for it, then restart agent-remediation.
 projects:

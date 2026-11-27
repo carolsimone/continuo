@@ -9,7 +9,7 @@ import (
 )
 
 // ArtifactWriter implements ports.ArtifactWriter over an object-store writer:
-// it stores proposal artifacts in one bucket and returns their s3:// URIs.
+// it stores fix artifacts in one bucket and returns their s3:// URIs.
 type ArtifactWriter struct {
 	objects objectstore.Writer
 	bucket  string

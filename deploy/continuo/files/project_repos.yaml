@@ -4,7 +4,7 @@
 # <repo_path> with an offending file's path to read the model's source from
 # GitHub — the repo itself comes from the release/remediation trigger — so it can
 # propose a fix. A project with no entry has its fix recorded as unverifiable and
-# its compile/seed/duplicate-table proposals skipped.
+# its compile/seed/duplicate-table fixes skipped.
 #
 # ⚠️  EXAMPLE DATA — NOT FOR PRODUCTION. Every entry below maps one of continuo's
 #     own demo projects (the continuo-demo-docs and continuo-core-finance-demo

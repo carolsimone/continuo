@@ -4,10 +4,10 @@ import { render, screen, fireEvent, waitFor, findByText } from '@testing-library
 import { MemoryRouter } from 'react-router';
 import CreatePrModal from './CreatePrModal';
 import RemediationPanel from './RemediationPanel';
-import { ProposalDTO } from './types';
+import { FixDTO } from './types';
 
 vi.mock('./remediation-api', () => ({
-  fetchProposals: vi.fn(),
+  fetchFixes: vi.fn(),
   createPullRequest: vi.fn(),
 }));
 
@@ -19,16 +19,16 @@ vi.mock('./auth/AuthContext', () => ({
   useCurrentUser: vi.fn(),
 }));
 
-import { fetchProposals, createPullRequest } from './remediation-api';
+import { fetchFixes, createPullRequest } from './remediation-api';
 import { fetchNodeProjects } from './node-api';
 import { useCurrentUser } from './auth/AuthContext';
 
-const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
+const mockFetchFixes = fetchFixes as ReturnType<typeof vi.fn>;
 const mockCreatePullRequest = createPullRequest as ReturnType<typeof vi.fn>;
 const mockFetchNodeProjects = fetchNodeProjects as ReturnType<typeof vi.fn>;
 const mockUseCurrentUser = useCurrentUser as ReturnType<typeof vi.fn>;
 
-const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
+const makeFix = (overrides: Partial<FixDTO> = {}): FixDTO => ({
   id: 'prop-1',
   source: 's3://bucket/key.sql',
   release_id: 'rel-abc',
@@ -57,13 +57,13 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   ...overrides,
 });
 
-function renderModal(proposalOverrides: Partial<ProposalDTO> = {}) {
-  const proposal = makeProposal(proposalOverrides);
+function renderModal(fixOverrides: Partial<FixDTO> = {}) {
+  const fix = makeFix(fixOverrides);
   const onClose = vi.fn();
   const onCreated = vi.fn();
   const { container } = render(
     <MemoryRouter>
-      <CreatePrModal proposal={proposal} onClose={onClose} onCreated={onCreated} />
+      <CreatePrModal fix={fix} onClose={onClose} onCreated={onCreated} />
     </MemoryRouter>
   );
   return { container, onClose, onCreated };
@@ -88,7 +88,7 @@ describe('CreatePrModal', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the modal with proposal context and confirms Create PR button', () => {
+  it('renders the modal with fix context and confirms Create PR button', () => {
     renderModal();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/svc\.schema\.my_model/)).toBeInTheDocument();
@@ -96,7 +96,7 @@ describe('CreatePrModal', () => {
     expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
   });
 
-  it('joins every resolved node for a batched proposal, not just the representative node_id', () => {
+  it('joins every resolved node for a batched fix, not just the representative node_id', () => {
     renderModal({ node_id: 's.a', resolved_node_ids: ['s.a', 's.b'] });
     expect(screen.getByText(/s\.a, s\.b/)).toBeInTheDocument();
   });
@@ -253,9 +253,9 @@ describe('RemediationPanel — Create PR trigger gating', () => {
   it('shows Create PR trigger for operator when source_resolved=true and no pr_url', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
     // status: proposed + source_resolved + no pr_url is exactly the
-    // actionable predicate, so this proposal's card is already open.
-    const proposal = makeProposal({ source_resolved: true, pr_url: '' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    // actionable predicate, so this fix's card is already open.
+    const fix = makeFix({ source_resolved: true, pr_url: '' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -266,8 +266,8 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('does NOT show Create PR trigger for viewer', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u2', email: 'v@x.com', name: 'Viewer', role: 'viewer' });
-    const proposal = makeProposal({ source_resolved: true, pr_url: '' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ source_resolved: true, pr_url: '' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -278,8 +278,8 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('does NOT show Create PR trigger when source_resolved=false', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
-    const proposal = makeProposal({ source_resolved: false, pr_url: '' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ source_resolved: false, pr_url: '' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -293,12 +293,12 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('does NOT show Create PR trigger when pr_url is already set', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
-    const proposal = makeProposal({
+    const fix = makeFix({
       source_resolved: true,
       pr_url: 'https://github.com/org/repo/pull/5',
       pr_state: 'open',
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -315,8 +315,8 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     // opening with no pr_url yet: another operator's request is in flight,
     // or the PR was created but recording it hasn't landed. Either way
     // BeginPullRequest would 409 against the live claim, so no trigger.
-    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: 'opening' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ source_resolved: true, pr_url: '', pr_state: 'opening' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -327,10 +327,10 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
-  it('an auto-expanded actionable proposal shows Create PR for an operator', async () => {
+  it('an auto-expanded actionable fix shows Create PR for an operator', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
-    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const fix = makeFix({ status: 'proposed', source_resolved: true, pr_url: '' });
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -340,15 +340,15 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(screen.getByRole('button', { name: /Create PR/i })).toBeInTheDocument();
   });
 
-  it('an auto-expanded actionable proposal hides Create PR for a viewer, but still shows the card', async () => {
+  it('an auto-expanded actionable fix hides Create PR for a viewer, but still shows the card', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u2', email: 'v@x.com', name: 'Viewer', role: 'viewer' });
-    const proposal = makeProposal({
+    const fix = makeFix({
       status: 'proposed',
       source_resolved: true,
       pr_url: '',
       rationale: 'Adds the missing GROUP BY column.',
     });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
 
@@ -363,16 +363,16 @@ describe('RemediationPanel — Create PR trigger gating', () => {
       pull_requests: [{ project: '', pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 }],
       errors: [],
     });
-    // Realistic actionable proposal: the card is already open, no click needed.
-    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });
+    // Realistic actionable fix: the card is already open, no click needed.
+    const fix = makeFix({ source_resolved: true, pr_url: '', pr_state: '' });
 
     // First call is the initial page load. The second call is the refetch
     // triggered after creation — held open so the test can assert the
     // in-between state before letting the authoritative response land.
-    let resolveRefetch!: (proposals: ProposalDTO[]) => void;
-    const refetchPromise = new Promise<ProposalDTO[]>(resolve => { resolveRefetch = resolve; });
-    mockFetchProposals
-      .mockResolvedValueOnce([proposal])
+    let resolveRefetch!: (fixes: FixDTO[]) => void;
+    const refetchPromise = new Promise<FixDTO[]>(resolve => { resolveRefetch = resolve; });
+    mockFetchFixes
+      .mockResolvedValueOnce([fix])
       .mockReturnValueOnce(refetchPromise);
 
     renderPanel();
@@ -397,13 +397,13 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     });
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
 
-    // Recording the PR against the proposal is best-effort server side, so
+    // Recording the PR against the fix is best-effort server side, so
     // until the refetch resolves the only state the client can honestly
     // claim is 'opening' — the one BeginPullRequest already guaranteed.
     expect(attemptStatusCell('proposed opening')).toBeInTheDocument();
 
     // The refetch lands and reports what the server actually recorded.
-    resolveRefetch([{ ...proposal, pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55, pr_state: 'open' }]);
+    resolveRefetch([{ ...fix, pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55, pr_state: 'open' }]);
 
     await waitFor(() => {
       expect(attemptStatusCell('proposed open')).toBeInTheDocument();
@@ -416,13 +416,13 @@ describe('RemediationPanel — Create PR trigger gating', () => {
       pull_requests: [{ project: '', pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56 }],
       errors: [],
     });
-    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });
+    const fix = makeFix({ source_resolved: true, pr_url: '', pr_state: '' });
 
     // The GitHub PR was created but recordPullRequest failed server side,
     // so the backend is still, honestly, at pr_state='opening'.
-    mockFetchProposals
-      .mockResolvedValueOnce([proposal])
-      .mockResolvedValueOnce([{ ...proposal, pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56, pr_state: 'opening' }]);
+    mockFetchFixes
+      .mockResolvedValueOnce([fix])
+      .mockResolvedValueOnce([{ ...fix, pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56, pr_state: 'opening' }]);
 
     renderPanel();
 

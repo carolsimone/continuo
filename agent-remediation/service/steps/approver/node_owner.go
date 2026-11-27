@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -57,12 +57,12 @@ func (*NodeOwner) Meta() step.Meta {
 // read for good (ports.ErrNotFound) records no owner, and any other read error
 // is logged as a warning and read the same way, so each node falls back to the
 // owner its contract file declares, else none.
-func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]proposal.Approver, error) {
+func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]fix.Approver, error) {
 	nodes := slices.Clone(in.Nodes)
 	slices.Sort(nodes)
 	nodes = slices.Compact(nodes)
 	if len(nodes) == 0 {
-		return []proposal.Approver{}, nil
+		return []fix.Approver{}, nil
 	}
 	owners, err := s.bundle.NodeOwners(ctx, in.Trigger.CodeBundleURI, in.Trigger.ReleaseID, nodes)
 	if err != nil && !errors.Is(err, ports.ErrNotFound) {
@@ -70,10 +70,10 @@ func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]pro
 			"release", in.Trigger.ReleaseID, "nodes", strings.Join(nodes, ", "), "error", err)
 		owners = nil
 	}
-	out := make([]proposal.Approver, 0, len(nodes))
+	out := make([]fix.Approver, 0, len(nodes))
 	for _, id := range nodes {
 		if owner := owners[id]; owner != "" {
-			out = append(out, proposal.Approver{NodeID: id, Owner: owner, Source: model.ApproverSourceBundle})
+			out = append(out, fix.Approver{NodeID: id, Owner: owner, Source: model.ApproverSourceBundle})
 			continue
 		}
 		out = append(out, s.fallback(in.Clusters, id))
@@ -83,11 +83,11 @@ func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]pro
 
 // fallback is the approver of a node the code bundle names no owner for: the
 // owner its contract file declares, else none.
-func (s *NodeOwner) fallback(clusters []step.ClusterDraft, nodeID string) proposal.Approver {
+func (s *NodeOwner) fallback(clusters []step.ClusterDraft, nodeID string) fix.Approver {
 	if owner := s.contractOwner(clusters, nodeID); owner != "" {
-		return proposal.Approver{NodeID: nodeID, Owner: owner, Source: model.ApproverSourceContractFile}
+		return fix.Approver{NodeID: nodeID, Owner: owner, Source: model.ApproverSourceContractFile}
 	}
-	return proposal.Approver{NodeID: nodeID, Source: model.ApproverSourceNone}
+	return fix.Approver{NodeID: nodeID, Source: model.ApproverSourceNone}
 }
 
 // contractOwner is the team.name of the first contract file, among the

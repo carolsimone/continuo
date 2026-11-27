@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -76,7 +76,7 @@ func (e stuckEnder) endIfStuck(ctx context.Context, id uuid.UUID, owner string) 
 	if err := repo.SaveRemediation(ctx, rem); err != nil {
 		return false, fmt.Errorf("save remediation: %w", err)
 	}
-	if err := failAttemptRow(ctx, u.ProposalRepo(), snap, deadLetteredReason(why.reason, rem.ID)); err != nil {
+	if err := failAttemptRow(ctx, u.FixRepo(), snap, deadLetteredReason(why.reason, rem.ID)); err != nil {
 		return false, err
 	}
 	entry, err := deadLetterEntry(snap, why, now)
@@ -192,33 +192,33 @@ func deliveryCount(rem remediation.Remediation, why stuck) int64 {
 	return 1
 }
 
-// failAttemptRow fails the proposal row of the current try's attempt with
-// reason, cleaned (proposal.CleanedReason), by what the row is: an attempt still generating is failed, and an
+// failAttemptRow fails the fix row of the current try's attempt with
+// reason, cleaned (fix.CleanedReason), by what the row is: an attempt still generating is failed, and an
 // attempt whose release checks are still being judged is failed as a release
 // check that did not pass, with the checks it recorded. A try with no row of its own leaves
 // the release's in-flight row failed, if it has one. Any other row already
 // says how its attempt ended.
-func failAttemptRow(ctx context.Context, repo repository.ProposalRepository, snap remediation.Snapshot, reason string) error {
+func failAttemptRow(ctx context.Context, repo repository.FixRepository, snap remediation.Snapshot, reason string) error {
 	// The reason holds the last error of a step, which can echo what a source or a
 	// service printed, and the row shows it.
-	reason = proposal.CleanedReason(reason)
+	reason = fix.CleanedReason(reason)
 	releaseID := snap.Remediation.ReleaseID
 	if snap.Try != nil {
-		views, err := repo.List(ctx, repository.ProposalFilter{ReleaseID: releaseID})
+		views, err := repo.List(ctx, repository.FixFilter{ReleaseID: releaseID})
 		if err != nil {
-			return fmt.Errorf("list the proposals of release %s: %w", releaseID, err)
+			return fmt.Errorf("list the fixes of release %s: %w", releaseID, err)
 		}
 		for _, v := range views {
 			if v.Attempt != snap.Try.Attempt {
 				continue
 			}
 			switch v.Status {
-			case proposal.StatusVerifying:
+			case fix.StatusVerifying:
 				if _, err := repo.MarkVerifyFailed(ctx, v.ID, reason, v.ReleaseChecks); err != nil {
 					return fmt.Errorf("fail the verifying attempt row: %w", err)
 				}
 				return nil
-			case proposal.StatusGenerating:
+			case fix.StatusGenerating:
 				if _, err := repo.FailGenerating(ctx, releaseID, reason); err != nil {
 					return fmt.Errorf("fail the in-flight attempt row: %w", err)
 				}

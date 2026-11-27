@@ -79,7 +79,7 @@ func TestCypherGuard_FailsAStatementWithoutTheTenant(t *testing.T) {
 		{"reached through a relationship",
 			"`MATCH (n:Node {tenant_id: $tenant_id})-[:CURRENT]->(v:NodeVersion) RETURN v`", "(v:NodeVersion)"},
 		{"in an EXISTS subquery",
-			"`MATCH (r:Rejection {tenant_id: $tenant_id}) RETURN exists { (r)-[:RESOLVED_BY]->(:Proposal) } AS x`", "(:Proposal)"},
+			"`MATCH (r:Rejection {tenant_id: $tenant_id}) RETURN exists { (r)-[:RESOLVED_BY]->(:Fix) } AS x`", "(:Fix)"},
 		{"tenant read from another node",
 			"`MATCH (n:Node {tenant_id: $tenant_id}) MATCH (m:Meta {tenant_id: n.tenant_id}) RETURN m`", "(m:Meta {tenant_id: n.tenant_id})"},
 		{"another parameter", "`MATCH (n:Node {tenant_id: $tenant}) RETURN n`", "(n:Node {tenant_id: $tenant})"},
@@ -124,7 +124,7 @@ func TestCypherGuard_AcceptsTenantBoundStatements(t *testing.T) {
 	statements := []string{
 		"`MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid})-[:CURRENT]->(v:NodeVersion {tenant_id: $tenant_id}) RETURN v`",
 		"`MERGE (m:Meta {key: 'export', tenant_id: $tenant_id}) RETURN m`",
-		"`MATCH (rej:Rejection {tenant_id: $tenant_id}) OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res) WHERE res:NodeVersion OR res:Proposal RETURN res`",
+		"`MATCH (rej:Rejection {tenant_id: $tenant_id}) OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res) WHERE res:NodeVersion OR res:Fix RETURN res`",
 		"`MATCH (n:Node {tenant_id: $tenant_id}) RETURN coalesce(n.active, true), count(DISTINCT n), duration({days: $d}), collect(n { .unique_id, x: coalesce(n.a, n.b) })`",
 		"`MATCH (n:Node {\n\t\ttenant_id: $tenant_id,\n\t\tunique_id: $uid\n\t}) RETURN n`",
 		`"no statement here (x: y)"`,

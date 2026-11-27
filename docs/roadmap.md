@@ -77,9 +77,9 @@ the CLI covers schedules (list, status, runs, graph, build, test, trigger,
 cancel, and their crons: set-cron, remove-cron, pause, resume), runs (show,
 graph, attempts, cancel, rerun, rebase), single nodes (build, test, trigger,
 diff, history, versions, upstream changes, code units), and failure precedents.
-The UI can do more: browse releases and their fixes' release checks, read the
+The UI can do more: browse releases and the release checks of their fixes, read the
 release log and the live release, list and inspect remediation
-proposals, open a proposal's fix PR, retry remediation on a rejected release,
+fixes, open a fix's pull request, retry remediation on a rejected release,
 and read a task's execution logs. The goal is one CLI command for every read and every action the
 UI offers, so the chat agent can do anything an operator can do from the
 dashboard. Mutating commands carry the `mutating` annotation in `describe`, so

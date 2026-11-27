@@ -1166,8 +1166,8 @@ Rules:
   red, `--open` indigo, anything else the grey base), prefixed by their
   service via `.pr-chip-labeled` (11px muted `__service` + chip, never split
   across lines) and laid out in one wrapping `.remediation-prs` row — a
-  proposal split across many services stays one compact cell.
-- Status pills for remediation attempts come from `proposalPillClass`
+  fix split across many services stays one compact cell.
+- Status pills for remediation attempts come from `fixPillClass`
   (`release-helpers.ts`), not `releasePillClass`: `proposed` → succeeded,
   `verifying` → running, `generating` → pending, `failed`/`escalated` →
   failed, `skipped` → skipped. Do not map a new lifecycle vocabulary through
@@ -1299,7 +1299,7 @@ const showCard = isActionable(p) || isSelected;
 // Whichever row sits directly above its own card — auto-expanded or
 // manually selected — drops its border so it doesn't draw a hairline
 // against that card. The card row keeps its own border; that's what
-// separates it from the next proposal.
+// separates it from the next fix.
 const compactRowClass = [
   isActionable(p) ? 'nodes-row--static' : '',
   isSelected ? 'nodes-row--selected' : '',
@@ -1341,7 +1341,7 @@ const compactRowClass = [
 /* Applied to whichever row sits directly above its own expanded card —
    auto-expanded or manually selected, either way — so the two don't draw a
    hairline against each other. The card row itself keeps its border,
-   which is what separates it from the next proposal row. */
+   which is what separates it from the next fix row. */
 .nodes-table tbody tr.nodes-row--no-border { border-bottom: none; }
 ```
 
@@ -1402,7 +1402,7 @@ Rules:
   `.nodes-row--static`/`.nodes-row--selected`, since a manually-selected row
   needs the no-border treatment too, not just an auto-expanded one. Never
   put `border-bottom: none` on the card row itself; the card row's border is
-  what separates one proposal's card from the next proposal's row.
+  what separates one fix's card from the next fix's row.
 
 ## Run status bar and counts
 

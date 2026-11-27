@@ -66,7 +66,7 @@ type CodeVersionRepository interface {
 
 // CaseBaseRepository writes a tenant's failure-precedent case base. Every
 // write is an idempotent MERGE on natural identity within the tenant, so
-// redeliveries and out-of-order arrival converge: a proposal landing before
+// redeliveries and out-of-order arrival converge: a fix landing before
 // its rejection creates a stub the rejection later fills. It links a
 // rejection or a fix PR's edit to the tenant's :Node only when the node
 // exists, a retired node included, and never creates a :Node: the topology
@@ -77,14 +77,14 @@ type CaseBaseRepository interface {
 	// back-links [:RESOLVED_BY] when a version newer than the rejection is
 	// already recorded.
 	RecordRejection(ctx context.Context, tenantID string, r casebase.Rejection) error
-	// RecordProposal upserts the proposal, its [:PROPOSED] edge, and the PR
-	// facts on the linked :PullRequest node (keyed by proposal_id + project).
-	RecordProposal(ctx context.Context, tenantID string, p casebase.Proposal, pr casebase.PullRequest) error
+	// RecordFix upserts the fix, its [:PROPOSED] edge, and the PR
+	// facts on the linked :PullRequest node (keyed by fix_id + project).
+	RecordFix(ctx context.Context, tenantID string, p casebase.Fix, pr casebase.PullRequest) error
 	// RecordPullRequestOutcome stamps a fix PR's terminal state on its
 	// :PullRequest node and, on a merged outcome, draws the case-base
 	// provenance edges: [:RESOLVED_BY] from each resolved :Rejection to the
-	// shared :Proposal (creating stub rejections when absent) and [:EDITED]
-	// from that :Proposal to each edit's :Node (skipped when the :Node is
+	// shared :Fix (creating stub rejections when absent) and [:EDITED]
+	// from that :Fix to each edit's :Node (skipped when the :Node is
 	// absent). A rejected outcome only stamps the terminal state. Idempotent
 	// under redelivery.
 	RecordPullRequestOutcome(ctx context.Context, tenantID string, o casebase.PullRequestOutcome) error

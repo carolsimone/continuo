@@ -1259,12 +1259,12 @@ func (x *GetPrecedentsRequest) GetIncludeCode() bool {
 	return false
 }
 
-// PrecedentProposal is one fix PR opened for a precedent's rejection.
-type PrecedentProposal struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	ProposalId string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
-	PrUrl      string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
-	PrNumber   int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
+// PrecedentFix is one fix PR opened for a precedent's rejection.
+type PrecedentFix struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	FixId    string                 `protobuf:"bytes,1,opt,name=fix_id,json=fixId,proto3" json:"fix_id,omitempty"`
+	PrUrl    string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
+	PrNumber int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
 	// pr_state is the PR's live state: open until the close-loop mirrors a
 	// terminal outcome, merged/rejected afterwards; rows recorded before the
 	// per-PR split keep the open-time snapshot.
@@ -1273,20 +1273,20 @@ type PrecedentProposal struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *PrecedentProposal) Reset() {
-	*x = PrecedentProposal{}
+func (x *PrecedentFix) Reset() {
+	*x = PrecedentFix{}
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *PrecedentProposal) String() string {
+func (x *PrecedentFix) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*PrecedentProposal) ProtoMessage() {}
+func (*PrecedentFix) ProtoMessage() {}
 
-func (x *PrecedentProposal) ProtoReflect() protoreflect.Message {
+func (x *PrecedentFix) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1298,33 +1298,33 @@ func (x *PrecedentProposal) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use PrecedentProposal.ProtoReflect.Descriptor instead.
-func (*PrecedentProposal) Descriptor() ([]byte, []int) {
+// Deprecated: Use PrecedentFix.ProtoReflect.Descriptor instead.
+func (*PrecedentFix) Descriptor() ([]byte, []int) {
 	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{17}
 }
 
-func (x *PrecedentProposal) GetProposalId() string {
+func (x *PrecedentFix) GetFixId() string {
 	if x != nil {
-		return x.ProposalId
+		return x.FixId
 	}
 	return ""
 }
 
-func (x *PrecedentProposal) GetPrUrl() string {
+func (x *PrecedentFix) GetPrUrl() string {
 	if x != nil {
 		return x.PrUrl
 	}
 	return ""
 }
 
-func (x *PrecedentProposal) GetPrNumber() int32 {
+func (x *PrecedentFix) GetPrNumber() int32 {
 	if x != nil {
 		return x.PrNumber
 	}
 	return 0
 }
 
-func (x *PrecedentProposal) GetPrState() string {
+func (x *PrecedentFix) GetPrState() string {
 	if x != nil {
 		return x.PrState
 	}
@@ -1336,7 +1336,7 @@ func (x *PrecedentProposal) GetPrState() string {
 // ancestor of the rejected node rather than the rejected node itself. diff is
 // the merged-truth diff (the version the merge superseded to the promoted
 // merged version) when the edit was amended and a promoted version straddles
-// the merge, otherwise the proposal's own edit diff.
+// the merge, otherwise the fix's own edit diff.
 type PrecedentEdit struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	NodeId  string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
@@ -1346,7 +1346,7 @@ type PrecedentEdit struct {
 	// diff_is_shipped is true only when diff was rendered from the promoted
 	// merged NodeVersion — the code that actually shipped. It is false when the
 	// edit was amended but no post-close version straddle was found yet, so diff
-	// fell back to the proposal-time diff: consumers must not then claim the diff
+	// fell back to the diff the fix proposed: consumers must not then claim the diff
 	// is what shipped.
 	DiffIsShipped bool `protobuf:"varint,5,opt,name=diff_is_shipped,json=diffIsShipped,proto3" json:"diff_is_shipped,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1437,9 +1437,9 @@ type Precedent struct {
 	ResolvingVersion *VersionView `protobuf:"bytes,10,opt,name=resolving_version,json=resolvingVersion,proto3" json:"resolving_version,omitempty"`
 	// resolution_diff is a unified diff from the version the fix superseded to
 	// the resolving version; "" when unresolved or no prior version exists.
-	ResolutionDiff          string               `protobuf:"bytes,11,opt,name=resolution_diff,json=resolutionDiff,proto3" json:"resolution_diff,omitempty"`
-	ResolutionDiffTruncated bool                 `protobuf:"varint,12,opt,name=resolution_diff_truncated,json=resolutionDiffTruncated,proto3" json:"resolution_diff_truncated,omitempty"`
-	Proposals               []*PrecedentProposal `protobuf:"bytes,13,rep,name=proposals,proto3" json:"proposals,omitempty"`
+	ResolutionDiff          string          `protobuf:"bytes,11,opt,name=resolution_diff,json=resolutionDiff,proto3" json:"resolution_diff,omitempty"`
+	ResolutionDiffTruncated bool            `protobuf:"varint,12,opt,name=resolution_diff_truncated,json=resolutionDiffTruncated,proto3" json:"resolution_diff_truncated,omitempty"`
+	Fixes                   []*PrecedentFix `protobuf:"bytes,13,rep,name=fixes,proto3" json:"fixes,omitempty"`
 	// edited carries the provenance of a merged fix PR that resolved this
 	// rejection: one entry per node the PR edited.
 	Edited        []*PrecedentEdit `protobuf:"bytes,14,rep,name=edited,proto3" json:"edited,omitempty"`
@@ -1561,9 +1561,9 @@ func (x *Precedent) GetResolutionDiffTruncated() bool {
 	return false
 }
 
-func (x *Precedent) GetProposals() []*PrecedentProposal {
+func (x *Precedent) GetFixes() []*PrecedentFix {
 	if x != nil {
-		return x.Proposals
+		return x.Fixes
 	}
 	return nil
 }
@@ -2211,10 +2211,9 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\bcategory\x18\x02 \x01(\tR\bcategory\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x14\n" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12!\n" +
-	"\finclude_code\x18\x05 \x01(\bR\vincludeCode\"\x83\x01\n" +
-	"\x11PrecedentProposal\x12\x1f\n" +
-	"\vproposal_id\x18\x01 \x01(\tR\n" +
-	"proposalId\x12\x15\n" +
+	"\finclude_code\x18\x05 \x01(\bR\vincludeCode\"t\n" +
+	"\fPrecedentFix\x12\x15\n" +
+	"\x06fix_id\x18\x01 \x01(\tR\x05fixId\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +
 	"\tpr_number\x18\x03 \x01(\x05R\bprNumber\x12\x19\n" +
 	"\bpr_state\x18\x04 \x01(\tR\aprState\"\x92\x01\n" +
@@ -2223,7 +2222,7 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x18\n" +
 	"\aamended\x18\x03 \x01(\bR\aamended\x12\x12\n" +
 	"\x04diff\x18\x04 \x01(\tR\x04diff\x12&\n" +
-	"\x0fdiff_is_shipped\x18\x05 \x01(\bR\rdiffIsShipped\"\xad\x04\n" +
+	"\x0fdiff_is_shipped\x18\x05 \x01(\bR\rdiffIsShipped\"\xa0\x04\n" +
 	"\tPrecedent\x12\x1d\n" +
 	"\n" +
 	"release_id\x18\x01 \x01(\tR\treleaseId\x12\x17\n" +
@@ -2239,8 +2238,8 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\x11resolving_version\x18\n" +
 	" \x01(\v2\x17.catalog.v1.VersionViewR\x10resolvingVersion\x12'\n" +
 	"\x0fresolution_diff\x18\v \x01(\tR\x0eresolutionDiff\x12:\n" +
-	"\x19resolution_diff_truncated\x18\f \x01(\bR\x17resolutionDiffTruncated\x12;\n" +
-	"\tproposals\x18\r \x03(\v2\x1d.catalog.v1.PrecedentProposalR\tproposals\x121\n" +
+	"\x19resolution_diff_truncated\x18\f \x01(\bR\x17resolutionDiffTruncated\x12.\n" +
+	"\x05fixes\x18\r \x03(\v2\x18.catalog.v1.PrecedentFixR\x05fixes\x121\n" +
 	"\x06edited\x18\x0e \x03(\v2\x19.catalog.v1.PrecedentEditR\x06edited\"N\n" +
 	"\x15GetPrecedentsResponse\x125\n" +
 	"\n" +
@@ -2328,7 +2327,7 @@ var file_proto_catalog_v1_catalog_proto_goTypes = []any{
 	(*GetCodeUnitVersionsRequest)(nil),       // 14: catalog.v1.GetCodeUnitVersionsRequest
 	(*GetCodeUnitVersionsResponse)(nil),      // 15: catalog.v1.GetCodeUnitVersionsResponse
 	(*GetPrecedentsRequest)(nil),             // 16: catalog.v1.GetPrecedentsRequest
-	(*PrecedentProposal)(nil),                // 17: catalog.v1.PrecedentProposal
+	(*PrecedentFix)(nil),                     // 17: catalog.v1.PrecedentFix
 	(*PrecedentEdit)(nil),                    // 18: catalog.v1.PrecedentEdit
 	(*Precedent)(nil),                        // 19: catalog.v1.Precedent
 	(*GetPrecedentsResponse)(nil),            // 20: catalog.v1.GetPrecedentsResponse
@@ -2350,7 +2349,7 @@ var file_proto_catalog_v1_catalog_proto_depIdxs = []int32{
 	6,  // 5: catalog.v1.GetUpstreamChangesResponse.changes:type_name -> catalog.v1.UpstreamChange
 	7,  // 6: catalog.v1.GetCodeUnitVersionsResponse.versions:type_name -> catalog.v1.UnitVersionView
 	4,  // 7: catalog.v1.Precedent.resolving_version:type_name -> catalog.v1.VersionView
-	17, // 8: catalog.v1.Precedent.proposals:type_name -> catalog.v1.PrecedentProposal
+	17, // 8: catalog.v1.Precedent.fixes:type_name -> catalog.v1.PrecedentFix
 	18, // 9: catalog.v1.Precedent.edited:type_name -> catalog.v1.PrecedentEdit
 	19, // 10: catalog.v1.GetPrecedentsResponse.precedents:type_name -> catalog.v1.Precedent
 	21, // 11: catalog.v1.GetNodeContractResponse.contract:type_name -> catalog.v1.ContractVersionView

@@ -15,7 +15,7 @@ import (
 )
 
 const prClosedPayload = `{
-	"proposal_id": "prop-1",
+	"fix_id": "fix-1",
 	"release_id": "rel-1",
 	"node_id": "analytics.revenue",
 	"resolved_node_ids": ["analytics.revenue", "analytics.margin"],
@@ -38,7 +38,7 @@ func TestParsePRClosed_HappyPath(t *testing.T) {
 	tenantID, evt, err := ParsePRClosed(msg)
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-7", tenantID, "the tenant is the entry's tenant_id field")
-	assert.Equal(t, "prop-1", evt.ProposalID)
+	assert.Equal(t, "fix-1", evt.FixID)
 	assert.Equal(t, "rel-1", evt.ReleaseID)
 	assert.Equal(t, "analytics.revenue", evt.NodeID)
 	assert.Equal(t, []string{"analytics.revenue", "analytics.margin"}, evt.ResolvedNodeIDs)
@@ -104,7 +104,7 @@ func TestPrClosedBinding_PassesTheTenant(t *testing.T) {
 	}}))
 	require.Len(t, u.lookups, 1)
 	assert.Equal(t, "tenant-7", u.lookups[0].TenantID)
-	assert.Equal(t, streams.CatalogRemediationPrClosedProvenance, u.lookups[0].Group)
+	assert.Equal(t, streams.CatalogFixPrClosedProvenance, u.lookups[0].Group)
 	require.NotNil(t, u.lookups[0].OutboxEntryID)
 	assert.Equal(t, "6e1d0a4c-6b0e-4d55-8c55-3f7d1f2e9a10", u.lookups[0].OutboxEntryID.String())
 

@@ -15,7 +15,7 @@ import (
 )
 
 const prOpenedPayload = `{
-	"proposal_id": "prop-1",
+	"fix_id": "fix-1",
 	"release_id": "rel-1",
 	"node_id": "analytics.revenue",
 	"pr_url": "https://github.com/org/repo/pull/42",
@@ -33,7 +33,7 @@ func TestParsePROpened_HappyPath(t *testing.T) {
 	tenantID, evt, err := ParsePROpened(msg)
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-7", tenantID, "the tenant is the entry's tenant_id field")
-	assert.Equal(t, "prop-1", evt.ProposalID)
+	assert.Equal(t, "fix-1", evt.FixID)
 	assert.Equal(t, "rel-1", evt.ReleaseID)
 	assert.Equal(t, "analytics.revenue", evt.NodeID)
 	assert.Equal(t, "https://github.com/org/repo/pull/42", evt.PrURL)
@@ -79,12 +79,12 @@ func TestParsePROpened_BadJSON(t *testing.T) {
 	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
-// The entry's tenant reaches the proposals group's marker, with the entry's
+// The entry's tenant reaches the fixes group's marker, with the entry's
 // outbox entry id; an entry without a tenant never reaches the handler.
 func TestPrOpenedBinding_PassesTheTenant(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	u := &processedUnitOfWork{}
-	binding := NewPrOpenedBinding(handlers.NewPrOpenedProposalsHandler(u, logger), logger)
+	binding := NewPrOpenedBinding(handlers.NewPrOpenedFixesHandler(u, logger), logger)
 
 	require.NoError(t, binding(context.Background(), goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
 		"payload": prOpenedPayload, "tenant_id": "tenant-7",
@@ -92,7 +92,7 @@ func TestPrOpenedBinding_PassesTheTenant(t *testing.T) {
 	}}))
 	require.Len(t, u.lookups, 1)
 	assert.Equal(t, "tenant-7", u.lookups[0].TenantID)
-	assert.Equal(t, streams.CatalogRemediationPrOpenedProposals, u.lookups[0].Group)
+	assert.Equal(t, streams.CatalogFixPrOpenedFixes, u.lookups[0].Group)
 	require.NotNil(t, u.lookups[0].OutboxEntryID)
 	assert.Equal(t, "6e1d0a4c-6b0e-4d55-8c55-3f7d1f2e9a10", u.lookups[0].OutboxEntryID.String())
 

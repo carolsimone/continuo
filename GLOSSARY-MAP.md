@@ -11,7 +11,7 @@ continuo has one glossary for the words its components share and one per compone
 | release-controller | [`release-controller/GLOSSARY.md`](release-controller/GLOSSARY.md) | Candidate releases, the release check, promotion |
 | topology-controller | [`topology-controller/GLOSSARY.md`](topology-controller/GLOSSARY.md) | Parsing releases into a topology and contracts |
 | remediation | [`remediation/GLOSSARY.md`](remediation/GLOSSARY.md) | Classifying a rejected release's failures |
-| agent-remediation | [`agent-remediation/GLOSSARY.md`](agent-remediation/GLOSSARY.md) | Fix proposals: tries, rounds, clusters, steps, hand-overs |
+| agent-remediation | [`agent-remediation/GLOSSARY.md`](agent-remediation/GLOSSARY.md) | Fixes: tries, rounds, clusters, steps, hand-overs |
 | agent-chat | [`agent-chat/GLOSSARY.md`](agent-chat/GLOSSARY.md) | The chat and its tool calls |
 | dead-letter-controller | [`dead-letter-controller/GLOSSARY.md`](dead-letter-controller/GLOSSARY.md) | Dead letters and redrives |
 | egress-proxy | [`egress-proxy/GLOSSARY.md`](egress-proxy/GLOSSARY.md) | Outbound traffic allowlist |

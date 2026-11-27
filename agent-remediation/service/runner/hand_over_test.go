@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -63,7 +63,7 @@ func handedOverOf(id uuid.UUID, round, tries int, nodes ...events.HandedOverNode
 }
 
 // handedOverNode is node handed over with outcome o.
-func handedOverNode(node string, o proposal.NodeOutcome) events.HandedOverNode {
+func handedOverNode(node string, o fix.NodeOutcome) events.HandedOverNode {
 	return events.HandedOverNode{NodeID: node, Reason: string(o.Code), Message: o.Reason}
 }
 
@@ -93,12 +93,12 @@ func TestHandOver_AFullyFixedRemediationEmitsNothing(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a"), compileNode("svc-b")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
 	assert.Len(t, h.proposedEvents(), 1)
 	assert.Empty(t, h.handedOverEvents())
 	assert.Empty(t, h.flowRows(id, 1)["hand_over"], "no output row is saved for an output that did not run")
@@ -112,15 +112,15 @@ func TestRunner_APassedRemediationHandsOverOnlyItsDeclinedNodes(t *testing.T) {
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 
-	declined := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: noFileReason, Code: model.HandoverReasonDeclined}
-	p := h.attempt(1).Proposal
-	assert.Equal(t, proposal.StatusProposed, p.Status)
-	assert.Equal(t, map[string]proposal.NodeOutcome{
-		"svc-a": {Status: proposal.StatusProposed},
+	declined := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: noFileReason, Code: model.HandoverReasonDeclined}
+	p := h.attempt(1).Fix
+	assert.Equal(t, fix.StatusProposed, p.Status)
+	assert.Equal(t, map[string]fix.NodeOutcome{
+		"svc-a": {Status: fix.StatusProposed},
 		"svc-b": declined,
 	}, p.NodeOutcomes)
 	assert.Len(t, h.proposedEvents(), 1)
@@ -172,7 +172,7 @@ func TestRunner_AMaintenanceRemediationWithNoUnfixableNodeEmitsNothing(t *testin
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	assert.Equal(t, proposal.StatusSkipped, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusSkipped, h.attempt(1).Fix.Status)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.store.OutboxEntries())
 }
@@ -186,7 +186,7 @@ func TestRunner_AMaintenanceRemediationHandsOverItsUnfixableNodes(t *testing.T) 
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	assert.Equal(t, proposal.StatusSkipped, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusSkipped, h.attempt(1).Fix.Status)
 	assert.Equal(t, handedOverOf(id, 1, 0,
 		events.HandedOverNode{NodeID: "svc-a", Reason: string(model.HandoverReasonClassifierInfra), Message: detail},
 	), h.handedOverEvent())
@@ -224,7 +224,7 @@ func TestRunner_TriesSpent(t *testing.T) {
 		}
 		return fixAnswer(req)
 	}
-	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+	h.checks.answer(fix.PhaseFailed, map[string]string{"svc-a": "still broken"})
 	noFile := compileNode("core")
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile",
@@ -237,18 +237,18 @@ func TestRunner_TriesSpent(t *testing.T) {
 		require.NoError(t, h.poll(id))
 	}
 
-	spent := proposal.NodeOutcome{
-		Status: proposal.StatusEscalated,
+	spent := fix.NodeOutcome{
+		Status: fix.StatusEscalated,
 		Reason: "tried 3 times; the last try failed: svc-a: still broken",
 		Code:   model.HandoverReasonTriesSpent,
 	}
-	roundsSpent := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent}
-	declined := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: noFileReason, Code: model.HandoverReasonDeclined}
-	classifier := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: detail, Code: model.HandoverReasonClassifierInfra}
-	escalated := h.attempt(4).Proposal
-	assert.Equal(t, proposal.StatusEscalated, escalated.Status)
+	roundsSpent := fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent}
+	declined := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: noFileReason, Code: model.HandoverReasonDeclined}
+	classifier := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: detail, Code: model.HandoverReasonClassifierInfra}
+	escalated := h.attempt(4).Fix
+	assert.Equal(t, fix.StatusEscalated, escalated.Status)
 	assert.Equal(t, id.String(), escalated.RemediationID)
-	assert.Equal(t, map[string]proposal.NodeOutcome{
+	assert.Equal(t, map[string]fix.NodeOutcome{
 		"svc-a": spent,
 		"svc-b": roundsSpent,
 		"core":  declined,
@@ -287,16 +287,16 @@ func TestRunner_UnverifiableEdits(t *testing.T) {
 				require.NoError(t, h.drive(id))
 			}
 
-			unverifiable := proposal.NodeOutcome{
-				Status: proposal.StatusEscalated,
+			unverifiable := fix.NodeOutcome{
+				Status: fix.StatusEscalated,
 				Reason: "tried 2 times; the last try failed: " + twoEditsReason,
 				Code:   model.HandoverReasonUnverifiableEdits,
 			}
-			noType := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: dbtTestReason, Code: model.HandoverReasonNoType}
+			noType := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: dbtTestReason, Code: model.HandoverReasonNoType}
 			require.Len(t, h.store.Tries(id), 2, "both tries ran")
-			escalated := h.attempt(3).Proposal
-			assert.Equal(t, proposal.StatusEscalated, escalated.Status)
-			assert.Equal(t, map[string]proposal.NodeOutcome{
+			escalated := h.attempt(3).Fix
+			assert.Equal(t, fix.StatusEscalated, escalated.Status)
+			assert.Equal(t, map[string]fix.NodeOutcome{
 				"svc-a": unverifiable,
 				"core":  unverifiable,
 				"svc-b": noType,
@@ -319,10 +319,10 @@ func TestRunner_UnverifiableEdits(t *testing.T) {
 // escalated with how many times the round was tried alone.
 func TestRunner_TheEscalatedRowContinuesTheReleasesAttempts(t *testing.T) {
 	h := newHarness(t)
-	h.attemptWithNoRemediationInRound(1, 1, proposal.StatusFailed)
-	h.attemptWithNoRemediationInRound(1, 2, proposal.StatusEscalated)
+	h.attemptWithNoRemediationInRound(1, 1, fix.StatusFailed)
+	h.attemptWithNoRemediationInRound(1, 2, fix.StatusEscalated)
 	for attempt := 3; attempt <= 5; attempt++ {
-		h.attemptWithNoRemediationInRound(2, attempt, proposal.StatusFailed)
+		h.attemptWithNoRemediationInRound(2, attempt, fix.StatusFailed)
 	}
 	trig := trigger("compile", compileNode("svc-a"))
 	trig.Round = 2
@@ -330,11 +330,11 @@ func TestRunner_TheEscalatedRowContinuesTheReleasesAttempts(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	spent := proposal.NodeOutcome{Status: proposal.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
-	escalated := h.attempt(6).Proposal
-	assert.Equal(t, proposal.StatusEscalated, escalated.Status)
+	spent := fix.NodeOutcome{Status: fix.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
+	escalated := h.attempt(6).Fix
+	assert.Equal(t, fix.StatusEscalated, escalated.Status)
 	assert.Equal(t, 2, escalated.RemediationRound)
-	assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": spent}, escalated.NodeOutcomes)
+	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, escalated.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 2, 0, handedOverNode("svc-a", spent)), h.handedOverEvent())
 	assert.Empty(t, h.store.Tries(id))
 	assert.Empty(t, h.store.Steps(id), "a remediation with no try records no output row")
@@ -345,15 +345,15 @@ func TestRunner_TheEscalatedRowContinuesTheReleasesAttempts(t *testing.T) {
 func TestRunner_TheEscalatedRowFinalizesAnInFlightRowOfItsAttempt(t *testing.T) {
 	h := newHarness(t)
 	for attempt := 1; attempt <= 3; attempt++ {
-		h.attemptWithNoRemediation(attempt, proposal.StatusFailed)
+		h.attemptWithNoRemediation(attempt, fix.StatusFailed)
 	}
-	h.attemptWithNoRemediation(4, proposal.StatusGenerating)
+	h.attemptWithNoRemediation(4, fix.StatusGenerating)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	require.Len(t, h.proposals(), 4, "the escalated row finalizes the in-flight row of attempt 4")
-	escalated := h.attempt(4).Proposal
-	assert.Equal(t, proposal.StatusEscalated, escalated.Status)
+	require.Len(t, h.fixes(), 4, "the escalated row finalizes the in-flight row of attempt 4")
+	escalated := h.attempt(4).Fix
+	assert.Equal(t, fix.StatusEscalated, escalated.Status)
 	assert.Equal(t, id.String(), escalated.RemediationID)
 }

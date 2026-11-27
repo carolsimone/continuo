@@ -21,7 +21,7 @@ import (
 
 func prClosedMergedInput() domainEvent.PRClosed {
 	return domainEvent.PRClosed{
-		ProposalID:      "prop-1",
+		FixID:           "fix-1",
 		ReleaseID:       "rel-1",
 		NodeID:          "analytics.revenue",
 		ResolvedNodeIDs: []string{"analytics.revenue", "analytics.margin"},
@@ -38,7 +38,7 @@ func prClosedMergedInput() domainEvent.PRClosed {
 }
 
 func provenanceMarker(messageID string, outboxEntryID *uuid.UUID) uow.Marker {
-	return caseBaseMarker(streams.CatalogRemediationPrClosedProvenance, messageID, outboxEntryID)
+	return caseBaseMarker(streams.CatalogFixPrClosedProvenance, messageID, outboxEntryID)
 }
 
 func newPrClosedProvenanceHandler(u uow.UnitOfWork) *handlers.PrClosedProvenanceHandler {
@@ -62,7 +62,7 @@ func TestPrClosedProvenanceHandler_RecordsMergedOutcome(t *testing.T) {
 	require.Len(t, repo.recordOutcomeCalls, 1)
 	assert.Equal(t, []string{caseBaseTenant}, repo.tenants, "the outcome is recorded under the message's tenant")
 	o := repo.recordOutcomeCalls[0]
-	assert.Equal(t, "prop-1", o.ProposalID)
+	assert.Equal(t, "fix-1", o.FixID)
 	assert.Equal(t, "rel-1", o.ReleaseID)
 	assert.Equal(t, "core", o.Project)
 	assert.Equal(t, "merged", o.Outcome)
@@ -92,14 +92,14 @@ func TestPrClosedProvenanceHandler_RecordsRejectedOutcome(t *testing.T) {
 	u := newCaseBaseUnitOfWork(repo)
 
 	in := domainEvent.PRClosed{
-		ProposalID: "prop-1",
-		ReleaseID:  "rel-1",
-		NodeID:     "analytics.revenue",
-		Project:    "core",
-		PrURL:      "https://github.com/org/repo/pull/42",
-		PrNumber:   42,
-		Outcome:    "rejected",
-		ClosedAt:   "2026-08-14T11:30:00Z",
+		FixID:     "fix-1",
+		ReleaseID: "rel-1",
+		NodeID:    "analytics.revenue",
+		Project:   "core",
+		PrURL:     "https://github.com/org/repo/pull/42",
+		PrNumber:  42,
+		Outcome:   "rejected",
+		ClosedAt:  "2026-08-14T11:30:00Z",
 	}
 	require.NoError(t, newPrClosedProvenanceHandler(u).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
 
@@ -119,12 +119,12 @@ func TestPrClosedProvenanceHandler_MergedWithoutResolvedNodesDrawsNothing(t *tes
 	u := newCaseBaseUnitOfWork(repo)
 
 	in := domainEvent.PRClosed{
-		ProposalID: "prop-1",
-		ReleaseID:  "rel-1",
-		NodeID:     "analytics.revenue",
-		Project:    "core",
-		Outcome:    "merged",
-		ClosedAt:   "2026-08-14T11:30:00Z",
+		FixID:     "fix-1",
+		ReleaseID: "rel-1",
+		NodeID:    "analytics.revenue",
+		Project:   "core",
+		Outcome:   "merged",
+		ClosedAt:  "2026-08-14T11:30:00Z",
 	}
 	require.NoError(t, newPrClosedProvenanceHandler(u).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
 
@@ -143,7 +143,7 @@ func TestPrClosedProvenanceHandler_PoisonPayloadIsPermanent(t *testing.T) {
 		name   string
 		mutate func(*domainEvent.PRClosed)
 	}{
-		{"empty proposal_id", func(in *domainEvent.PRClosed) { in.ProposalID = "" }},
+		{"empty fix_id", func(in *domainEvent.PRClosed) { in.FixID = "" }},
 		{"empty release_id", func(in *domainEvent.PRClosed) { in.ReleaseID = "" }},
 		{"unparseable closed_at", func(in *domainEvent.PRClosed) { in.ClosedAt = "not-a-time" }},
 	} {

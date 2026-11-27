@@ -1,6 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { NodeValidationResult } from './types';
-import { groupByStage, proposalKey, releasePillClass, stageLabel } from './release-helpers';
+import { groupByStage, fixKey, releasePillClass, stageLabel } from './release-helpers';
 
 // LogView renders a node's dbt log: a toggle that fetches and shows the log
 // inline on first open, and a link to the full log in a new tab. Shared by
@@ -87,7 +87,7 @@ export function NodeResultsTable({ perNode, fixCell }: {
                   ? (n.status === 'ok' ? 'binds' : n.status === 'failed' ? 'does not bind' : n.status)
                   : n.status;
                 return (
-                  <tr key={proposalKey(stage, n.node_id)}>
+                  <tr key={fixKey(stage, n.node_id)}>
                     <td>
                       <div className="nodes-node-name">
                         {n.node_id}

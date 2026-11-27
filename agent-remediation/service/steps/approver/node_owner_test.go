@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -103,7 +103,7 @@ func TestNodeOwner_ReadsTheBundleOwner(t *testing.T) {
 		Nodes:    []string{"analytics.orders", "analytics.kpis"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []proposal.Approver{
+	assert.Equal(t, []fix.Approver{
 		{NodeID: "analytics.kpis", Owner: "e2e", Source: model.ApproverSourceBundle},
 		{NodeID: "analytics.orders", Owner: "finance", Source: model.ApproverSourceBundle},
 	}, got, "sorted by node id")
@@ -137,7 +137,7 @@ func TestNodeOwner_FallsBackToTheContractFile(t *testing.T) {
 				Nodes:    []string{"analytics.kpis"},
 			})
 			require.NoError(t, err)
-			assert.Equal(t, []proposal.Approver{
+			assert.Equal(t, []fix.Approver{
 				{NodeID: "analytics.kpis", Owner: "analytics-team", Source: model.ApproverSourceContractFile},
 			}, got)
 		})
@@ -162,7 +162,7 @@ func TestNodeOwner_ANodeWithNoOwnerHasNone(t *testing.T) {
 				Nodes:    []string{"analytics.kpis"},
 			})
 			require.NoError(t, err)
-			assert.Equal(t, []proposal.Approver{
+			assert.Equal(t, []fix.Approver{
 				{NodeID: "analytics.kpis", Owner: "", Source: model.ApproverSourceNone},
 			}, got)
 		})
@@ -184,7 +184,7 @@ func TestNodeOwner_ABundleReadErrorFallsBackAndWarns(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, []proposal.Approver{
+	assert.Equal(t, []fix.Approver{
 		{NodeID: "analytics.kpis", Owner: "analytics-team", Source: model.ApproverSourceContractFile},
 		{NodeID: "analytics.other", Owner: "", Source: model.ApproverSourceNone},
 	}, got)
@@ -200,7 +200,7 @@ func TestNodeOwner_NamesEachNodeOnce(t *testing.T) {
 		Nodes:   []string{"b.y", "a.x", "b.y"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []proposal.Approver{
+	assert.Equal(t, []fix.Approver{
 		{NodeID: "a.x", Owner: "o", Source: model.ApproverSourceBundle},
 		{NodeID: "b.y", Owner: "", Source: model.ApproverSourceNone},
 	}, got)

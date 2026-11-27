@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import PageHeader from './PageHeader';
-import { ApproverDTO, ReleaseDetail, NodeValidationResult, ProposalDTO, ReleaseCheckSummary } from './types';
+import { ApproverDTO, ReleaseDetail, NodeValidationResult, FixDTO, ReleaseCheckSummary } from './types';
 import {
-  releasePillClass, proposalKey, reasonLabel,
-  proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode, proposalApproverForNode,
-  proposalPullRequests, proposalPrProjects, proposalPrStateForProject,
+  releasePillClass, fixKey, reasonLabel,
+  fixNodeIds, fixStatusForNode, fixReasonForNode, fixCodeForNode, fixApproverForNode,
+  fixPullRequests, fixPrProjects, fixPrStateForProject,
   attemptReleaseCheckPhase, releaseCheckPhase, effectiveRound, shortSha,
 } from './release-helpers';
 import ErrorCell from './ErrorCell';
 import { HANDOVER_TEXT } from './handover-text';
-import { fetchProposals } from './remediation-api';
+import { fetchFixes } from './remediation-api';
 import { NodeResultsTable } from './node-results';
 import ProjectTiles from './ProjectTiles';
 import ReleaseCheckTimeline from './ReleaseCheckTimeline';
@@ -26,7 +26,7 @@ const MAX_REMEDIATION_ROUNDS = 3;
 const OPEN_PR_STATES = ['opening', 'open', 'merged'];
 
 // Messages for the release-controller's 409/502/500 refusal reasons, other
-// than proposal_open (handled separately because it also carries a PR link).
+// than fix_open (handled separately because it also carries a PR link).
 const REFUSAL_TEXT: Record<string, string> = {
   rounds_exhausted: `Retried ${MAX_REMEDIATION_ROUNDS} times — push a new commit to start over.`,
   not_retryable: 'This release was rejected before retries existed — push a new commit.',
@@ -34,14 +34,14 @@ const REFUSAL_TEXT: Record<string, string> = {
   not_rejected: 'Only a rejected release can be retried.',
   retry_in_progress: 'A retry is already in progress — wait for the new round to start.',
   internal: 'Retry failed on the server — try again in a moment.',
-  proposal_reader_unavailable: 'agent-remediation is unreachable — try again in a moment.',
+  fix_reader_unavailable: 'agent-remediation is unreachable — try again in a moment.',
 };
 
-// Cadence for re-checking whether a remediation proposal has been persisted for a
-// failed node. The proposal is produced asynchronously after a release is rejected
-// (failure classification → LLM fix proposal), so the page polls until every failed
-// node has a proposal, then stops. The cap bounds polling for failed nodes that are
-// not healable and will therefore never receive a proposal.
+// Cadence for re-checking whether a remediation fix has been persisted for a
+// failed node. The fix is produced asynchronously after a release is rejected
+// (failure classification → LLM fix), so the page polls until every failed
+// node has a fix, then stops. The cap bounds polling for failed nodes that are
+// not healable and will therefore never receive a fix.
 const POLL_INTERVAL_MS = 5000;
 const MAX_POLL_MS = 180000;
 const MAX_POLLS = Math.floor(MAX_POLL_MS / POLL_INTERVAL_MS);
@@ -55,7 +55,7 @@ const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'rejected', 'superseded']
 // progressed: still being written, then being run through a release check to
 // see whether it holds, then ready for a human to review. A node can carry
 // several attempts at once — a later one can supersede an earlier in-flight
-// one — so the cell shows the furthest-along of them. Every other proposal
+// one — so the cell shows the furthest-along of them. Every other fix
 // status is terminal-but-blank (skipped/failed/escalated) and leaves the cell
 // empty.
 type FixState = 'generating' | 'verifying' | 'proposed';
@@ -66,25 +66,25 @@ function isFixState(status: string): status is FixState {
   return status in FIX_STATE_RANK;
 }
 
-// Per-node statuses that mean a fix attempt has nothing left to report: a
+// Per-node statuses that mean an attempt has nothing left to report: a
 // fix ready for review, or one of the terminal-but-blank outcomes rendered
 // as a fixNote (see refresh() below). 'generating'/'verifying' are the only
 // non-terminal statuses a node can carry.
 const TERMINAL_NODE_STATUSES = new Set(['proposed', 'skipped', 'failed', 'escalated']);
 
-// proposalIsDeadEnd mirrors release-controller's isDeadEnd: a batched attempt
+// fixIsDeadEnd mirrors release-controller's isDeadEnd: a batched attempt
 // opens one pull request per owning project, so it is a dead end only once
 // every owning project's pull request has been rejected. An owning project
 // with no pull request yet, or one in any non-rejected state, means a fix
-// could still land. A legacy (unsplit) proposal has one owning project group
+// could still land. A legacy (unsplit) fix has one owning project group
 // (''), whose pull request is synthesized from the singular pr_* fields.
-function proposalIsDeadEnd(p: ProposalDTO): boolean {
-  return proposalPrProjects(p).every((project) => proposalPrStateForProject(p, project) === 'rejected');
+function fixIsDeadEnd(p: FixDTO): boolean {
+  return fixPrProjects(p).every((project) => fixPrStateForProject(p, project) === 'rejected');
 }
 
 // hasActiveFix reports whether any failed node has a generating/verifying/
-// proposed fix among the given proposals — the same furthest-along ranking
-// FixCell uses, restricted to whatever list is passed in (all proposals, or
+// proposed fix among the given fixes — the same furthest-along ranking
+// FixCell uses, restricted to whatever list is passed in (all fixes, or
 // only the current remediation round's), so the dead-end check below can be
 // scoped to a single round without disturbing how the table renders. A
 // 'proposed' attempt every one of whose owning-project PRs was closed
@@ -92,14 +92,14 @@ function proposalIsDeadEnd(p: ProposalDTO): boolean {
 // resolves, not just its representative one, so it must not keep those nodes
 // counted as having an active fix. A single owning project still open (or not
 // yet PR'd) keeps the whole attempt counted as active.
-function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
+function hasActiveFix(list: FixDTO[], failedKeys: string[]): boolean {
   const byKey = new Map<string, FixState>();
   for (const p of list) {
-    if (p.status === 'proposed' && proposalIsDeadEnd(p)) continue;
-    for (const nid of proposalNodeIds(p)) {
-      const status = proposalStatusForNode(p, nid);
+    if (p.status === 'proposed' && fixIsDeadEnd(p)) continue;
+    for (const nid of fixNodeIds(p)) {
+      const status = fixStatusForNode(p, nid);
       if (!isFixState(status)) continue;
-      const k = proposalKey(p.source, nid);
+      const k = fixKey(p.source, nid);
       const current = byKey.get(k);
       if (!current || FIX_STATE_RANK[status] > FIX_STATE_RANK[current]) byKey.set(k, status);
     }
@@ -107,15 +107,15 @@ function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
   return failedKeys.some(k => byKey.has(k));
 }
 
-// anyOpenPR reports whether any proposal in the list has a pull request out
+// anyOpenPR reports whether any fix in the list has a pull request out
 // for review — checked across every round, not just the current one, since a
 // fix from an earlier round is still the thing to look at instead of
 // retrying. A batched attempt's pull requests are weighed per owning project
-// (proposalPullRequests), so one project's still-open PR counts even when a
-// sibling project's PR was rejected; a legacy (unsplit) proposal falls back
+// (fixPullRequests), so one project's still-open PR counts even when a
+// sibling project's PR was rejected; a legacy (unsplit) fix falls back
 // to its singular pr_state, so behavior for those is unchanged.
-function anyOpenPR(list: ProposalDTO[]): boolean {
-  return list.some(p => proposalPullRequests(p).some(pr => OPEN_PR_STATES.includes(pr.pr_state ?? '')));
+function anyOpenPR(list: FixDTO[]): boolean {
+  return list.some(p => fixPullRequests(p).some(pr => OPEN_PR_STATES.includes(pr.pr_state ?? '')));
 }
 
 // verifyLabel picks the wording of the chip of a fix in 'verifying'. A fix's
@@ -149,7 +149,7 @@ function OwnerNote({ approver }: { approver: ApproverDTO }) {
   );
 }
 
-// FixCell renders one node's remediation state: a link to the proposal once a
+// FixCell renders one node's remediation state: a link to the fix once a
 // fix is ready to review, a non-actionable chip while one is still being
 // produced or verified, and — when no attempt is in flight — a note
 // explaining why the latest attempt stopped (skipped/failed/escalated), so a
@@ -202,7 +202,7 @@ export default function ReleaseDetailPage() {
   // showing `rel` and this just surfaces that a retry is pending.
   const [pollError, setPollError] = useState<string | null>(null);
   // Per (stage, node_id) FIX-cell state, bucketed from the node's remediation
-  // proposals — see FixState. Nodes with only terminal-but-blank outcomes
+  // fixes — see FixState. Nodes with only terminal-but-blank outcomes
   // (skipped/failed/escalated) or none carry no entry and render nothing here.
   const [fixState, setFixState] = useState<Map<string, FixState>>(new Map());
   // Per (stage, node_id) explanation for a node whose latest attempt landed on
@@ -215,12 +215,12 @@ export default function ReleaseDetailPage() {
   // with no remediation id records none), so the cell then says nothing about
   // owners.
   const [fixOwner, setFixOwner] = useState<Map<string, ApproverDTO>>(new Map());
-  // The last polled proposal list for this release, kept alongside fixState so
+  // The last polled fix list for this release, kept alongside fixState so
   // the dead-end check below can recompute in-flight/PR state per remediation
   // round (fixState itself is a rendering-only summary across every round).
-  const [proposals, setProposals] = useState<ProposalDTO[]>([]);
+  const [fixes, setFixes] = useState<FixDTO[]>([]);
   // Per (stage, node_id) release check phase for a node currently shown as
-  // 'verifying', read off the proposal's own release check summary
+  // 'verifying', read off the fix's own release check summary
   // (attemptReleaseCheckPhase) — whether the release check judging its fix
   // is still queued behind the global one-at-a-time release queue or already
   // running. Populated
@@ -231,7 +231,7 @@ export default function ReleaseDetailPage() {
   const [releaseChecks, setReleaseChecks] = useState<ReleaseCheckSummary[]>([]);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
-  // Bumped by retry() to re-arm the proposal-polling effect below after a
+  // Bumped by retry() to re-arm the fix-polling effect below after a
   // successful retry, without changing the failed-node set it is also keyed
   // on (a retry does not change which nodes failed).
   const [pollNonce, setPollNonce] = useState(0);
@@ -278,49 +278,49 @@ export default function ReleaseDetailPage() {
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [id]);
 
-  // Failed nodes are the only ones eligible for a remediation proposal. A stable
+  // Failed nodes are the only ones eligible for a remediation fix. A stable
   // string key lets the polling effect re-subscribe only when that set changes.
   // Keyed on (stage, node_id) since a node_id alone is ambiguous across stages;
   // the keys themselves contain '|', so joining/splitting uses '\n'.
   const failedKeys = (rel?.per_node_results ?? [])
     .filter(n => n.status === 'failed')
-    .map(n => proposalKey(n.stage, n.node_id));
+    .map(n => fixKey(n.stage, n.node_id));
   const failedKey = failedKeys.slice().sort().join('\n');
 
-  // Proposals are produced only after a release is rejected (failure
-  // classification → LLM fix proposal runs off release.rejected:v1), so a node
+  // Fixes are produced only after a release is rejected (failure
+  // classification → LLM fix runs off release.rejected:v1), so a node
   // can already appear 'failed' in per_node_results while the release is still
-  // 'validating' (live updates land mid-run) without any proposal existing yet.
+  // 'validating' (live updates land mid-run) without any fix existing yet.
   // Gating on rejected — and keying the effect on it — means the poll starts
   // fresh exactly at the live transition to rejected, instead of having already
   // started (and possibly capped out via MAX_POLLS) before there was anything
   // to find.
   const isRejected = rel?.status === 'rejected';
 
-  // This remediation round's proposals — a proposal with no remediation_round
+  // This remediation round's fixes — a fix with no remediation_round
   // (older rows, or a round-1 attempt) counts as round 1. Scoping the
   // in-flight check to this set is what keeps a freshly-bumped round from
-  // reading as a dead end off the *previous* round's now-terminal proposals.
-  const currentRoundProposals = proposals.filter(p => effectiveRound(p) === rel?.remediation_round);
+  // reading as a dead end off the *previous* round's now-terminal fixes.
+  const currentRoundFixes = fixes.filter(p => effectiveRound(p) === rel?.remediation_round);
 
   // A rejected release is a dead end for remediation — nothing left for the
   // agent to do without human input — once it has at least one failed node,
-  // the current round has produced at least one proposal (the window between
-  // "round bumped" and "the new round's first proposal landed" is never a
+  // the current round has produced at least one fix (the window between
+  // "round bumped" and "the new round's first fix landed" is never a
   // dead end), no failed node has an in-flight/proposed fix in the current
-  // round, and no proposal from any round already has a PR out for review.
+  // round, and no fix from any round already has a PR out for review.
   // "Try again" (below) only ever shows in this state.
   const deadEnd = rel?.status === 'rejected'
     && failedKeys.length > 0
-    && currentRoundProposals.length > 0
-    && !hasActiveFix(currentRoundProposals, failedKeys)
-    && !anyOpenPR(proposals);
+    && currentRoundFixes.length > 0
+    && !hasActiveFix(currentRoundFixes, failedKeys)
+    && !anyOpenPR(fixes);
 
-  // Poll for remediation proposals so the FIX cell surfaces the "Generating fix…"
+  // Poll for remediation fixes so the FIX cell surfaces the "Generating fix…"
   // chip and then the "Proposed fix available →" link without a manual refresh.
-  // Polling runs only while a failed node has not yet reached a ready proposal,
+  // Polling runs only while a failed node has not yet reached a ready fix,
   // stops once every failed node has one, and is capped so unhealable failures
-  // (which never produce a ready proposal) do not poll forever. The cap is
+  // (which never produce a ready fix) do not poll forever. The cap is
   // suspended while any failed node's fix is 'verifying': that verdict comes
   // from a whole release the backend runs behind a global queue, which routinely
   // outlasts the cap, and it always arrives — the backend ends the attempt
@@ -336,7 +336,7 @@ export default function ReleaseDetailPage() {
     // Overlapping polls can resolve out of order. Apply only a response newer
     // than the last one already applied, so a slow stale response cannot
     // overwrite proposedNodeIds (and hide the link) after a newer poll has
-    // already found every proposal and stopped polling.
+    // already found every fix and stopped polling.
     let issued = 0;
     let applied = 0;
     // Whether the last applied response showed a fix a release check is
@@ -358,64 +358,64 @@ export default function ReleaseDetailPage() {
 
     const refresh = () => {
       const seq = ++issued;
-      return fetchProposals()
+      return fetchFixes()
         .then(fetched => {
           if (cancelled || seq <= applied) return;
           applied = seq;
-          const releaseProposals = fetched.filter(p => p.release_id === id);
-          setProposals(releaseProposals);
+          const releaseFixes = fetched.filter(p => p.release_id === id);
+          setFixes(releaseFixes);
           // Refresh the "Release checks" section on the same tick as the
-          // proposal poll, so a newly-started release check shows up without
+          // fix poll, so a newly-started release check shows up without
           // a manual reload. Best-effort: a failed fetch leaves the section
           // showing its last-known rows rather than clearing them.
           fetch(`/api/releases/${id}/release-checks`)
             .then(r => (r.ok ? r.json() : { checks: [] }))
             .then(d => { if (!cancelled) setReleaseChecks(d.checks ?? []); })
             .catch(() => {});
-          // Bucket each failed node by its proposals, keeping the furthest-along
+          // Bucket each failed node by its fixes, keeping the furthest-along
           // state any of its attempts reached; terminal-but-blank statuses
           // (skipped/failed/escalated) leave the node without an entry here —
-          // see fixNote below for those. A batched proposal is unpacked into
+          // see fixNote below for those. A batched fix is unpacked into
           // every node it resolves, each read against its own per-node
-          // outcome rather than the proposal's overall status.
+          // outcome rather than the fix's overall status.
           const byKey = new Map<string, FixState>();
-          // Latest attempt per node (proposal + which resolved node it was),
+          // Latest attempt per node (fix + which resolved node it was),
           // so fixNote explains why remediation stopped for that node rather
           // than why an earlier attempt, or a different node in the same
           // batched attempt, did.
-          const latestByKey = new Map<string, { proposal: ProposalDTO; nodeId: string }>();
+          const latestByKey = new Map<string, { fix: FixDTO; nodeId: string }>();
           // Latest attempt that proposed a fix for each node, whose approver
           // is the owner the cell shows beside the link to that fix.
-          const proposedByKey = new Map<string, { proposal: ProposalDTO; nodeId: string }>();
-          for (const p of releaseProposals) {
-            for (const nid of proposalNodeIds(p)) {
-              const k = proposalKey(p.source, nid);
-              const status = proposalStatusForNode(p, nid);
+          const proposedByKey = new Map<string, { fix: FixDTO; nodeId: string }>();
+          for (const p of releaseFixes) {
+            for (const nid of fixNodeIds(p)) {
+              const k = fixKey(p.source, nid);
+              const status = fixStatusForNode(p, nid);
               if (isFixState(status)) {
                 const current = byKey.get(k);
                 if (!current || FIX_STATE_RANK[status] > FIX_STATE_RANK[current]) byKey.set(k, status);
               }
               if (status === 'proposed') {
                 const proposed = proposedByKey.get(k);
-                if (!proposed || p.attempt > proposed.proposal.attempt) proposedByKey.set(k, { proposal: p, nodeId: nid });
+                if (!proposed || p.attempt > proposed.fix.attempt) proposedByKey.set(k, { fix: p, nodeId: nid });
               }
               const latest = latestByKey.get(k);
-              if (!latest || p.attempt > latest.proposal.attempt) latestByKey.set(k, { proposal: p, nodeId: nid });
+              if (!latest || p.attempt > latest.fix.attempt) latestByKey.set(k, { fix: p, nodeId: nid });
             }
           }
           setFixState(byKey);
           // Release check phase for each node whose furthest-along state is
-          // 'verifying', read off the proposal's own release check summary
+          // 'verifying', read off the fix's own release check summary
           // (attemptReleaseCheckPhase) rather than a separate poll — so the verify
           // chip can split queued-vs-running. A node settled on any other
           // state carries no entry. When more than one attempt for a node is
           // still verifying, 'running' wins over 'queued'.
           const phaseByKey = new Map<string, 'queued' | 'running'>();
-          for (const p of releaseProposals) {
+          for (const p of releaseFixes) {
             const phase = attemptReleaseCheckPhase(p);
             if (!phase) continue;
-            for (const nid of proposalNodeIds(p)) {
-              const k = proposalKey(p.source, nid);
+            for (const nid of fixNodeIds(p)) {
+              const k = fixKey(p.source, nid);
               if (byKey.get(k) !== 'verifying') continue;
               if (phase === 'running' || !phaseByKey.has(k)) phaseByKey.set(k, phase);
             }
@@ -423,28 +423,28 @@ export default function ReleaseDetailPage() {
           setVerifyPhaseByKey(phaseByKey);
           const noteByKey = new Map<string, FixNote>();
           const ownerByKey = new Map<string, ApproverDTO>();
-          for (const [k, { proposal, nodeId }] of proposedByKey) {
-            const approver = proposalApproverForNode(proposal, nodeId);
+          for (const [k, { fix, nodeId }] of proposedByKey) {
+            const approver = fixApproverForNode(fix, nodeId);
             if (approver) ownerByKey.set(k, approver);
           }
-          for (const [k, { proposal: p, nodeId: nid }] of latestByKey) {
+          for (const [k, { fix: p, nodeId: nid }] of latestByKey) {
             // A node outcome with a handover code says why the node went to a
             // human: the code's text, and the node's own message beneath it.
-            // It reads the outcome's own reason, never the proposal's
+            // It reads the outcome's own reason, never the fix's
             // rationale, which on a batched attempt describes other nodes'
             // fixes.
-            const code = proposalCodeForNode(p, nid);
+            const code = fixCodeForNode(p, nid);
             if (code) {
               const message = p.node_outcomes?.[nid]?.reason?.trim();
               noteByKey.set(k, { text: HANDOVER_TEXT[code], message: message || undefined });
               // A node still being written or verified by another attempt
               // shows that chip instead, with no owner beside it.
-              const approver = proposalApproverForNode(p, nid);
+              const approver = fixApproverForNode(p, nid);
               if (approver && !byKey.has(k)) ownerByKey.set(k, approver);
               continue;
             }
-            const status = proposalStatusForNode(p, nid);
-            const reason = proposalReasonForNode(p, nid);
+            const status = fixStatusForNode(p, nid);
+            const reason = fixReasonForNode(p, nid);
             if (status === 'escalated') noteByKey.set(k, { text: 'Attempt budget spent.' });
             else if (status === 'failed') noteByKey.set(k, { text: reason || 'The model could not produce a safe fix.' });
             else if (status === 'skipped') noteByKey.set(k, { text: `${reason || 'No source to fix at this commit.'} Fix it in the repository.` });
@@ -456,41 +456,41 @@ export default function ReleaseDetailPage() {
           // remediation round*: its latest current-round attempt landed on
           // 'proposed', or on a terminal-but-blank outcome ('skipped'/
           // 'failed'/'escalated'). A node still 'generating'/'verifying', or
-          // with no current-round proposal at all yet, is not settled and
+          // with no current-round fix at all yet, is not settled and
           // keeps the poll alive (up to the cap below, suspended by
           // `verifying`). Scoping to the current round (rather than reusing
           // byKey/noteByKey above, which intentionally span every round so
           // the FIX cell keeps showing the furthest-along attempt) matters
           // right after "Try again": the round bumps before its first
-          // proposal is written, and the previous round's now-stale terminal
+          // fix is written, and the previous round's now-stale terminal
           // outcome must not read as settled during that gap — otherwise
           // polling would stop before ever seeing the retry's fix.
           const currentRound = rel?.remediation_round;
-          const currentRoundProposals = currentRound === undefined
-            ? releaseProposals
-            : releaseProposals.filter(p => effectiveRound(p) === currentRound);
-          const latestCurrentRoundByKey = new Map<string, { proposal: ProposalDTO; nodeId: string }>();
-          for (const p of currentRoundProposals) {
-            for (const nid of proposalNodeIds(p)) {
-              const k = proposalKey(p.source, nid);
+          const currentRoundFixes = currentRound === undefined
+            ? releaseFixes
+            : releaseFixes.filter(p => effectiveRound(p) === currentRound);
+          const latestCurrentRoundByKey = new Map<string, { fix: FixDTO; nodeId: string }>();
+          for (const p of currentRoundFixes) {
+            for (const nid of fixNodeIds(p)) {
+              const k = fixKey(p.source, nid);
               const latest = latestCurrentRoundByKey.get(k);
-              if (!latest || p.attempt > latest.proposal.attempt) latestCurrentRoundByKey.set(k, { proposal: p, nodeId: nid });
+              if (!latest || p.attempt > latest.fix.attempt) latestCurrentRoundByKey.set(k, { fix: p, nodeId: nid });
             }
           }
           const settled = (k: string) => {
             const entry = latestCurrentRoundByKey.get(k);
             if (!entry) return false;
-            return TERMINAL_NODE_STATUSES.has(proposalStatusForNode(entry.proposal, entry.nodeId));
+            return TERMINAL_NODE_STATUSES.has(fixStatusForNode(entry.fix, entry.nodeId));
           };
           if (failed.every(settled)) stop();
         })
         .catch(() => {});
     };
 
-    // Always fetch once so an already-existing proposal shows immediately.
+    // Always fetch once so an already-existing fix shows immediately.
     refresh();
 
-    // Poll only while a failed node could still receive a proposal.
+    // Poll only while a failed node could still receive a fix.
     if (failed.length > 0) {
       timer = setInterval(() => {
         polls += 1;
@@ -502,12 +502,12 @@ export default function ReleaseDetailPage() {
     return () => { cancelled = true; stop(); };
   }, [id, isRejected, failedKey, pollNonce]);
 
-  // restartProposalPolling re-arms the effect above after a successful retry,
-  // so a fresh remediation round's proposals are picked up without a reload.
-  const restartProposalPolling = () => setPollNonce(n => n + 1);
+  // restartFixPolling re-arms the effect above after a successful retry,
+  // so a fresh remediation round's fixes are picked up without a reload.
+  const restartFixPolling = () => setPollNonce(n => n + 1);
 
   // retry asks release-controller to start another remediation round. A 202
-  // advances the round shown in the header and restarts proposal polling; a
+  // advances the round shown in the header and restarts fix polling; a
   // 409 means the request was refused, and the reason is turned into the text
   // shown under the button.
   const retry = async () => {
@@ -518,10 +518,10 @@ export default function ReleaseDetailPage() {
       const body = await r.json().catch(() => ({}));
       if (r.status === 202) {
         setRel(prev => (prev ? { ...prev, remediation_round: body.remediation_round } : prev));
-        restartProposalPolling();
+        restartFixPolling();
         return;
       }
-      if (body.error === 'proposal_open') {
+      if (body.error === 'fix_open') {
         setRetryError(
           body.pr_url
             ? `A fix is already proposed: ${body.pr_url}`
@@ -640,7 +640,7 @@ export default function ReleaseDetailPage() {
         <NodeResultsTable
           perNode={perNode}
           fixCell={(stage, n) => {
-            const key = proposalKey(stage, n.node_id);
+            const key = fixKey(stage, n.node_id);
             const st = fixState.get(key);
             return (
               <FixCell
