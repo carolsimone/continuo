@@ -199,8 +199,8 @@ func TestE2E_PythonRelease_AnInvalidContractIsRejected(t *testing.T) {
 		}
 	}
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	invalid := strings.Replace(pyProbeContractText(t),
 		"{name: id, physicalType: INTEGER, required: true,", `{name: id, physicalType: "NUMERIC(12)", required: true,`, 1)
@@ -282,8 +282,8 @@ func TestE2E_DbtContracts_AnInvalidContractIsRejected(t *testing.T) {
 		}
 	}
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// Set the criticality of one model in a copy of service-2's baseline
 	// manifest, copy the baseline's compile extras beside it, and pin
@@ -299,11 +299,11 @@ func TestE2E_DbtContracts_AnInvalidContractIsRejected(t *testing.T) {
 	putS3Object(t, ctx, clients,
 		fmt.Sprintf("%s/%s/manifest.json", dbtContractsPinnedProject, pinnedReleaseID), body)
 	copyBaselineExtras(t, ctx, clients, dbtContractsPinnedProject, pinnedReleaseID)
-	pinServiceProd(t, ctx, clients, dbtContractsPinnedProject, pinnedReleaseID, pinned.imageTag)
+	pinProductionPointer(t, ctx, clients, dbtContractsPinnedProject, pinnedReleaseID, pinned.imageTag)
 	// Put the pointer back so no later test parses the doctored manifest.
 	// Deferred, so it runs when the test function returns, while the pool is
 	// open.
-	defer pinServiceProd(t, context.Background(), clients,
+	defer pinProductionPointer(t, context.Background(), clients,
 		dbtContractsPinnedProject, e2eBaselineReleaseID, pinned.imageTag)
 
 	postRelease(t, clients, dbtContractsReleaseProject, releaseID, released.imageTag, false)
@@ -377,8 +377,8 @@ func TestE2E_DbtContracts_ASeedWithAnUndeclaredHeaderColumnIsRejected(t *testing
 		}
 	}
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// Drop the declared id column of seed_table_2 in a copy of service-1's
 	// baseline manifest, copy the baseline's compile extras beside it, and pin
@@ -396,11 +396,11 @@ func TestE2E_DbtContracts_ASeedWithAnUndeclaredHeaderColumnIsRejected(t *testing
 	putS3Object(t, ctx, clients,
 		fmt.Sprintf("%s/%s/manifest.json", dbtSeedHeaderPinnedProject, pinnedReleaseID), body)
 	copyBaselineExtras(t, ctx, clients, dbtSeedHeaderPinnedProject, pinnedReleaseID)
-	pinServiceProd(t, ctx, clients, dbtSeedHeaderPinnedProject, pinnedReleaseID, pinned.imageTag)
+	pinProductionPointer(t, ctx, clients, dbtSeedHeaderPinnedProject, pinnedReleaseID, pinned.imageTag)
 	// Put the pointer back so no later test parses the doctored manifest.
 	// Deferred, so it runs when the test function returns, while the pool is
 	// open.
-	defer pinServiceProd(t, context.Background(), clients,
+	defer pinProductionPointer(t, context.Background(), clients,
 		dbtSeedHeaderPinnedProject, e2eBaselineReleaseID, pinned.imageTag)
 
 	postRelease(t, clients, dbtSeedHeaderReleaseProject, releaseID, released.imageTag, false)

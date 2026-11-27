@@ -12,14 +12,14 @@ import (
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
 
-// ErrNoCurrentProd reports that nothing has been promoted, so there is no
-// current_prod topology to re-announce or print.
-var ErrNoCurrentProd = errors.New("no current_prod to re-announce")
+// ErrNoLiveRelease reports that nothing has been promoted, so there is no
+// live release whose topology could be re-announced or printed.
+var ErrNoLiveRelease = errors.New("no live release to re-announce")
 
 // ErrReleaseIDTaken reports an announcement under a release id that already
-// names a release check or current_prod: announcing under it would replace that
-// release's topology artifact.
-var ErrReleaseIDTaken = errors.New("release id already names a release check or current_prod")
+// names a release check or the live release: announcing under it would replace
+// that release's topology artifact.
+var ErrReleaseIDTaken = errors.New("release id already names a release check or the live release")
 
 // releaseIDPattern is the release id rule of the public release API
 // (RELEASE_ID_PATTERN in ui/src/server/routes/v1.ts); a test in pkg/streams
@@ -42,7 +42,7 @@ type AnnounceResult struct {
 
 // AnnounceTopology announces topo to the rest of continuo as release
 // releaseID: it writes the topology artifact, takes the next promotion seq and
-// queues release.promoted:v1. current_prod does not move, so the next real
+// queues release.promoted:v1. The live release does not move, so the next real
 // promotion is still diffed against the production release; it takes a
 // higher seq and replaces the announced topology everywhere. The benchmark
 // and e2e harnesses use it to load a topology without a release.
@@ -63,7 +63,7 @@ func AnnounceTopology(ctx context.Context, d *Deps, releaseID string, topo relea
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	// Hold the release-queue lock across the current_prod read, the seq
+	// Hold the release-queue lock across the live release's read, the seq
 	// allocation and the announcement, so a concurrent promotion cannot commit
 	// between them and be clobbered under a higher seq.
 	if err := u.LockReleaseQueue(ctx); err != nil {
@@ -74,9 +74,9 @@ func AnnounceTopology(ctx context.Context, d *Deps, releaseID string, topo relea
 	if err != nil {
 		return AnnounceResult{}, fmt.Errorf("get release %s: %w", releaseID, err)
 	}
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	cp, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
-		return AnnounceResult{}, fmt.Errorf("get current prod: %w", err)
+		return AnnounceResult{}, fmt.Errorf("get live release: %w", err)
 	}
 	if check != nil || cp.ReleaseID() == releaseID {
 		return AnnounceResult{}, fmt.Errorf("%w: %s", ErrReleaseIDTaken, releaseID)
@@ -106,33 +106,33 @@ func AnnounceTopology(ctx context.Context, d *Deps, releaseID string, topo relea
 	return AnnounceResult{ReleaseID: releaseID, PromotionSeq: seq, TopologyURI: ref.URI, TopologySHA256: ref.SHA256}, nil
 }
 
-// ReannounceCurrentProd re-announces current_prod's own topology artifact
+// ReannounceLiveRelease re-announces the live release's own topology artifact
 // under the next promotion seq, so every consumer moves back to it from any
 // topology announced since. The benchmark harness uses it to restore the live
 // topology.
-func ReannounceCurrentProd(ctx context.Context, d *Deps) (AnnounceResult, error) {
+func ReannounceLiveRelease(ctx context.Context, d *Deps) (AnnounceResult, error) {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
 		return AnnounceResult{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	// Hold the release-queue lock across the current_prod read, the seq
+	// Hold the release-queue lock across the live release's read, the seq
 	// allocation and the re-announcement, so a concurrent promotion cannot
 	// commit between them and be clobbered under a higher seq.
 	if err := u.LockReleaseQueue(ctx); err != nil {
 		return AnnounceResult{}, fmt.Errorf("lock release queue: %w", err)
 	}
 
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	cp, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
-		return AnnounceResult{}, fmt.Errorf("get current prod: %w", err)
+		return AnnounceResult{}, fmt.Errorf("get live release: %w", err)
 	}
 	if cp.ReleaseID() == "" && cp.Topology().IsZero() {
-		return AnnounceResult{}, ErrNoCurrentProd
+		return AnnounceResult{}, ErrNoLiveRelease
 	}
 	if cp.Topology().IsZero() {
-		return AnnounceResult{}, fmt.Errorf("current_prod %s references no topology artifact", cp.ReleaseID())
+		return AnnounceResult{}, fmt.Errorf("live release %s references no topology artifact", cp.ReleaseID())
 	}
 	seq, err := reannounce(ctx, u, cp, d.Clock.Now())
 	if err != nil {
@@ -142,19 +142,19 @@ func ReannounceCurrentProd(ctx context.Context, d *Deps) (AnnounceResult, error)
 		return AnnounceResult{}, fmt.Errorf("commit: %w", err)
 	}
 	ref := cp.Topology()
-	d.Logger.Info("current_prod re-announced", "release_id", cp.ReleaseID(), "promotion_seq", seq)
+	d.Logger.Info("live release re-announced", "release_id", cp.ReleaseID(), "promotion_seq", seq)
 	return AnnounceResult{ReleaseID: cp.ReleaseID(), PromotionSeq: seq, TopologyURI: ref.URI, TopologySHA256: ref.SHA256}, nil
 }
 
-// CurrentProdTopology returns the topology current_prod points at, or
-// ErrNoCurrentProd when nothing has been promoted.
-func CurrentProdTopology(ctx context.Context, d *Deps) (release.Topology, error) {
-	cp, err := d.NewUoW().CurrentProdRepo().Get(ctx)
+// LiveReleaseTopology returns the live release's topology, or
+// ErrNoLiveRelease when nothing has been promoted.
+func LiveReleaseTopology(ctx context.Context, d *Deps) (release.Topology, error) {
+	cp, err := d.NewUoW().LiveReleaseRepo().Get(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("get current prod: %w", err)
+		return nil, fmt.Errorf("get live release: %w", err)
 	}
 	if cp.ReleaseID() == "" && cp.Topology().IsZero() {
-		return nil, ErrNoCurrentProd
+		return nil, ErrNoLiveRelease
 	}
 	return loadProdTopology(ctx, d, cp)
 }
@@ -163,16 +163,16 @@ func CurrentProdTopology(ctx context.Context, d *Deps) (release.Topology, error)
 // queues release.promoted:v1 for cp's release and artifact. A re-announcement
 // changes nothing but the seq, so it names no changed node, no candidate
 // schema and no code bundle.
-func reannounce(ctx context.Context, u uow.UnitOfWork, cp *release.CurrentProd, now time.Time) (int64, error) {
+func reannounce(ctx context.Context, u uow.UnitOfWork, cp *release.LiveRelease, now time.Time) (int64, error) {
 	seq, err := u.PromotionSequenceRepo().Next(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("take promotion seq: %w", err)
 	}
 	if err := cp.Reannounce(seq); err != nil {
-		return 0, fmt.Errorf("re-announce current prod: %w", err)
+		return 0, fmt.Errorf("re-announce live release: %w", err)
 	}
-	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
-		return 0, fmt.Errorf("upsert current prod: %w", err)
+	if err := u.LiveReleaseRepo().Upsert(ctx, cp); err != nil {
+		return 0, fmt.Errorf("upsert live release: %w", err)
 	}
 	ref := cp.Topology()
 	if err := enqueueReleasePromoted(ctx, u, events.ReleasePromoted{

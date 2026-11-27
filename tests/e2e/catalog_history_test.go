@@ -35,18 +35,18 @@ import (
 // none of them current.
 //
 // The test changes the live topology of catalog and run-controller twice and
-// puts current_prod on its own release. A deferred restore announces the
+// puts the live release on its own release. A deferred restore announces the
 // default e2e DAG again, which every test that needs the DAG does at its start
 // as well, so the next test finds the topology it expects: the e2e DAG live in
 // catalog and run-controller, with rel_probe active again and the versions it
 // recorded. The restore also waits for the promote-seed runs the first release
 // planned, so no seed load of this test is in flight when the next test
-// starts. current_prod stays on the first release, which holds the baseline's
+// starts. The live release stays on the first release, which holds the baseline's
 // nodes with their own hashes; every test that reads it seeds it first, as
 // after any other release test. The file sorts after cancel_test.go and before
 // chat_test.go: the restore is what makes that position safe for the tests
 // after it, and the test itself needs only what setup.sh leaves (the baseline
-// manifests and service_prod), not a test before it.
+// manifests and the production pointers), not a test before it.
 func TestDroppedNodeKeepsItsHistory(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -71,7 +71,7 @@ func TestDroppedNodeKeepsItsHistory(t *testing.T) {
 	require.NotEmpty(t, allProjects,
 		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 	changedImageTag := allProjects[changedProject].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	// Production holds the baseline's own hash for every node, rel_probe
 	// included, so no node is changed and the release promotes with nothing to
@@ -91,12 +91,12 @@ func TestDroppedNodeKeepsItsHistory(t *testing.T) {
 	require.True(t, probeFound,
 		"rel_probe not found in any manifest — is the model in service-1 and the image rebuilt?")
 
-	// From here the test moves the live topology and current_prod.
+	// From here the test moves the live topology and the live release.
 	defer restoreDefaultTopologyAfter(t, clients, releaseID)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
 

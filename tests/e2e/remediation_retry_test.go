@@ -48,8 +48,8 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	changedProject := "service-2"
 	t.Logf("release_id=%s changed_project=%s changed_node=%s", releaseID, changedProject, ftableEUniqueID)
 
-	// Read baseline manifests from S3 (uploaded by setup.sh). Build the prod
-	// snapshot of every node except ftable_e so the derived changed set is
+	// Read baseline manifests from S3 (uploaded by setup.sh). Build the live
+	// release from every node except ftable_e so the derived changed set is
 	// exactly {ftable_e} — the deliberately-broken node.
 	allProjects := baselineProjects(t, ctx, clients)
 	require.NotEmpty(t, allProjects,
@@ -57,7 +57,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	var prodNodes []map[string]string
 	ftableFound := false
@@ -76,13 +76,13 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	}
 	require.True(t, ftableFound,
 		"ftable_e not found in any manifest — is the model in service-2 and the image rebuilt?")
-	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
+	t.Logf("seeded the live release with %d nodes (ftable_e excluded)", len(prodNodes))
 
-	// Reset the queue, seed current_prod (all nodes except ftable_e), and seed
-	// service_prod for every baseline project.
+	// Reset the queue, seed the live release (all nodes except ftable_e), and seed
+	// The production pointers for every baseline project.
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// Seed the ftable_e topology :Node in Neo4j so the agent-remediation's
 	// Locator can resolve the node's file path and project name for both rounds.

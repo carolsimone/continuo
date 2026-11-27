@@ -16,24 +16,24 @@ import (
 // "service-1=<tag>,service-2=<tag>,service-3=<tag>".
 const baselineImageTagsFile = ".image-tags"
 
-// seedBaselineServiceProd (re)establishes the per-project service_prod pointer
-// rows from the immutable deploy metadata. It is called before every consumer
+// seedBaselineProductionPointers (re)establishes every project's production
+// pointer from the immutable deploy metadata. It is called before every consumer
 // that reads per-project image tags (seedTopology, baselineProjects) so a prior
-// blue/green test's mutation of service_prod — promotion rewriting a row, or the
+// blue/green test's change to the production pointers — promotion rewriting a pointer, or the
 // bootstrap test wiping the table — cannot break a later test's read. The
 // baseline is rebuilt from setup metadata, never captured from the (test-mutated)
 // table.
-func seedBaselineServiceProd(t *testing.T, ctx context.Context, clients *testClients) {
+func seedBaselineProductionPointers(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 	for svc, tag := range baselineImageTags(t) {
 		_, err := clients.releaseDB.ExecContext(ctx,
-			`INSERT INTO service_prod (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+			`INSERT INTO production_pointers (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
 			 VALUES ($1, $2, $3, $4, 'dbt', now())
 			 ON CONFLICT (project_name) DO UPDATE SET
 			   release_id = EXCLUDED.release_id, manifest_s3_key = EXCLUDED.manifest_s3_key,
 			   image_tag = EXCLUDED.image_tag, manifest_kind = EXCLUDED.manifest_kind, updated_at = EXCLUDED.updated_at`,
 			svc, e2eBaselineReleaseID, canonicalManifestS3URI(svc, e2eBaselineReleaseID), tag)
-		require.NoError(t, err, "seed baseline service_prod row for %s", svc)
+		require.NoError(t, err, "seed the baseline production pointer of %s", svc)
 	}
 }
 

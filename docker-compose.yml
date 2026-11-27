@@ -832,7 +832,8 @@ services:
   # and topology artifact of the live release, which external consumers read
   # (docs/read-contract.md), and an age rule cannot tell a live release from an
   # old one. release-controller deletes a release's objects when its retention
-  # prunes the release, and never for current_prod or a service_prod release.
+  # prunes the release, and never for the live release or a release a production
+  # pointer names.
   # scripts/check-read-retention.sh fails a rule on either prefix.
   minio-init:
     image: ghcr.io/carolsimone/continuo-mc:2025.7.21
@@ -911,7 +912,7 @@ services:
       - POSTGRES_USER=continuo_warehouse
       - POSTGRES_PASSWORD=local-continuo_warehouse
       # Per-project image tags recorded in compiled manifests. The e2e resolves
-      # the dbt job image_tag from the release-controller service_prod table (seeded
+      # the dbt job image_tag from release-controller's production pointers (seeded
       # by setup.sh / provision-k8s-test-env.sh with the real content-hash tags), so
       # this value only satisfies the topology-controller's A1 publish-boundary
       # validator, which rejects a batch whose image_tag is empty. setup.sh exports

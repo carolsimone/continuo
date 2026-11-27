@@ -164,8 +164,8 @@ func TestE2E_Ontology(t *testing.T) {
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
-	// The switch is off again, and neither project this test releases is left
-	// in service_prod, whatever happens below: a later release would
+	// The switch is off again, and neither project this test releases keeps
+	// a production pointer, whatever happens below: a later release would
 	// otherwise assemble the ontology and the py-probe contracts into every
 	// manifest set. Cleanups run last-in first-out and each still runs when
 	// another fails, so the projects are forgotten first and the switch is
@@ -223,7 +223,7 @@ func TestE2E_Ontology(t *testing.T) {
 
 	var kind, manifestKey, releasedAs string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT manifest_kind, manifest_s3_key, release_id FROM service_prod WHERE project_name = $1`,
+		`SELECT manifest_kind, manifest_s3_key, release_id FROM production_pointers WHERE project_name = $1`,
 		ontologyE2EProject).Scan(&kind, &manifestKey, &releasedAs))
 	assert.Equal(t, "ontology", kind, "production records the ontology project's kind")
 	assert.True(t, strings.HasSuffix(manifestKey, "/"+ontologyE2EProject+"/"+ontologyID+"/"+ontologyArtifact),
@@ -317,15 +317,15 @@ func TestE2E_Ontology(t *testing.T) {
 	probeAfter := latestContractVersion(t, ctx, clients, pyProbeUniqueID)
 	assert.Equal(t, probeBefore.GetVersion(), probeAfter.GetVersion(), "a rejected ontology adds no contract version")
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT release_id FROM service_prod WHERE project_name = $1`, ontologyE2EProject).Scan(&releasedAs))
+		`SELECT release_id FROM production_pointers WHERE project_name = $1`, ontologyE2EProject).Scan(&releasedAs))
 	assert.Equal(t, ontologyID, releasedAs, "production keeps the ontology it had")
 	t.Logf("✅ ontology release %s rejected invalid_contract on %s, with no trigger and no published change", breakingID, pyProbeUniqueID)
 
 	// ── 6. a dbt project cannot be released as kind ontology ─────────────────
 	var dbtKind string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT manifest_kind FROM service_prod WHERE project_name = 'service-1'`).Scan(&dbtKind),
-		"setup seeds service_prod for service-1")
+		`SELECT manifest_kind FROM production_pointers WHERE project_name = 'service-1'`).Scan(&dbtKind),
+		"setup seeds service-1's production pointer")
 	require.Equal(t, "dbt", dbtKind)
 	kindChangeID := "e2e-ont-" + uuid.NewString()[:8]
 	token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", kindChangeID)
@@ -451,8 +451,8 @@ func forgetOntologyProjects(t *testing.T, clients *testClients) {
 	defer cancel()
 	resetReleaseControllerQueue(t, ctx, clients)
 	_, err := clients.releaseDB.ExecContext(ctx,
-		`DELETE FROM service_prod WHERE project_name IN ($1, $2)`, ontologyE2EProject, pyE2EProject)
-	require.NoError(t, err, "delete the service_prod rows of %s and %s", ontologyE2EProject, pyE2EProject)
+		`DELETE FROM production_pointers WHERE project_name IN ($1, $2)`, ontologyE2EProject, pyE2EProject)
+	require.NoError(t, err, "delete the production pointers of %s and %s", ontologyE2EProject, pyE2EProject)
 }
 
 // ontologyProcess is one component whose process the ontology switch restarts.

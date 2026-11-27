@@ -46,14 +46,14 @@ const (
 //	declares config.meta.timeout_minutes = 480 and nothing else
 //	→ POST /releases (service-1, unchanged code) → compile → topology-controller
 //	  writes the assembled topology with timeout_seconds = 28800 on ftable_e
-//	→ release-controller: every content_hash equals current_prod's, so no node
+//	→ release-controller: every content_hash equals the live release's, so no node
 //	  is changed and the release promotes with no validation.requested:v1 and
 //	  no validation Job
 //	→ release.promoted:v1 → run-controller stores the release's nodes, ftable_e carrying
 //	  28800 and every other node NULL but service-1's ftable_deadline, which
 //	  declares its own 60 seconds.
 //
-// meta is outside the content hash, so the seeded current_prod holds the
+// meta is outside the content hash, so the seeded live release holds the
 // baseline's own hashes for every node.
 func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testing.T) {
 	if testing.Short() {
@@ -101,8 +101,8 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// Copy service-2's baseline manifest, declare the timeout on one model, copy
 	// the baseline's compile extras beside it, and pin service-2's production
@@ -124,8 +124,8 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 			t.Logf("delete staged manifest s3://%s/%s: %v", e2eS3Bucket, stagedKey, err)
 		}
 	}()
-	pinServiceProd(t, ctx, clients, timeoutOnlyDeclaringProject, stagedReleaseID, declaring.imageTag)
-	defer pinServiceProd(t, context.Background(), clients,
+	pinProductionPointer(t, ctx, clients, timeoutOnlyDeclaringProject, stagedReleaseID, declaring.imageTag)
+	defer pinProductionPointer(t, context.Background(), clients,
 		timeoutOnlyDeclaringProject, e2eBaselineReleaseID, declaring.imageTag)
 
 	postRelease(t, clients, timeoutOnlyReleaseProject, releaseID, released.imageTag, false)

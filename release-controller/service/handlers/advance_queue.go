@@ -21,7 +21,7 @@ import (
 //
 // The assembled manifest set (for all projects) is computed once here, before
 // the branch below, so both paths record the same SetAssembledImageTags map
-// and read the other projects' service_prod pointers exactly once. Those
+// and read the other projects' production pointers exactly once. Those
 // pointers can change as earlier-queued releases are promoted, so we must
 // read them at activation time to guarantee we see the live state.
 //
@@ -29,8 +29,8 @@ import (
 //   - dbt: TransitionToCompiling and emit compile.requested:v1 — CI's manifest
 //     still needs a fresh dbt compile before it can be parsed. The
 //     manifest-key set is assembled again in HandleCompileResult (ok path),
-//     reading live service_prod a second time when the release advances to
-//     Parsing.
+//     reading the production pointers a second time when the release advances
+//     to Parsing.
 //   - python and ontology: no compile leg exists — CI already uploaded
 //     the odcs-bundle.json or the ontology.yaml before POST /releases — so the
 //     release goes straight to TransitionToParsing and emits
@@ -41,7 +41,7 @@ import (
 // invalid_artifact with ErrOntologyDisabled as its detail
 // (rejectOntologyCheckWhileSwitchOff), before anything is assembled, and the check
 // behind it is activated instead. So is a check whose kind is on the other side of the
-// line between the ontology and the node kinds from its project's service_prod
+// line between the ontology and the node kinds from its project's production
 // pointer: it is rejected invalid_artifact with the kind-change refusal as its
 // detail.
 //
@@ -86,33 +86,33 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return AdvanceQueue(ctx, d)
 	}
 
-	// Activation guard for the per-project model. The full topology is
-	// reconstructed from the service_prod pointer table plus this release's
-	// changed project. After an upgrade from the old whole-snapshot model,
-	// current_prod still lists every live project but service_prod starts empty,
-	// so activating now would assemble only the changed project and, on promote,
-	// retire every unseeded project. Refuse to activate until every project live
-	// in current_prod is covered by a service_prod pointer (or is this release's
-	// changed project). The release stays Received; once the operator runs
-	// seed-service-prod, a later AdvanceQueue tick proceeds automatically.
+	// Activation guard. The full topology is reconstructed from the production
+	// pointers plus this release's changed project. When the live release lists
+	// a project that has no production pointer, activating now would assemble
+	// only the projects that have one and, on promote, retire every other one.
+	// Refuse to activate until every project of the live release has a
+	// production pointer (or is this release's changed project). The release
+	// stays Received; once the operator runs seed-production-pointers, a later
+	// AdvanceQueue tick proceeds automatically.
 	//
-	// A fresh install (current_prod unseeded) is unaffected: there are no live
-	// projects to amputate, so the first bootstrap release proceeds normally.
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	// A fresh install (nothing promoted, so no live release) is unaffected:
+	// there are no live projects to drop, so the first bootstrap release
+	// proceeds normally.
+	cp, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
-		return fmt.Errorf("current prod: %w", err)
+		return fmt.Errorf("get live release: %w", err)
 	}
-	// Read the live service_prod pointers once: the same set drives both the
+	// Read the production pointers once: the same set drives both the
 	// activation guard and the manifest-set assembly below. Reading them now
 	// (when the release becomes active) reflects any promotion an earlier-queued
 	// release made meanwhile.
-	pointers, err := u.ServiceProdRepo().List(ctx)
+	pointers, err := u.ProductionPointerRepo().List(ctx)
 	if err != nil {
-		return fmt.Errorf("list service prod: %w", err)
+		return fmt.Errorf("list production pointers: %w", err)
 	}
-	// Intake refuses a kind change against the service_prod row it sees, but a
-	// check queued before another check of the project promoted meets the row that
-	// promotion wrote only here, where the queue lock is held and the pointers
+	// Intake refuses a kind change against the production pointer it sees, but a
+	// check queued before another check of the project promoted meets the pointer
+	// that promotion wrote only here, where the queue lock is held and the pointers
 	// are read. Assembling the set for such a check would swap the project's
 	// manifest for an artifact of the other side and drop or replace its nodes.
 	if stored := pointerOf(pointers, next.ChangedProject()); stored != nil &&
@@ -133,7 +133,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		}
 		if missing := uncoveredProdProjects(prod, pointers, next.ChangedProject()); len(missing) > 0 {
 			d.Logger.Warn(
-				"release activation blocked: service_prod is missing pointers for live projects; run seed-service-prod before accepting releases",
+				"release activation blocked: projects of the live release have no production pointer; run seed-production-pointers before accepting releases",
 				"release_id", next.ID(),
 				"missing_projects", missing,
 			)
@@ -150,8 +150,8 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		// A release of any kind but dbt has no compile leg: CI uploaded its
 		// artifact (the contract bundle or the ontology file) before
 		// POST /releases, so activation goes straight to Parsing and requests
-		// the manifest load with keys assembled from the same live
-		// service_prod read the activation guard used.
+		// the manifest load with keys assembled from the same production
+		// pointers the activation guard read.
 		if err := next.TransitionToParsing(now); err != nil {
 			return fmt.Errorf("transition to parsing: %w", err)
 		}
@@ -213,9 +213,9 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	return nil
 }
 
-// pointerOf returns the service_prod pointer of project, or nil when the
+// pointerOf returns the production pointer of project, or nil when the
 // project has none.
-func pointerOf(pointers []*release.ServiceProd, project string) *release.ServiceProd {
+func pointerOf(pointers []*release.ProductionPointer, project string) *release.ProductionPointer {
 	for _, p := range pointers {
 		if p.ProjectName() == project {
 			return p
@@ -225,12 +225,12 @@ func pointerOf(pointers []*release.ServiceProd, project string) *release.Service
 }
 
 // uncoveredProdProjects returns the sorted set of project names live in the
-// production topology that have no service_prod pointer and are not the
+// production topology that have no production pointer and are not the
 // release's changed project. A non-empty result means assembling the full
 // topology now would silently drop those projects on promote. An unknown-external node
-// belongs to no project, so it is skipped: no service_prod pointer covers it and
+// belongs to no project, so it is skipped: no production pointer covers it and
 // promoting without one drops nothing.
-func uncoveredProdProjects(prod release.Topology, pointers []*release.ServiceProd, changedProject string) []string {
+func uncoveredProdProjects(prod release.Topology, pointers []*release.ProductionPointer, changedProject string) []string {
 	covered := map[string]struct{}{changedProject: {}}
 	for _, p := range pointers {
 		covered[p.ProjectName()] = struct{}{}

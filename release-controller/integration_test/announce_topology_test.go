@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// On a cold install — no current_prod row — announcements still work, take
-// increasing seqs, and never create current_prod.
-func TestIntegration_AnnounceTopology_WithoutCurrentProd(t *testing.T) {
+// On a cold install — no live_release row — announcements still work, take
+// increasing seqs, and never create live_release.
+func TestIntegration_AnnounceTopology_WithoutLiveRelease(t *testing.T) {
 	_, deps, db := setup(t)
 	defer db.Close()
 	ctx := context.Background()
@@ -29,13 +29,13 @@ func TestIntegration_AnnounceTopology_WithoutCurrentProd(t *testing.T) {
 	assert.Equal(t, int64(2), second.PromotionSeq)
 
 	var rows int
-	require.NoError(t, db.Get(&rows, `SELECT count(*) FROM current_prod`))
+	require.NoError(t, db.Get(&rows, `SELECT count(*) FROM live_release`))
 	assert.Equal(t, 0, rows)
 	require.NoError(t, db.Get(&rows,
 		`SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1 AND event_type = 'release_promoted'`,
 		streams.ReleasePromotedV1))
 	assert.Equal(t, 2, rows)
 
-	_, err = handlers.ReannounceCurrentProd(ctx, deps)
-	require.ErrorIs(t, err, handlers.ErrNoCurrentProd)
+	_, err = handlers.ReannounceLiveRelease(ctx, deps)
+	require.ErrorIs(t, err, handlers.ErrNoLiveRelease)
 }

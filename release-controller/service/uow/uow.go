@@ -13,8 +13,8 @@ import (
 // lifecycle: Begin → (work) → Commit, with Rollback on any failure.
 type UnitOfWork interface {
 	ReleaseCheckRepo() repository.ReleaseCheckRepository
-	CurrentProdRepo() repository.CurrentProdRepository
-	ServiceProdRepo() repository.ServiceProdRepository
+	LiveReleaseRepo() repository.LiveReleaseRepository
+	ProductionPointerRepo() repository.ProductionPointerRepository
 	PromotionSequenceRepo() repository.PromotionSequenceRepository
 	OutboxRepo() pkgoutbox.Repository
 	MessageProcessingRepo() messageprocessing.Repository

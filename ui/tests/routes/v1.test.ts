@@ -3,7 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import type { Server } from 'node:http';
 import { once } from 'node:events';
-import { createV1Router, projectCurrentProd, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
+import { createV1Router, projectLiveRelease, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
 import { MAINTENANCE_MESSAGE } from '../../src/server/maintenance';
 import { HttpError, type ReleaseClient } from '../../src/server/clients/release-client';
 import type { Principal } from '../../src/server/auth/principal';
@@ -19,7 +19,7 @@ const ci = (grants: Record<string, boolean> = { core: false }): Principal => ({
 
 function fakeClient(over: Partial<ReleaseClient> = {}): ReleaseClient {
   return {
-    listReleases: vi.fn(), getCurrentProd: vi.fn(), retryRemediation: vi.fn(),
+    listReleases: vi.fn(), getLiveRelease: vi.fn(), retryRemediation: vi.fn(),
     getReleaseCheck: vi.fn(), listReleaseChecks: vi.fn(), getReleaseQueue: vi.fn(),
     submitRelease: vi.fn(async (b) => ({ status: 202, text: JSON.stringify({ release_id: b.release_id, status: 'received' }) })),
     getRelease: vi.fn(async () => { throw new HttpError(404, 'not found'); }),
@@ -508,7 +508,7 @@ describe('GET /api/v1/releases/:id', () => {
 
   it('an id outside the release_id pattern is 404 without asking release-controller', async () => {
     const client = fakeClient();
-    for (const id of ['r%2F1', '..%2Fcurrent-prod', '.hidden', `a${'b'.repeat(128)}`]) {
+    for (const id of ['r%2F1', '..%2Flive-release', '.hidden', `a${'b'.repeat(128)}`]) {
       const res = await request(appAs(operator, client)).get(`/api/v1/releases/${id}`);
       expect([id, res.status, res.body.code]).toEqual([id, 404, 'not_found']);
     }
@@ -552,33 +552,33 @@ describe('GET /api/v1/releases/:id', () => {
   });
 });
 
-describe('GET /api/v1/current-prod', () => {
-  const cp = () => fakeClient({ getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 3, updated_at: 't', extra: 1 })) });
+describe('GET /api/v1/live-release', () => {
+  const cp = () => fakeClient({ getLiveRelease: vi.fn(async () => ({ live_release_id: 'r', node_count: 3, updated_at: 't', extra: 1 })) });
 
   it('a bound CI identity and a viewer read exactly the three fields', async () => {
     for (const p of [ci(), viewer]) {
-      const res = await request(appAs(p, cp())).get('/api/v1/current-prod');
+      const res = await request(appAs(p, cp())).get('/api/v1/live-release');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ current_prod_release_id: 'r', node_count: 3, updated_at: 't' });
+      expect(res.body).toEqual({ live_release_id: 'r', node_count: 3, updated_at: 't' });
     }
   });
 
   it('a field of the wrong type becomes its empty value', () => {
-    expect(projectCurrentProd({ current_prod_release_id: null, node_count: '3', updated_at: 17 })).toEqual({ current_prod_release_id: '', node_count: 0, updated_at: '' });
+    expect(projectLiveRelease({ live_release_id: null, node_count: '3', updated_at: 17 })).toEqual({ live_release_id: '', node_count: 0, updated_at: '' });
   });
 
   it('503 when release-controller answers a body that is not a JSON object', async () => {
-    const client = fakeClient({ getCurrentProd: vi.fn(async () => 'oops') });
-    const res = await request(appAs(viewer, client)).get('/api/v1/current-prod');
+    const client = fakeClient({ getLiveRelease: vi.fn(async () => 'oops') });
+    const res = await request(appAs(viewer, client)).get('/api/v1/live-release');
     expect([res.status, res.body.code]).toEqual([503, 'upstream_unavailable']);
   });
 
   it('a CI identity bound to no project is forbidden', async () => {
     const client = cp();
-    const res = await request(appAs(ci({}), client)).get('/api/v1/current-prod');
+    const res = await request(appAs(ci({}), client)).get('/api/v1/live-release');
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('forbidden');
-    expect(client.getCurrentProd).not.toHaveBeenCalled();
+    expect(client.getLiveRelease).not.toHaveBeenCalled();
   });
 });
 
@@ -586,26 +586,26 @@ describe('read rate limit', () => {
   it('audits a rate-limited read with the principal, path and outcome 429', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      const c = fakeClient({ getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 1, updated_at: 't' })) });
+      const c = fakeClient({ getLiveRelease: vi.fn(async () => ({ live_release_id: 'r', node_count: 1, updated_at: 't' })) });
       await withServer(appAs(ci(), c), async (server) => {
-        for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) await request(server).get('/api/v1/current-prod');
-        expect((await request(server).get('/api/v1/current-prod')).status).toBe(429);
+        for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) await request(server).get('/api/v1/live-release');
+        expect((await request(server).get('/api/v1/live-release')).status).toBe(429);
       });
       const lines = spy.mock.calls
         .map((call) => { try { return JSON.parse(String(call[0])); } catch { return null; } })
         .filter((l) => l !== null && l.audit === true && l.event === 'release_read_limited');
       expect(lines).toHaveLength(1);
       expect(lines[0]).toMatchObject({
-        principal: 'ci', repository: 'carolsimone/continuo-demo', method: 'GET', path: '/api/v1/current-prod', outcome: 429,
+        principal: 'ci', repository: 'carolsimone/continuo-demo', method: 'GET', path: '/api/v1/live-release', outcome: 429,
       });
     } finally { spy.mockRestore(); }
   });
 
 
-  it('caps release and current-prod reads per principal, on a counter separate from submissions', async () => {
+  it('caps release and live-release reads per principal, on a counter separate from submissions', async () => {
     const c = fakeClient({
       getRelease: vi.fn(async () => ({ release_id: 'r1', status: 'validating', changed_project: 'core' })),
-      getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 1, updated_at: 't' })),
+      getLiveRelease: vi.fn(async () => ({ live_release_id: 'r', node_count: 1, updated_at: 't' })),
     });
     const app = express();
     app.use(express.json());
@@ -615,10 +615,10 @@ describe('read rate limit', () => {
 
     await withServer(app, async (server) => {
       for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) {
-        const path = i % 2 === 0 ? '/api/v1/releases/r1' : '/api/v1/current-prod';
+        const path = i % 2 === 0 ? '/api/v1/releases/r1' : '/api/v1/live-release';
         expect((await request(server).get(path)).status).toBe(200);
       }
-      for (const path of ['/api/v1/releases/r1', '/api/v1/current-prod']) {
+      for (const path of ['/api/v1/releases/r1', '/api/v1/live-release']) {
         const res = await request(server).get(path);
         expect(res.status).toBe(429);
         expect(res.body).toEqual({ error: 'too many reads; retry in a minute', code: 'rate_limited' });
@@ -628,7 +628,7 @@ describe('read rate limit', () => {
       expect((await request(server).post('/api/v1/releases').send(body)).status).toBe(202);
       // Another principal has its own read budget.
       who = operator;
-      expect((await request(server).get('/api/v1/current-prod')).status).toBe(200);
+      expect((await request(server).get('/api/v1/live-release')).status).toBe(200);
     });
   });
 });

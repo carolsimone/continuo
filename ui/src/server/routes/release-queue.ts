@@ -3,7 +3,7 @@ import { ReleaseClient } from '../clients/release-client';
 
 // GET /api/release-queue — the release check release-controller is running
 // right now, of either kind (a candidate release's or a fix's), or nothing.
-// Polled by the Releases tab's in-flight strip; unlimited, like current-prod.
+// Polled by the Releases tab's in-flight strip; unlimited, like live-release.
 export function createReleaseQueueRouter(client: ReleaseClient) {
   const router = Router();
   router.get('/', async (_req, res) => {

@@ -66,12 +66,12 @@ func TestReceiveCandidate_AcceptsOntologyWhileTheSwitchIsOn(t *testing.T) {
 	assert.Equal(t, releasecheck.StatusReceived, r.Status())
 }
 
-// An install has one ontology project: another project holding the kind in
-// service_prod, or in a candidate check that has not ended, refuses a second.
+// An install has one ontology project: another project holding the kind in its
+// production pointer, or in a candidate check that has not ended, refuses a second.
 func TestReceiveCandidate_RefusesASecondOntologyProject(t *testing.T) {
-	t.Run("another project holds it in service_prod", func(t *testing.T) {
+	t.Run("another project holds it in its production pointer", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
-		store.SeedServiceProd(release.NewServiceProd("ontology-a", "rel-1", "s3://b/ontology-a/rel-1/ontology.yaml", "img:1",
+		store.SeedProductionPointer(release.NewProductionPointer("ontology-a", "rel-1", "s3://b/ontology-a/rel-1/ontology.yaml", "img:1",
 			release.ManifestKindOntology, time.Unix(0, 0)))
 
 		err := receiveOntology(deps, "rOnt", "ontology-b", "ontology")
@@ -115,7 +115,7 @@ func TestReceiveCandidate_RefusesASecondOntologyProject(t *testing.T) {
 
 // A project keeps one side of the line for good: a project released with a node
 // kind cannot become the ontology, and the ontology project cannot be released
-// with a node kind. The refusal leaves the project's production row, and so its
+// with a node kind. The refusal leaves the project's production pointer, and so its
 // nodes, alone.
 func TestReceiveCandidate_RefusesAKindChangeToOrFromOntology(t *testing.T) {
 	cases := map[string]struct {
@@ -131,7 +131,7 @@ func TestReceiveCandidate_RefusesAKindChangeToOrFromOntology(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			deps, store := ontologyDeps(time.Unix(100, 0).UTC())
-			store.SeedServiceProd(release.NewServiceProd("svc", "rel-1", "s3://b/svc/rel-1/artifact", "img:1", tc.stored, time.Unix(0, 0)))
+			store.SeedProductionPointer(release.NewProductionPointer("svc", "rel-1", "s3://b/svc/rel-1/artifact", "img:1", tc.stored, time.Unix(0, 0)))
 
 			err := receiveOntology(deps, "rKind", "svc", tc.submit)
 
@@ -139,9 +139,9 @@ func TestReceiveCandidate_RefusesAKindChangeToOrFromOntology(t *testing.T) {
 			assert.EqualError(t, err, kindChangeText("svc", tc.stored))
 			_, getErr := store.GetRelease("rKind")
 			assert.Error(t, getErr, "a refused release is not stored")
-			sp := store.GetServiceProd("svc")
-			require.NotNil(t, sp)
-			assert.Equal(t, tc.stored, sp.ManifestKind(), "the production row stays as it was")
+			pointer := store.GetProductionPointer("svc")
+			require.NotNil(t, pointer)
+			assert.Equal(t, tc.stored, pointer.ManifestKind(), "the production pointer stays as it was")
 		})
 	}
 }
@@ -151,9 +151,9 @@ func TestReceiveCandidate_RefusesAKindChangeToOrFromOntology(t *testing.T) {
 // and a dbt release for a dbt project is untouched.
 func TestReceiveCandidate_NodeKindsKeepWorkingNextToTheOntologyRules(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
-	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rel-1", "s3://b/svc-dbt/rel-1/manifest.json", "img:1",
+	store.SeedProductionPointer(release.NewProductionPointer("svc-dbt", "rel-1", "s3://b/svc-dbt/rel-1/manifest.json", "img:1",
 		release.ManifestKindDbt, time.Unix(0, 0)))
-	store.SeedServiceProd(release.NewServiceProd("svc-py", "rel-1", "s3://b/svc-py/rel-1/odcs-bundle.json", "img:1",
+	store.SeedProductionPointer(release.NewProductionPointer("svc-py", "rel-1", "s3://b/svc-py/rel-1/odcs-bundle.json", "img:1",
 		release.ManifestKindPython, time.Unix(0, 0)))
 
 	require.NoError(t, receiveOntology(deps, "rDbt", "svc-dbt", ""))
@@ -161,12 +161,12 @@ func TestReceiveCandidate_NodeKindsKeepWorkingNextToTheOntologyRules(t *testing.
 	require.NoError(t, receiveOntology(deps, "rNew", "svc-new", "dbt"))
 }
 
-// The ontology project releases again and again: its own production row and its
+// The ontology project releases again and again: its own production pointer and its
 // own queued checks never count as a second ontology project.
 func TestReceiveCandidate_AcceptsTheSameOntologyProjectAgain(t *testing.T) {
-	t.Run("it holds the kind in service_prod", func(t *testing.T) {
+	t.Run("it holds the kind in its production pointer", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
-		store.SeedServiceProd(release.NewServiceProd("company-ontology", "rel-1", "s3://b/company-ontology/rel-1/ontology.yaml", "img:1",
+		store.SeedProductionPointer(release.NewProductionPointer("company-ontology", "rel-1", "s3://b/company-ontology/rel-1/ontology.yaml", "img:1",
 			release.ManifestKindOntology, time.Unix(0, 0)))
 
 		require.NoError(t, receiveOntology(deps, "rOnt2", "company-ontology", "ontology"))
@@ -190,7 +190,7 @@ func TestReceiveCandidate_AcceptsTheSameOntologyProjectAgain(t *testing.T) {
 func TestReceiveCandidate_ResubmittingAnOntologyReleaseStaysIdempotent(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, receiveOntology(deps, "rOnt", "ontology-b", "ontology"))
-	store.SeedServiceProd(release.NewServiceProd("ontology-a", "rel-1", "s3://b/ontology-a/rel-1/ontology.yaml", "img:1",
+	store.SeedProductionPointer(release.NewProductionPointer("ontology-a", "rel-1", "s3://b/ontology-a/rel-1/ontology.yaml", "img:1",
 		release.ManifestKindOntology, time.Unix(0, 0)))
 
 	require.NoError(t, receiveOntology(deps, "rOnt", "ontology-b", "ontology"))
@@ -217,12 +217,12 @@ func TestReceiveFix_RefusesOntology(t *testing.T) {
 
 // The ontology project declares no node. An ontology release whose parse names
 // no change to any node has nothing to validate: it promotes at once, moves
-// current_prod, and records the project's production pointer with the kind
+// the live release, and records the project's production pointer with the kind
 // ontology and the ontology file as its artifact.
 func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedServiceProd(release.NewServiceProd("svc-a", "prev", "s3://continuo/svc-a/prev/manifest.json", "sha-a",
+	store.SeedProductionPointer(release.NewProductionPointer("svc-a", "prev", "s3://continuo/svc-a/prev/manifest.json", "sha-a",
 		release.ManifestKindDbt, time.Unix(0, 0)))
 	topo := release.Topology{
 		{UniqueID: "a", ProjectName: "svc-a", ContentHash: "h_a"},
@@ -249,14 +249,14 @@ func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "an empty validation request is never sent")
 	}
-	assert.Equal(t, "rOnt", store.GetCurrentProd().ReleaseID(), "current prod moved to the ontology release")
+	assert.Equal(t, "rOnt", store.GetLiveRelease().ReleaseID(), "the live release moved to the ontology release")
 
-	sp := store.GetServiceProd("company-ontology")
-	require.NotNil(t, sp, "the ontology project's production pointer is stored")
-	assert.Equal(t, release.ManifestKindOntology, sp.ManifestKind())
-	assert.Equal(t, "s3://continuo/company-ontology/rOnt/ontology.yaml", sp.ManifestS3Key())
-	assert.Equal(t, "rOnt", sp.ReleaseID())
-	assert.Equal(t, "dbt", string(store.GetServiceProd("svc-a").ManifestKind()), "another project's pointer is not touched")
+	pointer := store.GetProductionPointer("company-ontology")
+	require.NotNil(t, pointer, "the ontology project's production pointer is stored")
+	assert.Equal(t, release.ManifestKindOntology, pointer.ManifestKind())
+	assert.Equal(t, "s3://continuo/company-ontology/rOnt/ontology.yaml", pointer.ManifestS3Key())
+	assert.Equal(t, "rOnt", pointer.ReleaseID())
+	assert.Equal(t, "dbt", string(store.GetProductionPointer("svc-a").ManifestKind()), "another project's pointer is not touched")
 
 	var promoted struct {
 		ReleaseID string `json:"release_id"`

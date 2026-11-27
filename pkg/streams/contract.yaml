@@ -143,7 +143,7 @@ streams:
 
   - name: release.promoted:v1
     const: ReleasePromotedV1
-    description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
+    description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving the live release. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
     producers: [release-controller]
     consumers:
       - component: catalog
@@ -531,7 +531,7 @@ vocabularies:
       - value: dbt-test
         const: DbtTest
         runtime: dbt
-        description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to catalog's graph and never scheduled.
+        description: a dbt data test; exists only in candidate and live topologies, where validation bind-checks its compiled SQL; never promoted to catalog's graph and never scheduled.
       - value: unknown-external
         const: UnknownExternal
         runtime: external

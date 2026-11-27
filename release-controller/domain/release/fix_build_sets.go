@@ -7,13 +7,13 @@ import "sort"
 // the check must keep apart:
 //
 //   - scope: the fix's own delta — nodes of the fix's candidate topology that
-//     differ from current_prod AND from the rejected release's candidate
+//     differ from the live release AND from the rejected release's candidate
 //     (touched by the fix, or absent from that candidate). These seed the
 //     downstream validation closure: the check measures the fix and everything
 //     below it.
 //
 //   - context: nodes the rejected release changed and validated ok — they
-//     differ from current_prod, the fix did not touch them, and the rejected
+//     differ from the live release, the fix did not touch them, and the rejected
 //     release did not record them in failing_nodes. They are rebuilt from the
 //     candidate wherever the scope closure needs them as ancestors, so the
 //     fix's node sees the shape that release produced; but they must NOT expand
@@ -25,7 +25,7 @@ import "sort"
 //
 // A node the rejected release recorded as not ok (failed or skipped) that the
 // fix did not touch is in neither set: cloned from production. A node another
-// release promoted since the rejection matches current_prod and is in neither
+// release promoted since the rejection matches the live release and is in neither
 // set. Both slices are sorted and deduplicated; nil when empty.
 func FixBuildSets(fix, prod, rejected Topology, rejectedFailing []string) (scope, context []string) {
 	touchedByFix := make(map[string]bool)

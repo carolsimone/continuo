@@ -8,8 +8,9 @@ import (
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 )
 
-// ErrReleaseSchemaNotReady reports that the release schema is not built: its
-// base tables are absent, so the database has not been migrated.
+// ErrReleaseSchemaNotReady reports that the release schema is not built: a
+// table of the release checks, the live release or the production pointers is
+// absent, so the database has not been migrated.
 var ErrReleaseSchemaNotReady = errors.New("release schema not initialized")
 
 // CheckReleaseSchemaInitialized refuses a release database whose base tables
@@ -21,8 +22,9 @@ func CheckReleaseSchemaInitialized(ctx context.Context, schema ports.ReleaseSche
 		return fmt.Errorf("read the release database schema: %w", err)
 	}
 	if !initialized {
-		return fmt.Errorf("%w: release_checks, current_prod or service_prod is absent; release-controller "+
-			"starts once the release database migration (the chart's db-init-migrate Job) has built the schema",
+		return fmt.Errorf("%w: a table that holds the release checks (release_checks), the live release (live_release) "+
+			"or the production pointers (production_pointers) is absent; release-controller starts once the release "+
+			"database migration (the chart's db-init-migrate Job) has built the schema",
 			ErrReleaseSchemaNotReady)
 	}
 	return nil

@@ -19,7 +19,7 @@ import (
 // TestE2E_DuplicateTable_RejectsBeforePromotion proves the duplicate-relation
 // gate end to end: a release whose assembled topology has two nodes claiming one
 // relation is rejected at parse time, before any validation Job runs and before
-// current_prod moves.
+// the live release moves.
 //
 // A Python release is used because it has no compile leg — the bundle is
 // uploaded directly and parsed on arrival — so the collision is reachable
@@ -41,7 +41,7 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	releaseID := "e2e-dup-" + uuid.NewString()[:8]
 
 	// Every dbt project keeps its live pointer; the colliding python project is
-	// new, so the assembled topology is "all prod nodes + this contract's node".
+	// new, so the assembled topology is "every live node + this contract's node".
 	allProjects := baselineProjects(t, ctx, clients)
 	require.NotEmpty(t, allProjects,
 		"no baseline manifests in S3 — setup.sh must run before the e2e suite")
@@ -77,12 +77,12 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 	defer func() {
 		if _, derr := clients.releaseDB.ExecContext(context.Background(),
-			`DELETE FROM service_prod WHERE project_name = $1`, dupE2EProject); derr != nil {
-			t.Errorf("cleanup: delete %s service_prod row: %v", dupE2EProject, derr)
+			`DELETE FROM production_pointers WHERE project_name = $1`, dupE2EProject); derr != nil {
+			t.Errorf("cleanup: delete %s production pointer: %v", dupE2EProject, derr)
 		}
 	}()
 
@@ -137,15 +137,15 @@ schema:
 	assert.Contains(t, rejectDetail, dupE2EProject,
 		"the rejection must name the newcomer project")
 
-	var currentProdRelease string
+	var liveReleaseRelease string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT release_id FROM current_prod`).Scan(&currentProdRelease))
-	assert.NotEqual(t, releaseID, currentProdRelease,
-		"a rejected release must never become current_prod")
+		`SELECT release_id FROM live_release`).Scan(&liveReleaseRelease))
+	assert.NotEqual(t, releaseID, liveReleaseRelease,
+		"a rejected release must never become the live release")
 }
 
 // dupE2EProject is the synthetic python project this test introduces; it exists
-// only for the duration of the test and is removed from service_prod on cleanup.
+// only for the duration of the test and is removed from the production pointers on cleanup.
 const dupE2EProject = "e2e-dup-collider"
 
 // dupE2EImage is an arbitrary tag: the release is rejected at parse time, so no

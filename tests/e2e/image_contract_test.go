@@ -105,15 +105,15 @@ func TestE2E_PythonImageContractMismatch_FailsInvalid(t *testing.T) {
 		}
 	}
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
-	// A service_prod pointer left behind would put this project's contracts
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
+	// A production pointer left behind would put this project's contracts
 	// into every later release's topology. Deferred, so it runs while the
 	// pools are open.
 	defer func() {
 		if _, err := clients.releaseDB.ExecContext(context.Background(),
-			`DELETE FROM service_prod WHERE project_name = $1`, pyMismatchProject); err != nil {
-			t.Errorf("cleanup: delete %s service_prod row: %v", pyMismatchProject, err)
+			`DELETE FROM production_pointers WHERE project_name = $1`, pyMismatchProject); err != nil {
+			t.Errorf("cleanup: delete %s production pointer: %v", pyMismatchProject, err)
 		}
 	}()
 

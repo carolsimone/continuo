@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCurrentProdRepository_GetEmptyReturnsZeroValue(t *testing.T) {
+func TestLiveReleaseRepository_GetEmptyReturnsZeroValue(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewCurrentProdRepository(db)
+	repo := postgres.NewLiveReleaseRepository(db)
 	cp, err := repo.Get(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, cp.ReleaseID())
@@ -23,12 +23,12 @@ func TestCurrentProdRepository_GetEmptyReturnsZeroValue(t *testing.T) {
 	assert.Equal(t, int64(0), cp.PromotionSeq())
 }
 
-func TestCurrentProdRepository_UpsertAndGet(t *testing.T) {
+func TestLiveReleaseRepository_UpsertAndGet(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewCurrentProdRepository(db)
+	repo := postgres.NewLiveReleaseRepository(db)
 	ref := release.TopologyRef{URI: "s3://b/tenants/default/topologies/sha-xyz/topology.json.gz", SHA256: "f00d", NodeCount: 7}
 	require.NoError(t, repo.Upsert(context.Background(),
-		release.RehydrateCurrentProd("sha-xyz", ref, 3, time.Unix(500, 0).UTC())))
+		release.RehydrateLiveRelease("sha-xyz", ref, 3, time.Unix(500, 0).UTC())))
 
 	got, err := repo.Get(context.Background())
 	require.NoError(t, err)
@@ -40,12 +40,12 @@ func TestCurrentProdRepository_UpsertAndGet(t *testing.T) {
 
 // A row that references no topology artifact reads with a zero reference: its
 // NULL reference columns map to a zero TopologyRef.
-func TestCurrentProdRepository_RowWithoutAnArtifactHasNoTopologyRef(t *testing.T) {
+func TestLiveReleaseRepository_RowWithoutAnArtifactHasNoTopologyRef(t *testing.T) {
 	db := openTestDB(t)
-	_, err := db.Exec(`INSERT INTO current_prod (id, release_id, updated_at) VALUES (1, '', now())`)
+	_, err := db.Exec(`INSERT INTO live_release (id, release_id, updated_at) VALUES (1, '', now())`)
 	require.NoError(t, err)
 
-	got, err := postgres.NewCurrentProdRepository(db).Get(context.Background())
+	got, err := postgres.NewLiveReleaseRepository(db).Get(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, got.ReleaseID())
 	assert.True(t, got.Topology().IsZero())

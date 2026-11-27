@@ -18,7 +18,7 @@ import (
 // assertOntologyCheckRejectedWhileSwitchIsOff checks that the ontology check
 // releaseID ended rejected invalid_artifact with the text intake answers while
 // the switch is off, emitted release.rejected:v1 and release_check.finished:v1,
-// and wrote neither current_prod nor a service_prod row for the ontology
+// and wrote neither the live release nor a production pointer for the ontology
 // project.
 func assertOntologyCheckRejectedWhileSwitchIsOff(t *testing.T, store *fakeStore, releaseID, project string) {
 	t.Helper()
@@ -27,8 +27,8 @@ func assertOntologyCheckRejectedWhileSwitchIsOff(t *testing.T, store *fakeStore,
 	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), r.FailReason())
 	assert.Equal(t, handlers.ErrOntologyDisabled.Error(), r.FailDetail())
 
-	assert.Nil(t, store.GetServiceProd(project), "no service_prod row is written for the ontology file")
-	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
+	assert.Nil(t, store.GetProductionPointer(project), "no production pointer is written for the ontology file")
+	assert.Zero(t, store.LiveReleaseUpsertCalls(), "the live release is not moved")
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "nothing is promoted")
 	}
@@ -76,7 +76,7 @@ func TestAdvanceQueue_AQueuedOntologyCheckIsRejectedAtActivationWhileTheSwitchIs
 func TestHandleParsedManifest_AParsingOntologyCheckIsRejectedWhileTheSwitchIsOff(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedServiceProd(release.NewServiceProd("svc-a", "prev", "s3://continuo/svc-a/prev/manifest.json", "sha-a",
+	store.SeedProductionPointer(release.NewProductionPointer("svc-a", "prev", "s3://continuo/svc-a/prev/manifest.json", "sha-a",
 		release.ManifestKindDbt, time.Unix(0, 0)))
 	topo := release.Topology{
 		{UniqueID: "a", ProjectName: "svc-a", ContentHash: "h_a"},
@@ -96,8 +96,8 @@ func TestHandleParsedManifest_AParsingOntologyCheckIsRejectedWhileTheSwitchIsOff
 	}))
 
 	assertOntologyCheckRejectedWhileSwitchIsOff(t, store, "rOnt", "company-ontology")
-	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(), "current_prod stays on the release it named")
-	assert.Equal(t, "dbt", string(store.GetServiceProd("svc-a").ManifestKind()), "another project's pointer is not touched")
+	assert.Equal(t, "prev", store.GetLiveRelease().ReleaseID(), "the live release stays on the release it named")
+	assert.Equal(t, "dbt", string(store.GetProductionPointer("svc-a").ManifestKind()), "another project's pointer is not touched")
 }
 
 // The refusal is the same for a failed parse result: the check is rejected with
@@ -154,6 +154,6 @@ func TestNodeKindChecksAreUnaffectedByTheOntologySwitchBeingOff(t *testing.T) {
 		}))
 
 		assert.Equal(t, releasecheck.StatusPromoted, mustGetRelease(t, store, "rPy").Status())
-		require.NotNil(t, store.GetServiceProd("svc-py"))
+		require.NotNil(t, store.GetProductionPointer("svc-py"))
 	})
 }

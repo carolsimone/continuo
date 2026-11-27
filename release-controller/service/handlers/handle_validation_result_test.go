@@ -227,7 +227,7 @@ func TestHandleValidationResult_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 
 	// Nothing was written: no promotion, no rejection, no outbox rows.
 	require.Empty(t, outboxEntries(store))
-	assert.Equal(t, "", store.GetCurrentProd().ReleaseID())
+	assert.Equal(t, "", store.GetLiveRelease().ReleaseID())
 }
 
 func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
@@ -247,7 +247,7 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 
-	cp := store.GetCurrentProd()
+	cp := store.GetLiveRelease()
 	assert.Equal(t, "rA", cp.ReleaseID())
 
 	entries := outboxEntries(store)
@@ -257,17 +257,17 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	assert.Equal(t, streams.ReleasePromotedV1, third.StreamName)
 	assert.Equal(t, "promoted", outcomeOf(t, entries[4]))
 
-	// Assert the changed project's service_prod row carries the correct values.
-	sp := store.GetServiceProd("svc-a")
-	require.NotNil(t, sp)
-	assert.Equal(t, "rA", sp.ReleaseID())
-	assert.Equal(t, "s3://continuo/svc-a/rA/manifest.json", sp.ManifestS3Key())
-	assert.Equal(t, "sha-a", sp.ImageTag())
+	// Assert the changed project's production pointer carries the correct values.
+	pointer := store.GetProductionPointer("svc-a")
+	require.NotNil(t, pointer)
+	assert.Equal(t, "rA", pointer.ReleaseID())
+	assert.Equal(t, "s3://continuo/svc-a/rA/manifest.json", pointer.ManifestS3Key())
+	assert.Equal(t, "sha-a", pointer.ImageTag())
 }
 
 // seedToValidatingFix mirrors seedToValidating but seeds a
 // fix's release check, so promotion tests can assert a fix's release check stops
-// at StatusPassed instead of reaching current_prod.
+// at StatusPassed instead of reaching the live release.
 func seedToValidatingFix(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -312,7 +312,7 @@ func TestHandleValidationResult_OK_RecordsTheValidatingStageDuration(t *testing.
 // TestHandleValidationResult_Fix_StopsAtPassed_NeverPromotes drives
 // HandleValidationResult with a fix's release check in Validating and an all-ok
 // aggregate. The fix's release check must stop at StatusPassed: no
-// release.promoted:v1 outbox row, current_prod's Upsert never called, and
+// release.promoted:v1 outbox row, the live release's Upsert never called, and
 // Telemetry's ReleasePromoted never called. A control on the identical flow
 // with a candidate must still promote, proving the gate is specific to the
 // check's kind rather than a general regression.
@@ -343,13 +343,13 @@ func TestHandleValidationResult_Fix_StopsAtPassed_NeverPromotes(t *testing.T) {
 				"a fix's release check must never emit release.promoted:v1")
 		}
 
-		assert.Equal(t, 0, store.CurrentProdUpsertCalls(),
-			"a fix's release check must never call CurrentProdRepo.Upsert")
-		cp := store.GetCurrentProd()
-		assert.Equal(t, "", cp.ReleaseID(), "current_prod must remain untouched by a fix's release check")
+		assert.Equal(t, 0, store.LiveReleaseUpsertCalls(),
+			"a fix's release check must never call LiveReleaseRepo.Upsert")
+		cp := store.GetLiveRelease()
+		assert.Equal(t, "", cp.ReleaseID(), "the live release must remain untouched by a fix's release check")
 
-		assert.Nil(t, store.GetServiceProd("svc-a"),
-			"a fix's release check must never upsert service_prod")
+		assert.Nil(t, store.GetProductionPointer("svc-a"),
+			"a fix's release check must never upsert a production pointer")
 
 		assert.Equal(t, 0, spy.releasePromotedCalls,
 			"a fix's release check must never call ReleasePromoted on Telemetry")
@@ -372,7 +372,7 @@ func TestHandleValidationResult_Fix_StopsAtPassed_NeverPromotes(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 
-		cp := store.GetCurrentProd()
+		cp := store.GetLiveRelease()
 		assert.Equal(t, "rCandidateControl", cp.ReleaseID())
 
 		entries := outboxEntries(store)
@@ -405,8 +405,8 @@ func TestHandleValidationResult_FixPasses_NoReleaseEvents_FinishedEmitted(t *tes
 
 	got, _ := store.GetRelease(r.ID())
 	assert.Equal(t, releasecheck.StatusPassed, got.Status())
-	assert.Equal(t, 0, store.CurrentProdUpsertCalls(), "a fix's release check never writes current_prod")
-	assert.Nil(t, store.GetServiceProd("core"), "a fix's release check never writes service_prod")
+	assert.Equal(t, 0, store.LiveReleaseUpsertCalls(), "a fix's release check never writes the live release")
+	assert.Nil(t, store.GetProductionPointer("core"), "a fix's release check never writes a production pointer")
 	streamsEmitted := map[string]int{}
 	for _, e := range store.entries {
 		streamsEmitted[e.StreamName]++
@@ -468,7 +468,7 @@ func TestHandleValidationResult_CandidatePromoted_EmitsFinishedToo(t *testing.T)
 
 // seedToValidatingPython mirrors seedToValidating but registers the release as
 // Kind: "python" for a distinct project, so promotion tests can assert the
-// service_prod pointer written for a Python release points at
+// production pointer written for a Python release points at
 // odcs-bundle.json rather than manifest.json. A python release has no compile
 // leg: AdvanceQueue activates it straight into Parsing, so — unlike
 // seedToValidating — there is no HandleCompileResult call here.
@@ -500,7 +500,7 @@ func seedToValidatingPython(t *testing.T, releaseID string) (*handlers.Deps, *fa
 }
 
 // TestHandleValidationResult_PythonKind_PromotesWithBundlePointer verifies
-// that promoting a Python release upserts a service_prod pointer whose
+// that promoting a Python release upserts a production pointer whose
 // ManifestKind is python and whose stored S3 key ends in odcs-bundle.json, not
 // manifest.json — the promote-path counterpart to
 // TestCanonicalManifestKey_PerKindArtifactName.
@@ -517,10 +517,10 @@ func TestHandleValidationResult_PythonKind_PromotesWithBundlePointer(t *testing.
 	})
 	require.NoError(t, err)
 
-	sp := store.GetServiceProd("svc-py")
-	require.NotNil(t, sp)
-	assert.Equal(t, release.ManifestKindPython, sp.ManifestKind())
-	assert.True(t, strings.HasSuffix(sp.ManifestS3Key(), "/odcs-bundle.json"))
+	pointer := store.GetProductionPointer("svc-py")
+	require.NotNil(t, pointer)
+	assert.Equal(t, release.ManifestKindPython, pointer.ManifestKind())
+	assert.True(t, strings.HasSuffix(pointer.ManifestS3Key(), "/odcs-bundle.json"))
 }
 
 func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
@@ -542,8 +542,8 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	assert.Equal(t, "validation_failed", r.FailReason())
 	assert.Equal(t, []string{"b"}, r.FailingNodes())
 
-	// CurrentProd must remain empty since validation failed.
-	cp := store.GetCurrentProd()
+	// LiveRelease must remain empty since validation failed.
+	cp := store.GetLiveRelease()
 	assert.Equal(t, "", cp.ReleaseID())
 
 	entries := outboxEntries(store)
@@ -847,13 +847,13 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	assert.Equal(t, []string{"b"}, p.ChangedNodeIDs, "b changed (hash differs from prior prod); a is unchanged")
 }
 
-// TestHandleValidationResult_Promote_TestNeverChangedButKeptInCurrentProd
+// TestHandleValidationResult_Promote_TestNeverChangedButKeptInLiveRelease
 // verifies that a dbt-test node in the candidate topology is never announced
 // in release.promoted:v1's changed_node_ids — catalog only ever draws
-// relations, never a test — while current_prod's own artifact
+// relations, never a test — while the live release's own artifact
 // still holds it, so an unchanged test is not re-checked by a future
 // release.
-func TestHandleValidationResult_Promote_TestNeverChangedButKeptInCurrentProd(t *testing.T) {
+func TestHandleValidationResult_Promote_TestNeverChangedButKeptInLiveRelease(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
@@ -882,7 +882,7 @@ func TestHandleValidationResult_Promote_TestNeverChangedButKeptInCurrentProd(t *
 	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
 	assert.Equal(t, []string{"a"}, p.ChangedNodeIDs, "a test is never announced as changed")
 
-	cp := store.GetCurrentProd()
+	cp := store.GetLiveRelease()
 	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
 	require.NoError(t, err)
 	keptIDs := map[string]bool{}
@@ -890,7 +890,7 @@ func TestHandleValidationResult_Promote_TestNeverChangedButKeptInCurrentProd(t *
 		keptIDs[n.UniqueID] = true
 	}
 	assert.True(t, keptIDs["test.p.not_null_a_id.1"],
-		"current_prod's artifact keeps the test so an unchanged test is not re-checked next release")
+		"the live release's artifact keeps the test so an unchanged test is not re-checked next release")
 	assert.True(t, keptIDs["a"])
 }
 
@@ -926,14 +926,14 @@ func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {
 // each failing node's rejected per_node entry names its transitive candidate
 // ancestors whose content changed against production, each with the location
 // THIS candidate declares for it. The seeded topology is rewired so "b" depends
-// on "a", and current_prod is seeded with a stale hash for "a" so it counts as
+// on "a", and the live release is seeded with a stale hash for "a" so it counts as
 // changed; "b" then fails validation and must carry "a" — path and project
 // included — as its changed_ancestors, while "a" itself (which has no
 // ancestors) must carry none.
 func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 	deps, store := seedToValidatingWithURIs(t, "rAnc")
 	// Rewire the seeded candidate topology so b depends on a, and record a
-	// current-prod snapshot where a's content differs: a is the changed
+	// live-release snapshot where a's content differs: a is the changed
 	// ancestor of the failing b.
 	r, err := store.GetRelease("rAnc")
 	require.NoError(t, err)
@@ -1111,12 +1111,12 @@ func nodeIDs(topo release.Topology) []string {
 	return ids
 }
 
-// TestPromoteToProduction_CurrentProdTakesTheArtifactTopology pins that a
-// promotion writes current_prod from the check's artifact — dbt-test nodes
+// TestPromoteToProduction_LiveReleaseTakesTheArtifactTopology pins that a
+// promotion writes the live release from the check's artifact — dbt-test nodes
 // included, so an unchanged test is not re-checked next release — and
 // announces on release.promoted:v1 the artifact's reference together with the
 // non-test nodes that changed against the previous prod.
-func TestPromoteToProduction_CurrentProdTakesTheArtifactTopology(t *testing.T) {
+func TestPromoteToProduction_LiveReleaseTakesTheArtifactTopology(t *testing.T) {
 	deps, store := seedToParsing(t, "rArt", map[string]string{"svc-a": "sha-a"})
 	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "a", ProjectName: "svc-a", NodeType: "dbt-model", ContentHash: "h_a"},
@@ -1140,11 +1140,11 @@ func TestPromoteToProduction_CurrentProdTakesTheArtifactTopology(t *testing.T) {
 		ReleaseID: "rArt", AggregateStatus: "ok",
 	}))
 
-	cp := store.GetCurrentProd()
+	cp := store.GetLiveRelease()
 	assert.Equal(t, "rArt", cp.ReleaseID())
 	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"a", "b", "test.b"}, nodeIDs(prodTopo), "the artifact current_prod points at keeps the test node")
+	assert.ElementsMatch(t, []string{"a", "b", "test.b"}, nodeIDs(prodTopo), "the live release's artifact keeps the test node")
 
 	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
 	assert.Equal(t, cp.Topology().URI, p.TopologyURI)
@@ -1153,7 +1153,7 @@ func TestPromoteToProduction_CurrentProdTakesTheArtifactTopology(t *testing.T) {
 
 // An object store that is unreachable at promotion time leaves everything as
 // it was: the handler returns the outage (the consumer pauses and redelivers
-// the decision) and neither current_prod nor the check moves.
+// the decision) and neither the live release nor the check moves.
 func TestHandleValidationResult_UnreachableArtifactStoreAtPromotionChangesNothing(t *testing.T) {
 	deps, store := seedToValidating(t, "rDown")
 	seedValidationNodes(t, deps, "rDown", []handlers.NodeResult{{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"}})
@@ -1165,7 +1165,7 @@ func TestHandleValidationResult_UnreachableArtifactStoreAtPromotionChangesNothin
 	require.Error(t, err)
 	var status interface{ HTTPStatusCode() int }
 	assert.True(t, errors.As(err, &status), "the outage keeps its status code, so the consumer pauses")
-	assert.Equal(t, 0, store.CurrentProdUpsertCalls())
+	assert.Equal(t, 0, store.LiveReleaseUpsertCalls())
 	got, err := store.GetRelease("rDown")
 	require.NoError(t, err)
 	assert.Equal(t, releasecheck.StatusValidating, got.Status())
@@ -1176,7 +1176,7 @@ func TestHandleValidationResult_UnreachableArtifactStoreAtPromotionChangesNothin
 
 // A corrupt artifact at promotion time is reported as corrupt, which the
 // validation.result binding dead-letters (permanentOnCorruptTopology);
-// current_prod does not move.
+// the live release does not move.
 func TestHandleValidationResult_CorruptArtifactAtPromotionIsReportedCorrupt(t *testing.T) {
 	deps, store := seedToValidating(t, "rBad")
 	seedValidationNodes(t, deps, "rBad", []handlers.NodeResult{{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"}})
@@ -1186,12 +1186,12 @@ func TestHandleValidationResult_CorruptArtifactAtPromotionIsReportedCorrupt(t *t
 
 	err = handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{ReleaseID: "rBad", AggregateStatus: "ok"})
 	assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
-	assert.Equal(t, 0, store.CurrentProdUpsertCalls())
+	assert.Equal(t, 0, store.LiveReleaseUpsertCalls())
 }
 
-// Promotion moves current_prod to the check's own candidate artifact and takes
+// Promotion moves the live release to the check's own candidate artifact and takes
 // the next promotion seq.
-func TestHandleValidationResult_Promote_PointsCurrentProdAtTheCandidateArtifact(t *testing.T) {
+func TestHandleValidationResult_Promote_PointsLiveReleaseAtTheCandidateArtifact(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
 		{NodeID: "a", Status: "ok"},
@@ -1203,7 +1203,7 @@ func TestHandleValidationResult_Promote_PointsCurrentProdAtTheCandidateArtifact(
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	cp := store.GetCurrentProd()
+	cp := store.GetLiveRelease()
 	assert.Equal(t, "rA", cp.ReleaseID())
 	assert.Equal(t, r.CandidateTopologyRef(), cp.Topology())
 	assert.Equal(t, int64(1), cp.PromotionSeq())
@@ -1211,7 +1211,7 @@ func TestHandleValidationResult_Promote_PointsCurrentProdAtTheCandidateArtifact(
 }
 
 // seedToValidatingAgainstProd advances a candidate of project "core" to
-// Validating while current_prod holds prod. A candidate node whose
+// Validating while the live release holds prod. A candidate node whose
 // content_hash matches prod's is an unchanged upstream, which the validation
 // leg clones empty from its production table; every other node is built from
 // its own candidate code.

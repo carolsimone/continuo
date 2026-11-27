@@ -38,11 +38,11 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "underscores converted to hyphens",
-			project:  "my_service",
+			project:  "my_project",
 			schema:   "prod_schema",
 			table:    "user_table",
 			runID:    runID,
-			expected: "my-service-prod-schema-user-table-" + shortSuffix,
+			expected: "my-project-prod-schema-user-table-" + shortSuffix,
 		},
 		{
 			name:     "dots converted to hyphens",
@@ -54,19 +54,19 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "special chars sanitized",
-			project:  "my@service",
+			project:  "my@project",
 			schema:   "prod#schema",
 			table:    "user$table",
 			runID:    runID,
-			expected: "my-service-prod-schema-user-table-" + shortSuffix,
+			expected: "my-project-prod-schema-user-table-" + shortSuffix,
 		},
 		{
 			name:     "consecutive hyphens collapsed",
-			project:  "my--service",
+			project:  "my--project",
 			schema:   "prod___schema",
 			table:    "user..table",
 			runID:    runID,
-			expected: "my-service-prod-schema-user-table-" + shortSuffix,
+			expected: "my-project-prod-schema-user-table-" + shortSuffix,
 		},
 		{
 			name:     "leading and trailing hyphens removed",

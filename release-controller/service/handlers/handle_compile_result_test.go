@@ -23,7 +23,7 @@ func decodeJSON(t *testing.T, data []byte) map[string]any {
 }
 
 // putCompilingRelease seeds a release that has been activated (Received →
-// Compiling via AdvanceQueue) and has a service_prod pointer for a second
+// Compiling via AdvanceQueue) and has a production pointer for a second
 // project so AssembleManifestSet in HandleCompileResult produces a non-trivial
 // manifest_keys list.
 func putCompilingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps, releaseID string) {
@@ -405,7 +405,7 @@ func TestHandleCompileResult_Fix_Failed_NoReleaseRejected_FinishedEmitted(t *tes
 // candidate topology it writes.
 func TestHandleCompileResult_OKReleaseRequestedCarriesAssembledImageTags(t *testing.T) {
 	d, fakes := newTestDeps(t)
-	fakes.SeedServiceProd(release.NewServiceProd("svc-b", "rOld", "s3://continuo/svc-b/rOld/manifest.json", "tag-b", release.ManifestKindDbt, time.Unix(0, 0)))
+	fakes.SeedProductionPointer(release.NewProductionPointer("svc-b", "rOld", "s3://continuo/svc-b/rOld/manifest.json", "tag-b", release.ManifestKindDbt, time.Unix(0, 0)))
 	putCompilingRelease(t, fakes, d, "rel-c-tags")
 
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{

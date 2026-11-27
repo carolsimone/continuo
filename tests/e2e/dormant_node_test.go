@@ -109,16 +109,16 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 		"no run of tenant %s holds a task for %s before the test runs it", events.DefaultTenantID, dormantProbeKey)
 
 	// ── 1. A bootstrap release of service-1 promotes ─────────────────────────
-	// From here the test moves the live topology, current_prod and service_prod.
+	// From here the test moves the live topology, the live release and the production pointers.
 	defer restoreDefaultTopologyAfter(t, clients, releaseID)
 
-	// Empty current_prod and service_prod, as the bootstrap test does: the
+	// Empty the live release and the production pointers, as the bootstrap test does: the
 	// release promotes with no validation against no baseline.
 	resetReleaseControllerQueue(t, ctx, clients)
-	_, err := clients.releaseDB.ExecContext(ctx, "DELETE FROM current_prod")
-	require.NoError(t, err, "clear current_prod")
-	_, err = clients.releaseDB.ExecContext(ctx, "DELETE FROM service_prod")
-	require.NoError(t, err, "clear service_prod")
+	_, err := clients.releaseDB.ExecContext(ctx, "DELETE FROM live_release")
+	require.NoError(t, err, "clear live_release")
+	_, err = clients.releaseDB.ExecContext(ctx, "DELETE FROM production_pointers")
+	require.NoError(t, err, "clear production_pointers")
 
 	postRelease(t, clients, dormantProbeProject, releaseID, imageTag, true)
 

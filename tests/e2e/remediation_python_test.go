@@ -239,7 +239,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	//    promotion that took some other route.
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
-		`SELECT count(*) FROM service_prod WHERE project_name = $1`, pyBadReadProject))
+		`SELECT count(*) FROM production_pointers WHERE project_name = $1`, pyBadReadProject))
 	require.Zero(t, prodRows, "a release check must never write the project's production pointer")
 	assertNoNodeVersionsFor(t, ctx, clients, checkID)
 
@@ -401,10 +401,10 @@ func rejectPythonFixtureRelease(
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
-	clearPythonServiceProd(t, ctx, clients)
-	cleanup := func() { clearPythonServiceProd(t, context.Background(), clients) }
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
+	clearPythonProductionPointer(t, ctx, clients)
+	cleanup := func() { clearPythonProductionPointer(t, context.Background(), clients) }
 
 	putODCSBundle(t, ctx, clients, project, releaseID, pyRemediationBundle(t, ctx, project))
 	postPythonRelease(t, clients, project, releaseID, pyFixtureImage, false)
@@ -458,16 +458,16 @@ func ensureBindingRelation(t *testing.T, ctx context.Context, clients *testClien
 	}
 }
 
-// clearPythonServiceProd removes the production pointers of both remediation
+// clearPythonProductionPointer removes the production pointers of both remediation
 // fixture projects. Neither is ever meant to reach production in these tests,
 // so a row for either is stale state from an earlier run and would be read
 // back during manifest assembly.
-func clearPythonServiceProd(t *testing.T, ctx context.Context, clients *testClients) {
+func clearPythonProductionPointer(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 	for _, svc := range []string{pyBadReadProject, pyLoopProject} {
 		if _, err := clients.releaseDB.ExecContext(ctx,
-			`DELETE FROM service_prod WHERE project_name = $1`, svc); err != nil {
-			t.Errorf("clear service_prod row for %s: %v", svc, err)
+			`DELETE FROM production_pointers WHERE project_name = $1`, svc); err != nil {
+			t.Errorf("clear production pointer for %s: %v", svc, err)
 		}
 	}
 }
@@ -806,7 +806,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	waitForRemediationProposed(t, ctx, proposedTap, releaseID, pyParseUniqueID, pyRecordVisibleBudget)
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
-		`SELECT count(*) FROM service_prod WHERE project_name = $1`, pyParseProject))
+		`SELECT count(*) FROM production_pointers WHERE project_name = $1`, pyParseProject))
 	require.Zero(t, prodRows, "a release check must never write the project's production pointer")
 
 	t.Log("✅ a python node rejected at the parse stage was repaired in its contract, verified by a real release check, and proposed for review")

@@ -6,11 +6,12 @@ import { buildProjectColors } from './project-helpers';
 // set, its name, and its image tag. The changed project — the one whose image
 // is new in this release check — is marked, and the sub-line says so, naming
 // what the page shows (subject: "release" unless the page says otherwise) and
-// where every other image was carried over from (carriedFrom: "prod" for a
-// candidate; the verified release for a fix's release check, whose set is
-// that release's with the fixed project swapped in). Renders nothing when no
-// image has been recorded yet.
-export default function ProjectTiles({ imageTags, changedProject, subject = 'release', carriedFrom = 'prod' }: {
+// where every other image was carried over from (carriedFrom: "production"
+// for a candidate, whose other images come from the production pointers; the
+// verified release for a fix's release check, whose set is that release's
+// with the fixed project swapped in). Renders nothing when no image has been
+// recorded yet.
+export default function ProjectTiles({ imageTags, changedProject, subject = 'release', carriedFrom = 'production' }: {
   imageTags: Record<string, string>;
   changedProject?: string;
   subject?: string;

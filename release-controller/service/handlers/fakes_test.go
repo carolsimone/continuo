@@ -100,14 +100,14 @@ var _ ports.Telemetry = (*stageSpy)(nil)
 // and write through the same data, so handler tests can inspect accumulated
 // state after multiple handler calls — each of which obtains its own UoW.
 type fakeStore struct {
-	mu            sync.Mutex
-	releases      map[string]*releasecheck.Check
-	order         []string // insertion order, oldest first; drives NextQueued FIFO
-	cp            *release.CurrentProd
-	cpUpsertCalls int
-	lastSeq       int64
-	serviceProd   map[string]*release.ServiceProd
-	entries       []*pkgoutbox.Entry
+	mu                 sync.Mutex
+	releases           map[string]*releasecheck.Check
+	order              []string // insertion order, oldest first; drives NextQueued FIFO
+	cp                 *release.LiveRelease
+	cpUpsertCalls      int
+	lastSeq            int64
+	productionPointers map[string]*release.ProductionPointer
+	entries            []*pkgoutbox.Entry
 	// racing holds checks another submission commits between a transaction's
 	// Load and its Create: invisible to Load, they land in releases the
 	// moment a Create for their id runs, as a concurrent winner's insert does.
@@ -119,9 +119,9 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		releases:    map[string]*releasecheck.Check{},
-		serviceProd: map[string]*release.ServiceProd{},
-		topologies:  newFakeTopologies(),
+		releases:           map[string]*releasecheck.Check{},
+		productionPointers: map[string]*release.ProductionPointer{},
+		topologies:         newFakeTopologies(),
 	}
 }
 
@@ -148,48 +148,48 @@ func (s *fakeStore) SeedRelease(r *releasecheck.Check) {
 	s.releases[r.ID()] = r
 }
 
-// SeedCurrentProd installs a current-prod snapshot directly, simulating a
+// SeedLiveRelease installs a live-release snapshot directly, simulating a
 // prior promotion. Used by handler tests to exercise the content_hash diff.
-func (s *fakeStore) SeedCurrentProd(cp *release.CurrentProd) {
+func (s *fakeStore) SeedLiveRelease(cp *release.LiveRelease) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cp = cp
 }
 
-// GetCurrentProd returns the stored current-prod record, or a fresh one if
+// GetLiveRelease returns the stored live-release record, or a fresh one if
 // none has been written yet.
-func (s *fakeStore) GetCurrentProd() *release.CurrentProd {
+func (s *fakeStore) GetLiveRelease() *release.LiveRelease {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cp == nil {
-		return release.NewCurrentProd()
+		return release.NewLiveRelease()
 	}
 	return s.cp
 }
 
-// SeedServiceProd installs a service_prod pointer directly so advance-queue
+// SeedProductionPointer installs a production pointer directly so advance-queue
 // tests can assert that other projects' manifest keys are picked up.
-func (s *fakeStore) SeedServiceProd(sp *release.ServiceProd) {
+func (s *fakeStore) SeedProductionPointer(pointer *release.ProductionPointer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.serviceProd[sp.ProjectName()] = sp
+	s.productionPointers[pointer.ProjectName()] = pointer
 }
 
-// GetServiceProd returns the service_prod pointer written for the given project
+// GetProductionPointer returns the production pointer written for the given project
 // name, or nil if no upsert has been recorded yet. Used by handler tests to
 // assert the values written by promoteToProduction.
-func (s *fakeStore) GetServiceProd(projectName string) *release.ServiceProd {
+func (s *fakeStore) GetProductionPointer(projectName string) *release.ProductionPointer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.serviceProd[projectName]
+	return s.productionPointers[projectName]
 }
 
-// CurrentProdUpsertCalls returns how many times CurrentProdRepo.Upsert has
+// LiveReleaseUpsertCalls returns how many times LiveReleaseRepo.Upsert has
 // been called against this store, across every UoW instance backed by it.
 // Used by tests to assert that a route which must never promote (e.g. a
-// fix's release check) never touches current_prod, rather than only inferring
+// fix's release check) never touches the live release, rather than only inferring
 // it from the stored value.
-func (s *fakeStore) CurrentProdUpsertCalls() int {
+func (s *fakeStore) LiveReleaseUpsertCalls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cpUpsertCalls
@@ -353,22 +353,22 @@ func (f *fakeReleaseCheckRepo) DeleteFinishedBefore(_ context.Context, cutoff ti
 
 var _ repository.ReleaseCheckRepository = (*fakeReleaseCheckRepo)(nil)
 
-// --- fakeCurrentProdRepo ---
+// --- fakeLiveReleaseRepo ---
 
-type fakeCurrentProdRepo struct {
+type fakeLiveReleaseRepo struct {
 	store *fakeStore
 }
 
-func (f *fakeCurrentProdRepo) Get(_ context.Context) (*release.CurrentProd, error) {
+func (f *fakeLiveReleaseRepo) Get(_ context.Context) (*release.LiveRelease, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	if f.store.cp == nil {
-		return release.NewCurrentProd(), nil
+		return release.NewLiveRelease(), nil
 	}
 	return f.store.cp, nil
 }
 
-func (f *fakeCurrentProdRepo) Upsert(_ context.Context, cp *release.CurrentProd) error {
+func (f *fakeLiveReleaseRepo) Upsert(_ context.Context, cp *release.LiveRelease) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	f.store.cp = cp
@@ -376,7 +376,7 @@ func (f *fakeCurrentProdRepo) Upsert(_ context.Context, cp *release.CurrentProd)
 	return nil
 }
 
-var _ repository.CurrentProdRepository = (*fakeCurrentProdRepo)(nil)
+var _ repository.LiveReleaseRepository = (*fakeLiveReleaseRepo)(nil)
 
 // LastPromotionSeq returns the last seq the fake sequence handed out.
 func (s *fakeStore) LastPromotionSeq() int64 {
@@ -400,41 +400,41 @@ func (f *fakePromotionSequenceRepo) Next(_ context.Context) (int64, error) {
 
 var _ repository.PromotionSequenceRepository = (*fakePromotionSequenceRepo)(nil)
 
-// --- fakeServiceProdRepo ---
+// --- fakeProductionPointerRepo ---
 
-type fakeServiceProdRepo struct {
+type fakeProductionPointerRepo struct {
 	store *fakeStore
 }
 
-func (f *fakeServiceProdRepo) List(_ context.Context) ([]*release.ServiceProd, error) {
+func (f *fakeProductionPointerRepo) List(_ context.Context) ([]*release.ProductionPointer, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
-	out := make([]*release.ServiceProd, 0, len(f.store.serviceProd))
-	for _, sp := range f.store.serviceProd {
-		out = append(out, sp)
+	out := make([]*release.ProductionPointer, 0, len(f.store.productionPointers))
+	for _, pointer := range f.store.productionPointers {
+		out = append(out, pointer)
 	}
 	return out, nil
 }
 
-func (f *fakeServiceProdRepo) Get(_ context.Context, projectName string) (*release.ServiceProd, error) {
+func (f *fakeProductionPointerRepo) Get(_ context.Context, projectName string) (*release.ProductionPointer, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
-	return f.store.serviceProd[projectName], nil
+	return f.store.productionPointers[projectName], nil
 }
 
-func (f *fakeServiceProdRepo) Upsert(_ context.Context, sp *release.ServiceProd) error {
+func (f *fakeProductionPointerRepo) Upsert(_ context.Context, pointer *release.ProductionPointer) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
-	f.store.serviceProd[sp.ProjectName()] = sp
+	f.store.productionPointers[pointer.ProjectName()] = pointer
 	return nil
 }
 
-func (f *fakeServiceProdRepo) ProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+func (f *fakeProductionPointerRepo) ProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	var names []string
-	for name, sp := range f.store.serviceProd {
-		if sp.ManifestKind() == kind {
+	for name, pointer := range f.store.productionPointers {
+		if pointer.ManifestKind() == kind {
 			names = append(names, name)
 		}
 	}
@@ -442,7 +442,7 @@ func (f *fakeServiceProdRepo) ProjectsWithKind(_ context.Context, kind release.M
 	return names, nil
 }
 
-var _ repository.ServiceProdRepository = (*fakeServiceProdRepo)(nil)
+var _ repository.ProductionPointerRepository = (*fakeProductionPointerRepo)(nil)
 
 // --- fakeOutbox ---
 
@@ -621,13 +621,13 @@ func (storeOutage) Error() string       { return "s3: project unavailable" }
 func (storeOutage) HTTPStatusCode() int { return 503 }
 
 // seedProd writes topo as release releaseID's topology artifact through the
-// Deps' artifact store and points current_prod at it, simulating a prior
+// Deps' artifact store and makes releaseID the live release, simulating a prior
 // promotion. Handler tests use it to exercise the diff against production.
 func seedProd(t *testing.T, deps *handlers.Deps, store *fakeStore, releaseID string, topo release.Topology, at time.Time) {
 	t.Helper()
 	ref, err := deps.Topologies.Write(context.Background(), releaseID, topo)
 	require.NoError(t, err)
-	store.SeedCurrentProd(release.RehydrateCurrentProd(releaseID, ref, 0, at))
+	store.SeedLiveRelease(release.RehydrateLiveRelease(releaseID, ref, 0, at))
 }
 
 // --- fakeUoW ---
@@ -639,8 +639,8 @@ func seedProd(t *testing.T, deps *handlers.Deps, store *fakeStore, releaseID str
 // writes from prior calls.
 type fakeUoW struct {
 	releases *fakeReleaseCheckRepo
-	cp       *fakeCurrentProdRepo
-	sp       *fakeServiceProdRepo
+	cp       *fakeLiveReleaseRepo
+	pointers *fakeProductionPointerRepo
 	seq      *fakePromotionSequenceRepo
 	outbox   *fakeOutbox
 	msgProc  fakeMessageProcessing
@@ -649,16 +649,16 @@ type fakeUoW struct {
 func newFakeUoW(store *fakeStore) *fakeUoW {
 	return &fakeUoW{
 		releases: &fakeReleaseCheckRepo{store: store},
-		cp:       &fakeCurrentProdRepo{store: store},
-		sp:       &fakeServiceProdRepo{store: store},
+		cp:       &fakeLiveReleaseRepo{store: store},
+		pointers: &fakeProductionPointerRepo{store: store},
 		seq:      &fakePromotionSequenceRepo{store: store},
 		outbox:   &fakeOutbox{store: store},
 	}
 }
 
-func (f *fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository { return f.releases }
-func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository   { return f.cp }
-func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository   { return f.sp }
+func (f *fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository           { return f.releases }
+func (f *fakeUoW) LiveReleaseRepo() repository.LiveReleaseRepository             { return f.cp }
+func (f *fakeUoW) ProductionPointerRepo() repository.ProductionPointerRepository { return f.pointers }
 func (f *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository {
 	return f.seq
 }

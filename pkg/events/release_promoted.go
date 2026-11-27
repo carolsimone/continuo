@@ -13,7 +13,7 @@ const ReleasePromotedSchemaVersion = 1
 
 // ReleasePromoted is the payload of a release.promoted:v1 entry: a topology
 // becoming the live one, numbered by PromotionSeq. release-controller allocates
-// the seq in the transaction that moves current_prod, or when it announces a
+// the seq in the transaction that moves the live release, or when it announces a
 // topology without moving it; a consumer applies an entry only when its seq is
 // higher than the last one it applied. The topology is the artifact at
 // TopologyURI, verified against TopologySHA256. The release's contract bundle

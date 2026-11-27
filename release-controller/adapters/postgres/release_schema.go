@@ -18,15 +18,16 @@ func NewReleaseSchema(q Queryer) *ReleaseSchema {
 
 var _ ports.ReleaseSchema = (*ReleaseSchema)(nil)
 
-// Initialized reports whether release_checks, current_prod and
-// service_prod all exist in the current schema.
+// Initialized reports whether the tables of the release checks, the live
+// release and the production pointers (release_checks, live_release and
+// production_pointers) all exist in the current schema.
 func (s *ReleaseSchema) Initialized(ctx context.Context) (bool, error) {
 	var n int
 	row := s.q.QueryRowxContext(ctx, `
 		SELECT count(*)
 		  FROM information_schema.tables
 		 WHERE table_schema = current_schema()
-		   AND table_name::text IN ('release_checks', 'current_prod', 'service_prod')`)
+		   AND table_name::text IN ('release_checks', 'live_release', 'production_pointers')`)
 	if err := row.Scan(&n); err != nil {
 		return false, fmt.Errorf("read release schema tables: %w", err)
 	}

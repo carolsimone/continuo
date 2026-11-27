@@ -4,7 +4,7 @@ export type Action =
   | { kind: 'api.read' }
   | { kind: 'api.mutate' }
   | { kind: 'release.read'; project: string }
-  | { kind: 'prod.read' }
+  | { kind: 'live-release.read' }
   | { kind: 'release.submit'; project: string; bootstrap: boolean };
 
 export type Decision =
@@ -21,7 +21,7 @@ const deny = (reason: string, code: 'forbidden' | 'bootstrap_not_allowed' = 'for
 export function authorize(p: Principal, a: Action): Decision {
   if (p.kind === 'human') {
     if (p.user.role === 'operator') return ALLOW;
-    if (a.kind === 'api.read' || a.kind === 'release.read' || a.kind === 'prod.read') return ALLOW;
+    if (a.kind === 'api.read' || a.kind === 'release.read' || a.kind === 'live-release.read') return ALLOW;
     return deny('operator role required');
   }
   if (p.grants.size === 0) return deny(`repository ${p.claims.repository} is not bound to any project`);
@@ -29,7 +29,7 @@ export function authorize(p: Principal, a: Action): Decision {
     case 'api.read':
     case 'api.mutate':
       return deny('CI tokens may only call /api/v1');
-    case 'prod.read':
+    case 'live-release.read':
       return ALLOW;
     case 'release.read':
       return p.grants.has(a.project) ? ALLOW : deny(`repository ${p.claims.repository} is not bound to project "${a.project}"`);

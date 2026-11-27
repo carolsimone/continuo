@@ -8,18 +8,19 @@ in any release.
 
 ## Find the release
 
-`GET /api/v1/current-prod` answers with the production pointer. The token is the
+`GET /api/v1/live-release` answers with the live release, the release production
+runs on now. The token is the
 one the release routes use ([deploy/AUTH.md](../deploy/AUTH.md)); a repository
 bound in `ciAuth.bindings` may call it.
 
 ```json
-{"current_prod_release_id": "rel-2026-11-06-0001", "node_count": 42, "updated_at": "2026-11-06T09:12:45Z"}
+{"live_release_id": "rel-2026-11-06-0001", "node_count": 42, "updated_at": "2026-11-06T09:12:45Z"}
 ```
 
-The read set is `current_prod_release_id`, a string. `node_count` and
+The read set is `live_release_id`, a string. `node_count` and
 `updated_at` are present but are not part of it. The route is versioned by its
-path: a change that removes, renames or retypes `current_prod_release_id` is a
-new route, `/api/v2/current-prod`.
+path: a change that removes, renames or retypes `live_release_id` is a
+new route, `/api/v2/live-release`.
 
 ## The three documents
 
@@ -143,9 +144,8 @@ ontology](ontology.md) says what is filled in.
 ## How long the objects stay
 
 - The bundle, the topology artifact and the contract bundle of the release
-  `current_prod_release_id` names are never deleted while it is the production
-  release. The same holds for a release that is still a project's production
-  release.
+  `live_release_id` names are never deleted while it is the live release. The
+  same holds for a release that a project's production pointer still names.
 - release-controller deletes the bundle of any other release when its retention
   prunes the release: 90 days after the release was submitted
   (`RELEASE_RETENTION_DAYS`). It deletes the topology artifact and the contract
@@ -166,6 +166,6 @@ ontology](ontology.md) says what is filled in.
 | The topology's read set and version | `pkg/topologyartifact/read_contract_test.go` checks each path and type on the golden fixture that both writers are pinned to. |
 | The contract bundle's read set and version | `topology-controller/tests/test_contract_bundle.py` writes a bundle and compares it with a fixture. `pkg/contractbundle/contractbundle_test.go` reads a copy of that fixture and checks each value, and `pkg/streams` keeps the two copies identical. |
 | Readers ignore unknown keys and refuse a newer version | The same tests, in `Decode` of each package. |
-| The pointer's key | `tests/e2e/public_api_test.go` reads `current_prod_release_id` through the public route. |
-| The live release's objects are kept | `TestPruneFinishedChecks_PassesCutoffAndKeepIDs` (the production release is never pruned) and `TestReleaseCheckRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes` (a kept release's prefixes are never deleted). |
+| The live release's key | `tests/e2e/public_api_test.go` reads `live_release_id` through the public route. |
+| The live release's objects are kept | `TestPruneFinishedChecks_PassesCutoffAndKeepIDs` (the live release is never pruned) and `TestReleaseCheckRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes` (a kept release's prefixes are never deleted). |
 | No expiry rule on the two prefixes | `scripts/check-read-retention.sh`, run by `make guards`. |

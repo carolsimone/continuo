@@ -68,7 +68,7 @@ describe('createApp gating', () => {
   it('mounts /api/v1 behind the guard', async () => {
     const store = new SessionStore(new FakeRedis(), 3600, 7200);
     const app = createApp(fakeGrpc, fakeGraph, oidcModeAuth(store));
-    expect((await request(app).get('/api/v1/current-prod')).status).toBe(401);
+    expect((await request(app).get('/api/v1/live-release')).status).toBe(401);
   });
 
   it('maintenance: a run-starting route is refused at the edge and the flag is exposed', async () => {

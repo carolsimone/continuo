@@ -88,15 +88,15 @@ func TestE2E_AliasedAndVersionedModels_ValidateWithTheirDependants(t *testing.T)
 		require.True(t, found[id],
 			"%s not found in any baseline manifest — are the models in service-1 and the image rebuilt + manifests re-uploaded?", id)
 	}
-	t.Logf("seeded prod snapshot with %d nodes (the four aliased and versioned models excluded)", len(prodNodes))
+	t.Logf("seeded the live release with %d nodes (the four aliased and versioned models excluded)", len(prodNodes))
 
 	// Tap the stream before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the tap recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 

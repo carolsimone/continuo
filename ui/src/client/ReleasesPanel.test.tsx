@@ -11,7 +11,7 @@ const item = (o: Partial<ReleaseListItem> & { release_id: string; status: string
 
 function mockFetch(releases: ReleaseListItem[], releaseQueue: ReleaseQueueResponse = { active: null }) {
   global.fetch = vi.fn((url: string) => {
-    if (String(url).startsWith('/api/releases/current-prod')) {
+    if (String(url).startsWith('/api/releases/live-release')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
     }
     if (String(url).startsWith('/api/release-queue')) {

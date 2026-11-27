@@ -142,9 +142,9 @@ export IMAGE_TAG_PER_PROJECT="$PER_PROJECT"
 echo "Exported IMAGE_TAG_PER_PROJECT=${IMAGE_TAG_PER_PROJECT}"
 
 # Write the per-project image tags to the bind-mounted tests/e2e/.image-tags file
-# (immutable setup metadata). The e2e rebuilds the release-controller service_prod
-# baseline from this before each consumer, so a prior test's mutation of
-# service_prod cannot break a later read. Replaces the obsolete S3 image-tag sidecar.
+# (immutable setup metadata). The e2e rebuilds release-controller's production pointers
+# from this before each consumer, so a prior test's change to a production
+# pointer cannot break a later read.
 printf '%s' "$PER_PROJECT" > tests/e2e/.image-tags
 echo "Wrote per-project image tags to tests/e2e/.image-tags"
 
@@ -221,9 +221,9 @@ echo "Compiling and uploading dbt manifests to MinIO S3..."
 docker exec dbt-compile-and-load uv run python -m dbt_upload load --projects-dir /app/projects --target minio --release-id e2e-baseline
 echo "✓ dbt manifests compiled and uploaded to MinIO S3 (key: <project>/e2e-baseline/manifest.json)"
 
-# Per-project image tags are seeded into the release-controller service_prod
-# pointer table at the end of this script (after the final compose up runs the
-# release-controller migrations). The e2e reads image_tag from service_prod — the
+# Per-project image tags are seeded into release-controller's production
+# pointers at the end of this script (after the final compose up runs the
+# release-controller migrations). The e2e reads image_tag from the production pointers — the
 # production source of truth — so no S3 image-tag sidecar is needed.
 
 # Materialize dbt seeds into e2e_schema. The e2e topology is seeded directly

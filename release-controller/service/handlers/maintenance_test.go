@@ -58,7 +58,7 @@ func TestAdvanceQueue_MaintenanceActivatesOnlyFixes(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	deps.Maintenance = true
-	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 	store.SeedRelease(releasecheck.NewCandidate("rCand", "svc-a", "tag-c", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
 	store.SeedRelease(releasecheck.NewFix("rVerify", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 

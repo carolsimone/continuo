@@ -1,22 +1,22 @@
 // announce-topology announces a topology to the rest of continuo on
 // release.promoted:v1 under a fresh promotion seq, without a release and
-// without moving current_prod. The benchmark and e2e harnesses use it to load
+// without moving the live release. The benchmark and e2e harnesses use it to load
 // a topology, and to restore the live one afterwards.
 //
 //	announce-topology --release-id bench-20261008 --topology nodes.json
-//	announce-topology --reannounce-current
-//	announce-topology --print-current > live.json
+//	announce-topology --reannounce-live
+//	announce-topology --print-live > live.json
 //
 // --topology reads a JSON array of topology artifact nodes from a path, or
-// from stdin with "-". --reannounce-current announces current_prod's own
-// topology again. --print-current writes current_prod's topology nodes to
+// from stdin with "-". --reannounce-live announces the live release's own
+// topology again. --print-live writes the live release's topology nodes to
 // stdout and announces nothing.
 //
 // stdout carries only the result: one JSON object
 // {"release_id","promotion_seq","topology_uri","topology_sha256"}, or the
-// node array for --print-current. Diagnostics go to stderr. Exit codes: 0 ok,
+// node array for --print-live. Diagnostics go to stderr. Exit codes: 0 ok,
 // 1 error, 2 usage (bad flags, an unreadable topology, a release id that
-// already names a check or current_prod), 3 nothing has been promoted.
+// already names a check or the live release), 3 nothing has been promoted.
 //
 // The command writes the artifact to S3 and the announcement to
 // release-controller's outbox; the running release-controller publishes it.
@@ -50,7 +50,7 @@ const (
 	exitOK            = 0
 	exitError         = 1
 	exitUsage         = 2
-	exitNoCurrentProd = 3
+	exitNoLiveRelease = 3
 )
 
 // topologyAnnouncer is the part of release-controller the command drives.
@@ -64,10 +64,10 @@ type topologyAnnouncer interface {
 type connectFunc func(ctx context.Context) (topologyAnnouncer, func(), error)
 
 type options struct {
-	releaseID         string
-	topologyPath      string
-	reannounceCurrent bool
-	printCurrent      bool
+	releaseID      string
+	topologyPath   string
+	reannounceLive bool
+	printLive      bool
 }
 
 func main() {
@@ -111,16 +111,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	defer closeFn()
 
-	if opts.printCurrent {
+	if opts.printLive {
 		current, err := a.CurrentTopology(ctx)
 		if err != nil {
-			return failure(logger, "print current_prod topology", err)
+			return failure(logger, "print the live release's topology", err)
 		}
 		return writeJSON(stdout, logger, fromTopology(current))
 	}
 
 	var res handlers.AnnounceResult
-	if opts.reannounceCurrent {
+	if opts.reannounceLive {
 		res, err = a.ReannounceCurrent(ctx)
 	} else {
 		res, err = a.Announce(ctx, opts.releaseID, topo)
@@ -142,8 +142,8 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	var o options
 	fs.StringVar(&o.releaseID, "release-id", "", "release id to announce the topology under (with --topology)")
 	fs.StringVar(&o.topologyPath, "topology", "", `topology to announce: a JSON array of topology artifact nodes, read from this path or from stdin with "-"`)
-	fs.BoolVar(&o.reannounceCurrent, "reannounce-current", false, "announce current_prod's own topology again under a fresh promotion seq")
-	fs.BoolVar(&o.printCurrent, "print-current", false, "write current_prod's topology nodes to stdout as a JSON array and announce nothing")
+	fs.BoolVar(&o.reannounceLive, "reannounce-live", false, "announce the live release's own topology again under a fresh promotion seq")
+	fs.BoolVar(&o.printLive, "print-live", false, "write the live release's topology nodes to stdout as a JSON array and announce nothing")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -154,14 +154,14 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	if o.topologyPath != "" || o.releaseID != "" {
 		modes++
 	}
-	if o.reannounceCurrent {
+	if o.reannounceLive {
 		modes++
 	}
-	if o.printCurrent {
+	if o.printLive {
 		modes++
 	}
 	if modes != 1 {
-		return options{}, errors.New("choose exactly one of --topology with --release-id, --reannounce-current, --print-current")
+		return options{}, errors.New("choose exactly one of --topology with --release-id, --reannounce-live, --print-live")
 	}
 	if (o.topologyPath == "") != (o.releaseID == "") {
 		return options{}, errors.New("--topology and --release-id go together")
@@ -275,8 +275,8 @@ func seedColumnsToArtifact(columns []release.SeedColumn) []topologyartifact.Seed
 func failure(logger *slog.Logger, what string, err error) int {
 	logger.Error(what, "error", err)
 	switch {
-	case errors.Is(err, handlers.ErrNoCurrentProd):
-		return exitNoCurrentProd
+	case errors.Is(err, handlers.ErrNoLiveRelease):
+		return exitNoLiveRelease
 	case errors.Is(err, handlers.ErrReleaseIDTaken), errors.Is(err, handlers.ErrInvalidReleaseID):
 		return exitUsage
 	default:
@@ -301,11 +301,11 @@ func (a depsAnnouncer) Announce(ctx context.Context, releaseID string, topo rele
 }
 
 func (a depsAnnouncer) ReannounceCurrent(ctx context.Context) (handlers.AnnounceResult, error) {
-	return handlers.ReannounceCurrentProd(ctx, a.d)
+	return handlers.ReannounceLiveRelease(ctx, a.d)
 }
 
 func (a depsAnnouncer) CurrentTopology(ctx context.Context) (release.Topology, error) {
-	return handlers.CurrentProdTopology(ctx, a.d)
+	return handlers.LiveReleaseTopology(ctx, a.d)
 }
 
 func connect(ctx context.Context) (topologyAnnouncer, func(), error) {

@@ -147,8 +147,8 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	waitForRunControllerLiveRelease(t, ctx, clients, base)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 	setLoadedSeedVersion(t, ctx, clients, oldSeedHash, "sha256:e2e-old-columns")
 
 	postRelease(t, clients, seedReloadProject, releaseID, imageTag, false)

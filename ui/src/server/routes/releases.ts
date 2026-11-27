@@ -52,7 +52,7 @@ export function createReleasesRouter(
 
   // Bound the list route only: it is the one that fans out to GitHub (one
   // getCommit per distinct commit), so an authenticated client must not be able
-  // to hammer it. The other release routes are left unlimited — current-prod is
+  // to hammer it. The other release routes are left unlimited — live-release is
   // polled every 5s and would otherwise share this budget. The key is the
   // authenticated user (this router is mounted behind the /api auth guard), not
   // the client IP: behind an ingress with no `trust proxy` the IP is the
@@ -78,10 +78,10 @@ export function createReleasesRouter(
     }
   });
 
-  // GET /api/releases/current-prod
-  router.get('/current-prod', async (_req, res) => {
+  // GET /api/releases/live-release
+  router.get('/live-release', async (_req, res) => {
     try {
-      res.json(await client.getCurrentProd());
+      res.json(await client.getLiveRelease());
     } catch (err: any) {
       res.status(err.status || 502).json({ error: 'release-controller request failed' });
     }

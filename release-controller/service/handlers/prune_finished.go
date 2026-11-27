@@ -6,7 +6,7 @@ import (
 )
 
 // PruneFinishedChecks deletes terminal checks of either kind older than retentionDays,
-// preserving any check still referenced by current_prod or a service_prod row.
+// preserving any check still named by the live release or by a production pointer.
 func PruneFinishedChecks(ctx context.Context, d *Deps, retentionDays int) (int, error) {
 	cutoff := d.Clock.Now().AddDate(0, 0, -retentionDays)
 
@@ -16,14 +16,14 @@ func PruneFinishedChecks(ctx context.Context, d *Deps, retentionDays int) (int, 
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	cp, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("get current prod: %w", err)
+		return 0, fmt.Errorf("get live release: %w", err)
 	}
 
-	sps, err := u.ServiceProdRepo().List(ctx)
+	pointers, err := u.ProductionPointerRepo().List(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("list service_prod: %w", err)
+		return 0, fmt.Errorf("list production pointers: %w", err)
 	}
 
 	// Collect all release IDs that must not be deleted.
@@ -31,9 +31,9 @@ func PruneFinishedChecks(ctx context.Context, d *Deps, retentionDays int) (int, 
 	if cp != nil && cp.ReleaseID() != "" {
 		seen[cp.ReleaseID()] = struct{}{}
 	}
-	for _, sp := range sps {
-		if sp.ReleaseID() != "" {
-			seen[sp.ReleaseID()] = struct{}{}
+	for _, pointer := range pointers {
+		if pointer.ReleaseID() != "" {
+			seen[pointer.ReleaseID()] = struct{}{}
 		}
 	}
 	keepIDs := make([]string, 0, len(seen))

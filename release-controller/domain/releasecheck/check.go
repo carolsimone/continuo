@@ -394,7 +394,7 @@ func (r *Check) SetRejectionPayload(p []byte) {
 }
 
 // SetAssembledImageTags replaces the image-tags map with the fully assembled
-// set built from every project's live service_prod pointer, read at
+// set built from every project's live production pointer, read at
 // activation so earlier-queued promotions are seen.
 func (r *Check) SetAssembledImageTags(tags map[string]string) { r.imageTags = tags }
 

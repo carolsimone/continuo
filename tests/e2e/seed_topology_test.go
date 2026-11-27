@@ -70,14 +70,14 @@ var e2eTestCounts = map[string]int{
 
 // e2eTopology returns the fixed e2e DAG as topology artifact nodes, plus the
 // schedules it declares, sorted. Per-project image_tag is read from the
-// release-controller service_prod table so the nodes carry the
+// release-controller's production pointers so the nodes carry the
 // content-addressed tag the kind images actually have.
 func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]topologyartifact.Node, []string) {
 	t.Helper()
 
-	// A prior blue/green test may have mutated service_prod; re-establish the
+	// A prior blue/green test may have mutated the production pointers; re-establish the
 	// baseline pointers before reading each project's image tag.
-	seedBaselineServiceProd(t, ctx, clients)
+	seedBaselineProductionPointers(t, ctx, clients)
 
 	imageTags := map[string]string{}
 	for _, svc := range []string{"service-1", "service-2", "service-3"} {
@@ -125,7 +125,7 @@ func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]top
 // announce-topology: release-controller writes the artifact, takes the next
 // promotion seq and queues release.promoted:v1, which both readers apply on the
 // path a promoted release takes — catalog's Neo4j :Node/:DEPENDS_ON and the
-// default tenant's :Meta, and run-controller's topology_nodes and live_release, from
+// default tenant's :Meta, and run-controller's topology_nodes and the live release, from
 // which run-controller reads each schedule's models. It returns once both have applied
 // it and run-controller's live release has a model of every schedule the DAG declares.
 // It skips validation, so it can seed any topology, including the

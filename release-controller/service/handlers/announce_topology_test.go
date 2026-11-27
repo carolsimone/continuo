@@ -22,8 +22,8 @@ func benchTopology() release.Topology {
 }
 
 // An announcement writes the artifact, takes the next seq and queues
-// release.promoted:v1 — and leaves current_prod alone, even when none exists.
-func TestAnnounceTopology_AnnouncesWithoutMovingCurrentProd(t *testing.T) {
+// release.promoted:v1 — and leaves the live release alone, even when none exists.
+func TestAnnounceTopology_AnnouncesWithoutMovingLiveRelease(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 
 	first, err := handlers.AnnounceTopology(context.Background(), deps, "bench-1", benchTopology())
@@ -33,7 +33,7 @@ func TestAnnounceTopology_AnnouncesWithoutMovingCurrentProd(t *testing.T) {
 
 	assert.Equal(t, int64(1), first.PromotionSeq)
 	assert.Equal(t, int64(2), second.PromotionSeq)
-	assert.Equal(t, "", store.GetCurrentProd().ReleaseID(), "an announcement never moves current_prod")
+	assert.Equal(t, "", store.GetLiveRelease().ReleaseID(), "an announcement never moves the live release")
 
 	got, err := deps.Topologies.Load(context.Background(), release.TopologyRef{URI: first.TopologyURI, SHA256: first.TopologySHA256, NodeCount: 2})
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestAnnounceTopology_AnnouncesWithoutMovingCurrentProd(t *testing.T) {
 	assert.False(t, p.Bootstrap)
 }
 
-// Announcing under a release id that names a check or current_prod would
+// Announcing under a release id that names a check or the live release would
 // replace that release's artifact, so it is refused before anything is written.
 func TestAnnounceTopology_RefusesATakenReleaseID(t *testing.T) {
 	t.Run("a release check", func(t *testing.T) {
@@ -59,7 +59,7 @@ func TestAnnounceTopology_RefusesATakenReleaseID(t *testing.T) {
 		assert.Equal(t, int64(0), store.LastPromotionSeq())
 		assert.Empty(t, outboxEntries(store))
 	})
-	t.Run("current_prod", func(t *testing.T) {
+	t.Run("the live release", func(t *testing.T) {
 		deps, store := newDeps(time.Unix(100, 0).UTC())
 		seedProd(t, deps, store, "rLive", benchTopology(), time.Unix(1, 0).UTC())
 		_, err := handlers.AnnounceTopology(context.Background(), deps, "rLive", benchTopology())
@@ -112,23 +112,23 @@ func TestAnnounceTopology_RefusesAnAllDbtTestTopology(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestReannounceCurrentProd(t *testing.T) {
+func TestReannounceLiveRelease(t *testing.T) {
 	t.Run("nothing promoted", func(t *testing.T) {
 		deps, store := newDeps(time.Unix(100, 0).UTC())
-		_, err := handlers.ReannounceCurrentProd(context.Background(), deps)
-		require.ErrorIs(t, err, handlers.ErrNoCurrentProd)
+		_, err := handlers.ReannounceLiveRelease(context.Background(), deps)
+		require.ErrorIs(t, err, handlers.ErrNoLiveRelease)
 		assert.Empty(t, outboxEntries(store))
 	})
-	t.Run("re-announces current_prod's artifact under a fresh seq", func(t *testing.T) {
+	t.Run("re-announces the live release's artifact under a fresh seq", func(t *testing.T) {
 		deps, store := newDeps(time.Unix(100, 0).UTC())
 		seedProd(t, deps, store, "rLive", benchTopology(), time.Unix(1, 0).UTC())
 		_, err := handlers.AnnounceTopology(context.Background(), deps, "bench-1", benchTopology())
 		require.NoError(t, err)
 
-		res, err := handlers.ReannounceCurrentProd(context.Background(), deps)
+		res, err := handlers.ReannounceLiveRelease(context.Background(), deps)
 		require.NoError(t, err)
 
-		cp := store.GetCurrentProd()
+		cp := store.GetLiveRelease()
 		assert.Equal(t, "rLive", res.ReleaseID)
 		assert.Equal(t, int64(2), res.PromotionSeq)
 		assert.Equal(t, cp.Topology().URI, res.TopologyURI)
@@ -139,13 +139,13 @@ func TestReannounceCurrentProd(t *testing.T) {
 	})
 }
 
-func TestCurrentProdTopology(t *testing.T) {
+func TestLiveReleaseTopology(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
-	_, err := handlers.CurrentProdTopology(context.Background(), deps)
-	require.ErrorIs(t, err, handlers.ErrNoCurrentProd)
+	_, err := handlers.LiveReleaseTopology(context.Background(), deps)
+	require.ErrorIs(t, err, handlers.ErrNoLiveRelease)
 
 	seedProd(t, deps, store, "rLive", benchTopology(), time.Unix(1, 0).UTC())
-	got, err := handlers.CurrentProdTopology(context.Background(), deps)
+	got, err := handlers.LiveReleaseTopology(context.Background(), deps)
 	require.NoError(t, err)
 	assert.Equal(t, benchTopology(), got)
 }

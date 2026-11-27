@@ -354,7 +354,7 @@ const KINDS_WITHOUT_COMPILE = ['python', 'ontology'];
 // - parsing: every release check;
 // - seed_building: dbt only, and only when the validation set holds a new or
 //   changed seed;
-// - validating: unless nothing changed against prod (then a candidate
+// - validating: unless nothing changed against the live release (then a candidate
 //   release promotes and a fix's release check ends at once), and never for
 //   a bootstrap release, which promotes right after parsing.
 // An unknown kind takes the dbt path, the common one.

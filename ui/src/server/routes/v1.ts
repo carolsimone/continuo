@@ -69,9 +69,9 @@ interface PublicNotice {
   stops_on: string[];
 }
 
-// The production pointer as GET /api/v1/current-prod answers it.
-export interface PublicCurrentProd {
-  current_prod_release_id: string;
+// The live release as GET /api/v1/live-release answers it.
+export interface PublicLiveRelease {
+  live_release_id: string;
   node_count: number;
   updated_at: string;
 }
@@ -172,9 +172,9 @@ export function projectRelease(rel: Record<string, unknown>, publicUrl?: string)
   };
 }
 
-export function projectCurrentProd(cp: Record<string, unknown>): PublicCurrentProd {
+export function projectLiveRelease(cp: Record<string, unknown>): PublicLiveRelease {
   return {
-    current_prod_release_id: str(cp.current_prod_release_id),
+    live_release_id: str(cp.live_release_id),
     node_count: typeof cp.node_count === 'number' ? cp.node_count : 0,
     updated_at: str(cp.updated_at),
   };
@@ -334,17 +334,17 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     res.json(projectRelease(rel, publicUrl));
   });
 
-  router.get('/current-prod', readLimiter, async (req, res) => {
-    const d = authorize(principalOf(req)!, { kind: 'prod.read' });
+  router.get('/live-release', readLimiter, async (req, res) => {
+    const d = authorize(principalOf(req)!, { kind: 'live-release.read' });
     if (!d.allow) return fail(res, 403, d.code, d.reason);
     let cp: unknown;
     try {
-      cp = await releases.getCurrentProd();
+      cp = await releases.getLiveRelease();
     } catch {
       return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
     }
     if (!isObject(cp)) return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
-    res.json(projectCurrentProd(cp));
+    res.json(projectLiveRelease(cp));
   });
 
   router.use((_req, res) => fail(res, 404, 'not_found', 'no such /api/v1 route'));

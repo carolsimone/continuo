@@ -16,7 +16,8 @@ import (
 // a fix's release check ends failed with no release event, and both emit
 // release_check.finished:v1. The detail names why the check cannot proceed.
 // invalid_artifact is not healable, so remediation does not act on the
-// rejection. It writes neither current_prod nor service_prod, and it commits u.
+// rejection. It writes neither the live release nor a production pointer, and it
+// commits u.
 func rejectInvalidArtifactCheck(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, detail string, now time.Time) error {
 	reason := pkg_model.RejectReasonInvalidArtifact
 	if err := r.Fail(string(pkg_model.RejectReasonInvalidArtifact), detail, []string{}, now); err != nil {

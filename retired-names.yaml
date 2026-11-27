@@ -284,3 +284,14 @@ names:
     use: ReleaseChecks, KindFix, NewFix, ReceiveFix
   - pattern: 'api/(verifications|pipeline)'
     use: api/release-checks, api/release-queue
+  # Live release and production pointer group: the release the install runs
+  # on now is its live release (table live_release, GET /api/v1/live-release,
+  # live_release_id), and each project's record of the code and image
+  # production runs is its production pointer (table production_pointers,
+  # seed-production-pointers).
+  - pattern: '\w*(current_prod|CURRENT_PROD|CurrentProd|currentProd)\w*|(?i)current[ -]prod'
+    use: live release (live_release, LiveRelease, live_release_id)
+  - pattern: '\w*(service_prod|SERVICE_PROD|ServiceProd|serviceProd)\w*|(?i)service[ -]prod'
+    use: production pointer (production_pointers, ProductionPointer)
+  - pattern: 'reannounce-current|print-current'
+    use: announce-topology --reannounce-live, --print-live

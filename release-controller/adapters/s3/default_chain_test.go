@@ -12,7 +12,7 @@ import (
 )
 
 // TestTopologyArtifactStore_WritesWithTheDefaultChain proves the wiring main,
-// announce-topology and seed-service-prod use: one *objectstore.Client built
+// announce-topology and seed-production-pointers use: one *objectstore.Client built
 // without static keys, passed to the artifact store as its
 // objectstore.ReadWriter role, signs every request with the credentials the
 // SDK's default chain resolves.

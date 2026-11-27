@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Fails if a compose file installs an object-store expiry rule on `code-bundles/`
 # or `tenants/`. Those prefixes hold the code bundle and the topology artifact
-# that external consumers read for the release GET /api/v1/current-prod names
+# that external consumers read for the release GET /api/v1/live-release names
 # (docs/read-contract.md). An age rule cannot tell the live release from an old
 # one, so a release that stays live past the rule's age would lose its objects.
 # release-controller's retention deletes them, and never for a release that is
-# still current_prod or service_prod.
+# still the live release or that a production pointer names.
 #
 # Usage: check-read-retention.sh [compose-file...]   (default: the repo's compose files)
 set -uo pipefail

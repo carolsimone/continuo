@@ -34,6 +34,9 @@ func TestCheckReleaseSchemaInitialized_RefusesADatabaseTheMigrationsHaveNotBuilt
 	require.Error(t, err)
 	assert.ErrorIs(t, err, handlers.ErrReleaseSchemaNotReady)
 	assert.Contains(t, err.Error(), "db-init-migrate")
+	for _, table := range []string{"release_checks", "live_release", "production_pointers"} {
+		assert.Contains(t, err.Error(), table, "the refusal names every table it needs")
+	}
 }
 
 // A schema read that fails is surfaced as a failed read, not as the refusal.

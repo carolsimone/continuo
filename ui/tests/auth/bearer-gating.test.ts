@@ -28,7 +28,7 @@ async function oidcApp() {
   app.use(express.json());
   app.use(bearerAuth({ verifier, ci, login: { issuer: loginIssuer.issuer, roles } }), sessionAuth(store));
   app.use('/api', requireApiAuth());
-  app.get('/api/v1/current-prod', (req, res) => res.json(principalOf(req)));
+  app.get('/api/v1/live-release', (req, res) => res.json(principalOf(req)));
   app.post('/api/v1/releases', (_req, res) => res.json({ ok: true }));
   app.get('/api/v1/releases/:id', (_req, res) => res.json({ ok: true }));
   app.get('/api/features', (_req, res) => res.json({ ok: true }));
@@ -44,7 +44,7 @@ describe('bearer authentication', () => {
   it('a valid CI token becomes a ci principal with its granted projects', async () => {
     const { app } = await oidcApp();
     const t = await ciIssuer!.sign(githubClaims());
-    const res = await request(app).get('/api/v1/current-prod').set('Authorization', `Bearer ${t}`);
+    const res = await request(app).get('/api/v1/live-release').set('Authorization', `Bearer ${t}`);
     expect(res.status).toBe(200);
     expect(res.body.kind).toBe('ci');
     expect(res.body.claims.repositoryId).toBe('812345678');
@@ -64,7 +64,7 @@ describe('bearer authentication', () => {
   it('accepts a lowercase scheme and trailing whitespace', async () => {
     const { app } = await oidcApp();
     const t = await ciIssuer!.sign(githubClaims());
-    expect((await request(app).get('/api/v1/current-prod').set('Authorization', `bearer ${t}  `)).status).toBe(200);
+    expect((await request(app).get('/api/v1/live-release').set('Authorization', `bearer ${t}  `)).status).toBe(200);
   });
 
   it('CI tokens are denied on every non-v1 /api route', async () => {
@@ -118,7 +118,7 @@ describe('bearer authentication', () => {
   it('a login-issuer token resolves role via resolveRole', async () => {
     const { app } = await oidcApp();
     const op = await loginIssuer!.sign({ sub: 'u1', email: 'op@corp.com', email_verified: true });
-    const res = await request(app).get('/api/v1/current-prod').set('Authorization', `Bearer ${op}`);
+    const res = await request(app).get('/api/v1/live-release').set('Authorization', `Bearer ${op}`);
     expect(res.body).toMatchObject({ kind: 'human', user: { role: 'operator', email: 'op@corp.com' } });
     expect((await request(app).post('/api/things').set('Authorization', `Bearer ${op}`)).status).toBe(200);
   });
@@ -142,7 +142,7 @@ describe('bearer authentication', () => {
     const t = await ciIssuer!.sign(githubClaims());
     await ciIssuer!.close();
     ciIssuer = undefined;
-    const res = await request(app).get('/api/v1/current-prod').set('Authorization', `Bearer ${t}`);
+    const res = await request(app).get('/api/v1/live-release').set('Authorization', `Bearer ${t}`);
     expect(res.status).toBe(503);
     expect(res.body.code).toBe('auth_unavailable');
   });
@@ -156,12 +156,12 @@ describe('dev mode with CI config', () => {
     const app = express();
     app.use(...(auth.app.authn as [express.RequestHandler]));
     app.use('/api', ...auth.app.apiGuards);
-    app.get('/api/v1/current-prod', (req, res) => res.json(principalOf(req)));
+    app.get('/api/v1/live-release', (req, res) => res.json(principalOf(req)));
     app.use(auth.app.errorHandler);
-    expect((await request(app).get('/api/v1/current-prod')).body).toMatchObject({ kind: 'human', user: { role: 'operator' } });
+    expect((await request(app).get('/api/v1/live-release')).body).toMatchObject({ kind: 'human', user: { role: 'operator' } });
     const t = await ciIssuer.sign(githubClaims());
-    expect((await request(app).get('/api/v1/current-prod').set('Authorization', `Bearer ${t}`)).body.kind).toBe('ci');
-    expect((await request(app).get('/api/v1/current-prod').set('Authorization', 'Bearer nope')).status).toBe(401);
+    expect((await request(app).get('/api/v1/live-release').set('Authorization', `Bearer ${t}`)).body.kind).toBe('ci');
+    expect((await request(app).get('/api/v1/live-release').set('Authorization', 'Bearer nope')).status).toBe(401);
   });
 
   it('devIdentity leaves an /api request carrying Authorization to bearerAuth', async () => {
@@ -186,10 +186,10 @@ describe('dev mode with CI config', () => {
     const app = express();
     app.use(...(auth.app.authn as [express.RequestHandler]));
     app.use('/api', ...auth.app.apiGuards);
-    app.get('/api/v1/current-prod', (req, res) => res.json(principalOf(req)));
+    app.get('/api/v1/live-release', (req, res) => res.json(principalOf(req)));
     app.use(auth.app.errorHandler);
     const t = await ciIssuer.sign(githubClaims());
-    const res = await request(app).get('/api/v1/current-prod').set('Authorization', `Bearer ${t}`);
+    const res = await request(app).get('/api/v1/live-release').set('Authorization', `Bearer ${t}`);
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: 'invalid bearer token: untrusted issuer', code: 'invalid_token' });
     expect(ciIssuer.discoveryFetches()).toBe(0);

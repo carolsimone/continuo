@@ -37,7 +37,7 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
-	_, err = db.Exec("TRUNCATE release_checks, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
+	_, err = db.Exec("TRUNCATE release_checks, live_release, release_controller_outbox, message_processing, production_pointers RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
 	_, err = db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
 	require.NoError(t, err, "promotion_sequence is missing: run make test-deps-up to apply the release migrations")
@@ -119,19 +119,19 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NotEmpty(t, r.PerNodeResults())
 	assert.Equal(t, "ok", r.PerNodeResults()[0].Status)
 
-	// 5. GET /current-prod
-	req = httptest.NewRequest(http.MethodGet, "/current-prod", nil)
+	// 5. GET /live-release
+	req = httptest.NewRequest(http.MethodGet, "/live-release", nil)
 	w = httptest.NewRecorder()
 	srv.Routes().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	var cp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cp))
-	assert.Equal(t, "rA", cp["current_prod_release_id"])
+	assert.Equal(t, "rA", cp["live_release_id"])
 
-	// 6. service_prod must be upserted for service-1.
-	var spCount int
-	require.NoError(t, db.Get(&spCount, `SELECT count(*) FROM service_prod WHERE project_name = 'service-1'`))
-	assert.Equal(t, 1, spCount, "service_prod must have a row for the promoted project")
+	// 6. service-1 has a production pointer.
+	var pointerCount int
+	require.NoError(t, db.Get(&pointerCount, `SELECT count(*) FROM production_pointers WHERE project_name = 'service-1'`))
+	assert.Equal(t, 1, pointerCount, "the promoted project must have a production pointer")
 
 	// 7. Outbox has 5 entries (compile.requested + release.requested +
 	// validation.requested + release.promoted + release_check.finished — the
@@ -147,7 +147,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 	assert.Equal(t, "release_promoted", promotedEventType)
 
 	var seq int64
-	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM current_prod WHERE id = 1`))
+	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM live_release WHERE id = 1`))
 	assert.Equal(t, int64(1), seq, "the first promotion is announced under seq 1")
 
 	var finishedCount int

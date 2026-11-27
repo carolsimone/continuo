@@ -18,9 +18,9 @@ BEGIN
 END;
 $$;
 
--- current_prod
+-- live_release
 
-CREATE TABLE current_prod (
+CREATE TABLE live_release (
     id smallint DEFAULT 1 NOT NULL,
     release_id text NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -28,8 +28,8 @@ CREATE TABLE current_prod (
     topology_sha256 text,
     node_count integer,
     promotion_seq bigint DEFAULT 0 NOT NULL,
-    CONSTRAINT current_prod_pkey PRIMARY KEY (id),
-    CONSTRAINT current_prod_id_check CHECK ((id = 1))
+    CONSTRAINT live_release_pkey PRIMARY KEY (id),
+    CONSTRAINT live_release_id_check CHECK ((id = 1))
 );
 
 -- message_processing
@@ -127,17 +127,17 @@ CREATE INDEX idx_release_checks_kind_status_created ON release_checks (check_kin
 
 CREATE INDEX idx_release_checks_verifies ON release_checks (verifies_release_id) WHERE check_kind = 'fix';
 
--- service_prod
+-- production_pointers
 
-CREATE TABLE service_prod (
+CREATE TABLE production_pointers (
     project_name text NOT NULL,
     release_id text NOT NULL,
     manifest_s3_key text NOT NULL,
     image_tag text NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL,
     manifest_kind text DEFAULT 'dbt' NOT NULL,
-    CONSTRAINT service_prod_pkey PRIMARY KEY (project_name),
-    CONSTRAINT service_prod_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'ontology')))
+    CONSTRAINT production_pointers_pkey PRIMARY KEY (project_name),
+    CONSTRAINT production_pointers_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'ontology')))
 );
 
 -- release_controller_outbox
