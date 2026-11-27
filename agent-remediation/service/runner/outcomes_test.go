@@ -529,7 +529,7 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 
 // A node handed over because its drafts are spent is not settled: the next
 // try groups it again and asks the model about it again.
-func TestRunner_ARoundsSpentNodeIsTriedAgain(t *testing.T) {
+func TestRunner_ADraftsSpentNodeIsTriedAgain(t *testing.T) {
 	h := newHarness(t)
 	h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
 		if strings.Contains(req.User, "services/svc-a/") {

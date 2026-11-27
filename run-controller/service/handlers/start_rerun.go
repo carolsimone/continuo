@@ -28,7 +28,7 @@ func NewStartRerunHandler(planner runstart.Planner, logger *slog.Logger) *StartR
 		eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
 			return src.CanBeRerunSource(ctx, tasks)
 		},
-		logLabel: "Rerun triggered",
+		logLabel: "Rerun started",
 	}}
 }
 

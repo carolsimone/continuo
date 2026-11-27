@@ -115,7 +115,7 @@ func (h *StartSingleNodeRunHandler) write(ctx context.Context, u uow.UnitOfWork,
 		return "", err
 	}
 	u.AfterCommit(func() {
-		h.logger.Info("Single-node run triggered", "tenant_id", in.TenantID, "new_run_id", runID, "schedule_name", scheduleName, "target", in.Target,
+		h.logger.Info("Single-node run started", "tenant_id", in.TenantID, "new_run_id", runID, "schedule_name", scheduleName, "target", in.Target,
 			"release_id", sel.Stamp.ReleaseID)
 	})
 	return scheduleName, nil

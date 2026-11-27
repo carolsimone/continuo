@@ -128,10 +128,10 @@ agentRemediation.workflows.files names the gate step as release_check
 
 BREAKING: a type file counts the drafts a cluster gets in one try with the
 key drafts. If agentRemediation.workflows.files holds a type file, rename its
-agent.rounds to agent.drafts before the upgrade, and write the round of a
-fixture's trigger as round: agent-remediation refuses to start on a type file
-with rounds, naming the file and line, and remediation-check files refuses
-both.
+agent.rounds to agent.drafts before the upgrade, and in a fixture write the
+trigger's round under the key round. agent-remediation refuses to start on a
+type file with rounds, naming the file and line, and remediation-check files
+refuses both.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}

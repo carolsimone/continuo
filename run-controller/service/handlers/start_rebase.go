@@ -41,7 +41,7 @@ func NewStartRebaseHandler(planner runstart.Planner, logger *slog.Logger) *Start
 		eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
 			return src.CanBeRebaseSource(ctx, tasks)
 		},
-		logLabel: "Rebase triggered",
+		logLabel: "Rebase started",
 	}}
 }
 

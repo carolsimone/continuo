@@ -610,7 +610,7 @@ func TestRunner_ARoundTwoTriggerNumbersItsTriesFromOne(t *testing.T) {
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 }
 
-func TestRunner_ThePromptIsCachedUnderTheRemediationTryClusterAndRound(t *testing.T) {
+func TestRunner_ThePromptIsCachedUnderTheRemediationTryClusterAndDraft(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
