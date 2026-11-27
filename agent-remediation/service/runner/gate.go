@@ -57,7 +57,7 @@ func gateInput(run tryRun, drafts []step.ClusterDraft, fixID string, submittedAt
 // step, or the failing set is handed over once the tries are spent.
 func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCluster) error {
 	name, gate, err := r.gateStep(run.flow)
-	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowRound, run.flow.Revision)
+	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowDraft, run.flow.Revision)
 	if err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
@@ -156,7 +156,7 @@ func (r *Runner) pollGate(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return r.countGateFailure(ctx, run, name, err)
 	}
-	row, ok := run.journal.row(flowCluster, string(name), flowRound)
+	row, ok := run.journal.row(flowCluster, string(name), flowDraft)
 	if !ok {
 		return r.countGateFailure(ctx, run, name, fmt.Errorf("remediation %s: try %d is verifying with no %s row", id, run.snap.Try.Try, name))
 	}
@@ -199,10 +199,10 @@ func (r *Runner) countGateFailure(ctx context.Context, run tryRun, name workflow
 	if name == "" {
 		name = flowGateRowName
 	}
-	if row, ok := run.journal.row(flowCluster, string(name), flowRound); ok {
+	if row, ok := run.journal.row(flowCluster, string(name), flowDraft); ok {
 		return r.countFailure(ctx, row, cause)
 	}
-	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowRound, run.flow.Revision)
+	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowDraft, run.flow.Revision)
 	return r.recordFailure(ctx, row, cause)
 }
 
@@ -373,7 +373,7 @@ func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepR
 			return err
 		}
 		in := step.OutputInput{Remediation: run.snap.Remediation, Try: *run.snap.Try, Trigger: run.trigger, Snapshot: run.snap, Approvers: approvers}
-		outRow := r.newRow(run, flowCluster, string(outName), kindOutput, flowRound, run.flow.Revision)
+		outRow := r.newRow(run, flowCluster, string(outName), kindOutput, flowDraft, run.flow.Revision)
 		if err := out.Pass(ctx, u, in, v); err != nil {
 			return fmt.Errorf("step %s: %w", outName, err)
 		}

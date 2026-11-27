@@ -88,7 +88,7 @@ func clusterRecord(c remediation.Cluster, rows []remediation.StepRun) (remediati
 	last := rows[len(rows)-1]
 	pass, err := DecodeRecord[PreflightRecord](last.Output)
 	if err != nil {
-		return cr, fmt.Errorf("decode the pre-flight draft of cluster %d in round %d: %w", c.Cluster, last.Draft, err)
+		return cr, fmt.Errorf("decode the pre-flight pass of cluster %d in draft %d: %w", c.Cluster, last.Draft, err)
 	}
 	for _, e := range pass.Draft.Edits {
 		if diff := fix.EditDiff(e.Original, e.Content, e.Path, e.RenamedFrom); diff != "" {

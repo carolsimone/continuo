@@ -35,8 +35,9 @@ Arguments:
   <schedule-name>  The schedule to build.
 
 Output (stdout, JSON):
-  {"run_id":string,"schedule_name":string,"created_at":string}
-  created_at is when the command created the run (RFC3339, UTC).
+  {"run_id":string,"schedule_name":string,"requested_at":string}
+  requested_at is when the command asked for the run, by the clock of the
+  machine that runs it (RFC3339, UTC). The run's own created_at is in "run show".
 
 ` + client.RequestIDHelp + `
 
@@ -49,7 +50,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule build daily",
 		Annotations: map[string]string{
-			"output_schema": `{"run_id":"string","schedule_name":"string","created_at":"string"}`,
+			"output_schema": `{"run_id":"string","schedule_name":"string","requested_at":"string"}`,
 			"exit_codes":    `[0,2,3,4,5,6,7]`,
 			"mutating":      "true",
 		},
@@ -81,7 +82,7 @@ Errors:
 			payload := map[string]string{
 				"run_id":        resp.GetRunId(),
 				"schedule_name": scheduleName,
-				"created_at":    time.Now().UTC().Format(time.RFC3339),
+				"requested_at":  time.Now().UTC().Format(time.RFC3339),
 			}
 			return output.EmitSuccess(stdout, payload)
 		},

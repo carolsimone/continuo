@@ -21,11 +21,11 @@ import (
 
 // The command names a command record and its metric carry.
 const (
-	commandStartRun             = "start_run"
+	commandStartRun           = "start_run"
 	commandStartRerun         = "start_rerun"
 	commandStartRebase        = "start_rebase"
 	commandStartSingleNodeRun = "start_single_node_run"
-	commandCancelActiveRun      = "cancel_active_run"
+	commandCancelActiveRun    = "cancel_active_run"
 )
 
 // ErrNoActiveRun reports a cancel by schedule name of a schedule with no

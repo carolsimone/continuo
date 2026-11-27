@@ -35,11 +35,11 @@ const (
 	tryVerifyingSlack = time.Hour
 )
 
-// The cluster and round of a flow-level step's journal row: a cross-cluster
+// The cluster and draft of a flow-level step's journal row: a cross-cluster
 // check, the gate or an output.
 const (
 	flowCluster = remediation.FlowCluster
-	flowRound   = 1
+	flowDraft   = 1
 	// flowGateRowName is the step name of the gate's row for a flow that names
 	// no gate step.
 	flowGateRowName = "gate"
@@ -219,8 +219,8 @@ type settledNode struct {
 // failed, each member of one of its clusters whose outcome carries a settled
 // code (settledCode), with the type of that cluster. The clusters a try carries
 // are themselves handed over with their code and type, so a node once settled
-// stays settled in every later try. A node handed over because its pre-flight
-// rounds are spent is not settled, and is grouped again.
+// stays settled in every later try. A node handed over because pre-flight
+// refused every draft its type allows is not settled, and is grouped again.
 func settledNodes(run tryRun) map[string]settledNode {
 	out := map[string]settledNode{}
 	for _, n := range run.trigger.Nodes {
@@ -441,7 +441,7 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, try
 	var row remediation.StepRun
 	if run.snap.Try != nil {
 		in.Try = *run.snap.Try
-		row = r.newRow(run, flowCluster, string(name), kindOutput, flowRound, run.flow.Revision)
+		row = r.newRow(run, flowCluster, string(name), kindOutput, flowDraft, run.flow.Revision)
 	}
 	if err := out.GiveUp(ctx, u, in); err != nil {
 		return fmt.Errorf("step %s: %w", name, err)
@@ -501,7 +501,7 @@ func (r *Runner) recordTry(ctx context.Context, u uow.UnitOfWork, run tryRun, tr
 func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 	checked, err := r.checkedClusters(run)
 	if err != nil {
-		return r.recordFailure(ctx, r.newRow(run, flowCluster, stepDrafts, kindRunner, flowRound, run.flow.Revision), err)
+		return r.recordFailure(ctx, r.newRow(run, flowCluster, stepDrafts, kindRunner, flowDraft, run.flow.Revision), err)
 	}
 	drafts := draftsOf(checked)
 	if run.snap.Try.Status == remediation.TryDrafting {
@@ -516,7 +516,7 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 		})
 	}
 	for _, ref := range run.flow.AcrossClusters {
-		row, done := run.journal.done(flowCluster, string(ref.Name), flowRound)
+		row, done := run.journal.done(flowCluster, string(ref.Name), flowDraft)
 		if !done {
 			return r.runCrossCheck(ctx, run, checked, ref.Name)
 		}
@@ -562,7 +562,7 @@ func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
 // finding and fails the try in the same transaction.
 func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, checked []checkedCluster, name workflow.StepName) error {
 	drafts := draftsOf(checked)
-	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowRound, run.flow.Revision)
+	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowDraft, run.flow.Revision)
 	chk, err := lookup[step.CrossCheck](r.d.Registry, name, step.KindCheck)
 	if err != nil {
 		return r.recordFailure(ctx, row, err)

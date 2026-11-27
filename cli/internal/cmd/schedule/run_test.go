@@ -24,7 +24,7 @@ type fakeRunController struct {
 	resp            *runv1.StartRunResponse
 	err             error
 	gotScheduleName string
-	gotStartActor string
+	gotStartActor   string
 	// gotRequestIDs is the request id of every command the fake received.
 	gotRequestIDs []string
 
@@ -136,8 +136,8 @@ func TestScheduleRun_SuccessEmitsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	assert.Equal(t, "sched_123", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
-	_, err := time.Parse(time.RFC3339, payload["created_at"])
-	assert.NoError(t, err, "created_at must be RFC3339")
+	_, err := time.Parse(time.RFC3339, payload["requested_at"])
+	assert.NoError(t, err, "requested_at must be RFC3339")
 	assert.Equal(t, "daily_ingest", fake.gotScheduleName)
 }
 

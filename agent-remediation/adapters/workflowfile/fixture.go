@@ -145,7 +145,7 @@ type answersFile struct {
 	Revision revisionAnswerFile `yaml:"revision"`
 }
 
-// revisionAnswerFile is the answer lists of a round after a try's first.
+// revisionAnswerFile is the answer lists of a draft after a try's first.
 type revisionAnswerFile struct {
 	Pass    []answerFile `yaml:"pass"`
 	Fail    []answerFile `yaml:"fail"`

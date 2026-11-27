@@ -78,11 +78,11 @@ var retryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond
 // methods retried on ABORTED. The schedule edits are retried on UNAVAILABLE
 // only (scheduleEditMethods), and a read and CancelRun are not retried.
 var commandMethods = map[string]bool{
-	runv1.RunService_StartRun_FullMethodName:             true,
+	runv1.RunService_StartRun_FullMethodName:           true,
 	runv1.RunService_StartRerun_FullMethodName:         true,
 	runv1.RunService_StartRebase_FullMethodName:        true,
 	runv1.RunService_StartSingleNodeRun_FullMethodName: true,
-	runv1.RunService_CancelActiveRun_FullMethodName:      true,
+	runv1.RunService_CancelActiveRun_FullMethodName:    true,
 }
 
 // scheduleEditMethods are the RPCs that change the cron of a schedule. They
