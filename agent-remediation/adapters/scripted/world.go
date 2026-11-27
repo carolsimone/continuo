@@ -100,7 +100,7 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 		ImagePackages:    imagePackages{r: f.Release},
 		CurrentContracts: cat,
 		Releases:         release{r: f.Release},
-		PriorAttempts:    store.ProposalRepository(),
+		PriorAttempts:    store.FixRepository(),
 		Tries:            store.RemediationRepository(),
 		ReleaseChecks:    pipe,
 		Clock:            clock,
@@ -144,14 +144,14 @@ func (w *World) Clusters(id uuid.UUID) []remediation.Cluster { return w.store.Cl
 // Steps is every journal row of the remediation.
 func (w *World) Steps(id uuid.UUID) []remediation.StepRun { return w.store.Steps(id) }
 
-// Attempts is every proposal row the store holds, in attempt order.
+// Attempts is every fix row the store holds, in attempt order.
 func (w *World) Attempts() []conformance.Attempt {
-	stored := w.store.Proposals()
+	stored := w.store.Fixes()
 	out := make([]conformance.Attempt, 0, len(stored))
 	for _, p := range stored {
-		out = append(out, conformance.Attempt{Proposal: p.Proposal, VerifyError: p.VerifyError})
+		out = append(out, conformance.Attempt{Fix: p.Fix, VerifyError: p.VerifyError})
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Proposal.Attempt < out[j].Proposal.Attempt })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Fix.Attempt < out[j].Fix.Attempt })
 	return out
 }
 

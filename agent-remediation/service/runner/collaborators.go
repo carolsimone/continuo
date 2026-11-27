@@ -52,7 +52,7 @@ type Collaborators struct {
 	CurrentContracts ports.CurrentContractReader
 	// Releases reads the original failing release's node-failure set.
 	Releases ports.ReleaseReader
-	// PriorAttempts reads the release's proposal rows, so a later try's prompt
+	// PriorAttempts reads the release's fix rows, so a later try's prompt
 	// can show the attempts recorded with no remediation.
 	PriorAttempts repository.AttemptLister
 	// Tries reads every try the runner made at the release, so a later try's

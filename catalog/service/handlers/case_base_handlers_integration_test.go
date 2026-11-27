@@ -164,43 +164,43 @@ func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T
 	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-unfixable"))
 }
 
-// A crash after the proposals' statements ran rolls back every proposal, PR
+// A crash after the fixes' statements ran rolls back every fix, PR
 // and stub rejection with the marker; the redelivery records them and the
 // marker in one write.
-func TestProposalsHandler_MarkerAtomicWithRecord(t *testing.T) {
+func TestFixesHandler_MarkerAtomicWithRecord(t *testing.T) {
 	ctx := context.Background()
 	g := newVersionsGroupFixture(t)
 	in := domainEvent.PROpened{
-		ProposalID: "prop-1", ReleaseID: "r2", NodeID: "svc.public.a",
+		FixID: "fix-1", ReleaseID: "r2", NodeID: "svc.public.a",
 		ResolvedNodeIDs: []string{"svc.public.a", "svc.public.b"},
 		PrURL:           "https://github.com/org/svc/pull/9", PrNumber: 9,
 		OpenedBy: "agent-remediation", OpenedAt: "2026-10-30T10:00:00Z", Project: "svc",
 	}
-	proposals := func(u uow.UnitOfWork) *handlers.PrOpenedProposalsHandler {
-		return handlers.NewPrOpenedProposalsHandler(u, newTestLogger())
+	fixes := func(u uow.UnitOfWork) *handlers.PrOpenedFixesHandler {
+		return handlers.NewPrOpenedFixesHandler(u, newTestLogger())
 	}
 	const (
-		proposedCount = `MATCH (:Rejection {tenant_id: $tenant_id})-[p:PROPOSED]->(:Proposal {tenant_id: $tenant_id}) RETURN count(p) AS v`
-		prCount       = `MATCH (:Proposal {tenant_id: $tenant_id})-[:HAS_PR]->(p:PullRequest {tenant_id: $tenant_id}) RETURN count(p) AS v`
-		anyCount      = `MATCH (n {tenant_id: $tenant_id}) WHERE n:Rejection OR n:Proposal OR n:PullRequest RETURN count(n) AS v`
+		proposedCount = `MATCH (:Rejection {tenant_id: $tenant_id})-[p:PROPOSED]->(:Fix {tenant_id: $tenant_id}) RETURN count(p) AS v`
+		prCount       = `MATCH (:Fix {tenant_id: $tenant_id})-[:HAS_PR]->(p:PullRequest {tenant_id: $tenant_id}) RETURN count(p) AS v`
+		anyCount      = `MATCH (n {tenant_id: $tenant_id}) WHERE n:Rejection OR n:Fix OR n:PullRequest RETURN count(n) AS v`
 	)
 
 	crash := &crashingUnitOfWork{UnitOfWork: g.uow, crashAt: 1}
-	require.ErrorIs(t, proposals(crash).Handle(ctx, g.tenant, "prop-msg", nil, in), errCrash)
-	assert.Equal(t, 1, crash.writes, "every proposal and the marker share one write")
-	assert.Zero(t, g.count(anyCount), "the crash rolls every proposal back")
-	assert.False(t, g.processedBy(streams.CatalogRemediationPrOpenedProposals, "prop-msg"))
+	require.ErrorIs(t, fixes(crash).Handle(ctx, g.tenant, "fix-msg", nil, in), errCrash)
+	assert.Equal(t, 1, crash.writes, "every fix and the marker share one write")
+	assert.Zero(t, g.count(anyCount), "the crash rolls every fix back")
+	assert.False(t, g.processedBy(streams.CatalogFixPrOpenedFixes, "fix-msg"))
 
 	counted := &crashingUnitOfWork{UnitOfWork: g.uow}
-	require.NoError(t, proposals(counted).Handle(ctx, g.tenant, "prop-msg", nil, in))
+	require.NoError(t, fixes(counted).Handle(ctx, g.tenant, "fix-msg", nil, in))
 	assert.Equal(t, 1, counted.writes)
 	assert.Equal(t, int64(2), g.count(proposedCount), "one [:PROPOSED] per resolved node")
 	assert.Equal(t, int64(1), g.count(prCount))
-	assert.Equal(t, []string{streams.CatalogRemediationPrOpenedProposals}, g.markerGroups("prop-msg"))
+	assert.Equal(t, []string{streams.CatalogFixPrOpenedFixes}, g.markerGroups("fix-msg"))
 
-	require.NoError(t, proposals(g.uow).Handle(ctx, g.tenant, "prop-msg", nil, in))
+	require.NoError(t, fixes(g.uow).Handle(ctx, g.tenant, "fix-msg", nil, in))
 	assert.Equal(t, int64(2), g.count(proposedCount))
-	assert.Equal(t, []string{streams.CatalogRemediationPrOpenedProposals}, g.markerGroups("prop-msg"))
+	assert.Equal(t, []string{streams.CatalogFixPrOpenedFixes}, g.markerGroups("fix-msg"))
 }
 
 // A crash after the outcome's statements ran rolls back the PR's state and
@@ -211,7 +211,7 @@ func TestPrClosedProvenanceHandler_MarkerAtomicWithRecord(t *testing.T) {
 	g := newVersionsGroupFixture(t)
 	g.promoteNodes("svc.public.a", "svc.public.e")
 	in := domainEvent.PRClosed{
-		ProposalID: "prop-1", ReleaseID: "r2", NodeID: "svc.public.a",
+		FixID: "fix-1", ReleaseID: "r2", NodeID: "svc.public.a",
 		ResolvedNodeIDs: []string{"svc.public.a"}, Project: "svc",
 		PrURL: "https://github.com/org/svc/pull/9", PrNumber: 9,
 		Outcome: "merged", ClosedAt: "2026-10-30T11:00:00Z",
@@ -222,8 +222,8 @@ func TestPrClosedProvenanceHandler_MarkerAtomicWithRecord(t *testing.T) {
 	}
 	const (
 		mergedCount   = `MATCH (p:PullRequest {tenant_id: $tenant_id}) WHERE p.pr_state = 'merged' RETURN count(p) AS v`
-		resolvedCount = `MATCH (:Rejection {tenant_id: $tenant_id})-[r:RESOLVED_BY]->(:Proposal {tenant_id: $tenant_id}) RETURN count(r) AS v`
-		editedCount   = `MATCH (:Proposal {tenant_id: $tenant_id})-[e:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: 'svc.public.e'}) RETURN count(e) AS v`
+		resolvedCount = `MATCH (:Rejection {tenant_id: $tenant_id})-[r:RESOLVED_BY]->(:Fix {tenant_id: $tenant_id}) RETURN count(r) AS v`
+		editedCount   = `MATCH (:Fix {tenant_id: $tenant_id})-[e:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: 'svc.public.e'}) RETURN count(e) AS v`
 	)
 
 	crash := &crashingUnitOfWork{UnitOfWork: g.uow, crashAt: 1}
@@ -232,7 +232,7 @@ func TestPrClosedProvenanceHandler_MarkerAtomicWithRecord(t *testing.T) {
 	assert.Zero(t, g.count(mergedCount), "the crash rolls the outcome back")
 	assert.Zero(t, g.count(resolvedCount))
 	assert.Zero(t, g.count(editedCount))
-	assert.False(t, g.processedBy(streams.CatalogRemediationPrClosedProvenance, "closed-msg"))
+	assert.False(t, g.processedBy(streams.CatalogFixPrClosedProvenance, "closed-msg"))
 
 	counted := &crashingUnitOfWork{UnitOfWork: g.uow}
 	require.NoError(t, provenance(counted).Handle(ctx, g.tenant, "closed-msg", nil, in))
@@ -240,10 +240,10 @@ func TestPrClosedProvenanceHandler_MarkerAtomicWithRecord(t *testing.T) {
 	assert.Equal(t, int64(1), g.count(mergedCount))
 	assert.Equal(t, int64(1), g.count(resolvedCount))
 	assert.Equal(t, int64(1), g.count(editedCount))
-	assert.Equal(t, []string{streams.CatalogRemediationPrClosedProvenance}, g.markerGroups("closed-msg"))
+	assert.Equal(t, []string{streams.CatalogFixPrClosedProvenance}, g.markerGroups("closed-msg"))
 
 	require.NoError(t, provenance(g.uow).Handle(ctx, g.tenant, "closed-msg", nil, in))
 	assert.Equal(t, int64(1), g.count(resolvedCount))
 	assert.Equal(t, int64(1), g.count(editedCount))
-	assert.Equal(t, []string{streams.CatalogRemediationPrClosedProvenance}, g.markerGroups("closed-msg"))
+	assert.Equal(t, []string{streams.CatalogFixPrClosedProvenance}, g.markerGroups("closed-msg"))
 }

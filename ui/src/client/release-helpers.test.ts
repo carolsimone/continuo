@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
-  groupByStage, stageLabel, reasonLabel, proposalKey,
-  proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode,
+  groupByStage, stageLabel, reasonLabel, fixKey,
+  fixNodeIds, fixStatusForNode, fixReasonForNode, fixCodeForNode,
   releasePillClass, attemptReleaseCheckPhase, releaseCheckPhase,
-  effectiveRound, groupProposals, proposalPillClass, upcomingStages,
+  effectiveRound, groupFixes, fixPillClass, upcomingStages,
 } from './release-helpers';
 import { HANDOVER_TEXT } from './handover-text';
 import { HANDOVER_REASONS } from '../server/generated/vocabulary.gen';
 import { NodeValidationResult } from './types';
-import type { ProposalDTO } from './types';
+import type { FixDTO } from './types';
 import { REJECT_REASONS } from '../server/generated/vocabulary.gen';
 
 const n = (stage: string, node_id: string): NodeValidationResult => ({
@@ -88,10 +88,10 @@ describe('parse stage vocabulary', () => {
   });
 });
 
-describe('proposalKey', () => {
+describe('fixKey', () => {
   it('joins stage and node_id', () => {
-    expect(proposalKey('compile', 'svc')).toBe('compile|svc');
-    expect(proposalKey('validation', 'model.svc.x')).toBe('validation|model.svc.x');
+    expect(fixKey('compile', 'svc')).toBe('compile|svc');
+    expect(fixKey('validation', 'model.svc.x')).toBe('validation|model.svc.x');
   });
 });
 
@@ -100,48 +100,48 @@ const base = {
   status: 'verifying', confidence: 'high', rationale: 'overall', proposed_sql_uri: '', diff_uri: '', candidate_fix_sql_uri: '',
   candidate_fix_diff_uri: '', source_resolved: true, repo: '', commit_sha: '', file_path: '', model: '', created_at: '',
   pr_url: '', pr_number: 0, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '', release_check_id: '', verify_error: '',
-} as ProposalDTO;
+} as FixDTO;
 
-describe('batched proposal helpers', () => {
+describe('batched fix helpers', () => {
   it('lists every resolved node, falling back to node_id for a legacy row', () => {
-    expect(proposalNodeIds({ ...base, resolved_node_ids: ['s.a', 's.b'] })).toEqual(['s.a', 's.b']);
-    expect(proposalNodeIds(base)).toEqual(['s.a']);
+    expect(fixNodeIds({ ...base, resolved_node_ids: ['s.a', 's.b'] })).toEqual(['s.a', 's.b']);
+    expect(fixNodeIds(base)).toEqual(['s.a']);
   });
 
-  it('reads a node-specific status and reason, falling back to the proposal', () => {
+  it('reads a node-specific status and reason, falling back to the fix', () => {
     const p = { ...base, resolved_node_ids: ['s.a', 's.b'], node_outcomes: { 's.b': { status: 'skipped', reason: 'no source' } } };
-    expect(proposalStatusForNode(p, 's.a')).toBe('verifying');
-    expect(proposalStatusForNode(p, 's.b')).toBe('skipped');
-    expect(proposalReasonForNode(p, 's.b')).toBe('no source');
-    expect(proposalReasonForNode(p, 's.a')).toBe('overall');
+    expect(fixStatusForNode(p, 's.a')).toBe('verifying');
+    expect(fixStatusForNode(p, 's.b')).toBe('skipped');
+    expect(fixReasonForNode(p, 's.b')).toBe('no source');
+    expect(fixReasonForNode(p, 's.a')).toBe('overall');
   });
 });
 
-describe('proposalCodeForNode', () => {
-  const withOutcome = (outcome: object): ProposalDTO => ({
+describe('fixCodeForNode', () => {
+  const withOutcome = (outcome: object): FixDTO => ({
     ...base, resolved_node_ids: ['s.a'], node_outcomes: { 's.a': outcome as any },
   });
 
   it('reads the hand-over code of the node\'s own outcome', () => {
-    expect(proposalCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: 'tries_spent' }), 's.a')).toBe('tries_spent');
+    expect(fixCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: 'tries_spent' }), 's.a')).toBe('tries_spent');
   });
 
   it('is undefined for the empty code the server sends when an outcome has none', () => {
-    expect(proposalCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: '' }), 's.a')).toBeUndefined();
+    expect(fixCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: '' }), 's.a')).toBeUndefined();
   });
 
   it('is undefined when the outcome omits the code field', () => {
-    expect(proposalCodeForNode(withOutcome({ status: 'failed', reason: 'x' }), 's.a')).toBeUndefined();
+    expect(fixCodeForNode(withOutcome({ status: 'failed', reason: 'x' }), 's.a')).toBeUndefined();
   });
 
   it('is undefined for a value that is not a known reason', () => {
-    expect(proposalCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: 'something_new' }), 's.a')).toBeUndefined();
+    expect(fixCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: 'something_new' }), 's.a')).toBeUndefined();
   });
 
-  it('is undefined for a node with no outcome of its own, with no proposal-level fallback', () => {
+  it('is undefined for a node with no outcome of its own, with no fix-level fallback', () => {
     const p = withOutcome({ status: 'failed', reason: 'x', code: 'declined' });
-    expect(proposalCodeForNode(p, 's.b')).toBeUndefined();
-    expect(proposalCodeForNode(base, 's.a')).toBeUndefined();
+    expect(fixCodeForNode(p, 's.b')).toBeUndefined();
+    expect(fixCodeForNode(base, 's.a')).toBeUndefined();
   });
 });
 
@@ -155,7 +155,7 @@ describe('HANDOVER_TEXT', () => {
 });
 
 describe('attemptReleaseCheckPhase', () => {
-  const p = (phases: string[]): ProposalDTO => ({
+  const p = (phases: string[]): FixDTO => ({
     ...base, status: 'verifying',
     release_checks: phases.map((phase, i) => ({ project: `s${i}`, kind: 'dbt', check_id: `verify-${i}`, phase, activated_at: '', error: '' } as any)),
   });
@@ -190,15 +190,15 @@ describe('releasePillClass for release check statuses', () => {
 });
 
 describe('effectiveRound', () => {
-  const p = (round?: number): ProposalDTO => ({ remediation_round: round } as ProposalDTO);
+  const p = (round?: number): FixDTO => ({ remediation_round: round } as FixDTO);
   it('treats a missing round as 1', () => expect(effectiveRound(p(undefined))).toBe(1));
   it('treats an explicit 0 as 1 (proto3 default over the wire)', () => expect(effectiveRound(p(0))).toBe(1));
   it('passes a positive round through', () => expect(effectiveRound(p(3))).toBe(3));
 });
 
-describe('groupProposals', () => {
-  // A minimal proposal carrying only the fields groupProposals reads.
-  const mk = (o: Partial<ProposalDTO>): ProposalDTO => ({
+describe('groupFixes', () => {
+  // A minimal fix carrying only the fields groupFixes reads.
+  const mk = (o: Partial<FixDTO>): FixDTO => ({
     id: o.id ?? 'x',
     release_id: o.release_id ?? 'rel-1',
     remediation_round: o.remediation_round,
@@ -212,10 +212,10 @@ describe('groupProposals', () => {
     pull_requests: o.pull_requests,
     pr_url: o.pr_url ?? '',
     pr_state: o.pr_state ?? '',
-  } as ProposalDTO);
+  } as FixDTO);
 
   it('buckets by (release_id, round); same release+round is one group, different round is two', () => {
-    const groups = groupProposals([
+    const groups = groupFixes([
       mk({ id: 'a', release_id: 'r1', remediation_round: 1, created_at: '2026-09-03T10:00:00Z' }),
       mk({ id: 'b', release_id: 'r1', remediation_round: 1, created_at: '2026-09-03T11:00:00Z' }),
       mk({ id: 'c', release_id: 'r1', remediation_round: 2, created_at: '2026-09-03T12:00:00Z' }),
@@ -227,7 +227,7 @@ describe('groupProposals', () => {
   });
 
   it('orders groups newest first by their latest attempt', () => {
-    const groups = groupProposals([
+    const groups = groupFixes([
       mk({ id: 'old', release_id: 'r1', remediation_round: 1, created_at: '2026-09-01T10:00:00Z' }),
       mk({ id: 'new', release_id: 'r2', remediation_round: 1, created_at: '2026-09-05T10:00:00Z' }),
     ]);
@@ -235,7 +235,7 @@ describe('groupProposals', () => {
   });
 
   it('tie-breaks same created_at by higher attempt number for the latest', () => {
-    const groups = groupProposals([
+    const groups = groupFixes([
       mk({ id: 'a1', release_id: 'r1', remediation_round: 1, attempt: 1, created_at: '2026-09-03T10:00:00Z' }),
       mk({ id: 'a2', release_id: 'r1', remediation_round: 1, attempt: 2, created_at: '2026-09-03T10:00:00Z' }),
     ]);
@@ -243,7 +243,7 @@ describe('groupProposals', () => {
   });
 
   it('unions the projects each attempt carries, sorted and de-duplicated', () => {
-    const groups = groupProposals([
+    const groups = groupFixes([
       mk({ id: 'a', projects: ['ledger', 'analytics'] }),
       mk({ id: 'b', projects: ['analytics'] }),
     ]);
@@ -251,17 +251,17 @@ describe('groupProposals', () => {
   });
 
   it('never parses a project out of a node id — a remediation node id is "<schema>.<table>"', () => {
-    const groups = groupProposals([
+    const groups = groupFixes([
       mk({ id: 'a', node_id: 'e2e_schema.table_a', resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'], projects: ['service-1'] }),
     ]);
     expect(groups[0].projects).toEqual(['service-1']);
   });
 
   it('falls back to the non-empty pr_projects of an attempt that carries no projects', () => {
-    // A proposal served by an agent-remediation that predates the projects
+    // A fix served by an agent-remediation that predates the projects
     // field arrives with it absent; the owning projects its pull requests
     // split into are the nearest thing it does carry.
-    const groups = groupProposals([
+    const groups = groupFixes([
       mk({ id: 'a', pr_projects: ['shared', 'analytics'] }),
       mk({ id: 'b', pr_projects: [''] }),
     ]);
@@ -269,33 +269,33 @@ describe('groupProposals', () => {
   });
 
   it('yields no projects for a legacy attempt carrying neither projects nor split pull requests', () => {
-    const groups = groupProposals([mk({ id: 'a', node_id: 'core_schema.t', pr_projects: [''] })]);
+    const groups = groupFixes([mk({ id: 'a', node_id: 'core_schema.t', pr_projects: [''] })]);
     expect(groups[0].projects).toEqual([]);
   });
 
   it('unions resolved node ids across attempts, sorted', () => {
-    const groups = groupProposals([
+    const groups = groupFixes([
       mk({ id: 'a', resolved_node_ids: ['svc.b', 'svc.a'] }),
       mk({ id: 'b', resolved_node_ids: ['svc.c', 'svc.a'] }),
     ]);
     expect(groups[0].nodeIds).toEqual(['svc.a', 'svc.b', 'svc.c']);
   });
 
-  it('picks the newest attempt that has a pull request as latestPrProposal', () => {
-    const groups = groupProposals([
+  it('picks the newest attempt that has a pull request as latestPrFix', () => {
+    const groups = groupFixes([
       mk({ id: 'older', created_at: '2026-09-03T10:00:00Z', pr_state: 'merged' }),
       mk({ id: 'newer', created_at: '2026-09-03T12:00:00Z' }), // no PR
     ]);
-    expect(groups[0].latestPrProposal?.id).toBe('older');
+    expect(groups[0].latestPrFix?.id).toBe('older');
   });
 
-  it('sets latestPrProposal to null when no attempt has a pull request', () => {
-    const groups = groupProposals([mk({ id: 'a' }), mk({ id: 'b' })]);
-    expect(groups[0].latestPrProposal).toBeNull();
+  it('sets latestPrFix to null when no attempt has a pull request', () => {
+    const groups = groupFixes([mk({ id: 'a' }), mk({ id: 'b' })]);
+    expect(groups[0].latestPrFix).toBeNull();
   });
 });
 
-describe('proposalPillClass', () => {
+describe('fixPillClass', () => {
   it.each([
     ['proposed',   'pill--succeeded'],
     ['verifying',  'pill--running'],
@@ -304,12 +304,12 @@ describe('proposalPillClass', () => {
     ['escalated',  'pill--failed'],
     ['skipped',    'pill--skipped'],
   ])('maps the %s attempt status to %s', (status, cls) => {
-    expect(proposalPillClass(status)).toBe(cls);
+    expect(fixPillClass(status)).toBe(cls);
   });
 
   it('falls back to the release vocabulary for an unknown status', () => {
-    expect(proposalPillClass('cancelled_by_operator')).toBe('pill--cancelled');
-    expect(proposalPillClass('whatever')).toBe('pill--pending');
+    expect(fixPillClass('cancelled_by_operator')).toBe('pill--cancelled');
+    expect(fixPillClass('whatever')).toBe('pill--pending');
   });
 });
 

@@ -468,9 +468,9 @@ export type NodeDetailFrom =
   | { type: 'schedule'; name: string; mode: 'run' | 'latest' }
   | { type: 'nodes' };
 
-// One file a proposal changes. content_uri and diff_uri address S3 objects
+// One file a fix changes. content_uri and diff_uri address S3 objects
 // holding the full corrected file and its unified diff. target_node_id names
-// the specific resolved node this edit fixes, when a batched proposal's
+// the specific resolved node this edit fixes, when a batched fix's
 // edits map one-to-one to the nodes it resolves; absent when the edit is not
 // attributable to a single node (e.g. a shared contract file).
 export interface FileEditDTO {
@@ -490,8 +490,8 @@ export interface NodeOutcomeDTO {
   code?: HandoverReason | '';
 }
 
-// One pull request opened from a proposal. A proposal splits into one entry
-// per owning project; project === '' is the legacy whole-proposal group.
+// One pull request opened from a fix. A fix splits into one entry
+// per owning project; project === '' is the legacy whole-fix group.
 export interface PullRequestDTO {
   project: string;
   repo: string;
@@ -533,14 +533,14 @@ export interface ApproverDTO {
   source: ApproverSource;
 }
 
-export interface ProposalDTO {
+export interface FixDTO {
   id: string;
   source: string;
   release_id: string;
   node_id: string;
   error_signature: string;
   attempt: number;
-  // Lifecycle of one fix attempt. Two are in flight and carry no reviewable
+  // Lifecycle of the attempt this row records. Two are in flight and carry no reviewable
   // fix yet: 'generating' while the fix is being produced, and 'verifying'
   // while a release check judges the produced fix through every stage a
   // release passes. The rest are terminal: 'proposed' (a fix ready for
@@ -574,44 +574,44 @@ export interface ProposalDTO {
   // python contract attempt reached 'failed'. Empty unless the release check
   // failed.
   verify_error: string;
-  // Every file this proposal changes. Absent or empty on a proposal that has
+  // Every file this fix changes. Absent or empty on a fix that has
   // no real repository source to edit — a candidate-only fix — in which case
   // the single-file diff_uri above still points at a previewable diff.
   edits?: FileEditDTO[];
   // remediation_round is the release's remediation round this attempt
-  // belongs to. Absent on a proposal from before rounds existed, which the
+  // belongs to. Absent on a fix from before rounds existed, which the
   // reader treats the same as round 1.
   remediation_round?: number;
   // resolved_node_ids lists every failing node this attempt addresses. Absent
-  // or empty on a legacy single-node proposal (or one from before batching
+  // or empty on a legacy single-node fix (or one from before batching
   // existed), in which case node_id — the representative (first resolved)
-  // node — is the attempt's sole member. See proposalNodeIds.
+  // node — is the attempt's sole member. See fixNodeIds.
   resolved_node_ids?: string[];
   // node_outcomes carries how this attempt ended for each node it resolved,
   // keyed by node id. Absent or missing an entry for a legacy row or a node
-  // the attempt did not record separately, in which case the proposal's own
-  // status/rationale describe that node too. See proposalStatusForNode /
-  // proposalReasonForNode.
+  // the attempt did not record separately, in which case the fix's own
+  // status/rationale describe that node too. See fixStatusForNode /
+  // fixReasonForNode.
   node_outcomes?: Record<string, NodeOutcomeDTO>;
   // release_checks lists the release checks this attempt ran, one per
-  // edited project that needed one. Empty on a proposal judged without one,
+  // edited project that needed one. Empty on a fix judged without one,
   // or a legacy row that only ever tracked a single release_check_id.
   release_checks?: ReleaseCheckDTO[];
-  // pull_requests is one entry per (proposal, project) pull request; absent
-  // or empty on a proposal that never entered the PR lifecycle, or one from
+  // pull_requests is one entry per (fix, project) pull request; absent
+  // or empty on a fix that never entered the PR lifecycle, or one from
   // before the per-project split existed — in which case the singular pr_*
   // fields above describe its one (legacy, project '') pull request. See
-  // proposalPullRequests.
+  // fixPullRequests.
   pull_requests?: PullRequestDTO[];
-  // pr_projects is the sorted owning-project groups this proposal's pull
-  // requests split into; absent, or [''], for a legacy (unsplit) proposal.
-  // See proposalPrProjects.
+  // pr_projects is the sorted owning-project groups this fix's pull
+  // requests split into; absent, or [''], for a legacy (unsplit) fix.
+  // See fixPrProjects.
   pr_projects?: string[];
   // projects is every project this attempt touched — the failing nodes'
   // projects plus the edited ones, sorted — the same set the server's
-  // `project` list filter matches a proposal on. Absent from a proposal
+  // `project` list filter matches a fix on. Absent from a fix
   // served by an agent-remediation that predates the field. See
-  // proposalProjects.
+  // fixProjects.
   projects?: string[];
   // approvers is who must approve what this attempt did with each node a
   // remediation settled at its end, the fixed and the handed-over nodes, one

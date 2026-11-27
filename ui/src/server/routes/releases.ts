@@ -9,12 +9,6 @@ import { commitUrl } from '../github/web-base';
 // provenance fields and the author it attaches.
 type EnrichableRelease = { repo?: string; commit_sha?: string; author?: ReleaseAuthor };
 
-// normalizeKey strips a leading s3://<bucket>/ so getLogObject receives a key.
-function normalizeKey(raw: string): string {
-  const m = raw.match(/^s3:\/\/[^/]+\/(.+)$/);
-  return m ? m[1] : raw;
-}
-
 // enrichAuthors resolves the commit author for every release in place. Each
 // distinct (repo, commit_sha) is looked up once; a lookup that fails leaves that
 // release without an author rather than failing the whole list, so a GitHub
@@ -44,7 +38,6 @@ async function enrichAuthors(releases: EnrichableRelease[], resolver: CommitAuth
 
 export function createReleasesRouter(
   client: ReleaseClient,
-  getLog: (key: string) => Promise<string>,
   authorResolver?: CommitAuthorResolver,
   githubWebBaseUrl = 'https://github.com',
 ) {
@@ -52,8 +45,8 @@ export function createReleasesRouter(
 
   // Bound the list route only: it is the one that fans out to GitHub (one
   // getCommit per distinct commit), so an authenticated client must not be able
-  // to hammer it. The other release routes are left unlimited — live-release is
-  // polled every 5s and would otherwise share this budget. The key is the
+  // to hammer it. The other release routes are left unlimited — the Releases tab
+  // polls them and would otherwise share this budget. The key is the
   // authenticated user (this router is mounted behind the /api auth guard), not
   // the client IP: behind an ingress with no `trust proxy` the IP is the
   // ingress socket, which would bucket every operator together.
@@ -63,28 +56,6 @@ export function createReleasesRouter(
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => req.user?.userId ?? 'anon',
-  });
-
-  // GET /api/releases/log?key=  — registered before /:id so "log" is not treated as an id.
-  router.get('/log', async (req, res) => {
-    const key = (req.query.key as string) || '';
-    if (!key) return res.status(400).json({ error: 'key query param is required' });
-    try {
-      const content = await getLog(normalizeKey(key));
-      res.setHeader('Content-Type', 'text/plain');
-      res.send(content);
-    } catch {
-      res.status(502).json({ error: 'Failed to fetch log from storage' });
-    }
-  });
-
-  // GET /api/releases/live-release
-  router.get('/live-release', async (_req, res) => {
-    try {
-      res.json(await client.getLiveRelease());
-    } catch (err: any) {
-      res.status(err.status || 502).json({ error: 'release-controller request failed' });
-    }
   });
 
   // GET /api/releases?status=&limit=&cursor=
@@ -107,7 +78,7 @@ export function createReleasesRouter(
 
   // POST /api/releases/:id/retry-remediation — start another remediation round.
   // release-controller's status and body are passed through: 202 with the new
-  // round, or 409 with a reason the page turns into "look at the proposal instead".
+  // round, or 409 with a reason the page turns into "look at the fix instead".
   router.post('/:id/retry-remediation', async (req, res) => {
     try {
       const { status, body } = await client.retryRemediation(req.params.id);

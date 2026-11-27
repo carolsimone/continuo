@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
@@ -41,7 +41,7 @@ func TestChangeDiffer_IsTheDiffFromThePromotedVersion(t *testing.T) {
 
 	got := differ(v).Diff(context.Background(), "model.a", "select 2")
 
-	assert.Equal(t, proposal.ComputeUnifiedDiff("select 1", "select 2", "model.a"), got)
+	assert.Equal(t, fix.ComputeUnifiedDiff("select 1", "select 2", "model.a"), got)
 	assert.Equal(t, []string{"model.a"}, v.calls)
 }
 
@@ -89,7 +89,7 @@ func TestChangeDiffer_ComparesTwoCleanedTexts(t *testing.T) {
 
 	got := differ(v).Diff(context.Background(), "model.a", "select 'password=hunter2' as pw\nselect 2")
 
-	assert.Equal(t, proposal.ComputeUnifiedDiff(stored, "select 'password=[redacted:secret]' as pw\nselect 2", "model.a"), got,
+	assert.Equal(t, fix.ComputeUnifiedDiff(stored, "select 'password=[redacted:secret]' as pw\nselect 2", "model.a"), got,
 		"the candidate is cleaned as the catalog cleans what it stores, so only the real change shows")
 	assert.NotContains(t, got, "hunter2")
 }

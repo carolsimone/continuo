@@ -160,11 +160,12 @@ func seedPrecedentCurrentPointer(
 	require.NoError(t, err)
 }
 
-// seedPrecedentProposal creates one :Proposal fixture linked [:PROPOSED] from
-// the given rejection.
-func seedPrecedentProposal(
+// seedPrecedentFix creates one :Fix fixture linked [:PROPOSED] from the
+// given rejection, stamped with project, and its PR facts on the fix's
+// :PullRequest of that project, the shape RecordFix writes.
+func seedPrecedentFix(
 	t *testing.T, client neo4jinfra.Neo4jClient,
-	releaseID, nodeID, proposalID, prURL string, prNumber int, prState, openedBy string,
+	releaseID, nodeID, fixID, project, prURL string, prNumber int, prState, openedBy string,
 	openedAt time.Time,
 ) {
 	t.Helper()
@@ -173,14 +174,16 @@ func seedPrecedentProposal(
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
 		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
-		CREATE (p:Proposal {
-			tenant_id: $tenant_id, proposal_id: $proposal_id, pr_url: $pr_url, pr_number: $pr_number,
-			pr_state: $pr_state, opened_by: $opened_by, opened_at: $opened_at
+		CREATE (f:Fix {tenant_id: $tenant_id, fix_id: $fix_id})
+		MERGE (rej)-[:PROPOSED {project: $project}]->(f)
+		CREATE (f)-[:HAS_PR]->(:PullRequest {
+			tenant_id: $tenant_id, fix_id: $fix_id, project: $project,
+			pr_url: $pr_url, pr_number: $pr_number, pr_state: $pr_state,
+			opened_by: $opened_by, opened_at: $opened_at
 		})
-		MERGE (rej)-[:PROPOSED]->(p)
 	`, map[string]any{
 		"tenant_id":  precedentFixtureTenant,
-		"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID,
+		"release_id": releaseID, "node_id": nodeID, "fix_id": fixID, "project": project,
 		"pr_url": prURL, "pr_number": prNumber, "pr_state": prState,
 		"opened_by": openedBy, "opened_at": openedAt.UTC(),
 	})
@@ -196,7 +199,7 @@ func seedPrecedentProposal(
 // by the "resolved" rank, not recency), and a third rejection on a different
 // signature must not appear at all. The resolved row must carry its
 // ResolvingVersion, the PriorVersion it superseded (next-older by
-// promoted_at), and its Proposals.
+// promoted_at), and its Fixes.
 func TestPrecedentReader_MatchesBySignature(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
@@ -224,7 +227,7 @@ func TestPrecedentReader_MatchesBySignature(t *testing.T) {
 	seedPrecedentVersion(t, client, nodeResolved, marker, "hash-resolving", "select resolving", t0.Add(2*time.Hour))
 	linkPrecedentResolvedBy(t, client, relResolved, nodeResolved, nodeResolved, "hash-resolving")
 
-	seedPrecedentProposal(t, client, relResolved, nodeResolved, marker+"-proposal",
+	seedPrecedentFix(t, client, relResolved, nodeResolved, marker+"-fix", "core",
 		"https://github.com/org/repo/pull/7", 7, "open", "agent-remediation", t0.Add(30*time.Minute))
 
 	repo := newPrecedentReader(client)
@@ -243,15 +246,15 @@ func TestPrecedentReader_MatchesBySignature(t *testing.T) {
 	require.NotNil(t, resolved.PriorVersion, "the resolved row must carry the version its fix superseded")
 	assert.Equal(t, "hash-prior", resolved.PriorVersion.ContentHash)
 	assert.Equal(t, "select prior", resolved.PriorVersion.RawCode)
-	require.Len(t, resolved.Proposals, 1)
-	assert.Equal(t, marker+"-proposal", resolved.Proposals[0].ProposalID)
-	assert.Equal(t, "https://github.com/org/repo/pull/7", resolved.Proposals[0].PrURL)
-	assert.Equal(t, 7, resolved.Proposals[0].PrNumber)
-	assert.Equal(t, "open", resolved.Proposals[0].PrState)
+	require.Len(t, resolved.Fixes, 1)
+	assert.Equal(t, marker+"-fix", resolved.Fixes[0].FixID)
+	assert.Equal(t, "https://github.com/org/repo/pull/7", resolved.Fixes[0].PrURL)
+	assert.Equal(t, 7, resolved.Fixes[0].PrNumber)
+	assert.Equal(t, "open", resolved.Fixes[0].PrState)
 
 	assert.Nil(t, open.ResolvingVersion, "the still-open row has no resolving version")
 	assert.Nil(t, open.PriorVersion)
-	assert.Empty(t, open.Proposals)
+	assert.Empty(t, open.Fixes)
 }
 
 // TestPrecedentReader_MatchesByCategoryReason verifies the fallback lookup
@@ -519,9 +522,9 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 		"prior-version code is always fetched — the caller renders the diff from it")
 }
 
-// TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState
-// verifies the read path widened to recognize proposal-level provenance: a
-// rejection resolved by a MERGED PR (a [:RESOLVED_BY] edge to a :Proposal,
+// TestPrecedentReader_FixResolvedRejectionCarriesEditedAndLivePrState
+// verifies the read path widened to recognize fix-level provenance: a
+// rejection resolved by a MERGED PR (a [:RESOLVED_BY] edge to a :Fix,
 // not a :NodeVersion)
 // counts as resolved by the identity query — it must sort ahead of a still-open
 // rejection filed LATER on the same signature — and the detail path surfaces
@@ -529,7 +532,7 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 // The edited node (nu) is an UPSTREAM node distinct from the rejected node, so
 // the test also proves the edited target is carried faithfully rather than
 // assumed equal to the rejection node.
-func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t *testing.T) {
+func TestPrecedentReader_FixResolvedRejectionCarriesEditedAndLivePrState(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -542,14 +545,14 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 	relA, nodeA := marker+"-rel-a", marker+"-node-a"
 	relOpen, nodeOpen := marker+"-rel-open", marker+"-node-open"
 	nu := marker + "-nu" // the edited upstream :Node, distinct from nodeA
-	proposalID := marker + "-proposal"
+	fixID := marker + "-fix"
 	closedAt := t0.Add(2 * time.Hour)
 
-	// The proposal-resolved rejection, filed EARLIER than the open one.
+	// The fix-resolved rejection, filed EARLIER than the open one.
 	seedPrecedentRejection(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 	// A still-open rejection on the same signature, filed LATER — resolved-first
-	// ordering must still rank the proposal-resolved rejection ahead of it.
+	// ordering must still rank the fix-resolved rejection ahead of it.
 	seedPrecedentRejection(t, client, relOpen, nodeOpen, sig, "logic", "logic:missing_object",
 		t0.Add(30*time.Minute), "select open", "hash-open")
 
@@ -557,15 +560,15 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 	seedEditTargetNode(t, client, nu, marker)
 
 	repo := newCaseBaseRepo(client)
-	require.NoError(t, repo.RecordProposal(ctx,
-		casebase.Proposal{ProposalID: proposalID, ReleaseID: relA, NodeID: nodeA},
+	require.NoError(t, repo.RecordFix(ctx,
+		casebase.Fix{FixID: fixID, ReleaseID: relA, NodeID: nodeA},
 		casebase.PullRequest{
-			ProposalID: proposalID, Project: "core",
+			FixID: fixID, Project: "core",
 			PrURL: "https://github.com/org/repo/pull/9", PrNumber: 9,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
 		}))
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: relA, Project: "core",
+		FixID: fixID, ReleaseID: relA, Project: "core",
 		Outcome: "merged", ClosedAt: closedAt,
 		ResolvedNodeIDs: []string{nodeA},
 		Edits: []casebase.EditOutcome{
@@ -578,11 +581,11 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "both rejections on the signature match")
 
-	// The identity query counts the [:RESOLVED_BY]->(:Proposal) edge as
+	// The identity query counts the [:RESOLVED_BY]->(:Fix) edge as
 	// resolved: nodeA sorts first despite being OLDER by `at`.
 	resolved, open := precedents[0], precedents[1]
 	assert.Equal(t, nodeA, resolved.Rejection.NodeID,
-		"a proposal-resolved rejection must rank resolved-first, ahead of a newer open one")
+		"a fix-resolved rejection must rank resolved-first, ahead of a newer open one")
 	assert.Equal(t, nodeOpen, open.Rejection.NodeID)
 
 	require.Len(t, resolved.Edited, 1, "the merged PR's EDITED provenance is surfaced")
@@ -591,14 +594,14 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 	assert.NotEqual(t, nodeA, e.NodeID)
 	assert.Equal(t, "models/upstream.sql", e.Path)
 	assert.False(t, e.Amended)
-	assert.Equal(t, "D1", e.Diff, "a non-amended edit keeps the edge's stored proposal diff")
+	assert.Equal(t, "D1", e.Diff, "a non-amended edit keeps the edge's stored fix diff")
 	assert.Nil(t, e.MergedVersion, "no straddling merged version selected for a non-amended edit")
 	assert.Nil(t, e.MergedPrior)
 
-	require.Len(t, resolved.Proposals, 1)
-	assert.Equal(t, proposalID, resolved.Proposals[0].ProposalID)
-	assert.Equal(t, "merged", resolved.Proposals[0].PrState,
-		"pr_state comes live from the :PullRequest node, not the open-time inline snapshot")
+	require.Len(t, resolved.Fixes, 1)
+	assert.Equal(t, fixID, resolved.Fixes[0].FixID)
+	assert.Equal(t, "merged", resolved.Fixes[0].PrState,
+		"pr_state comes live from the :PullRequest node")
 
 	assert.Empty(t, open.Edited, "the still-open rejection carries no edited provenance")
 }
@@ -621,7 +624,7 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	relC, nodeC := marker+"-rel-c", marker+"-node-c"
 	nu := marker + "-nu"
-	proposalID := marker + "-proposal"
+	fixID := marker + "-fix"
 	closedAt := t0.Add(2 * time.Hour)
 
 	seedPrecedentRejection(t, client, relC, nodeC, sig, "logic", "logic:missing_object",
@@ -637,15 +640,15 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 	seedPrecedentVersion(t, client, nu, marker, "hash-way-after", "select way after", closedAt.Add(3*time.Hour))
 
 	repo := newCaseBaseRepo(client)
-	require.NoError(t, repo.RecordProposal(ctx,
-		casebase.Proposal{ProposalID: proposalID, ReleaseID: relC, NodeID: nodeC},
+	require.NoError(t, repo.RecordFix(ctx,
+		casebase.Fix{FixID: fixID, ReleaseID: relC, NodeID: nodeC},
 		casebase.PullRequest{
-			ProposalID: proposalID, Project: "core",
+			FixID: fixID, Project: "core",
 			PrURL: "https://github.com/org/repo/pull/11", PrNumber: 11,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
 		}))
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: relC, Project: "core",
+		FixID: fixID, ReleaseID: relC, Project: "core",
 		Outcome: "merged", ClosedAt: closedAt,
 		ResolvedNodeIDs: []string{nodeC},
 		Edits: []casebase.EditOutcome{
@@ -670,14 +673,14 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 	assert.Equal(t, "select before", e.MergedPrior.RawCode)
 }
 
-// TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByProposal
-// verifies the detail query surfaces the proposal-resolved signal even when the
+// TestPrecedentReader_FixResolvedWithAllEditsAbsentSurfacesResolvedByFix
+// verifies the detail query surfaces the fix-resolved signal even when the
 // merged PR drew NO [:EDITED] edges — every edit target was absent from the
 // graph, so RecordPullRequestOutcome skipped them (it never mints a :Node).
 // The rejection is genuinely fixed and the identity query already counts it
-// resolved-first; ResolvedByProposal must be true so the service's Resolved
+// resolved-first; ResolvedByFix must be true so the service's Resolved
 // boolean agrees, with no Edited rows and no own-timeline version.
-func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByProposal(t *testing.T) {
+func TestPrecedentReader_FixResolvedWithAllEditsAbsentSurfacesResolvedByFix(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -688,7 +691,7 @@ func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByPro
 	sig := marker + "-sig"
 	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	relA, nodeA := marker+"-rel-a", marker+"-node-a"
-	proposalID := marker + "-proposal"
+	fixID := marker + "-fix"
 	missing := marker + "-missing" // edit target that is NOT in the graph
 	closedAt := t0.Add(2 * time.Hour)
 
@@ -696,17 +699,17 @@ func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByPro
 		t0, "select failing", "hash-failing")
 
 	repo := newCaseBaseRepo(client)
-	require.NoError(t, repo.RecordProposal(ctx,
-		casebase.Proposal{ProposalID: proposalID, ReleaseID: relA, NodeID: nodeA},
+	require.NoError(t, repo.RecordFix(ctx,
+		casebase.Fix{FixID: fixID, ReleaseID: relA, NodeID: nodeA},
 		casebase.PullRequest{
-			ProposalID: proposalID, Project: "core",
+			FixID: fixID, Project: "core",
 			PrURL: "https://github.com/org/repo/pull/13", PrNumber: 13,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
 		}))
 	// Merged: resolves nodeA, but the sole edit's target :Node is absent, so no
 	// [:EDITED] edge is drawn.
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: relA, Project: "core",
+		FixID: fixID, ReleaseID: relA, Project: "core",
 		Outcome: "merged", ClosedAt: closedAt,
 		ResolvedNodeIDs: []string{nodeA},
 		Edits: []casebase.EditOutcome{
@@ -720,16 +723,16 @@ func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByPro
 	require.Len(t, precedents, 1)
 
 	p := precedents[0]
-	assert.True(t, p.ResolvedByProposal,
-		"a RESOLVED_BY->(:Proposal) edge must surface even when no EDITED edge was drawn")
+	assert.True(t, p.ResolvedByFix,
+		"a RESOLVED_BY->(:Fix) edge must surface even when no EDITED edge was drawn")
 	assert.Empty(t, p.Edited, "no EDITED edge was drawn for an absent target")
 	assert.Nil(t, p.ResolvingVersion, "there is no own-timeline resolving version")
 }
 
-// TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal pins the
+// TestPrecedentReader_UnresolvedRejectionIsNotResolvedByFix pins the
 // negative: a rejection with no [:RESOLVED_BY] edge at all reports
-// ResolvedByProposal=false.
-func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal(t *testing.T) {
+// ResolvedByFix=false.
+func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByFix(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -749,23 +752,23 @@ func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
-	assert.False(t, precedents[0].ResolvedByProposal, "an unresolved rejection has no proposal edge")
+	assert.False(t, precedents[0].ResolvedByFix, "an unresolved rejection has no fix edge")
 	assert.Nil(t, precedents[0].ResolvingVersion)
 	assert.Empty(t, precedents[0].Edited)
 }
 
-// TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject
+// TestPrecedentReader_MultiProjectFixScopesEditedProvenancePerProject
 // verifies the per-resolving-project scoping of edited-node provenance. A single
-// :Proposal spans two projects: a core rejection resolved by core's merged PR
+// :Fix spans two projects: a core rejection resolved by core's merged PR
 // (a non-amended edit to a core node) and a finance rejection resolved by
 // finance's merged PR (an amended edit to a finance node). Each rejection links
-// to the SHARED :Proposal, so without scoping the read would walk EVERY [:EDITED]
-// edge and EVERY merged :PullRequest on that proposal. The RESOLVED_BY edge's
+// to the SHARED :Fix, so without scoping the read would walk EVERY [:EDITED]
+// edge and EVERY merged :PullRequest on that fix. The RESOLVED_BY edge's
 // project stamp scopes the walk: the core rejection surfaces only the core edit,
 // the finance rejection only the finance edit, and the finance amended straddle
 // is selected against finance's own :PullRequest closed_at — never core's
 // earlier one.
-func TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject(t *testing.T) {
+func TestPrecedentReader_MultiProjectFixScopesEditedProvenancePerProject(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -775,7 +778,7 @@ func TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject(t 
 
 	sig := marker + "-sig"
 	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
-	proposalID := marker + "-proposal"
+	fixID := marker + "-fix"
 
 	coreRel, coreNode := marker+"-core-rel", marker+"-core-node"
 	finRel, finNode := marker+"-fin-rel", marker+"-fin-node"
@@ -785,7 +788,7 @@ func TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject(t 
 	coreClosed := t0.Add(2 * time.Hour) // Tc — earlier close
 	finClosed := t0.Add(5 * time.Hour)  // Tf — later close
 
-	// Two rejections on the SAME signature, resolved by the SAME proposal but by
+	// Two rejections on the SAME signature, resolved by the SAME fix but by
 	// different projects' PRs.
 	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
 		t0, "select core", "hash-core")
@@ -804,25 +807,25 @@ func TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject(t 
 
 	repo := newCaseBaseRepo(client)
 
-	// pr_opened per project, sharing the one proposal.
-	require.NoError(t, repo.RecordProposal(ctx,
-		casebase.Proposal{ProposalID: proposalID, ReleaseID: coreRel, NodeID: coreNode},
+	// pr_opened per project, sharing the one fix.
+	require.NoError(t, repo.RecordFix(ctx,
+		casebase.Fix{FixID: fixID, ReleaseID: coreRel, NodeID: coreNode},
 		casebase.PullRequest{
-			ProposalID: proposalID, Project: "core",
+			FixID: fixID, Project: "core",
 			PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
 		}))
-	require.NoError(t, repo.RecordProposal(ctx,
-		casebase.Proposal{ProposalID: proposalID, ReleaseID: finRel, NodeID: finNode},
+	require.NoError(t, repo.RecordFix(ctx,
+		casebase.Fix{FixID: fixID, ReleaseID: finRel, NodeID: finNode},
 		casebase.PullRequest{
-			ProposalID: proposalID, Project: "finance",
+			FixID: fixID, Project: "finance",
 			PrURL: "https://github.com/org/finance/pull/1", PrNumber: 1,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
 		}))
 
 	// core PR merges: edits the core node, not amended.
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: coreRel, Project: "core",
+		FixID: fixID, ReleaseID: coreRel, Project: "core",
 		Outcome: "merged", ClosedAt: coreClosed,
 		PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
 		ResolvedNodeIDs: []string{coreNode},
@@ -832,7 +835,7 @@ func TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject(t 
 	}))
 	// finance PR merges: edits the finance node, amended.
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: finRel, Project: "finance",
+		FixID: fixID, ReleaseID: finRel, Project: "finance",
 		Outcome: "merged", ClosedAt: finClosed,
 		PrURL: "https://github.com/org/finance/pull/1", PrNumber: 1,
 		ResolvedNodeIDs: []string{finNode},
@@ -876,72 +879,17 @@ func TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject(t 
 	assert.Equal(t, "hash-between", fe.MergedPrior.ContentHash)
 }
 
-// TestPrecedentReader_ResolvedByWithoutProjectRendersEdit pins the fallback for
-// a [:RESOLVED_BY]->(:Proposal) edge that carries no project: the scoped walk
-// does not exclude it — with a null rb.project it falls back to the
-// whole-proposal walk, so its single-project edit still renders.
-func TestPrecedentReader_ResolvedByWithoutProjectRendersEdit(t *testing.T) {
-	client := newTestClient(t)
-	ctx := context.Background()
-	marker := t.Name()
-	cleanup := caseBaseCleanup(t, client, marker)
-	cleanup()
-	defer cleanup()
-
-	sig := marker + "-sig"
-	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
-	rel, node := marker+"-rel", marker+"-node"
-	proposalID := marker + "-proposal"
-	edited := marker + "-edited"
-
-	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
-		t0, "select failing", "hash-failing")
-	seedEditTargetNode(t, client, edited, marker)
-
-	// A RESOLVED_BY edge with NO project property, plus its EDITED edge. The
-	// read must still render it.
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
-		MATCH (n:Node {tenant_id: $tenant_id, unique_id: $edited})
-		MERGE (p:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
-		MERGE (rej)-[:RESOLVED_BY]->(p)
-		MERGE (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: 'core'})
-		SET pl.pr_state = 'merged', pl.closed_at = $closed_at
-		MERGE (p)-[ed:EDITED {path: 'models/legacy.sql'}]->(n)
-		SET ed.amended = false, ed.diff = 'D-legacy', ed.project = 'core'
-	`, map[string]any{
-		"tenant_id":  precedentFixtureTenant,
-		"release_id": rel, "node_id": node, "proposal_id": proposalID,
-		"edited": edited, "closed_at": t0.Add(time.Hour).UTC(),
-	})
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
-	s.Close(ctx)
-
-	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
-	require.NoError(t, err)
-	require.Len(t, precedents, 1)
-
-	require.Len(t, precedents[0].Edited, 1,
-		"a RESOLVED_BY edge with no project still renders its edit via the null fallback")
-	assert.Equal(t, edited, precedents[0].Edited[0].NodeID)
-	assert.Equal(t, "D-legacy", precedents[0].Edited[0].Diff)
-}
-
-// TestPrecedentReader_MultiProjectProposalScopesProposalPRsPerProject verifies
+// TestPrecedentReader_MultiProjectFixScopesFixPRsPerProject verifies
 // the per-proposing-project scoping of a precedent's PR facts. A single
-// :Proposal spans two projects: a core rejection whose fix PR is core's, and a
+// :Fix spans two projects: a core rejection whose fix PR is core's, and a
 // finance rejection whose fix PR is finance's. Both rejections link to the
-// SHARED :Proposal, which carries both projects' :PullRequest nodes. Without
-// scoping the read would fan EVERY :PullRequest into EVERY rejection's Proposals
+// SHARED :Fix, which carries both projects' :PullRequest nodes. Without
+// scoping the read would fan EVERY :PullRequest into EVERY rejection's Fixes
 // list — a core rejection would surface finance's PR url/number/state (and a
-// duplicate proposal entry). The [:PROPOSED] edge's project stamp scopes the PR
+// duplicate fix entry). The [:PROPOSED] edge's project stamp scopes the PR
 // join: the core rejection surfaces only core's PR, the finance rejection only
 // finance's.
-func TestPrecedentReader_MultiProjectProposalScopesProposalPRsPerProject(t *testing.T) {
+func TestPrecedentReader_MultiProjectFixScopesFixPRsPerProject(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -951,12 +899,12 @@ func TestPrecedentReader_MultiProjectProposalScopesProposalPRsPerProject(t *test
 
 	sig := marker + "-sig"
 	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
-	proposalID := marker + "-proposal"
+	fixID := marker + "-fix"
 
 	coreRel, coreNode := marker+"-core-rel", marker+"-core-node"
 	finRel, finNode := marker+"-fin-rel", marker+"-fin-node"
 
-	// Two rejections on the SAME signature, resolved by the SAME proposal but by
+	// Two rejections on the SAME signature, resolved by the SAME fix but by
 	// different projects' PRs.
 	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
 		t0, "select core", "hash-core")
@@ -965,19 +913,20 @@ func TestPrecedentReader_MultiProjectProposalScopesProposalPRsPerProject(t *test
 
 	repo := newCaseBaseRepo(client)
 
-	// pr_opened per project, sharing the one proposal. Each RecordProposal stamps	// its project on the [:PROPOSED] edge and lands its PR on its own
+	// pr_opened per project, sharing the one fix. Each RecordFix stamps
+	// its project on the [:PROPOSED] edge and lands its PR on its own
 	// :PullRequest node.
-	require.NoError(t, repo.RecordProposal(ctx,
-		casebase.Proposal{ProposalID: proposalID, ReleaseID: coreRel, NodeID: coreNode},
+	require.NoError(t, repo.RecordFix(ctx,
+		casebase.Fix{FixID: fixID, ReleaseID: coreRel, NodeID: coreNode},
 		casebase.PullRequest{
-			ProposalID: proposalID, Project: "core",
+			FixID: fixID, Project: "core",
 			PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
 		}))
-	require.NoError(t, repo.RecordProposal(ctx,
-		casebase.Proposal{ProposalID: proposalID, ReleaseID: finRel, NodeID: finNode},
+	require.NoError(t, repo.RecordFix(ctx,
+		casebase.Fix{FixID: fixID, ReleaseID: finRel, NodeID: finNode},
 		casebase.PullRequest{
-			ProposalID: proposalID, Project: "finance",
+			FixID: fixID, Project: "finance",
 			PrURL: "https://github.com/org/finance/pull/7", PrNumber: 7,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
 		}))
@@ -998,69 +947,18 @@ func TestPrecedentReader_MultiProjectProposalScopesProposalPRsPerProject(t *test
 
 	// The core rejection surfaces ONLY core's PR — never finance's, and never a
 	// duplicate.
-	require.Len(t, coreP.Proposals, 1, "core rejection surfaces exactly its own project's PR")
-	assert.Equal(t, proposalID, coreP.Proposals[0].ProposalID)
-	assert.Equal(t, "https://github.com/org/core/pull/1", coreP.Proposals[0].PrURL,
+	require.Len(t, coreP.Fixes, 1, "core rejection surfaces exactly its own project's PR")
+	assert.Equal(t, fixID, coreP.Fixes[0].FixID)
+	assert.Equal(t, "https://github.com/org/core/pull/1", coreP.Fixes[0].PrURL,
 		"core must not surface finance's PR url")
-	assert.Equal(t, 1, coreP.Proposals[0].PrNumber)
-	assert.Equal(t, "open", coreP.Proposals[0].PrState)
+	assert.Equal(t, 1, coreP.Fixes[0].PrNumber)
+	assert.Equal(t, "open", coreP.Fixes[0].PrState)
 
 	// The finance rejection surfaces ONLY finance's PR.
-	require.Len(t, finP.Proposals, 1, "finance rejection surfaces exactly its own project's PR")
-	assert.Equal(t, "https://github.com/org/finance/pull/7", finP.Proposals[0].PrURL,
+	require.Len(t, finP.Fixes, 1, "finance rejection surfaces exactly its own project's PR")
+	assert.Equal(t, "https://github.com/org/finance/pull/7", finP.Fixes[0].PrURL,
 		"finance must not surface core's PR url")
-	assert.Equal(t, 7, finP.Proposals[0].PrNumber)
-}
-
-// TestPrecedentReader_ProposedWithoutProjectRendersPR pins the fallback for a
-// [:PROPOSED] edge that carries no project: the scoped PR join does not exclude
-// it — with a null prop.project it falls back to matching any of the
-// proposal's PRs, so its single-project PR still renders.
-func TestPrecedentReader_ProposedWithoutProjectRendersPR(t *testing.T) {
-	client := newTestClient(t)
-	ctx := context.Background()
-	marker := t.Name()
-	cleanup := caseBaseCleanup(t, client, marker)
-	cleanup()
-	defer cleanup()
-
-	sig := marker + "-sig"
-	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
-	rel, node := marker+"-rel", marker+"-node"
-	proposalID := marker + "-proposal"
-
-	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
-		t0, "select failing", "hash-failing")
-
-	// A [:PROPOSED] edge with NO project property, plus a :PullRequest on the
-	// proposal. The read must still render the PR via the null fallback.
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
-		MERGE (p:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
-		MERGE (rej)-[:PROPOSED]->(p)
-		MERGE (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: 'core'})
-		SET pl.pr_url = $pr_url, pl.pr_number = 5, pl.pr_state = 'merged'
-	`, map[string]any{
-		"tenant_id":  precedentFixtureTenant,
-		"release_id": rel, "node_id": node, "proposal_id": proposalID,
-		"pr_url": "https://github.com/org/legacy/pull/5",
-	})
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
-	s.Close(ctx)
-
-	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
-	require.NoError(t, err)
-	require.Len(t, precedents, 1)
-
-	require.Len(t, precedents[0].Proposals, 1,
-		"a PROPOSED edge with no project still renders its PR via the null fallback")
-	assert.Equal(t, "https://github.com/org/legacy/pull/5", precedents[0].Proposals[0].PrURL)
-	assert.Equal(t, 5, precedents[0].Proposals[0].PrNumber)
-	assert.Equal(t, "merged", precedents[0].Proposals[0].PrState)
+	assert.Equal(t, 7, finP.Fixes[0].PrNumber)
 }
 
 // TestPrecedentReader_NoMatchIsEmptyNotError verifies that a signature with no

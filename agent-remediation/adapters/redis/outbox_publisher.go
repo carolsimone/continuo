@@ -65,7 +65,7 @@ var _ pkgoutbox.Renderer = (*agentRemediationOutboxPublisher)(nil)
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id: a dead-letter row's scalar fields, or the row's JSON body as
 // the "payload" field beside its tenant as "tenant_id". A
-// remediation.proposed:v1 row stores its payload under its tenant
+// fix.proposed:v1 row stores its payload under its tenant
 // (outbox.WrapTenant), which renders as the payload beside that tenant. A
 // remediation.handed_over:v1 row, stored the same way, renders as the event's
 // envelope (renderRemediationHandedOver), and a consumer.dead_letter:v1 row,
@@ -85,8 +85,8 @@ func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[st
 		return values, nil
 	}
 	switch entry.StreamName {
-	case streams.RemediationProposedV1:
-		return renderRemediationProposed(entry)
+	case streams.FixProposedV1:
+		return renderFixProposed(entry)
 	case streams.RemediationHandedOverV1:
 		return renderRemediationHandedOver(entry)
 	case streams.ConsumerDeadLetterV1:
@@ -95,14 +95,14 @@ func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[st
 	return map[string]any{"payload": string(entry.Payload), "tenant_id": pkgevents.DefaultTenantID}, nil
 }
 
-// renderRemediationProposed renders a remediation.proposed:v1 row: its stored
+// renderFixProposed renders a fix.proposed:v1 row: its stored
 // payload as the "payload" field, beside the tenant it is stored under. The
 // stored payload is our own, so a row that is not stored under a tenant is
 // permanent: no retry makes it renderable.
-func renderRemediationProposed(entry *pkgoutbox.Entry) (map[string]any, error) {
+func renderFixProposed(entry *pkgoutbox.Entry) (map[string]any, error) {
 	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationProposedV1, err)
+		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.FixProposedV1, err)
 	}
 	return map[string]any{"payload": string(payload), "tenant_id": tenantID}, nil
 }

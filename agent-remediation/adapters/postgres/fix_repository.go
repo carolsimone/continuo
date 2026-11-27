@@ -1,0 +1,1263 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
+
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/pkg/domain/model"
+)
+
+// Queryer is the minimal sqlx surface satisfied by both *sqlx.DB and *sqlx.Tx.
+// SelectContext is required for multi-row reads (List).
+type Queryer interface {
+	GetContext(ctx context.Context, dest any, query string, args ...any) error
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	SelectContext(ctx context.Context, dest any, query string, args ...any) error
+}
+
+// FixRepository is the Postgres-backed FixRepository port.
+type FixRepository struct {
+	q Queryer
+	// projectRepoPaths maps a dbt project name to its project root within the
+	// repository. BeginPR uses it to bucket a claimed fix's edits by
+	// owning project, so a per-project PR claims only that project's edits and
+	// the nodes it fixed.
+	projectRepoPaths map[string]string
+}
+
+var _ repository.FixRepository = (*FixRepository)(nil)
+var _ repository.OpenPRLister = (*FixRepository)(nil)
+var _ repository.OpeningLister = (*FixRepository)(nil)
+
+// NewFixRepository binds a repository to a Queryer (pass *sqlx.Tx for the
+// transactional write path) and the project→repo-path prefixes used to split a
+// fix's edits by owning project when claiming a per-project pull request.
+func NewFixRepository(q Queryer, projectRepoPaths map[string]string) *FixRepository {
+	return &FixRepository{q: q, projectRepoPaths: projectRepoPaths}
+}
+
+// CountAttempts returns the number of TERMINAL attempts recorded for
+// one remediation round of one release. In-flight rows — 'generating' (the
+// model call has not resolved) and 'verifying' (a release check is still
+// validating a proposed fix) — are excluded so an attempt that has not yet
+// concluded neither inflates the attempt cap nor shifts the attempt number on
+// a redelivery.
+func (r *FixRepository) CountAttempts(ctx context.Context, releaseID string, remediationRound int) (int, error) {
+	const query = `SELECT count(*) FROM fix
+		WHERE release_id=$1 AND remediation_round=$2
+		  AND status NOT IN ('generating','verifying')`
+	var count int
+	if err := r.q.GetContext(ctx, &count, query, releaseID, remediationRound); err != nil {
+		return 0, fmt.Errorf("count attempts: %w", err)
+	}
+	return count, nil
+}
+
+// roundOrDefault returns n, or 1 when n is not a positive round number. A
+// fix built without an explicit remediation round (e.g. an instant
+// escalation path that never saw a trigger) belongs to round 1, the round
+// every fix predating this column belongs to.
+func roundOrDefault(n int) int {
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// textArray serialises a list of strings for a NOT NULL text[] column (a
+// fix's projects, a cluster's members). A nil slice becomes the empty
+// array '{}' (the column's default) rather than SQL NULL, so a fix whose projects are not yet known — a
+// generating row built from a trigger that carried none — still inserts.
+func textArray(s []string) pq.StringArray {
+	if len(s) == 0 {
+		return pq.StringArray{}
+	}
+	return pq.StringArray(s)
+}
+
+// remediationIDArg is the remediation_id column value of a fix: NULL for
+// an attempt row that belongs to no remediation, the remediation's id otherwise.
+func remediationIDArg(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
+}
+
+// InsertGenerating persists an in-flight 'generating' row for the attempt right
+// before the model is called. It is idempotent: ON CONFLICT on the natural key
+// (release_id, attempt) DO NOTHING, so a redelivery that re-runs the same
+// attempt leaves the single generating row untouched. Only the identity +
+// status columns, plus the resolved nodes, their initial outcomes and the
+// remediation the attempt belongs to, are written; the remaining columns take
+// their defaults and are populated when Upsert finalizes the row.
+func (r *FixRepository) InsertGenerating(ctx context.Context, p fix.Fix) error {
+	const stmt = `
+		INSERT INTO fix
+			(source, release_id, remediation_round, node_id, error_signature, attempt, status, created_at,
+			 resolved_node_ids, node_outcomes, projects, remediation_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		ON CONFLICT (release_id, attempt) DO NOTHING`
+	resolved, err := marshalResolved(p.ResolvedNodeIDs)
+	if err != nil {
+		return fmt.Errorf("marshal fix resolved node ids: %w", err)
+	}
+	outcomes, err := marshalNodeOutcomes(p.NodeOutcomes)
+	if err != nil {
+		return fmt.Errorf("marshal fix node outcomes: %w", err)
+	}
+	if _, err := r.q.ExecContext(ctx, stmt,
+		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
+		fix.StatusGenerating, p.CreatedAt,
+		resolved, outcomes, textArray(p.Projects), remediationIDArg(p.RemediationID),
+	); err != nil {
+		return fmt.Errorf("insert generating fix: %w", err)
+	}
+	return nil
+}
+
+// FailGenerating finalizes releaseID's in-flight 'generating' row, recording
+// reason as the rationale, and returns how many rows moved. It carries the
+// terminal status into the per-node outcomes too: every node_outcomes entry
+// still marked 'generating' is rewritten to 'failed' with reason, while any
+// already-terminal entry is left as it is. This matters because the release UI
+// reads a node's own outcome in preference to the row status, so a per-node
+// entry left at 'generating' would keep the FIX cell spinning and hide the
+// release's "Try again" even though the row itself is failed.
+//
+// One attempt addresses a release's whole failing set, so at most one row
+// per release can be generating at a time: the release id alone identifies
+// the row unambiguously, with no node or error-signature match needed.
+//
+// The status filter is what makes it safe to run at any time: a row that has
+// already reached a terminal state is left exactly as it is.
+func (r *FixRepository) FailGenerating(ctx context.Context, releaseID, reason string) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE fix
+		   SET status=$3,
+		       rationale=$2,
+		       node_outcomes = COALESCE(
+		         (SELECT jsonb_object_agg(
+		            key,
+		            CASE WHEN value->>'status' = $4
+		                 THEN jsonb_build_object('status', $3::text, 'reason', $2::text)
+		                 ELSE value END)
+		          FROM jsonb_each(node_outcomes)),
+		         node_outcomes)
+		 WHERE release_id=$1 AND status=$4`,
+		releaseID, reason, fix.StatusFailed, fix.StatusGenerating)
+	if err != nil {
+		return 0, fmt.Errorf("fail generating fixes: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("fail generating fixes: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// FailLegacyInFlight fails, in one UPDATE, every attempt row in flight that
+// belongs to no remediation: status 'generating' or 'verifying' with a NULL
+// remediation_id. A row that was generating takes reason as its rationale, as
+// FailGenerating writes it; a row that was verifying takes reason as its
+// verify_error and keeps its rationale, edits and release checks, as
+// MarkVerifyFailed writes it. The SET expressions read the row as it was, so
+// each of them sees the status the row had. Every node_outcomes entry still
+// 'generating' or 'verifying' becomes {"status": "failed", "reason": reason}
+// and the rest are copied through; the COALESCE keeps the column (NOT NULL)
+// writable for a row with no entries, which aggregates to NULL.
+//
+// The WHERE clause is the whole selection: a row of a remediation, and a row
+// that is not in flight, match nothing, so a second call moves no row.
+//
+// A row whose remediation the retention sweeper deleted also has a NULL
+// remediation_id (the foreign key is ON DELETE SET NULL), so the selection
+// cannot tell it from a row that never had one. That is safe: the sweeper
+// deletes only 'done' and 'system_failure' remediations, whose rows are
+// terminal, never 'generating' or 'verifying', so no row of a deleted
+// remediation is in flight.
+func (r *FixRepository) FailLegacyInFlight(ctx context.Context, reason string) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE fix
+		   SET status = $2::text,
+		       rationale = CASE WHEN status = $3::text THEN $1::text ELSE rationale END,
+		       verify_error = CASE WHEN status = $4::text THEN $1::text ELSE verify_error END,
+		       node_outcomes = COALESCE((
+		         SELECT jsonb_object_agg(k, CASE WHEN v->>'status' IN ($3::text, $4::text)
+		              THEN jsonb_build_object('status', $2::text, 'reason', $1::text)
+		              ELSE v END)
+		           FROM jsonb_each(node_outcomes) AS e(k, v)),
+		         node_outcomes)
+		 WHERE remediation_id IS NULL AND status IN ($3::text, $4::text)`,
+		reason, fix.StatusFailed, fix.StatusGenerating, fix.StatusVerifying)
+	if err != nil {
+		return 0, fmt.Errorf("fail in-flight fixes of no remediation: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("fail in-flight fixes of no remediation: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// Upsert records the terminal fix row of an attempt on the natural key
+// (release_id, attempt): when an in-flight generating row exists (the common
+// healable path) it is finalized in place via ON CONFLICT … DO UPDATE;
+// otherwise the row is plain-inserted (instant paths — e.g. attempt-cap
+// escalation — that never marked generating). A fix that names its
+// remediation records it; one that does not leaves an existing row's
+// remediation as it was. Likewise a fix that carries approvers replaces
+// the row's, and one that carries none leaves an existing row's approvers as
+// they were.
+func (r *FixRepository) Upsert(ctx context.Context, p fix.Fix) error {
+	const stmt = `
+		INSERT INTO fix
+			(source, release_id, remediation_round, node_id, error_signature, attempt,
+			 status, release_check_id,
+			 confidence, rationale, proposed_sql_uri, diff_uri,
+			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
+			 model, created_at,
+			 repo, commit_sha, file_path, file_edits,
+			 resolved_node_ids, node_outcomes, release_checks, projects, remediation_id, approvers)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+		ON CONFLICT (release_id, attempt) DO UPDATE SET
+			status                 = EXCLUDED.status,
+			release_check_id       = EXCLUDED.release_check_id,
+			confidence             = EXCLUDED.confidence,
+			rationale              = EXCLUDED.rationale,
+			proposed_sql_uri       = EXCLUDED.proposed_sql_uri,
+			diff_uri               = EXCLUDED.diff_uri,
+			candidate_fix_sql_uri  = EXCLUDED.candidate_fix_sql_uri,
+			candidate_fix_diff_uri = EXCLUDED.candidate_fix_diff_uri,
+			source_resolved        = EXCLUDED.source_resolved,
+			model                  = EXCLUDED.model,
+			created_at             = EXCLUDED.created_at,
+			repo                   = EXCLUDED.repo,
+			commit_sha             = EXCLUDED.commit_sha,
+			file_path              = EXCLUDED.file_path,
+			file_edits             = EXCLUDED.file_edits,
+			resolved_node_ids      = EXCLUDED.resolved_node_ids,
+			node_outcomes          = EXCLUDED.node_outcomes,
+			release_checks         = EXCLUDED.release_checks,
+			projects               = EXCLUDED.projects,
+			remediation_id         = COALESCE(EXCLUDED.remediation_id, fix.remediation_id),
+			approvers              = CASE WHEN jsonb_array_length(EXCLUDED.approvers) = 0
+			                              THEN fix.approvers ELSE EXCLUDED.approvers END`
+	edits, err := marshalFileEdits(p.Edits)
+	if err != nil {
+		return fmt.Errorf("marshal fix file edits: %w", err)
+	}
+	resolved, err := marshalResolved(p.ResolvedNodeIDs)
+	if err != nil {
+		return fmt.Errorf("marshal fix resolved node ids: %w", err)
+	}
+	outcomes, err := marshalNodeOutcomes(p.NodeOutcomes)
+	if err != nil {
+		return fmt.Errorf("marshal fix node outcomes: %w", err)
+	}
+	releaseChecks, err := marshalReleaseChecks(p.ReleaseChecks)
+	if err != nil {
+		return fmt.Errorf("marshal fix release checks: %w", err)
+	}
+	approvers, err := marshalApprovers(p.Approvers)
+	if err != nil {
+		return fmt.Errorf("marshal fix approvers: %w", err)
+	}
+	if _, err := r.q.ExecContext(ctx, stmt,
+		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
+		p.Status, p.ReleaseCheckID,
+		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
+		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
+		p.Model, p.CreatedAt,
+		p.Repo, p.CommitSHA, p.FilePath, edits,
+		resolved, outcomes, releaseChecks, textArray(p.Projects), remediationIDArg(p.RemediationID), approvers,
+	); err != nil {
+		return fmt.Errorf("insert fix: %w", err)
+	}
+	return nil
+}
+
+// fixRow is the persistence DTO for a full fix projection. The db
+// tags (a persistence concern) live here in the adapter so the domain
+// fix.View stays free of storage annotations.
+type fixRow struct {
+	ID                  string         `db:"id"`
+	Source              string         `db:"source"`
+	ReleaseID           string         `db:"release_id"`
+	RemediationRound    int            `db:"remediation_round"`
+	RemediationID       sql.NullString `db:"remediation_id"`
+	NodeID              string         `db:"node_id"`
+	ErrorSignature      string         `db:"error_signature"`
+	Attempt             int            `db:"attempt"`
+	Status              string         `db:"status"`
+	ReleaseCheckID      string         `db:"release_check_id"`
+	VerifyError         string         `db:"verify_error"`
+	Confidence          string         `db:"confidence"`
+	Rationale           string         `db:"rationale"`
+	ProposedSQLURI      string         `db:"proposed_sql_uri"`
+	DiffURI             string         `db:"diff_uri"`
+	CandidateFixSQLURI  string         `db:"candidate_fix_sql_uri"`
+	CandidateFixDiffURI string         `db:"candidate_fix_diff_uri"`
+	SourceResolved      bool           `db:"source_resolved"`
+	Repo                string         `db:"repo"`
+	CommitSHA           string         `db:"commit_sha"`
+	FilePath            string         `db:"file_path"`
+	FileEdits           []byte         `db:"file_edits"`
+	ResolvedNodeIDs     []byte         `db:"resolved_node_ids"`
+	NodeOutcomes        []byte         `db:"node_outcomes"`
+	ReleaseChecks       []byte         `db:"release_checks"`
+	Approvers           []byte         `db:"approvers"`
+	Projects            pq.StringArray `db:"projects"`
+	Model               string         `db:"model"`
+	CreatedAt           time.Time      `db:"created_at"`
+	PrURL               string         `db:"pr_url"`
+	PrNumber            int            `db:"pr_number"`
+	PrState             string         `db:"pr_state"`
+	PrOpenedAt          *time.Time     `db:"pr_opened_at"`
+	PrOpenedBy          string         `db:"pr_opened_by"`
+	PrClosedAt          *time.Time     `db:"pr_closed_at"`
+}
+
+// fileEditRow is the persistence DTO for one element of the file_edits JSONB
+// column. The json tags — a storage concern — live here in the adapter so the
+// domain fix.FileEdit carries no serialization annotations. The stored
+// shape is
+// [{"path","renamed_from","content_uri","diff_uri","target_node_id","member_node_ids"}, ...],
+// renamed_from present only on an edit that moves a file.
+// member_node_ids records the failing nodes an edit's cluster resolves, so a
+// per-project pull request claimed later from this row can narrow itself to the
+// members its own edits address.
+type fileEditRow struct {
+	Path          string   `json:"path"`
+	RenamedFrom   string   `json:"renamed_from,omitempty"`
+	ContentURI    string   `json:"content_uri"`
+	DiffURI       string   `json:"diff_uri"`
+	TargetNodeID  string   `json:"target_node_id,omitempty"`
+	MemberNodeIDs []string `json:"member_node_ids,omitempty"`
+}
+
+// marshalFileEdits encodes the domain edits as the file_edits column value.
+// A nil or empty slice encodes as an empty JSON array, so the column is never
+// written as SQL NULL.
+func marshalFileEdits(edits []fix.FileEdit) ([]byte, error) {
+	rows := make([]fileEditRow, 0, len(edits))
+	for _, e := range edits {
+		rows = append(rows, fileEditRow{
+			Path:          e.Path,
+			RenamedFrom:   e.RenamedFrom,
+			ContentURI:    e.ContentURI,
+			DiffURI:       e.DiffURI,
+			TargetNodeID:  e.TargetNodeID,
+			MemberNodeIDs: e.MemberNodeIDs,
+		})
+	}
+	return json.Marshal(rows)
+}
+
+// editsOrLegacy decodes the file_edits JSONB column into a []fix.FileEdit.
+// A malformed blob is treated the same as an empty array rather than failing
+// the read: a fix row must stay readable even if its file_edits value
+// were ever corrupted, since the single-file scalar columns still carry the
+// same information for a one-file fix. When the decoded (or defaulted)
+// list is empty and filePath is non-empty, one edit is synthesized from those
+// scalar columns (filePath, contentURI, diffURI), which is how a row written
+// before the file_edits column existed keeps reading as a single file change.
+func editsOrLegacy(raw []byte, filePath, contentURI, diffURI string) []fix.FileEdit {
+	var rows []fileEditRow
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) == 0 && filePath != "" {
+		return []fix.FileEdit{{Path: filePath, ContentURI: contentURI, DiffURI: diffURI}}
+	}
+	edits := make([]fix.FileEdit, 0, len(rows))
+	for _, r := range rows {
+		edits = append(edits, fix.FileEdit{
+			Path:          r.Path,
+			RenamedFrom:   r.RenamedFrom,
+			ContentURI:    r.ContentURI,
+			DiffURI:       r.DiffURI,
+			TargetNodeID:  r.TargetNodeID,
+			MemberNodeIDs: r.MemberNodeIDs,
+		})
+	}
+	return edits
+}
+
+// nodeOutcomeRow is the persistence DTO for one entry of the node_outcomes
+// JSONB column. The json tags live here so the domain fix.NodeOutcome
+// carries no serialization annotations.
+type nodeOutcomeRow struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+	Code   string `json:"code,omitempty"`
+}
+
+// marshalNodeOutcomes encodes the per-node outcomes map as the node_outcomes
+// column value. A nil or empty map encodes as an empty JSON object, so the
+// column is never written as SQL NULL.
+func marshalNodeOutcomes(m map[string]fix.NodeOutcome) ([]byte, error) {
+	rows := make(map[string]nodeOutcomeRow, len(m))
+	for nodeID, o := range m {
+		rows[nodeID] = nodeOutcomeRow{Status: string(o.Status), Reason: o.Reason, Code: string(o.Code)}
+	}
+	return json.Marshal(rows)
+}
+
+// unmarshalNodeOutcomes decodes the node_outcomes JSONB column. A malformed
+// or empty blob decodes as nil rather than an empty non-nil map, so a row
+// that never recorded any per-node outcome reads back as unset.
+func unmarshalNodeOutcomes(raw []byte) map[string]fix.NodeOutcome {
+	var rows map[string]nodeOutcomeRow
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	outcomes := make(map[string]fix.NodeOutcome, len(rows))
+	for nodeID, r := range rows {
+		outcomes[nodeID] = fix.NodeOutcome{Status: fix.Status(r.Status), Reason: r.Reason, Code: model.HandoverReason(r.Code)}
+	}
+	return outcomes
+}
+
+// releaseCheckRow is the persistence DTO for one element of the
+// release_checks JSONB column. The json tags live here so the domain
+// fix.ReleaseCheck carries no serialization annotations.
+type releaseCheckRow struct {
+	Project     string     `json:"project"`
+	Kind        string     `json:"kind"`
+	CheckID     string     `json:"check_id"`
+	Phase       string     `json:"phase"`
+	ActivatedAt *time.Time `json:"activated_at"`
+	Error       string     `json:"error"`
+}
+
+// marshalReleaseChecks encodes the domain release checks as the release_checks
+// column value. A nil or empty slice encodes as an empty JSON array, so the
+// column is never written as SQL NULL.
+func marshalReleaseChecks(v []fix.ReleaseCheck) ([]byte, error) {
+	rows := make([]releaseCheckRow, 0, len(v))
+	for _, e := range v {
+		rows = append(rows, releaseCheckRow{
+			Project: e.Project, Kind: e.Kind, CheckID: e.CheckID,
+			Phase: string(e.Phase), ActivatedAt: e.ActivatedAt, Error: e.Error,
+		})
+	}
+	return json.Marshal(rows)
+}
+
+// unmarshalReleaseChecks decodes the release_checks JSONB column. A malformed
+// or empty blob decodes as nil rather than an empty non-nil slice, so a row
+// that never posted a release check reads back as unset.
+func unmarshalReleaseChecks(raw []byte) []fix.ReleaseCheck {
+	var rows []releaseCheckRow
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	releaseChecks := make([]fix.ReleaseCheck, 0, len(rows))
+	for _, r := range rows {
+		releaseChecks = append(releaseChecks, fix.ReleaseCheck{
+			Project: r.Project, Kind: r.Kind, CheckID: r.CheckID,
+			Phase: fix.Phase(r.Phase), ActivatedAt: r.ActivatedAt, Error: r.Error,
+		})
+	}
+	return releaseChecks
+}
+
+// approverRow is the persistence DTO for one element of the approvers JSONB
+// column. The json tags live here so the domain fix.Approver carries no
+// serialization annotations.
+type approverRow struct {
+	NodeID string               `json:"node_id"`
+	Owner  string               `json:"owner"`
+	Source model.ApproverSource `json:"source"`
+}
+
+// marshalApprovers encodes the domain approvers as the approvers column value.
+// A nil or empty slice encodes as an empty JSON array, so the column is never
+// written as SQL NULL.
+func marshalApprovers(approvers []fix.Approver) ([]byte, error) {
+	rows := make([]approverRow, 0, len(approvers))
+	for _, a := range approvers {
+		rows = append(rows, approverRow{NodeID: a.NodeID, Owner: a.Owner, Source: a.Source})
+	}
+	return json.Marshal(rows)
+}
+
+// unmarshalApprovers decodes the approvers JSONB column. A malformed or empty
+// blob decodes as nil rather than an empty non-nil slice, so a row that holds
+// no approver reads back as unset.
+func unmarshalApprovers(raw []byte) []fix.Approver {
+	var rows []approverRow
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	approvers := make([]fix.Approver, 0, len(rows))
+	for _, r := range rows {
+		approvers = append(approvers, fix.Approver{NodeID: r.NodeID, Owner: r.Owner, Source: r.Source})
+	}
+	return approvers
+}
+
+// marshalResolved encodes the resolved node ids as the resolved_node_ids
+// column value. A nil or empty slice encodes as an empty JSON array, so the
+// column is never written as SQL NULL.
+func marshalResolved(ids []string) ([]byte, error) {
+	if ids == nil {
+		ids = []string{}
+	}
+	return json.Marshal(ids)
+}
+
+// resolvedOrLegacy decodes the resolved_node_ids JSONB column into a
+// []string. When the decoded (or defaulted) list is empty and nodeID is
+// non-empty, one entry is synthesized from the legacy node_id column, which
+// is how a row written before resolved_node_ids existed keeps reading as the
+// single node it addressed.
+func resolvedOrLegacy(raw []byte, nodeID string) []string {
+	var ids []string
+	_ = json.Unmarshal(raw, &ids)
+	if len(ids) == 0 && nodeID != "" {
+		return []string{nodeID}
+	}
+	return ids
+}
+
+func (row fixRow) toView() fix.View {
+	return fix.View{
+		ID:                  row.ID,
+		Source:              row.Source,
+		ReleaseID:           row.ReleaseID,
+		RemediationRound:    row.RemediationRound,
+		RemediationID:       row.RemediationID.String,
+		NodeID:              row.NodeID,
+		ResolvedNodeIDs:     resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID),
+		ErrorSignature:      row.ErrorSignature,
+		Attempt:             row.Attempt,
+		Status:              fix.Status(row.Status),
+		NodeOutcomes:        unmarshalNodeOutcomes(row.NodeOutcomes),
+		ReleaseChecks:       unmarshalReleaseChecks(row.ReleaseChecks),
+		Approvers:           unmarshalApprovers(row.Approvers),
+		ReleaseCheckID:      row.ReleaseCheckID,
+		Projects:            []string(row.Projects),
+		VerifyError:         row.VerifyError,
+		Confidence:          fix.Confidence(row.Confidence),
+		Rationale:           row.Rationale,
+		ProposedSQLURI:      row.ProposedSQLURI,
+		DiffURI:             row.DiffURI,
+		CandidateFixSQLURI:  row.CandidateFixSQLURI,
+		CandidateFixDiffURI: row.CandidateFixDiffURI,
+		SourceResolved:      row.SourceResolved,
+		Repo:                row.Repo,
+		CommitSHA:           row.CommitSHA,
+		FilePath:            row.FilePath,
+		Edits:               editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI),
+		Model:               row.Model,
+		CreatedAt:           row.CreatedAt,
+		PrURL:               row.PrURL,
+		PrNumber:            row.PrNumber,
+		PrState:             row.PrState,
+		PrOpenedAt:          row.PrOpenedAt,
+		PrOpenedBy:          row.PrOpenedBy,
+		PrClosedAt:          row.PrClosedAt,
+	}
+}
+
+const fixColumns = `id, source, release_id, remediation_round, node_id, error_signature, attempt,
+		       status, release_check_id, verify_error,
+		       confidence, rationale, proposed_sql_uri, diff_uri,
+		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
+		       repo, commit_sha, file_path, file_edits, model, created_at,
+		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at,
+		       resolved_node_ids, node_outcomes, release_checks, projects, remediation_id, approvers`
+
+// claimRow is the persistence DTO for the BeginPR RETURNING projection.
+type claimRow struct {
+	ID              string    `db:"id"`
+	Repo            string    `db:"repo"`
+	CommitSHA       string    `db:"commit_sha"`
+	FilePath        string    `db:"file_path"`
+	ProposedSQLURI  string    `db:"proposed_sql_uri"`
+	DiffURI         string    `db:"diff_uri"`
+	FileEdits       []byte    `db:"file_edits"`
+	ReleaseID       string    `db:"release_id"`
+	NodeID          string    `db:"node_id"`
+	ResolvedNodeIDs []byte    `db:"resolved_node_ids"`
+	NodeOutcomes    []byte    `db:"node_outcomes"`
+	Approvers       []byte    `db:"approvers"`
+	Attempt         int       `db:"attempt"`
+	Rationale       string    `db:"rationale"`
+	Confidence      string    `db:"confidence"`
+	Model           string    `db:"model"`
+	ClaimedAt       time.Time `db:"pr_claimed_at"`
+}
+
+// toClaim projects a claimed row onto the claim the caller opens a pull request
+// from, scoped to project. ResolvedNodeIDs is first narrowed to the nodes the
+// attempt actually repaired (FixedNodeIDs): the claim is what names the pull
+// request and writes its body, and a node the attempt skipped or failed carries
+// no fix to describe. Every consumer of a claim reads it through this
+// projection, so the narrowing cannot be bypassed.
+//
+// When project is non-empty the claim is narrowed a second time to that owning
+// project's group: Edits keeps only the files project owns (GroupEditsByProject
+// on projectRepoPaths), and ResolvedNodeIDs keeps only the members those edits
+// address that the attempt also fixed (MembersOfEdits ∩ fixed). The legacy ""
+// project keeps every edit and the full fixed set — one pull request for the
+// whole fix. Approvers is the row's approvers of the nodes the claim
+// resolves.
+func (row claimRow) toClaim(project, branch string, projectRepoPaths map[string]string) fix.PRClaim {
+	edits := editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI)
+	fixed := fix.FixedNodeIDs(
+		resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID), unmarshalNodeOutcomes(row.NodeOutcomes))
+	resolved := fixed
+	if project != "" {
+		edits = fix.GroupEditsByProject(projectRepoPaths, edits)[project]
+		// The fallback is nil, not fixed: a per-project claim resolves ONLY the
+		// members its own edits explicitly attribute. An edit written before the
+		// member_node_ids codec carries no members, and falling back to the whole
+		// fixed set there would let one project's PR claim nodes it never touched.
+		resolved = fix.IntersectSorted(fix.MembersOfEdits(edits, nil), fixed)
+	}
+	return fix.PRClaim{
+		ID:              row.ID,
+		Repo:            row.Repo,
+		CommitSHA:       row.CommitSHA,
+		FilePath:        row.FilePath,
+		ProposedSQLURI:  row.ProposedSQLURI,
+		DiffURI:         row.DiffURI,
+		Edits:           edits,
+		ReleaseID:       row.ReleaseID,
+		NodeID:          row.NodeID,
+		ResolvedNodeIDs: resolved,
+		Approvers:       fix.ApproversForNodes(unmarshalApprovers(row.Approvers), resolved),
+		Attempt:         row.Attempt,
+		Rationale:       row.Rationale,
+		Confidence:      fix.Confidence(row.Confidence),
+		Model:           row.Model,
+		ClaimedAt:       row.ClaimedAt,
+		Branch:          branch,
+		Project:         project,
+	}
+}
+
+// pullRequestRow is the persistence DTO for one fix_pull_request child
+// row — one pull request per (fix, project).
+type pullRequestRow struct {
+	FixID       string     `db:"fix_id"`
+	Project     string     `db:"project"`
+	Repo        string     `db:"repo"`
+	Branch      string     `db:"branch"`
+	PrState     string     `db:"pr_state"`
+	PrURL       string     `db:"pr_url"`
+	PrNumber    int        `db:"pr_number"`
+	PrClaimedAt *time.Time `db:"pr_claimed_at"`
+	PrOpenedAt  *time.Time `db:"pr_opened_at"`
+	PrOpenedBy  string     `db:"pr_opened_by"`
+	PrClosedAt  *time.Time `db:"pr_closed_at"`
+}
+
+func (row pullRequestRow) toPullRequest() fix.PullRequest {
+	return fix.PullRequest{
+		Project:     row.Project,
+		Repo:        row.Repo,
+		Branch:      row.Branch,
+		PrURL:       row.PrURL,
+		PrNumber:    row.PrNumber,
+		PrState:     row.PrState,
+		PrOpenedAt:  row.PrOpenedAt,
+		PrClosedAt:  row.PrClosedAt,
+		PrOpenedBy:  row.PrOpenedBy,
+		PrClaimedAt: row.PrClaimedAt,
+	}
+}
+
+// pullRequestColumns is the child-table projection loaded onto a View's
+// PullRequests. fix_id is included so a batch load over many fixes can
+// group the rows by their parent.
+const pullRequestColumns = `fix_id, project, repo, branch, pr_state, pr_url, pr_number,
+	pr_claimed_at, pr_opened_at, pr_opened_by, pr_closed_at`
+
+// loadPullRequests reads the fix_pull_request child rows for the given
+// fix ids, grouped by fix_id and ordered by project within each
+// group, so applyChildPRs can populate every View's PullRequests and derive its
+// singular Pr* fields from the first child.
+func (r *FixRepository) loadPullRequests(ctx context.Context, ids []string) (map[string][]fix.PullRequest, error) {
+	byFix := make(map[string][]fix.PullRequest, len(ids))
+	if len(ids) == 0 {
+		return byFix, nil
+	}
+	q := `SELECT ` + pullRequestColumns + `
+		FROM fix_pull_request
+		WHERE fix_id = ANY($1::uuid[])
+		ORDER BY fix_id, project`
+	var rows []pullRequestRow
+	if err := r.q.SelectContext(ctx, &rows, q, pq.Array(ids)); err != nil {
+		return nil, fmt.Errorf("load fix pull requests: %w", err)
+	}
+	for _, row := range rows {
+		byFix[row.FixID] = append(byFix[row.FixID], row.toPullRequest())
+	}
+	return byFix, nil
+}
+
+// applyChildPRs attaches the child pull requests to the view and, when any
+// exist, overrides the view's singular Pr* fields from the first child (ordered
+// by project). This keeps every existing reader of the singular fields
+// rendering the live PR state now that the parent's own pr_* columns are no
+// longer written; a fix with no child rows keeps its legacy parent values.
+func applyChildPRs(v *fix.View, prs []fix.PullRequest) {
+	v.PullRequests = prs
+	if len(prs) == 0 {
+		return
+	}
+	first := prs[0]
+	v.PrState = first.PrState
+	v.PrURL = first.PrURL
+	v.PrNumber = first.PrNumber
+	v.PrOpenedAt = first.PrOpenedAt
+	v.PrOpenedBy = first.PrOpenedBy
+	v.PrClosedAt = first.PrClosedAt
+}
+
+// Get returns the full View for the given fix id.
+// Returns ErrNotFound if no row exists.
+func (r *FixRepository) Get(ctx context.Context, id string) (fix.View, error) {
+	query := `SELECT ` + fixColumns + ` FROM fix WHERE id = $1`
+	var row fixRow
+	if err := r.q.GetContext(ctx, &row, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fix.View{}, repository.ErrNotFound
+		}
+		return fix.View{}, fmt.Errorf("get fix: %w", err)
+	}
+	view := row.toView()
+	byFix, err := r.loadPullRequests(ctx, []string{id})
+	if err != nil {
+		return fix.View{}, err
+	}
+	applyChildPRs(&view, byFix[id])
+	return view, nil
+}
+
+// List returns fixes matching the filter, ordered by created_at DESC.
+// Empty filter fields are treated as "no constraint". Limit=0 means no limit.
+func (r *FixRepository) List(ctx context.Context, filter repository.FixFilter) ([]fix.View, error) {
+	q := `SELECT ` + fixColumns + ` FROM fix WHERE 1=1`
+	args := make([]any, 0, 6)
+
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		q += fmt.Sprintf(" AND status = $%d", len(args))
+	}
+	if filter.PRState != "" {
+		args = append(args, filter.PRState)
+		n := len(args)
+		// pr_state now lives on the fix_pull_request child rows; the
+		// parent's own pr_state column is a legacy read-mirror that nothing
+		// writes. A fix matches when any of its child rows is in the
+		// requested state, or — for a legacy fix that never split into
+		// child rows — when its own parent column is. This mirrors the derived
+		// singular pr_state readers see (the first child row ordered by project,
+		// else the parent column).
+		q += fmt.Sprintf(` AND (EXISTS (SELECT 1 FROM fix_pull_request ppr`+
+			` WHERE ppr.fix_id = fix.id AND ppr.pr_state = $%d)`+
+			` OR (NOT EXISTS (SELECT 1 FROM fix_pull_request ppr`+
+			` WHERE ppr.fix_id = fix.id) AND fix.pr_state = $%d))`, n, n)
+	}
+	if filter.ReleaseID != "" {
+		args = append(args, filter.ReleaseID)
+		q += fmt.Sprintf(" AND release_id = $%d", len(args))
+	}
+	if filter.Source != "" {
+		args = append(args, filter.Source)
+		q += fmt.Sprintf(" AND source = $%d", len(args))
+	}
+	if filter.Project != "" {
+		args = append(args, filter.Project)
+		q += fmt.Sprintf(" AND $%d = ANY(projects)", len(args))
+	}
+	q += " ORDER BY created_at DESC"
+	if filter.Limit > 0 {
+		args = append(args, filter.Limit)
+		q += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+
+	var rows []fixRow
+	if err := r.q.SelectContext(ctx, &rows, q, args...); err != nil {
+		return nil, fmt.Errorf("list fixes: %w", err)
+	}
+	views := make([]fix.View, 0, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, row.toView())
+		ids = append(ids, row.ID)
+	}
+	byFix, err := r.loadPullRequests(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range views {
+		applyChildPRs(&views[i], byFix[views[i].ID])
+	}
+	return views, nil
+}
+
+// beginPRClaimCAS is the atomic claim BeginPR issues: it moves a (fix,
+// project) child row from empty or 'failed' to 'opening' — stamping pr_claimed_at
+// — only while the parent fix is still source-resolved and 'proposed'. The
+// correlated EXISTS re-checks those two preconditions inside the same UPDATE as
+// the pr_state guard, so a status or source_resolved change committed between
+// BeginPR's pre-read and this statement can never yield a claim: the UPDATE
+// simply matches 0 rows (surfacing as ErrPRConflict) rather than opening a PR
+// for a fix that is no longer proposed or resolved. Reading pr_claimed_at back
+// from the row is what makes the returned claim carry the value actually
+// persisted, not the caller's argument.
+const beginPRClaimCAS = `
+	UPDATE fix_pull_request ppr
+	   SET pr_state='opening', pr_claimed_at=$3
+	 WHERE ppr.fix_id=$1 AND ppr.project=$2 AND ppr.pr_state IN ('', 'failed')
+	   AND EXISTS (SELECT 1 FROM fix p
+	                WHERE p.id=ppr.fix_id AND p.source_resolved AND p.status='proposed')
+	RETURNING pr_claimed_at`
+
+// BeginPR atomically claims one (fix, project) pull request for creation:
+// the child fix_pull_request row's pr_state moves from empty or 'failed' to
+// 'opening', stamping pr_claimed_at with claimedAt. The child row is created on
+// first claim by an INSERT … ON CONFLICT DO NOTHING; the UPDATE … RETURNING is
+// the single-winner guard, so concurrent callers for the same project see 0
+// rows and receive ErrPRConflict. The RETURNING clause reads pr_claimed_at back
+// from the row rather than trusting the claimedAt argument verbatim, so the
+// returned PRClaim.ClaimedAt is always the value actually persisted — the one a
+// later FailStuckOpeningPR call must CAS against.
+//
+// The parent-fix preconditions are read first so each returns its own
+// error rather than collapsing into the CAS's "already claimed". Claiming
+// requires status='proposed' as well as source_resolved: a python contract fix
+// is written as 'verifying' with source_resolved=true the moment its
+// release check is submitted, and a failed release check changes nothing
+// but the status — so without the status guard a caller could open a pull
+// request for a fix still being judged, or for one already judged wrong.
+//
+// Returns ErrNotSourceResolved when source_resolved=false, ErrNotProposed when
+// the attempt has not reached 'proposed', ErrPRConflict when the project is
+// already claimed, ErrNotFound when the id is unknown.
+func (r *FixRepository) BeginPR(ctx context.Context, id, project, branch string, claimedAt time.Time) (fix.PRClaim, error) {
+	// Pre-read the parent fix: the claim's payload columns plus the
+	// source_resolved / status ladder. pr_claimed_at is not among them — the
+	// claim ages from the child row's CAS, not from the (legacy) parent column.
+	var pre struct {
+		claimRow
+		SourceResolved bool   `db:"source_resolved"`
+		Status         string `db:"status"`
+	}
+	const preRead = `SELECT id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
+		file_edits, release_id, node_id, resolved_node_ids, node_outcomes, approvers,
+		attempt, rationale, confidence, model, source_resolved, status
+		FROM fix WHERE id=$1`
+	if err := r.q.GetContext(ctx, &pre, preRead, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fix.PRClaim{}, repository.ErrNotFound
+		}
+		return fix.PRClaim{}, fmt.Errorf("begin pr lookup: %w", err)
+	}
+	if !pre.SourceResolved {
+		return fix.PRClaim{}, repository.ErrNotSourceResolved
+	}
+	if fix.Status(pre.Status) != fix.StatusProposed {
+		return fix.PRClaim{}, repository.ErrNotProposed
+	}
+
+	// Create the child row if this project has never been claimed; a row left
+	// from an earlier failed claim is untouched (DO NOTHING) so its CAS below
+	// re-claims it from 'failed'.
+	if _, err := r.q.ExecContext(ctx,
+		`INSERT INTO fix_pull_request (fix_id, project, repo, branch)
+		 VALUES ($1,$2,$3,$4) ON CONFLICT (fix_id, project) DO NOTHING`,
+		id, project, pre.Repo, branch); err != nil {
+		return fix.PRClaim{}, fmt.Errorf("begin pr insert child: %w", err)
+	}
+
+	var persistedClaimedAt time.Time
+	if err := r.q.GetContext(ctx, &persistedClaimedAt, beginPRClaimCAS,
+		id, project, claimedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fix.PRClaim{}, repository.ErrPRConflict
+		}
+		return fix.PRClaim{}, fmt.Errorf("begin pr cas: %w", err)
+	}
+
+	row := pre.claimRow
+	row.ClaimedAt = persistedClaimedAt
+	return row.toClaim(project, branch, r.projectRepoPaths), nil
+}
+
+// RecordPR records the opened PR on the (fix, project) child row, flips
+// its pr_state to 'open', and clears pr_claimed_at back to NULL since the claim
+// it tracked is now resolved — but only when the row is still 'opening': the
+// WHERE clause is the same compare-and-set guard FailStuckOpeningPR and
+// RecordPROutcome apply, so a row already moved on (recorded or failed by
+// another caller, including an unknown id) leaves 0 rows affected rather than a
+// blind write. hit reports whether the CAS fired.
+func (r *FixRepository) RecordPR(ctx context.Context, id, project, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE fix_pull_request
+		 SET pr_state='open', pr_url=$3, pr_number=$4, pr_opened_by=$5, pr_opened_at=$6,
+		     pr_claimed_at=NULL
+		 WHERE fix_id=$1 AND project=$2 AND pr_state='opening'`,
+		id, project, prURL, prNumber, openedBy, openedAt)
+	if err != nil {
+		return false, fmt.Errorf("record pr: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("record pr: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// FailStuckOpeningPR resets a stuck 'opening' claim back to 'failed' and
+// clears pr_claimed_at, but only when the row's current pr_claimed_at still
+// equals observedClaimedAt: the WHERE clause is the compare-and-set guard, so
+// a claim released and re-claimed since the caller observed or acquired it (a
+// different pr_claimed_at, or a pr_state that already moved on) leaves 0 rows
+// affected rather than clobbering the fresh claim. Used both by the
+// reconciler's opening sweep (CAS'd on the ClaimedAt it read while listing
+// stuck claims) and by the ui PR-creation route's own failure
+// callback (CAS'd on the ClaimedAt its own BeginPR call returned).
+func (r *FixRepository) FailStuckOpeningPR(ctx context.Context, id, project string, observedClaimedAt time.Time) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE fix_pull_request SET pr_state='failed', pr_claimed_at=NULL
+		 WHERE fix_id=$1 AND project=$2 AND pr_state='opening' AND pr_claimed_at=$3`,
+		id, project, observedClaimedAt)
+	if err != nil {
+		return false, fmt.Errorf("fail stuck opening pr: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fail stuck opening pr: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// openPRRow is the persistence DTO for the ListOpenPullRequests projection: one
+// row per open child pull request, joined to its parent fix.
+type openPRRow struct {
+	ID        string `db:"id"`
+	Project   string `db:"project"`
+	Repo      string `db:"repo"`
+	PRNumber  int    `db:"pr_number"`
+	ReleaseID string `db:"release_id"`
+	NodeID    string `db:"node_id"`
+	Attempt   int    `db:"attempt"`
+}
+
+// ListOpenPullRequests returns one entry per child pull request with
+// pr_state='open', oldest-opened first, so the reconciler checks the
+// longest-waiting PRs before newer ones. A fix split into several
+// per-project PRs yields one entry per open project.
+func (r *FixRepository) ListOpenPullRequests(ctx context.Context, limit int) ([]fix.OpenPR, error) {
+	q := `SELECT p.id, ppr.project, ppr.repo, ppr.pr_number, p.release_id, p.node_id, p.attempt
+	      FROM fix_pull_request ppr
+	      JOIN fix p ON p.id = ppr.fix_id
+	      WHERE ppr.pr_state = 'open' ORDER BY ppr.pr_opened_at ASC`
+	args := []any{}
+	if limit > 0 {
+		args = append(args, limit)
+		q += " LIMIT $1"
+	}
+	var rows []openPRRow
+	if err := r.q.SelectContext(ctx, &rows, q, args...); err != nil {
+		return nil, fmt.Errorf("list open pull requests: %w", err)
+	}
+	out := make([]fix.OpenPR, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, fix.OpenPR{
+			ID:        row.ID,
+			Repo:      row.Repo,
+			PRNumber:  row.PRNumber,
+			ReleaseID: row.ReleaseID,
+			NodeID:    row.NodeID,
+			Attempt:   row.Attempt,
+			Project:   row.Project,
+		})
+	}
+	return out, nil
+}
+
+// openingRow is the persistence DTO for the ListStuckOpening projection: one
+// row per 'opening' child pull request, joined to its parent fix for the
+// ordering key and the fields the opening sweep needs.
+type openingRow struct {
+	ID        string     `db:"id"`
+	Project   string     `db:"project"`
+	Repo      string     `db:"repo"`
+	ReleaseID string     `db:"release_id"`
+	NodeID    string     `db:"node_id"`
+	Attempt   int        `db:"attempt"`
+	ClaimedAt *time.Time `db:"pr_claimed_at"`
+	CreatedAt time.Time  `db:"created_at"`
+}
+
+// ListStuckOpening returns up to limit child pull requests with
+// pr_state='opening', ordered oldest-created first by (parent fix
+// created_at, parent id, child project) and resuming strictly after cursor
+// (nil for the first page). It over-fetches by one row to tell "more rows
+// exist" apart from "this was the last page": when limit+1 rows come back, the
+// (limit+1)th is dropped from the result and becomes next, the cursor of the
+// row now at the end of the page; otherwise next is nil. Project is part of the
+// keyset because one fix can have several 'opening' children — one per
+// owning project — that share a (created_at, id); ordering and resuming on
+// project too keeps a page boundary that lands between two siblings from
+// skipping the later one, which a (created_at, id)-only cursor would exclude
+// via its strict `>`.
+func (r *FixRepository) ListStuckOpening(ctx context.Context, limit int, cursor *repository.OpeningCursor) ([]fix.OpeningPR, *repository.OpeningCursor, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := `SELECT p.id, ppr.project, ppr.repo, p.release_id, p.node_id, p.attempt,
+	             ppr.pr_claimed_at, p.created_at
+	      FROM fix_pull_request ppr
+	      JOIN fix p ON p.id = ppr.fix_id
+	      WHERE ppr.pr_state = 'opening'`
+	args := make([]any, 0, 6)
+	if cursor != nil {
+		args = append(args, cursor.CreatedAt, cursor.ID, cursor.Project)
+		q += fmt.Sprintf(" AND (p.created_at, p.id, ppr.project) > ($%d, $%d, $%d)", len(args)-2, len(args)-1, len(args))
+	}
+	q += " ORDER BY p.created_at ASC, p.id ASC, ppr.project ASC"
+	args = append(args, limit+1)
+	q += fmt.Sprintf(" LIMIT $%d", len(args))
+
+	var rows []openingRow
+	if err := r.q.SelectContext(ctx, &rows, q, args...); err != nil {
+		return nil, nil, fmt.Errorf("list stuck opening fixes: %w", err)
+	}
+
+	var next *repository.OpeningCursor
+	if len(rows) > limit {
+		last := rows[limit-1]
+		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID, Project: last.Project}
+		rows = rows[:limit]
+	}
+
+	out := make([]fix.OpeningPR, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, fix.OpeningPR{
+			ID:        row.ID,
+			Repo:      row.Repo,
+			ReleaseID: row.ReleaseID,
+			NodeID:    row.NodeID,
+			Attempt:   row.Attempt,
+			ClaimedAt: row.ClaimedAt,
+			CreatedAt: row.CreatedAt,
+			Project:   row.Project,
+		})
+	}
+	return out, next, nil
+}
+
+// RecordPROutcome atomically transitions the (fix, project) child row's
+// pr_state 'open' -> outcome. The WHERE pr_state='open' guard makes concurrent
+// or repeated calls single-winner: only the first caller sees rows-affected=1;
+// every later call is a no-op false.
+func (r *FixRepository) RecordPROutcome(ctx context.Context, id, project string, outcome fix.PROutcome, closedAt time.Time) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE fix_pull_request SET pr_state=$3, pr_closed_at=$4
+		 WHERE fix_id=$1 AND project=$2 AND pr_state='open'`,
+		id, project, string(outcome), closedAt)
+	if err != nil {
+		return false, fmt.Errorf("record pr outcome: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("record pr outcome: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// rewriteVerifyingOutcomes is the node_outcomes assignment that carries an
+// attempt's per-node outcomes along with the attempt itself: every node still
+// waiting on its release check takes the status the attempt just reached, while
+// a node the attempt had already settled — skipped, or failed while being
+// fixed — keeps the entry it was recorded with, since no release check
+// judged it.
+//
+// The COALESCE is what keeps the column (NOT NULL) writable: aggregating over a
+// row that recorded no per-node outcome at all yields SQL NULL, not an empty
+// object.
+const rewriteVerifyingOutcomes = `
+	node_outcomes = COALESCE((
+		SELECT jsonb_object_agg(k, CASE WHEN v->>'status' = $2
+			THEN jsonb_set(v, '{status}', to_jsonb($3::text)) ELSE v END)
+		FROM jsonb_each(node_outcomes) AS e(k, v)
+	), '{}'::jsonb)`
+
+// MarkFixVerified finalizes a fix the runner verified: every release
+// check passed, so status 'verifying' becomes 'proposed', every node that was
+// waiting on those checks is carried to 'proposed' with it, and the release checks
+// the Verified carries are written as the final summary of each release check. It refuses a
+// zero Verified, which holds no proof that its drafts were checked and
+// verified. The WHERE status='verifying' guard is the same compare-and-set
+// contract as every other state transition in this file: a row already
+// finalized by a concurrent or repeated pass leaves 0 rows affected rather than
+// a blind overwrite. hit reports whether the CAS fired.
+func (r *FixRepository) MarkFixVerified(ctx context.Context, v remediation.Verified) (bool, error) {
+	if v.IsZero() {
+		return false, errors.New("mark fix verified: the verified fix is the zero value")
+	}
+	releaseChecks, err := marshalReleaseChecks(v.ReleaseChecks())
+	if err != nil {
+		return false, fmt.Errorf("marshal fix release checks: %w", err)
+	}
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE fix SET status=$3, release_checks=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		v.FixID(), fix.StatusVerifying, fix.StatusProposed, releaseChecks)
+	if err != nil {
+		return false, fmt.Errorf("mark fix verified: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark fix verified: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// MarkVerifyFailed finalizes a fix a release check rejected,
+// transitioning status 'verifying' -> 'failed', carrying every node that was
+// waiting on those runs to 'failed' with it, recording verifyErr so the next
+// attempt can use it as evidence, and writing release checks as the final
+// summary of each release check. The CAS guard and hit semantics mirror MarkFixVerified.
+func (r *FixRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string, releaseChecks []fix.ReleaseCheck) (bool, error) {
+	v, err := marshalReleaseChecks(releaseChecks)
+	if err != nil {
+		return false, fmt.Errorf("marshal fix release checks: %w", err)
+	}
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE fix SET status=$3, verify_error=$4, release_checks=$5, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		id, fix.StatusVerifying, fix.StatusFailed, verifyErr, v)
+	if err != nil {
+		return false, fmt.Errorf("mark verify failed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark verify failed: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// ReopenTryAttempt moves the failed row of the remediation's attempt back to
+// status in one UPDATE whose WHERE clause is the whole check: the row's
+// remediation, attempt and failed status. The verify error is cleared.
+// Reopened generating, the rationale is cleared and node_outcomes undoes
+// FailGenerating's rewrite (reopenGeneratingOutcomes); reopened verifying,
+// node_outcomes is outcomes.
+func (r *FixRepository) ReopenTryAttempt(ctx context.Context, remediationID uuid.UUID, attempt int, status fix.Status, outcomes map[string]fix.NodeOutcome) (bool, error) {
+	var (
+		res sql.Result
+		err error
+	)
+	switch status {
+	case fix.StatusGenerating:
+		if outcomes != nil {
+			return false, fmt.Errorf("reopen attempt %d: a row reopened generating takes back the outcomes it had, not outcomes given", attempt)
+		}
+		res, err = r.q.ExecContext(ctx, `
+			UPDATE fix
+			   SET status = $3, verify_error = '', rationale = '', `+reopenGeneratingOutcomes+`
+			 WHERE remediation_id = $1 AND attempt = $2 AND status = $4`,
+			remediationID, attempt, string(fix.StatusGenerating), string(fix.StatusFailed))
+	case fix.StatusVerifying:
+		raw, merr := marshalNodeOutcomes(outcomes)
+		if merr != nil {
+			return false, fmt.Errorf("reopen attempt %d: %w", attempt, merr)
+		}
+		res, err = r.q.ExecContext(ctx, `
+			UPDATE fix
+			   SET status = $3, verify_error = '', node_outcomes = $5
+			 WHERE remediation_id = $1 AND attempt = $2 AND status = $4`,
+			remediationID, attempt, string(fix.StatusVerifying), string(fix.StatusFailed), raw)
+	default:
+		return false, fmt.Errorf("reopen attempt %d: status %q is not generating or verifying", attempt, status)
+	}
+	if err != nil {
+		return false, fmt.Errorf("reopen attempt %d: %w", attempt, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("reopen attempt %d: rows affected: %w", attempt, err)
+	}
+	return n > 0, nil
+}
+
+// reopenGeneratingOutcomes is the node_outcomes assignment that undoes
+// FailGenerating's rewrite of a row's per-node outcomes ($3 is 'generating'
+// and $4 'failed'): an entry failed with the row's rationale as its reason
+// and no code, which is how FailGenerating fails an entry that was
+// generating, is generating again, and every other entry is kept. The
+// expressions of an UPDATE's SET read the row as it was, so rationale is the
+// reason FailGenerating recorded even when the same UPDATE clears it. A row
+// with no entries keeps its empty object.
+const reopenGeneratingOutcomes = `
+	node_outcomes = COALESCE((
+		SELECT jsonb_object_agg(k, CASE
+			WHEN v->>'status' = $4 AND COALESCE(v->>'code', '') = '' AND COALESCE(v->>'reason', '') = COALESCE(rationale, '')
+			THEN jsonb_build_object('status', $3::text) ELSE v END)
+		FROM jsonb_each(node_outcomes) AS e(k, v)
+	), node_outcomes)`
+
+// UpdateReleaseCheckPhase rewrites one element of the release_checks array,
+// matched by check_id, with the phase and activation time given. Elements for
+// other runs are copied through unchanged, in their stored order.
+func (r *FixRepository) UpdateReleaseCheckPhase(ctx context.Context, id, checkID string, phase fix.Phase, activatedAt *time.Time) error {
+	var at sql.NullString
+	if activatedAt != nil {
+		at = sql.NullString{String: activatedAt.UTC().Format(time.RFC3339Nano), Valid: true}
+	}
+	_, err := r.q.ExecContext(ctx, `
+		UPDATE fix SET release_checks = COALESCE((
+			SELECT jsonb_agg(CASE WHEN v->>'check_id' = $2
+			         THEN v || jsonb_build_object('phase', $3::text, 'activated_at', $4::text)
+			         ELSE v END ORDER BY ord)
+			  FROM jsonb_array_elements(release_checks) WITH ORDINALITY AS x(v, ord)), '[]'::jsonb)
+		 WHERE id = $1`, id, checkID, string(phase), at)
+	if err != nil {
+		return fmt.Errorf("update release check phase: %w", err)
+	}
+	return nil
+}
+
+// RecordApprovers adds approvers to the approvers of the row of one attempt of
+// a release, in the caller's transaction: the row is locked (FOR UPDATE until
+// that transaction ends), merged with fix.MergeApprovers and written
+// back, so two writers of one row's approvers never lose each other's. It
+// returns ErrNotFound when the release has no row for the attempt.
+func (r *FixRepository) RecordApprovers(ctx context.Context, releaseID string, attempt int, approvers []fix.Approver) error {
+	var raw []byte
+	if err := r.q.GetContext(ctx, &raw,
+		`SELECT approvers FROM fix WHERE release_id = $1 AND attempt = $2 FOR UPDATE`, releaseID, attempt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return repository.ErrNotFound
+		}
+		return fmt.Errorf("read approvers of attempt %d of release %s: %w", attempt, releaseID, err)
+	}
+	merged, err := marshalApprovers(fix.MergeApprovers(unmarshalApprovers(raw), approvers))
+	if err != nil {
+		return fmt.Errorf("marshal fix approvers: %w", err)
+	}
+	if _, err := r.q.ExecContext(ctx,
+		`UPDATE fix SET approvers = $3 WHERE release_id = $1 AND attempt = $2`, releaseID, attempt, merged); err != nil {
+		return fmt.Errorf("record approvers of attempt %d of release %s: %w", attempt, releaseID, err)
+	}
+	return nil
+}

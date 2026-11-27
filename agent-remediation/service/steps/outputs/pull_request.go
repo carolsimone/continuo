@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
@@ -23,7 +23,7 @@ import (
 const namePullRequest workflow.StepName = "pull_request"
 
 // PullRequest is the pass output `pull_request`. It marks a verified fix
-// proposed and announces it on remediation.proposed:v1, which is what puts it
+// proposed and announces it on fix.proposed:v1, which is what puts it
 // in front of a human for review.
 type PullRequest struct {
 	clock ports.Clock
@@ -42,21 +42,21 @@ func (*PullRequest) Meta() step.Meta {
 	return step.Meta{
 		Name: namePullRequest,
 		Kind: step.KindOutput,
-		Description: "Marks the verified proposal proposed, stores the approvers of the nodes it fixes on its row and " +
-			"enqueues remediation.proposed:v1 for human review, in the same transaction. A proposal that is already " +
+		Description: "Marks the verified fix proposed, stores the approvers of the nodes it fixes on its row and " +
+			"enqueues fix.proposed:v1 for human review, in the same transaction. A fix that is already " +
 			"final is left alone and announces nothing.",
 	}
 }
 
-// Pass finalizes the proposal v names with the release checks v carries, stores
+// Pass finalizes the fix v names with the release checks v carries, stores
 // on its row the approvers in.Approvers names (the owners of the nodes the fix
-// covers), and enqueues its remediation.proposed:v1 event in the same
+// covers), and enqueues its fix.proposed:v1 event in the same
 // transaction, stored under the remediation's tenant, so the row and the
 // announcement cannot disagree. The status change is a
 // compare-and-set: when the row is no longer verifying, nothing is written and
 // nothing is announced.
 func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.OutputInput, v remediation.Verified) error {
-	repo := u.ProposalRepo()
+	repo := u.FixRepo()
 	hit, err := repo.MarkFixVerified(ctx, v)
 	if err != nil {
 		return fmt.Errorf("mark fix verified: %w", err)
@@ -64,13 +64,13 @@ func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.Output
 	if !hit {
 		return nil
 	}
-	row, err := repo.Get(ctx, v.ProposalID())
+	row, err := repo.Get(ctx, v.FixID())
 	if err != nil {
-		return fmt.Errorf("read verified proposal %s: %w", v.ProposalID(), err)
+		return fmt.Errorf("read verified fix %s: %w", v.FixID(), err)
 	}
 	if len(in.Approvers) > 0 {
 		if err := repo.RecordApprovers(ctx, row.ReleaseID, row.Attempt, in.Approvers); err != nil {
-			return fmt.Errorf("record the approvers of verified proposal %s: %w", v.ProposalID(), err)
+			return fmt.Errorf("record the approvers of verified fix %s: %w", v.FixID(), err)
 		}
 	}
 	return p.enqueue(ctx, u, in.Remediation.TenantID, proposedEvent(row), row.SourceResolved)
@@ -78,8 +78,8 @@ func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.Output
 
 // proposedEvent is the attempt as it was recorded. The release check decided
 // only whether the attempt may be shown, not what it says.
-func proposedEvent(v proposal.View) proposal.Proposal {
-	return proposal.Proposal{
+func proposedEvent(v fix.View) fix.Fix {
+	return fix.Fix{
 		Source:           v.Source,
 		ReleaseID:        v.ReleaseID,
 		RemediationRound: v.RemediationRound,
@@ -87,25 +87,25 @@ func proposedEvent(v proposal.View) proposal.Proposal {
 		ResolvedNodeIDs:  append([]string(nil), v.ResolvedNodeIDs...),
 		ErrorSignature:   v.ErrorSignature,
 		Attempt:          v.Attempt,
-		Status:           proposal.StatusProposed,
-		ReleaseChecks:    append([]proposal.ReleaseCheck(nil), v.ReleaseChecks...),
+		Status:           fix.StatusProposed,
+		ReleaseChecks:    append([]fix.ReleaseCheck(nil), v.ReleaseChecks...),
 		ReleaseCheckID:   v.ReleaseCheckID,
 		Confidence:       v.Confidence,
 		Rationale:        v.Rationale,
 		ProposedSQLURI:   v.ProposedSQLURI,
 		DiffURI:          v.DiffURI,
-		Edits:            append([]proposal.FileEdit(nil), v.Edits...),
+		Edits:            append([]fix.FileEdit(nil), v.Edits...),
 		Model:            v.Model,
 	}
 }
 
-// enqueue writes the remediation.proposed:v1 outbox entry for p in u's
+// enqueue writes the fix.proposed:v1 outbox entry for p in u's
 // transaction, its payload stored under tenantID. The entry id is derived from
 // the event id, which is derived from (release, attempt), so one attempt
 // announces once. sourceResolved says whether the fix rewrote real
 // version-controlled source. No inbound message drove the write, so the entry
 // carries no message-processing provenance.
-func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID string, pr proposal.Proposal, sourceResolved bool) error {
+func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID string, pr fix.Fix, sourceResolved bool) error {
 	eventID := event.RemediationEventID(pr.ReleaseID, pr.Attempt)
 	edits := make([]event.ProposedEdit, 0, len(pr.Edits))
 	for _, e := range pr.Edits {
@@ -116,7 +116,7 @@ func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID st
 			TargetNodeID: e.TargetNodeID,
 		})
 	}
-	payload := event.RemediationProposed{
+	payload := event.FixProposed{
 		EventID:          eventID.String(),
 		Source:           pr.Source,
 		ReleaseID:        pr.ReleaseID,
@@ -134,7 +134,7 @@ func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID st
 		SourceResolved:   sourceResolved,
 		ProposedAt:       p.clock.Now().Format(time.RFC3339),
 	}
-	body, err := json.Marshal(serialization.RemediationProposedFromDomain(payload))
+	body, err := json.Marshal(serialization.FixProposedFromDomain(payload))
 	if err != nil {
 		return fmt.Errorf("marshal proposed event: %w", err)
 	}
@@ -148,7 +148,7 @@ func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID st
 		AggregateID:   event.AggregateIDForRelease(pr.ReleaseID),
 		EventType:     event.EventType,
 		Payload:       stored,
-		StreamName:    streams.RemediationProposedV1,
+		StreamName:    streams.FixProposedV1,
 		Status:        "pending",
 	})
 }

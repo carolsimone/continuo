@@ -49,12 +49,12 @@ const ftableGUniqueID = "e2e_schema.ftable_g"
 // calls in between, so the ceilings are sized for a cold-ish stack rather
 // than for the ~3 minutes a warm one takes.
 const (
-	batchCtxBudget      = 35 * time.Minute
-	batchRejectBudget   = 10 * time.Minute
-	batchTriggerBudget  = 3 * time.Minute
-	batchProposalBudget = 20 * time.Minute
-	batchEventBudget    = 3 * time.Minute
-	batchVerifyBudget   = 2 * time.Minute
+	batchCtxBudget     = 35 * time.Minute
+	batchRejectBudget  = 10 * time.Minute
+	batchTriggerBudget = 3 * time.Minute
+	batchFixBudget     = 20 * time.Minute
+	batchEventBudget   = 3 * time.Minute
+	batchVerifyBudget  = 2 * time.Minute
 )
 
 // TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest proves that a
@@ -67,12 +67,12 @@ const (
 //	POST /releases (service-2; ftable_e and ftable_k are both new)
 //	→ validation fails on both nodes → release "rejected"
 //	→ ONE heal.triggered:v1 carrying both nodes, each with no changed ancestor
-//	→ ONE proposal row for the release (attempt 1) holding TWO file edits,
+//	→ ONE fix row for the release (attempt 1) holding TWO file edits,
 //	  each naming the node whose source it repairs
 //	→ ONE dbt release check (both edits belong to service-2) that passes
 //	→ the runner's gate poller reads the verdict and the attempt moves
 //	  verifying → proposed
-//	→ ONE remediation.proposed:v1
+//	→ ONE fix.proposed:v1
 //	→ ONE pull request, titled for the two nodes it fixes
 //
 // The release, not the node, is the unit of remediation: two failures must
@@ -131,7 +131,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
-	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.FixProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedLiveRelease(t, ctx, clients, prodNodes)
@@ -160,8 +160,8 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 
 	// 4. ONE trigger for the release, carrying BOTH failing nodes. This is the
 	//    batching contract at its source: the classifier emits per release, not
-	//    per node, so a second message here would mean two fix attempts, two
-	//    proposals and two pull requests downstream.
+	//    per node, so a second message here would mean two attempts, two
+	//    fixes and two pull requests downstream.
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID,
 		[]string{ftableEUniqueID, ftableKUniqueID}, batchTriggerBudget)
 	require.Len(t, triggersForRelease(t, requestedTap, releaseID), 1,
@@ -181,12 +181,12 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	}
 	t.Logf("✅ one %s carries both independent failures", streams.HealTriggeredV1)
 
-	// 5. ONE proposal row for the whole release, reaching 'proposed' only after
+	// 5. ONE fix row for the whole release, reaching 'proposed' only after
 	//    its release check has judged the fix. The representative node_id is
 	//    the lowest resolved id, so the row is addressed by ftable_e.
-	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
-	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID),
-		"one release yields one fix attempt, not one per failing node")
+	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
+	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID),
+		"one release yields one attempt, not one per failing node")
 
 	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
 	require.Equal(t, []string{ftableEUniqueID, ftableKUniqueID}, resolved,
@@ -232,7 +232,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	require.Len(t, proposedEventsForRelease(t, proposedTap, releaseID), 1,
 		"one verified attempt announces itself once")
 	require.Equal(t, []string{ftableEUniqueID, ftableKUniqueID}, proposed.ResolvedNodeIDs,
-		"%s must announce the whole resolved set", streams.RemediationProposedV1)
+		"%s must announce the whole resolved set", streams.FixProposedV1)
 	require.Len(t, proposed.Edits, 2, "the announcement must carry both file edits; got %+v", proposed.Edits)
 	require.Equal(t, ftableEUniqueID, proposed.NodeID,
 		"the representative node is the lowest resolved id")
@@ -241,7 +241,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	//    edits belong to service-2 and now carry cluster member ids, so
 	//    PRProjects attributes the single group to that real project — the
 	//    title carries its " (service-2)" suffix, the same way it would for
-	//    any proposal split across more than the legacy "" group.
+	//    any fix split across more than the legacy "" group.
 	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID, changedProject)
 	pr := fetchStubPullRequest(t, ctx, row.Repo, prNumber)
 	require.Equal(t, fmt.Sprintf("[remediation] fix 2 nodes (release %s) (%s)", releaseID, changedProject), pr.Title,
@@ -250,8 +250,8 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 
 	// 10. Opening the pull request must not have minted a second attempt: the
 	//     release is still one fix, reviewed once.
-	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID),
-		"no second proposal row may appear for a release whose single attempt was accepted")
+	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID),
+		"no second fix row may appear for a release whose single attempt was accepted")
 }
 
 // TestE2E_BatchedRemediation_SharedUpstreamFixedOnce proves that failures with
@@ -265,7 +265,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 //	→ ONE heal.triggered:v1 whose two entries share one error signature
 //	  and both name ftable_u as their changed ancestor
 //	→ the runner groups them into ONE shared-upstream cluster targeting ftable_u
-//	→ ONE proposal with ONE edit — to ftable_u's source, a node that never failed
+//	→ ONE fix with ONE edit — to ftable_u's source, a node that never failed
 //	→ ONE dbt release check that passes for the repaired ancestor and its
 //	  descendants
 //	→ ONE pull request fixing two nodes by changing one file
@@ -395,11 +395,11 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	}
 	t.Logf("✅ one %s names %s as the shared cause of both failures", streams.HealTriggeredV1, ftableUUniqueID)
 
-	// 6. ONE proposal, and — the point of the whole scenario — ONE edit, to a
+	// 6. ONE fix, and — the point of the whole scenario — ONE edit, to a
 	//    node that never appeared in the failing set.
-	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
-	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID),
-		"one release yields one fix attempt")
+	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
+	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID),
+		"one release yields one attempt")
 
 	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
 	require.Equal(t, []string{ftableVUniqueID, ftableWUniqueID}, resolved,
@@ -453,7 +453,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	// 10. Merging the pull request AS PROPOSED — no further human edit — must
 	//     draw the case-base provenance edges catalog's pr_closed
 	//     consumer maintains: one RESOLVED_BY per resolved descendant to the
-	//     shared :Proposal, and one EDITED edge from that :Proposal to the
+	//     shared :Fix, and one EDITED edge from that :Fix to the
 	//     changed ancestor's :Node, both carrying amended=false. The stub
 	//     serves the PR's own written commit at the merge sha (nothing pushes
 	//     a further commit in this test), so the merged content is
@@ -477,16 +477,16 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	//     descendant — also amended=false; and the :PullRequest node
 	//     reflecting the terminal 'merged' state. pollNeo4jPRState waits for
 	//     catalog's asynchronous consumption of
-	//     remediation.pr_closed:v1 to land; RecordPullRequestOutcome draws the
+	//     fix.pr_closed:v1 to land; RecordPullRequestOutcome draws the
 	//     pr_state change and every edge below in the SAME Cypher statement, so
 	//     once the poll observes 'merged' the edges are already committed and
 	//     the plain reads that follow cannot race the write.
 	pollNeo4jPRState(t, ctx, clients, row.ID, changedProject, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id})-[rb:RESOLVED_BY]->(p:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id})-[rb:RESOLVED_BY]->(p:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN count(r) AS n, collect(DISTINCT rb.amended) AS amended`,
-		map[string]any{"release_id": releaseID, "proposal_id": row.ID})
+		map[string]any{"release_id": releaseID, "fix_id": row.ID})
 	require.Len(t, resolvedRows, 1, "expected one summary row for the RESOLVED_BY query")
 	require.EqualValues(t, 2, resolvedRows[0]["n"],
 		"one RESOLVED_BY per resolved node (%s, %s); got %+v", ftableVUniqueID, ftableWUniqueID, resolvedRows[0])
@@ -494,9 +494,9 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 		"every RESOLVED_BY drawn by an as-proposed merge must carry amended=false; got %+v", resolvedRows[0])
 
 	editRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (p:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[e:EDITED]->(t:Node {tenant_id: 'default'})
+		MATCH (p:Fix {tenant_id: 'default', fix_id: $fix_id})-[e:EDITED]->(t:Node {tenant_id: 'default'})
 		RETURN t.unique_id AS unique_id, e.amended AS amended`,
-		map[string]any{"proposal_id": row.ID})
+		map[string]any{"fix_id": row.ID})
 	require.Len(t, editRows, 1, "the shared-upstream attempt drew one EDITED edge, to the ancestor it repaired; got %+v", editRows)
 	require.Equal(t, ftableUUniqueID, editRows[0]["unique_id"], "EDITED must target the changed ancestor, not either failing descendant")
 	require.Equal(t, false, editRows[0]["amended"], "an as-proposed merge's EDITED edge must carry amended=false")
@@ -521,10 +521,10 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 //	POST /releases (service-2; ftable_e and ftable_g both held back from the live release)
 //	→ validation fails on both nodes → release "rejected"
 //	→ ONE heal.triggered:v1 carrying both nodes
-//	→ ONE proposal row (attempt 1) holding TWO file edits, one per project
+//	→ ONE fix row (attempt 1) holding TWO file edits, one per project
 //	→ TWO dbt release checks (one per edited project) that both pass
-//	→ ONE remediation.proposed:v1
-//	→ POST /proposals/:id/pull-request opens TWO pull requests, distinct
+//	→ ONE fix.proposed:v1
+//	→ POST /fixes/:id/pull-request opens TWO pull requests, distinct
 //	  branches and numbers, one per project
 //	→ merge the service-2 PR, close-without-merging the service-3 PR
 //	→ the merged PR's member (ftable_e) gets a RESOLVED_BY edge; the rejected
@@ -626,10 +626,10 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 		triggerNodeIDs(trigger))
 	require.Equal(t, string(model.RemediationSourceValidation), trigger.Source, "trigger source")
 
-	// 5. ONE proposal for the release, TWO independent edits.
-	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
-	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID),
-		"one release yields one fix attempt, even split across two projects")
+	// 5. ONE fix for the release, TWO independent edits.
+	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
+	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID),
+		"one release yields one attempt, even split across two projects")
 
 	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
 	require.Equal(t, []string{ftableEUniqueID, ftableGUniqueID}, resolved,
@@ -647,14 +647,14 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	}, targetsByPath, "each edit must name the node whose source it changes, in its own project's path")
 
 	// pr_projects is derived from the edits' cluster member ids
-	// (agent-remediation/service/proposals/service.go's PRProjects), so it is
-	// readable straight off the GetProposal RPC once the edits above exist —
+	// (agent-remediation/service/fixes/service.go's PRProjects), so it is
+	// readable straight off the GetFix RPC once the edits above exist —
 	// this is the same computation the create-PR route below drives from.
-	proposalPB, err := clients.agentRemediationClient.GetProposal(ctx,
-		&remediationv1.GetProposalRequest{Id: row.ID})
-	require.NoError(t, err, "GetProposal %s", row.ID)
-	require.ElementsMatch(t, []string{changedProject, otherProject}, proposalPB.GetPrProjects(),
-		"a proposal split across two projects must report both in pr_projects; got %v", proposalPB.GetPrProjects())
+	fixPB, err := clients.agentRemediationClient.GetFix(ctx,
+		&remediationv1.GetFixRequest{Id: row.ID})
+	require.NoError(t, err, "GetFix %s", row.ID)
+	require.ElementsMatch(t, []string{changedProject, otherProject}, fixPB.GetPrProjects(),
+		"a fix split across two projects must report both in pr_projects; got %v", fixPB.GetPrProjects())
 
 	// 6. TWO release checks, one per edited project.
 	releaseChecks := decodeReleaseChecks(t, row.ReleaseChecks)
@@ -681,7 +681,7 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	createPRResp := callCreatePREndpoint(t, ctx, clients.uiBase, row.ID, http.StatusOK)
 	require.Empty(t, createPRResp.Errors, "no per-project group should fail to open a pull request; got %+v", createPRResp.Errors)
 	require.Len(t, createPRResp.PullRequests, 2,
-		"a proposal split across two projects must open two pull requests; got %+v", createPRResp.PullRequests)
+		"a fix split across two projects must open two pull requests; got %+v", createPRResp.PullRequests)
 
 	byProject := map[string]pullRequestResult{}
 	for _, pr := range createPRResp.PullRequests {
@@ -703,11 +703,11 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 		changedProject, changedRow.PRNumber, changedRow.Branch, otherProject, otherRow.PRNumber, otherRow.Branch)
 
 	// 8. Merge the service-2 PR; close the service-3 PR without merging. repo
-	//    is a single column on the parent proposal row — the same monorepo
+	//    is a single column on the parent fix row — the same monorepo
 	//    both per-project PRs were opened against.
 	var repoName string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoName,
-		`SELECT repo FROM proposal WHERE id = $1`, row.ID))
+		`SELECT repo FROM fix WHERE id = $1`, row.ID))
 
 	mergedSHA := mergePullRequestViaStub(t, ctx, repoName, changedRow.PRNumber)
 	t.Logf("merged %s PR #%d via stub-github: merge_commit_sha=%s", changedProject, changedRow.PRNumber, mergedSHA)
@@ -720,23 +720,23 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	// 9. Provenance: the merged PR's member gets RESOLVED_BY; the rejected
 	//    PR's member gets none; each :PullRequest carries its own terminal
 	//    pr_state. pollNeo4jPRState waits out catalog's asynchronous
-	//    consumption of remediation.pr_closed:v1 for EACH project
+	//    consumption of fix.pr_closed:v1 for EACH project
 	//    independently — the two PRs close through two separate events.
 	pollNeo4jPRState(t, ctx, clients, row.ID, changedProject, "merged", 60*time.Second)
 	pollNeo4jPRState(t, ctx, clients, row.ID, otherProject, "rejected", 60*time.Second)
 
 	mergedResolved := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN rb.amended AS amended`,
-		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "proposal_id": row.ID})
+		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "fix_id": row.ID})
 	require.Len(t, mergedResolved, 1,
-		"the merged PR's member %s must have exactly one RESOLVED_BY edge to the shared proposal", ftableEUniqueID)
+		"the merged PR's member %s must have exactly one RESOLVED_BY edge to the shared fix", ftableEUniqueID)
 	require.Equal(t, false, mergedResolved[0]["amended"], "an as-proposed merge's RESOLVED_BY edge must carry amended=false")
 
 	rejectedResolved := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN rb.amended AS amended`,
-		map[string]any{"release_id": releaseID, "node_id": ftableGUniqueID, "proposal_id": row.ID})
+		map[string]any{"release_id": releaseID, "node_id": ftableGUniqueID, "fix_id": row.ID})
 	require.Empty(t, rejectedResolved,
 		"the rejected PR's member %s must draw NO RESOLVED_BY edge; got %+v", ftableGUniqueID, rejectedResolved)
 
@@ -746,10 +746,10 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 // TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended proves that a
 // human edit pushed to a remediation PR's branch before it merges is recorded
 // as such all the way into the case-base: the agent-remediation's merge-time
-// byte-compare (agent-remediation/service/proposals/amend.go) flags the edit
+// byte-compare (agent-remediation/service/fixes/amend.go) flags the edit
 // amended, and catalog's pr_closed provenance handler carries that
 // flag onto both the RESOLVED_BY edge (from the fixed node's :Rejection) and
-// the EDITED edge (from the shared :Proposal).
+// the EDITED edge (from the shared :Fix).
 //
 // The scenario reuses TestE2E_AgentRemediation_ProposesFixForRejection's
 // single-node ftable_e setup (service-2 only) — the amend mechanic itself
@@ -815,7 +815,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ftableEUniqueID}, batchTriggerBudget)
 	require.Len(t, trigger.Nodes, 1, "the trigger must carry exactly ftable_e; got %v", triggerNodeIDs(trigger))
 
-	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
+	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
 	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
 	require.Equal(t, []string{ftableEUniqueID}, resolved, "the attempt must resolve exactly ftable_e")
 
@@ -836,7 +836,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 
 	var repoName string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoName,
-		`SELECT repo FROM proposal WHERE id = $1`, row.ID))
+		`SELECT repo FROM fix WHERE id = $1`, row.ID))
 
 	// 3. Push a SECOND, human-authored commit to the PR branch through the
 	//    stub's git-write endpoints, changing the one edited file's content —
@@ -872,28 +872,28 @@ FROM e2e_schema.ftable_c c`
 	pollNeo4jPRState(t, ctx, clients, row.ID, changedProject, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN rb.amended AS amended`,
-		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "proposal_id": row.ID})
-	require.Len(t, resolvedRows, 1, "ftable_e must have exactly one RESOLVED_BY edge to the proposal")
+		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "fix_id": row.ID})
+	require.Len(t, resolvedRows, 1, "ftable_e must have exactly one RESOLVED_BY edge to the fix")
 	require.Equal(t, true, resolvedRows[0]["amended"], "an amended merge's RESOLVED_BY edge must carry amended=true")
 
 	editRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[e:EDITED]->(t:Node {tenant_id: 'default', unique_id: $node_id})
+		MATCH (:Fix {tenant_id: 'default', fix_id: $fix_id})-[e:EDITED]->(t:Node {tenant_id: 'default', unique_id: $node_id})
 		RETURN e.amended AS amended`,
-		map[string]any{"proposal_id": row.ID, "node_id": ftableEUniqueID})
-	require.Len(t, editRows, 1, "ftable_e must have exactly one EDITED edge from the proposal")
+		map[string]any{"fix_id": row.ID, "node_id": ftableEUniqueID})
+	require.Len(t, editRows, 1, "ftable_e must have exactly one EDITED edge from the fix")
 	require.Equal(t, true, editRows[0]["amended"], "an amended merge's EDITED edge must carry amended=true")
 
 	t.Logf("✅ amended-merge provenance confirmed: rb.amended=true, ed.amended=true, pr_state=merged")
 }
 
-// batchProposalRow is the batched view of a proposal row: the set the attempt
+// batchFixRow is the batched view of a fix row: the set the attempt
 // addressed, each node's outcome, every file it changed, and every
-// release check that judged it. The single-node projection is proposalRow;
+// release check that judged it. The single-node projection is fixRow;
 // a batched attempt cannot be read through that one, because its scalar
 // node_id and file_path columns hold only a representative.
-type batchProposalRow struct {
+type batchFixRow struct {
 	ID              string `db:"id"`
 	NodeID          string `db:"node_id"`
 	Status          string `db:"status"`
@@ -906,32 +906,32 @@ type batchProposalRow struct {
 	ReleaseChecks   []byte `db:"release_checks"`
 }
 
-// waitForBatchProposal polls the agent-remediation's proposal table until the
+// waitForBatchFix polls the agent-remediation's fix table until the
 // release's given attempt reaches want, and returns the row. It is addressed by
 // (release, attempt) rather than by node, because one attempt now covers a whole
 // failing set and no single node identifies it. Every status change is logged,
 // so an attempt that stalls in 'generating' or 'verifying' is distinguishable
 // from one that was never created — pollUntil's message is built before any
 // polling and cannot carry that.
-func waitForBatchProposal(
+func waitForBatchFix(
 	t *testing.T, ctx context.Context, clients *testClients,
 	releaseID string, attempt int, want string, timeout time.Duration,
-) batchProposalRow {
+) batchFixRow {
 	t.Helper()
-	var row batchProposalRow
+	var row batchFixRow
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row, `
 			SELECT id, node_id, status, attempt, repo, verify_error,
 			       resolved_node_ids, node_outcomes, file_edits, release_checks
-			  FROM proposal
+			  FROM fix
 			 WHERE release_id = $1 AND attempt = $2`,
 			releaseID, attempt)
 		if err != nil {
 			return false, nil
 		}
 		if row.Status != last {
-			t.Logf("proposal %s attempt %d: status=%s node_id=%s", releaseID, attempt, row.Status, row.NodeID)
+			t.Logf("fix %s attempt %d: status=%s node_id=%s", releaseID, attempt, row.Status, row.NodeID)
 			last = row.Status
 		}
 		return row.Status == want, nil
@@ -940,18 +940,18 @@ func waitForBatchProposal(
 	return row
 }
 
-// countProposalsForRelease returns how many proposal rows exist for a release.
+// countFixesForRelease returns how many fix rows exist for a release.
 // A batched release is one attempt: this is what proves the failing set was not
-// silently fanned back out into one proposal — and one pull request — per node.
-func countProposalsForRelease(t *testing.T, ctx context.Context, clients *testClients, releaseID string) int {
+// silently fanned back out into one fix — and one pull request — per node.
+func countFixesForRelease(t *testing.T, ctx context.Context, clients *testClients, releaseID string) int {
 	t.Helper()
 	var n int
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &n,
-		`SELECT count(*) FROM proposal WHERE release_id = $1`, releaseID))
+		`SELECT count(*) FROM fix WHERE release_id = $1`, releaseID))
 	return n
 }
 
-// nodeOutcomeEntry mirrors one value of the proposal's node_outcomes column:
+// nodeOutcomeEntry mirrors one value of the fix's node_outcomes column:
 // how the attempt ended for one of the nodes it addressed.
 type nodeOutcomeEntry struct {
 	Status string `json:"status"`
@@ -962,7 +962,7 @@ type nodeOutcomeEntry struct {
 func decodeNodeOutcomes(t *testing.T, raw []byte) map[string]nodeOutcomeEntry {
 	t.Helper()
 	outcomes := map[string]nodeOutcomeEntry{}
-	require.NoError(t, json.Unmarshal(raw, &outcomes), "decode proposal node_outcomes: %s", raw)
+	require.NoError(t, json.Unmarshal(raw, &outcomes), "decode fix node_outcomes: %s", raw)
 	return outcomes
 }
 
@@ -1030,7 +1030,7 @@ func triggerNodeIDs(p tappedTrigger) []string {
 	return ids
 }
 
-// proposedEdit mirrors one element of remediation.proposed:v1's edits array.
+// proposedEdit mirrors one element of fix.proposed:v1's edits array.
 type proposedEdit struct {
 	Path         string `json:"path"`
 	ContentURI   string `json:"content_uri"`
@@ -1038,9 +1038,9 @@ type proposedEdit struct {
 	TargetNodeID string `json:"target_node_id"`
 }
 
-// batchProposedPayload is the batched projection of remediation.proposed:v1:
+// batchProposedPayload is the batched projection of fix.proposed:v1:
 // the whole set the attempt resolved and every file it changed. The single-node
-// projection of the same event is remediationProposedPayload, which does not
+// projection of the same event is fixProposedPayload, which does not
 // decode the edits array.
 type batchProposedPayload struct {
 	ReleaseID       string         `json:"release_id"`
@@ -1050,7 +1050,7 @@ type batchProposedPayload struct {
 	Edits           []proposedEdit `json:"edits"`
 }
 
-// waitForBatchProposedEvent polls remediation.proposed:v1 for the release's
+// waitForBatchProposedEvent polls fix.proposed:v1 for the release's
 // announcement and returns it.
 func waitForBatchProposedEvent(
 	t *testing.T, ctx context.Context, proposedTap *streamTap, releaseID string, timeout time.Duration,
@@ -1064,11 +1064,11 @@ func waitForBatchProposedEvent(
 		}
 		found = events[0]
 		return true, nil
-	}, fmt.Sprintf("timeout waiting for %s for release %s", streams.RemediationProposedV1, releaseID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s", streams.FixProposedV1, releaseID))
 	return found
 }
 
-// proposedEventsForRelease returns every remediation.proposed:v1 message naming
+// proposedEventsForRelease returns every fix.proposed:v1 message naming
 // the release.
 func proposedEventsForRelease(t *testing.T, proposedTap *streamTap, releaseID string) []batchProposedPayload {
 	t.Helper()
@@ -1108,33 +1108,33 @@ func releaseFailingNodes(t *testing.T, ctx context.Context, clients *testClients
 	return body.FailingNodes
 }
 
-// openRemediationPR opens the proposal's pull request(s) through the UI route
+// openRemediationPR opens the fix's pull request(s) through the UI route
 // and returns the single entry's PR number, asserting a single-project
-// proposal opens exactly ONE pull request, attributed to project, whose
+// fix opens exactly ONE pull request, attributed to project, whose
 // branch carries the deterministic /<project> suffix. It also asserts the
 // route is idempotent: a second POST must return the SAME pull_requests set —
 // not open a second pull request — since every group that already has one
 // resolves to a reported success rather than a per-group error, so the whole
 // route still answers 200, not 409.
 func openRemediationPR(
-	t *testing.T, ctx context.Context, clients *testClients, proposalID, releaseID, project string,
+	t *testing.T, ctx context.Context, clients *testClients, fixID, releaseID, project string,
 ) int {
 	t.Helper()
-	created := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
+	created := callCreatePREndpoint(t, ctx, clients.uiBase, fixID, http.StatusOK)
 	require.Empty(t, created.Errors, "no per-project group should fail to open a pull request; got %+v", created.Errors)
 	require.Len(t, created.PullRequests, 1,
-		"a single-project proposal must open exactly one pull request; got %+v", created.PullRequests)
+		"a single-project fix must open exactly one pull request; got %+v", created.PullRequests)
 	pr := created.PullRequests[0]
-	require.Equal(t, project, pr.Project, "the pull request must be attributed to the proposal's owning project")
+	require.Equal(t, project, pr.Project, "the pull request must be attributed to the fix's owning project")
 	require.NotEmpty(t, pr.PRUrl, "pr_url must be non-empty on first create")
 	require.Greater(t, pr.PRNumber, 0, "pr_number must be a positive stub-github PR number")
 
-	dup := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
+	dup := callCreatePREndpoint(t, ctx, clients.uiBase, fixID, http.StatusOK)
 	require.Empty(t, dup.Errors, "a duplicate POST must not report any per-project failure; got %+v", dup.Errors)
 	require.Equal(t, created.PullRequests, dup.PullRequests,
 		"a second POST must return the SAME pull request set, not open another one for release %s", releaseID)
 
-	row := pollChildPRState(t, ctx, clients, proposalID, project, "open", 30*time.Second)
+	row := pollChildPRState(t, ctx, clients, fixID, project, "open", 30*time.Second)
 	require.Equal(t, pr.PRNumber, row.PRNumber, "the row must record the number the create call returned")
 	require.True(t, strings.HasSuffix(row.Branch, "/"+project),
 		"a per-project pull request's branch must carry the /<project> suffix; got %q", row.Branch)
@@ -1166,7 +1166,7 @@ type stubPullRequest struct {
 // agent-remediation and ui use.
 func fetchStubPullRequest(t *testing.T, ctx context.Context, repo string, number int) stubPullRequest {
 	t.Helper()
-	require.NotEmpty(t, repo, "proposal row must carry the repo its pull request was opened on")
+	require.NotEmpty(t, repo, "fix row must carry the repo its pull request was opened on")
 	url := fmt.Sprintf("http://stub-github:9200/repos/%s/pulls/%d", repo, number)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	require.NoError(t, err, "build GET pull request")
@@ -1333,9 +1333,9 @@ func TestE2E_BatchedRemediation_CrossProjectBreakFixedAtProducer(t *testing.T) {
 	t.Logf("✅ trigger names %s@%s (depth 1) as the cause of %s@%s",
 		xbreakUpUniqueID, producerProject, xbreakDownUniqueID, consumerProject)
 
-	// 4. ONE proposal, ONE edit — to the producer, in the producer's project.
-	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
-	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID))
+	// 4. ONE fix, ONE edit — to the producer, in the producer's project.
+	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
+	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID))
 	require.Equal(t, []string{xbreakDownUniqueID}, decodeNodeIDs(t, row.ResolvedNodeIDs))
 	outcomes := decodeNodeOutcomes(t, row.NodeOutcomes)
 	require.Equal(t, "proposed", outcomes[xbreakDownUniqueID].Status, "node_outcomes=%s", row.NodeOutcomes)
@@ -1365,7 +1365,7 @@ func TestE2E_BatchedRemediation_CrossProjectBreakFixedAtProducer(t *testing.T) {
 	require.True(t, strings.HasSuffix(prRow.Branch, "/"+producerProject), "branch %q must carry the producer's suffix", prRow.Branch)
 	var consumerPRs int
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &consumerPRs,
-		`SELECT count(*) FROM proposal_pull_request WHERE proposal_id = $1 AND project = $2`, row.ID, consumerProject))
+		`SELECT count(*) FROM fix_pull_request WHERE fix_id = $1 AND project = $2`, row.ID, consumerProject))
 	require.Zero(t, consumerPRs, "nothing is opened for the consumer's project")
 
 	mergeCommitSHA := mergePullRequestViaStub(t, ctx, row.Repo, prNumber)
@@ -1374,14 +1374,14 @@ func TestE2E_BatchedRemediation_CrossProjectBreakFixedAtProducer(t *testing.T) {
 	pollNeo4jPRState(t, ctx, clients, row.ID, producerProject, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN rb.amended AS amended`,
-		map[string]any{"release_id": releaseID, "node_id": xbreakDownUniqueID, "proposal_id": row.ID})
+		map[string]any{"release_id": releaseID, "node_id": xbreakDownUniqueID, "fix_id": row.ID})
 	require.Len(t, resolvedRows, 1, "the consumer is resolved by the producer's merged fix")
 	editRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (p:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[e:EDITED]->(t:Node {tenant_id: 'default'})
+		MATCH (p:Fix {tenant_id: 'default', fix_id: $fix_id})-[e:EDITED]->(t:Node {tenant_id: 'default'})
 		RETURN t.unique_id AS unique_id`,
-		map[string]any{"proposal_id": row.ID})
+		map[string]any{"fix_id": row.ID})
 	require.Len(t, editRows, 1)
 	require.Equal(t, xbreakUpUniqueID, editRows[0]["unique_id"], "EDITED must target the producer, not the consumer")
 	t.Logf("✅ provenance confirmed: RESOLVED_BY %s, EDITED -> %s", xbreakDownUniqueID, xbreakUpUniqueID)

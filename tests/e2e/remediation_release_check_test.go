@@ -104,7 +104,7 @@ func TestE2E_FixReleaseCheck_FailsConsumerFixThatIgnoresChangedUpstream(t *testi
 	require.True(t, ok)
 	require.Equal(t, []string{ybreakUpUniqueID}, ancestorIDs(down), "the consumer's only changed ancestor")
 
-	verifying := waitForBatchProposal(t, ctx, clients, releaseID, 1, "verifying", batchProposalBudget)
+	verifying := waitForBatchFix(t, ctx, clients, releaseID, 1, "verifying", batchFixBudget)
 	edits := decodeFileEdits(t, verifying.FileEdits)
 	require.Len(t, edits, 1)
 	require.Equal(t, "services/service-2/models/ybreak_down.sql", edits[0].Path, "the fix edits the consumer")
@@ -128,7 +128,7 @@ func TestE2E_FixReleaseCheck_FailsConsumerFixThatIgnoresChangedUpstream(t *testi
 		"the consumer that still reads the dropped column must fail; per-node=%v", perNode)
 
 	// 5. The attempt records the verdict.
-	failed := waitForBatchProposal(t, ctx, clients, releaseID, 1, "failed", batchProposalBudget)
+	failed := waitForBatchFix(t, ctx, clients, releaseID, 1, "failed", batchFixBudget)
 	require.Contains(t, failed.VerifyError, "ybreak_down",
 		"the recorded reason must name the node the release check failed; got %q", failed.VerifyError)
 	t.Logf("✅ release check %s failed the consumer-side fix: %s", checkID, failed.VerifyError)

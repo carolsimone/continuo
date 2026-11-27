@@ -15,7 +15,7 @@ type Classification struct {
 	Signature string
 	Decision  Decision
 	Reason    string // matched rule, e.g. "infra:connection_refused" or "logic:missing_relation"
-	// Unfixable says why no fix proposal can help the node: set on every
+	// Unfixable says why no fix can help the node: set on every
 	// DecisionDrop and on nothing else. A dropped failure is still forwarded on
 	// the trigger, marked with this reason and with UnfixableDetail as its
 	// detail.
@@ -174,7 +174,7 @@ func classifyStructured(structured *StructuredResult, logText string) Classifica
 }
 
 // infraDrop is the classification of a failure an infrastructure rule matched:
-// a new release run clears it, so no fix proposal can help. key is the error
+// a new release run clears it, so no fix can help. key is the error
 // text the signature and the excerpt derive from.
 func infraDrop(r rule, key string) Classification {
 	return Classification{

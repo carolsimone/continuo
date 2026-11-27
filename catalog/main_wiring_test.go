@@ -54,16 +54,16 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	}
 	slices.Sort(got)
 	want := []string{
+		"CatalogFixPrClosedProvenance",
+		"CatalogFixPrOpenedFixes",
 		"CatalogHealTriggeredRejections",
 		"CatalogReleaseContracts",
 		"CatalogReleaseTopology",
 		"CatalogReleaseVersions",
-		"CatalogRemediationPrClosedProvenance",
-		"CatalogRemediationPrOpenedProposals",
+		"FixPrClosedV1",
+		"FixPrOpenedV1",
 		"HealTriggeredV1",
 		"ReleasePromotedV1",
-		"RemediationPrClosedV1",
-		"RemediationPrOpenedV1",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("main.go names streams %v, want %v", got, want)

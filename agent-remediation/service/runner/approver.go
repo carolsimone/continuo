@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -16,7 +16,7 @@ import (
 // returns one approver per node sorted by node id. It runs in the transaction
 // that ends the remediation, so an error fails that transaction and the end
 // runs again in the next drive or poll. With no node, nothing runs.
-func (r *Runner) approversFor(ctx context.Context, run tryRun, clusters []step.ClusterDraft, nodes []string) ([]proposal.Approver, error) {
+func (r *Runner) approversFor(ctx context.Context, run tryRun, clusters []step.ClusterDraft, nodes []string) ([]fix.Approver, error) {
 	if len(nodes) == 0 {
 		return nil, nil
 	}
@@ -29,7 +29,7 @@ func (r *Runner) approversFor(ctx context.Context, run tryRun, clusters []step.C
 	if err != nil {
 		return nil, fmt.Errorf("step %s: %w", name, err)
 	}
-	slices.SortFunc(out, func(a, b proposal.Approver) int { return strings.Compare(a.NodeID, b.NodeID) })
+	slices.SortFunc(out, func(a, b fix.Approver) int { return strings.Compare(a.NodeID, b.NodeID) })
 	return out, nil
 }
 

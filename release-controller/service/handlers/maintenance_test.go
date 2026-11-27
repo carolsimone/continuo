@@ -31,7 +31,7 @@ func TestRetryRemediation_RefusedDuringMaintenance(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	deps.Maintenance = true
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
-	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{NodeID: "finance", Attempt: 1, Status: "failed", RemediationRound: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Attempt: 1, Status: "failed", RemediationRound: 1}}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.True(t, errors.Is(err, maintenance.ErrActive), "%v", err)
@@ -45,7 +45,7 @@ func TestRetryRemediation_RefusedDuringMaintenance(t *testing.T) {
 func TestRetryRemediation_SkippedRoundIsRetryable(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"release_id":"rel-1","reason":"compile_failed"}`))
-	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{NodeID: "finance", Attempt: 1, Status: "skipped", RemediationRound: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Attempt: 1, Status: "skipped", RemediationRound: 1}}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)

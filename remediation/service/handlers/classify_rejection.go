@@ -23,7 +23,7 @@ import (
 // release's source fixes it) is carried too, marked unfixable with its reason,
 // so the release page can name it and why no fix was proposed. The release,
 // not the node, is the unit of remediation, so a release failing on several
-// nodes yields one trigger, one proposal and one pull request downstream. The
+// nodes yields one trigger, one fix and one pull request downstream. The
 // trigger's outbox row is stored under tenantID, the tenant of the message the
 // rejection came from. Idempotency is the decision repository's natural key: a
 // redelivered rejection re-records nothing new and therefore re-emits and

@@ -66,7 +66,7 @@ func main() {
 	}
 
 	if cfg.Maintenance {
-		logger.Warn("Maintenance mode is on: release intake and remediation retries are refused; the queue activates only fixes' release checks")
+		logger.Warn("Maintenance mode is on: release intake and remediation retries are refused; the queue activates only the release checks of fixes")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -188,7 +188,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() { _ = remediationConn.Close() }()
-	proposalsClient := rcgrpc.NewProposalsClient(remediationv1.NewRemediationProposalsClient(remediationConn))
+	fixesClient := rcgrpc.NewFixesClient(remediationv1.NewRemediationFixesClient(remediationConn))
 
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, candidateSQLDeleter) },
@@ -196,7 +196,7 @@ func main() {
 		Telemetry: rcmetrics.NewTelemetry(metricsReg),
 		Logger:    logger,
 		Bucket:    cfg.S3.Bucket,
-		Proposals: proposalsClient,
+		Fixes:     fixesClient,
 
 		Topologies: s3adapter.NewTopologyArtifactStore(objectStore, cfg.S3.Bucket, topologyCacheSize),
 

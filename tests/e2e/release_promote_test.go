@@ -1138,8 +1138,8 @@ func assertReleaseHistoryAndPerNodeLog(t *testing.T, ctx context.Context, client
 		t.Log("UI_HTTP_BASE not set — skipping UI BFF per-node log assertion")
 		return
 	}
-	logResp, err := http.Get(fmt.Sprintf("%s/api/releases/log?key=%s", uiBase, url.QueryEscape(logURI))) //nolint:gosec // uiBase is the trusted UI_HTTP_BASE harness env var and logURI is query-escaped, not raw external input
-	require.NoError(t, err, "GET ui /api/releases/log")
+	logResp, err := http.Get(fmt.Sprintf("%s/api/logs?key=%s", uiBase, url.QueryEscape(logURI))) //nolint:gosec // uiBase is the trusted UI_HTTP_BASE harness env var and logURI is query-escaped, not raw external input
+	require.NoError(t, err, "GET ui /api/logs")
 	defer logResp.Body.Close()
 	require.Equal(t, http.StatusOK, logResp.StatusCode, "UI BFF should stream the per-node dbt log")
 	body, _ := io.ReadAll(logResp.Body)

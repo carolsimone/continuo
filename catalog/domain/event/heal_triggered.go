@@ -23,6 +23,6 @@ type HealTriggeredNode struct {
 	DBTLogURI      string
 	// Unfixable is set when the classifier judged that no change to the
 	// release's source fixes the failure. The case base keeps such a node out:
-	// it holds the failures a fix proposal can learn from.
+	// it holds the failures a fix can learn from.
 	Unfixable bool
 }

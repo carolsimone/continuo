@@ -117,14 +117,14 @@ func TestPrecedentService_ResolvedByEditedProvenanceWithoutOwnTimeline(t *testin
 
 // TestPrecedentService_AmendedFallbackDiffIsNotShipped covers an edit amended
 // before merge whose merged version has not been promoted yet: no straddle
-// (MergedVersion nil), so the service keeps the proposal-time diff and must
+// (MergedVersion nil), so the service keeps the proposed diff and must
 // leave DiffIsShipped false — the diff is not the shipped truth.
 func TestPrecedentService_AmendedFallbackDiffIsNotShipped(t *testing.T) {
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
 			Rejection: casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
 			Edited: []casebase.EditedView{
-				{NodeID: "svc.schema.tbl", Path: "models/tbl.sql", Amended: true, Diff: "proposal-diff"},
+				{NodeID: "svc.schema.tbl", Path: "models/tbl.sql", Amended: true, Diff: "fix-diff"},
 			},
 		},
 	}}
@@ -135,7 +135,7 @@ func TestPrecedentService_AmendedFallbackDiffIsNotShipped(t *testing.T) {
 	require.Len(t, out, 1)
 
 	require.Len(t, out[0].Edited, 1)
-	assert.Equal(t, "proposal-diff", out[0].Edited[0].Diff, "no straddle: the proposal-time diff is kept")
+	assert.Equal(t, "fix-diff", out[0].Edited[0].Diff, "no straddle: the proposed diff is kept")
 	assert.False(t, out[0].Edited[0].DiffIsShipped, "an amended edit with no promoted merged version is not shipped")
 }
 
@@ -146,7 +146,7 @@ func TestPrecedentService_AmendedEditRendersMergedTruthDiff(t *testing.T) {
 			Edited: []casebase.EditedView{
 				{
 					NodeID: "svc.schema.tbl", Path: "models/tbl.sql", Amended: true,
-					Diff:          "proposal-diff", // must be replaced by the merged-truth diff
+					Diff:          "fix-diff", // must be replaced by the merged-truth diff
 					MergedPrior:   &codeversion.VersionView{RawCode: "select 1", VersionSeq: 3},
 					MergedVersion: &codeversion.VersionView{RawCode: "select 2", VersionSeq: 4},
 				},
@@ -162,23 +162,23 @@ func TestPrecedentService_AmendedEditRendersMergedTruthDiff(t *testing.T) {
 	p := out[0]
 	assert.True(t, p.Resolved)
 	require.Len(t, p.Edited, 1)
-	assert.NotEqual(t, "proposal-diff", p.Edited[0].Diff,
-		"an amended edit with a straddling version renders the merged-truth diff, not the proposal diff")
+	assert.NotEqual(t, "fix-diff", p.Edited[0].Diff,
+		"an amended edit with a straddling version renders the merged-truth diff, not the fix diff")
 	assert.Contains(t, p.Edited[0].Diff, "-select 1")
 	assert.Contains(t, p.Edited[0].Diff, "+select 2")
 	assert.True(t, p.Edited[0].DiffIsShipped, "a merged-NodeVersion straddle marks the diff as the shipped truth")
 }
 
-func TestPrecedentService_ProposalResolvedWithoutDrawnEditsIsResolved(t *testing.T) {
+func TestPrecedentService_FixResolvedWithoutDrawnEditsIsResolved(t *testing.T) {
 	// A rejection resolved by a merged PR whose EDITED targets were all absent
-	// from the graph: the reader surfaces ResolvedByProposal=true but no Edited
+	// from the graph: the reader surfaces ResolvedByFix=true but no Edited
 	// rows and no own-timeline version. The service must still report Resolved.
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
-			Rejection:          casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
-			ResolvingVersion:   nil,
-			Edited:             nil,
-			ResolvedByProposal: true,
+			Rejection:        casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+			ResolvingVersion: nil,
+			Edited:           nil,
+			ResolvedByFix:    true,
 		},
 	}}
 	svc := newPrecedentSvc(r)
@@ -188,7 +188,7 @@ func TestPrecedentService_ProposalResolvedWithoutDrawnEditsIsResolved(t *testing
 	require.Len(t, out, 1)
 
 	p := out[0]
-	assert.True(t, p.Resolved, "a proposal-resolved rejection is resolved even with no drawn edits")
+	assert.True(t, p.Resolved, "a fix-resolved rejection is resolved even with no drawn edits")
 	assert.Nil(t, p.ResolvingVersion, "no own-timeline version to show")
 	assert.Empty(t, p.Edited, "no fabricated edited provenance when none was drawn")
 	assert.Empty(t, p.ResolutionDiff)

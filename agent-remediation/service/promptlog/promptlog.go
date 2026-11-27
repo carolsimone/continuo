@@ -4,7 +4,7 @@
 // the context) the failure it addresses. Nothing else captures this: the
 // caching decorator stores only the completion, and only the corrected source
 // and its diff are persisted as artifacts, so without this there is no record of
-// what was actually fed to the LLM for a given proposal.
+// what was actually fed to the LLM for a given fix.
 //
 // The runner cleans every request with its Redactor before it reaches this
 // port, so a prompt is logged with placeholders in place of the values.

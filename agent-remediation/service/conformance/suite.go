@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -526,9 +526,9 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 			e.triesSpent(f, plan)
 			break
 		}
-		if as := e.attempts(proposal.StatusFailed, proposal.StatusProposed); len(as) == 2 {
+		if as := e.attempts(fix.StatusFailed, fix.StatusProposed); len(as) == 2 {
 			e.verifyError(as[0], f.GateErrors)
-			e.nodes(as[1], proposal.StatusProposed)
+			e.nodes(as[1], fix.StatusProposed)
 		}
 		e.proposedEvents(1)
 		e.noHandedOver()
@@ -541,7 +541,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 			e.membersRanTheirTypes(files, first)
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
 		case workflow.ClusterCrossProject:
-			if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
+			if as := e.attempts(fix.StatusSkipped); len(as) == 1 {
 				e.membersSkipped(first, as[0], model.HandoverReasonDeclined)
 			}
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
@@ -566,7 +566,7 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 	case workflow.ClusterSharedUpstream:
 		e.membersRanTheirTypes(files, first)
 	case workflow.ClusterCrossProject:
-		if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
+		if as := e.attempts(fix.StatusSkipped); len(as) == 1 {
 			e.membersSkipped(first, as[0], model.HandoverReasonPreflightRoundsSpent)
 		}
 		finding, ok := e.firstFinding(first, typ)
@@ -582,10 +582,10 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 // triesSpent expects every one of the plan's tries to have failed its
 // release check with the fixture's gate errors, the journal to hold each try,
 // the failing set handed over as tries_spent by one remediation.handed_over
-// event that counts the tries, and no proposal.
+// event that counts the tries, and no fix.
 func (e *expectation) triesSpent(f Fixture, plan typePlan) {
-	failed := slices.Repeat([]proposal.Status{proposal.StatusFailed}, plan.tries)
-	as := e.attempts(append(failed, proposal.StatusEscalated)...)
+	failed := slices.Repeat([]fix.Status{fix.StatusFailed}, plan.tries)
+	as := e.attempts(append(failed, fix.StatusEscalated)...)
 	for _, a := range as[:min(plan.tries, len(as))] {
 		e.verifyError(a, f.GateErrors)
 	}

@@ -28,7 +28,7 @@ import (
 type testClients struct {
 	catalogClient          catalogv1.CatalogQueryClient
 	runClient              runv1.RunServiceClient
-	agentRemediationClient remediationv1.RemediationProposalsClient
+	agentRemediationClient remediationv1.RemediationFixesClient
 	deadLetterClient       deadletterv1.DeadLetterServiceClient
 	redisClient            *goredis.Client
 	neo4jDriver            neo4jdriver.DriverWithContext
@@ -76,7 +76,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	)
 	require.NoError(t, err, "Failed to connect to run-controller")
 
-	// Setup agent-remediation gRPC client (RemediationProposals, port 50054)
+	// Setup agent-remediation gRPC client (RemediationFixes, port 50054)
 	agentRemediationConn, err := grpc.NewClient(
 		fmt.Sprintf("%s:50054", agentRemediationHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -127,7 +127,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	clients := &testClients{
 		catalogClient:          catalogv1.NewCatalogQueryClient(catalogConn),
 		runClient:              runv1.NewRunServiceClient(runControllerConn),
-		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
+		agentRemediationClient: remediationv1.NewRemediationFixesClient(agentRemediationConn),
 		deadLetterClient:       deadletterv1.NewDeadLetterServiceClient(deadLetterConn),
 		redisClient:            redisClient,
 		neo4jDriver:            neo4jDriver,

@@ -39,12 +39,12 @@ func (f *swapFixture) recordRejection(rej casebase.Rejection) {
 	})
 }
 
-// recordProposal records p and its PR for the fixture's tenant, as the
-// proposals group does.
-func (f *swapFixture) recordProposal(p casebase.Proposal, pr casebase.PullRequest) {
+// recordFix records p and its PR for the fixture's tenant, as the
+// fixes group does.
+func (f *swapFixture) recordFix(p casebase.Fix, pr casebase.PullRequest) {
 	f.t.Helper()
-	f.writeCaseBase(streams.CatalogRemediationPrOpenedProposals, func(ctx context.Context, cb repository.CaseBaseRepository) error {
-		return cb.RecordProposal(ctx, f.tenant, p, pr)
+	f.writeCaseBase(streams.CatalogFixPrOpenedFixes, func(ctx context.Context, cb repository.CaseBaseRepository) error {
+		return cb.RecordFix(ctx, f.tenant, p, pr)
 	})
 }
 
@@ -52,7 +52,7 @@ func (f *swapFixture) recordProposal(p casebase.Proposal, pr casebase.PullReques
 // provenance group does.
 func (f *swapFixture) recordOutcome(o casebase.PullRequestOutcome) {
 	f.t.Helper()
-	f.writeCaseBase(streams.CatalogRemediationPrClosedProvenance, func(ctx context.Context, cb repository.CaseBaseRepository) error {
+	f.writeCaseBase(streams.CatalogFixPrClosedProvenance, func(ctx context.Context, cb repository.CaseBaseRepository) error {
 		return cb.RecordPullRequestOutcome(ctx, f.tenant, o)
 	})
 }
@@ -119,9 +119,9 @@ func rejectionOf(releaseID, nodeID, signature string, at time.Time) casebase.Rej
 	}
 }
 
-func openPullRequest(proposalID, project string, number int, openedAt time.Time) casebase.PullRequest {
+func openPullRequest(fixID, project string, number int, openedAt time.Time) casebase.PullRequest {
 	return casebase.PullRequest{
-		ProposalID: proposalID, Project: project,
+		FixID: fixID, Project: project,
 		PrURL: "https://github.com/org/repo/pull/" + strconv.Itoa(number), PrNumber: number,
 		State: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
 	}
@@ -246,7 +246,7 @@ func TestRecordRejection_BackLinksResolvedByWhenNewerVersionExists(t *testing.T)
 }
 
 // The back-link's existing-edge guard looks only at [:RESOLVED_BY] edges to a
-// :NodeVersion: a merged fix PR's [:RESOLVED_BY] to its :Proposal, drawn
+// :NodeVersion: a merged fix PR's [:RESOLVED_BY] to its :Fix, drawn
 // before the rejection landed, does not suppress the version back-link.
 func TestRecordRejection_BackLinkGuardIsPerNodeVersionFamily(t *testing.T) {
 	f := newSwapFixture(t)
@@ -254,15 +254,15 @@ func TestRecordRejection_BackLinkGuardIsPerNodeVersionFamily(t *testing.T) {
 
 	f.seedVersion("node-a", "hash-a1", t0.Add(time.Hour))
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel-a", Project: "core", Outcome: "merged",
+		FixID: "fix", ReleaseID: "rel-a", Project: "core", Outcome: "merged",
 		ClosedAt: t0, ResolvedNodeIDs: []string{"node-a"},
 	})
 	f.recordRejection(rejectionOf("rel-a", "node-a", "sig-a", t0))
 	assert.Equal(t, []string{"hash-a1"}, f.resolvedByVersion("rel-a", "node-a"),
-		"the proposal-resolved rejection still gets its version back-link")
+		"the fix-resolved rejection still gets its version back-link")
 	assert.Equal(t, int64(1), f.count(`
-		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-a', node_id: 'node-a'})-[r:RESOLVED_BY]->(:Proposal {tenant_id: $tenant_id})
-		RETURN count(r) AS n`, nil), "the proposal edge is untouched")
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-a', node_id: 'node-a'})-[r:RESOLVED_BY]->(:Fix {tenant_id: $tenant_id})
+		RETURN count(r) AS n`, nil), "the fix edge is untouched")
 
 	f.seedVersion("node-b", "hash-b1", t0.Add(time.Hour))
 	f.recordRejection(rejectionOf("rel-b", "node-b", "sig-b", t0))
@@ -288,23 +288,23 @@ func TestRecordRejection_BackLinksResolvedByOnRevert(t *testing.T) {
 		"the revert links to the current version, found through [:CURRENT]'s promoted_at")
 }
 
-// ── RecordProposal ──────────────────────────────────────────────────────────
+// ── RecordFix ──────────────────────────────────────────────────────────
 
-// A proposal landing before its rejection creates a stub :Rejection to anchor
+// A fix landing before its rejection creates a stub :Rejection to anchor
 // its [:PROPOSED]; the rejection completes that stub in place; a replayed
-// proposal converges on one :Proposal and one :PullRequest and leaves the
+// fix converges on one :Fix and one :PullRequest and leaves the
 // completed rejection alone.
-func TestRecordProposal_CreatesStubRejection(t *testing.T) {
+func TestRecordFix_CreatesStubRejection(t *testing.T) {
 	f := newSwapFixture(t)
 	openedAt := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
-	p := casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "node"}
-	pr := openPullRequest("prop", "core", 42, openedAt)
+	p := casebase.Fix{FixID: "fix", ReleaseID: "rel", NodeID: "node"}
+	pr := openPullRequest("fix", "core", 42, openedAt)
 
-	f.recordProposal(p, pr)
+	f.recordFix(p, pr)
 	stub := f.rows(`
 		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'})-[:PROPOSED]->
-		      (:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'})-[:HAS_PR]->
-		      (pl:PullRequest {tenant_id: $tenant_id, proposal_id: 'prop', project: 'core'})
+		      (:Fix {tenant_id: $tenant_id, fix_id: 'fix'})-[:HAS_PR]->
+		      (pl:PullRequest {tenant_id: $tenant_id, fix_id: 'fix', project: 'core'})
 		RETURN rej.stub AS stub, properties(pl) AS pl`, nil)
 	require.Len(t, stub, 1, "a stub :Rejection with a [:PROPOSED]->[:HAS_PR] chain")
 	isStub, _ := stub[0].Get("stub")
@@ -315,8 +315,8 @@ func TestRecordProposal_CreatesStubRejection(t *testing.T) {
 	assert.EqualValues(t, pr.PrNumber, pl["pr_number"])
 	assert.Equal(t, "open", pl["pr_state"])
 	assert.Equal(t, pr.OpenedBy, pl["opened_by"])
-	assert.Nil(t, f.scalar(`MATCH (p:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'}) RETURN p.pr_url AS v`, nil),
-		"the PR facts live on the :PullRequest, not the :Proposal")
+	assert.Nil(t, f.scalar(`MATCH (p:Fix {tenant_id: $tenant_id, fix_id: 'fix'}) RETURN p.pr_url AS v`, nil),
+		"the PR facts live on the :PullRequest, not the :Fix")
 
 	rej := rejectionOf("rel", "node", "sig", time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC))
 	rej.RawCode, rej.ContentHash = "select 1", "hash-1"
@@ -329,23 +329,23 @@ func TestRecordProposal_CreatesStubRejection(t *testing.T) {
 	assert.Equal(t, rej.Stage, props["stage"])
 	assert.Equal(t, rej.RawCode, props["raw_code"])
 	assert.Equal(t, int64(1), f.count(`
-		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'})-[r:PROPOSED]->(:Proposal {tenant_id: $tenant_id})
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'})-[r:PROPOSED]->(:Fix {tenant_id: $tenant_id})
 		RETURN count(r) AS n`, nil), "[:PROPOSED] survives the stub being completed")
 
-	f.recordProposal(p, pr)
-	assert.Equal(t, int64(1), f.count(`MATCH (p:Proposal {tenant_id: $tenant_id}) RETURN count(p) AS n`, nil))
+	f.recordFix(p, pr)
+	assert.Equal(t, int64(1), f.count(`MATCH (p:Fix {tenant_id: $tenant_id}) RETURN count(p) AS n`, nil))
 	assert.Equal(t, int64(1), f.count(`MATCH (p:PullRequest {tenant_id: $tenant_id}) RETURN count(p) AS n`, nil))
 	after := f.rows(`MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'}) RETURN rej.stub AS stub, rej.at AS at`, nil)
 	require.Len(t, after, 1)
 	stubAfter, _ := after[0].Get("stub")
-	assert.Equal(t, false, stubAfter, "a replayed proposal does not turn the rejection back into a stub")
+	assert.Equal(t, false, stubAfter, "a replayed fix does not turn the rejection back into a stub")
 	atAfter, _ := after[0].Get("at")
-	assert.True(t, rej.At.Equal(atAfter.(time.Time)), "nor overwrite its classified-at with the proposal's opened_at")
+	assert.True(t, rej.At.Equal(atAfter.(time.Time)), "nor overwrite its classified-at with the fix's opened_at")
 }
 
 // ── tenancy ─────────────────────────────────────────────────────────────────
 
-// Two tenants record the same rejection, proposal and outcome: each tenant
+// Two tenants record the same rejection, fix and outcome: each tenant
 // gets its own nodes, its own signature hub and its own links, and neither
 // write reaches the other tenant's nodes.
 func TestCaseBase_LeavesOtherTenantsAlone(t *testing.T) {
@@ -359,14 +359,14 @@ func TestCaseBase_LeavesOtherTenantsAlone(t *testing.T) {
 	beforeB := b.snapshot()
 
 	a.recordRejection(rejectionOf("rel", "node", "sig", at))
-	a.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "node"}, openPullRequest("prop", "core", 7, at))
+	a.recordFix(casebase.Fix{FixID: "fix", ReleaseID: "rel", NodeID: "node"}, openPullRequest("fix", "core", 7, at))
 	a.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: at.Add(time.Hour),
+		FixID: "fix", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: at.Add(time.Hour),
 		ResolvedNodeIDs: []string{"node"}, Edits: []casebase.EditOutcome{{Path: "models/edited.sql", TargetNodeID: "edited"}},
 	})
 	assert.Equal(t, beforeB, b.snapshot(), "tenant a's case base writes nothing of tenant b")
 	assert.Equal(t, int64(1), a.failedEdges("rel", "node"))
-	assert.Equal(t, int64(1), a.count(`MATCH (:Proposal {tenant_id: $tenant_id})-[r:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: 'edited'}) RETURN count(r) AS n`, nil))
+	assert.Equal(t, int64(1), a.count(`MATCH (:Fix {tenant_id: $tenant_id})-[r:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: 'edited'}) RETURN count(r) AS n`, nil))
 
 	b.recordRejection(rejectionOf("rel", "node", "sig", at))
 	for _, f := range []*swapFixture{a, b} {

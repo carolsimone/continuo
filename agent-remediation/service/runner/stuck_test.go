@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
 
@@ -67,14 +67,14 @@ func (h *harness) requireEndedAsStuck(id uuid.UUID, want string, tryStatus remed
 	assert.Contains(h.t, rem.Failure, want)
 	assert.Equal(h.t, tryStatus, h.try(id, rem.CurrentTry).Status, "the try is left where it stopped")
 	p := h.attempt(h.try(id, rem.CurrentTry).Attempt)
-	assert.Equal(h.t, proposal.StatusFailed, p.Proposal.Status, "the attempt row is failed with the reason")
-	reason := p.Proposal.Rationale
+	assert.Equal(h.t, fix.StatusFailed, p.Fix.Status, "the attempt row is failed with the reason")
+	reason := p.Fix.Rationale
 	if tryStatus == remediation.TryVerifying {
 		reason = p.VerifyError
 	}
 	assert.Equal(h.t, deadLetteredReason(rem), reason)
-	for _, o := range p.Proposal.NodeOutcomes {
-		assert.Equal(h.t, proposal.StatusFailed, o.Status)
+	for _, o := range p.Fix.NodeOutcomes {
+		assert.Equal(h.t, fix.StatusFailed, o.Status)
 	}
 	assert.Len(h.t, h.deadLetters(), 1, "the trigger is dead-lettered")
 }
@@ -166,7 +166,7 @@ func TestRunner_ADriveEndsAStuckRemediationBeforeItsNextStep(t *testing.T) {
 		assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
 		assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run, the last time with: database down")
 		assert.Empty(t, h.store.Tries(id), "no try opens")
-		assert.Empty(t, h.proposals())
+		assert.Empty(t, h.fixes())
 	})
 }
 
@@ -213,7 +213,7 @@ func TestRunner_PollGateEndsAStuckRemediationBeforeItReadsTheGate(t *testing.T) 
 			id := h.accept(trigger("compile", compileNode("svc-a")))
 			require.NoError(t, h.runner.Drive(ctx, id))
 			require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-			h.checks.answer(proposal.PhasePassed, nil)
+			h.checks.answer(fix.PhasePassed, nil)
 			tc.stick(h, id)
 
 			require.NoError(t, h.poll(id))
@@ -221,8 +221,8 @@ func TestRunner_PollGateEndsAStuckRemediationBeforeItReadsTheGate(t *testing.T) 
 			h.requireEndedAsStuck(id, tc.want, remediation.TryVerifying)
 			assert.Zero(t, h.checks.statusReads(), "the gate is not read")
 			assert.Empty(t, h.proposedEvents())
-			assert.Equal(t, []proposal.ReleaseCheck{{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: proposal.PhaseQueued}},
-				h.attempt(1).Proposal.ReleaseChecks, "the attempt row keeps the runs it recorded")
+			assert.Equal(t, []fix.ReleaseCheck{{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: fix.PhaseQueued}},
+				h.attempt(1).Fix.ReleaseChecks, "the attempt row keeps the runs it recorded")
 		})
 	}
 }

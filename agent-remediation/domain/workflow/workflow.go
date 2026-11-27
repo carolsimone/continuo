@@ -128,7 +128,7 @@ const (
 type Output struct {
 	Action OutputAction
 	// Emits is the base name of the stream the output publishes on
-	// ("remediation.proposed"), empty when it publishes nothing.
+	// ("fix.proposed"), empty when it publishes nothing.
 	Emits string
 	Pos   Pos
 }

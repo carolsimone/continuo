@@ -67,7 +67,7 @@ type HealTriggeredAncestor struct {
 	Depth    int    `json:"depth"`
 }
 
-// Unfixable is the classifier's verdict that no fix proposal can help a node.
+// Unfixable is the classifier's verdict that no fix can help a node.
 // Reason is model.HandoverReasonClassifierInfra or
 // model.HandoverReasonClassifierUnhealableParse; Detail is what actually
 // failed: the failure's key error line, cleaned of credentials and email

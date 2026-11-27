@@ -32,7 +32,7 @@ export default function ReleasesPanel() {
 
   useEffect(() => {
     const f = () => {
-      fetch('/api/releases/live-release').then(r => r.json()).then(setLiveRelease).catch(() => {});
+      fetch('/api/live-release').then(r => r.json()).then(setLiveRelease).catch(() => {});
       fetch('/api/release-queue').then(r => r.json()).then(setReleaseQueue).catch(() => {});
     };
     f();

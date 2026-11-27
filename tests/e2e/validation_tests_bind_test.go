@@ -97,7 +97,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 		require.Equal(t, "dbt-test", n.NodeType)
 		require.Nil(t, n.Unfixable, "a test that fails to bind is no infrastructure failure, so the classifier leaves it to the agent")
 	}
-	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "skipped", batchProposalBudget)
+	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "skipped", batchFixBudget)
 	outcomes := decodeNodeOutcomes(t, row.NodeOutcomes)
 	for _, id := range []string{tbindNotNullTestID, tbindSingularTestID} {
 		require.Equal(t, "skipped", outcomes[id].Status)

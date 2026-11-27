@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/overlay"
@@ -161,7 +161,7 @@ func (g *ReleaseCheck) Submit(ctx context.Context, in step.GateInput) (step.Gate
 		return step.GateVerdict{}, err
 	}
 	t, attempt := in.Trigger, in.Try.Attempt
-	releaseChecks := make([]proposal.ReleaseCheck, 0, len(checks))
+	releaseChecks := make([]fix.ReleaseCheck, 0, len(checks))
 	for _, r := range checks {
 		project := r.edits.Project
 		overlayURI := ""
@@ -223,8 +223,8 @@ func (g *ReleaseCheck) Submit(ctx context.Context, in step.GateInput) (step.Gate
 		g.logger.Info("release check submitted",
 			"release", t.ReleaseID, "attempt", attempt, "project", project,
 			"check", r.checkID, "kind", r.kind, "edits", len(r.edits.Edits))
-		releaseChecks = append(releaseChecks, proposal.ReleaseCheck{
-			Project: project, Kind: r.kind, CheckID: r.checkID, Phase: proposal.PhaseQueued,
+		releaseChecks = append(releaseChecks, fix.ReleaseCheck{
+			Project: project, Kind: r.kind, CheckID: r.checkID, Phase: fix.PhaseQueued,
 		})
 	}
 	return step.GateVerdict{
@@ -253,8 +253,8 @@ func (g *ReleaseCheck) Poll(ctx context.Context, in step.GateInput, waiting reme
 	}
 	got := read{nodeErrors: map[string]string{}}
 	for _, r := range planned {
-		got.checks = append(got.checks, proposal.ReleaseCheck{
-			Project: r.edits.Project, Kind: r.kind, CheckID: r.checkID, Phase: proposal.PhaseQueued,
+		got.checks = append(got.checks, fix.ReleaseCheck{
+			Project: r.edits.Project, Kind: r.kind, CheckID: r.checkID, Phase: fix.PhaseQueued,
 		})
 	}
 	if ids := checkIDs(got.checks); !slices.Equal(ids, waiting.CheckIDs) {
@@ -268,7 +268,7 @@ func (g *ReleaseCheck) Poll(ctx context.Context, in step.GateInput, waiting reme
 		}
 		got.checks[i] = applyStatus(got.checks[i], st)
 		got.read = i + 1
-		if st.Phase == proposal.PhaseFailed {
+		if st.Phase == fix.PhaseFailed {
 			for node, msg := range st.NodeErrors {
 				got.nodeErrors[node] = msg
 			}

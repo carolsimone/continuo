@@ -1,7 +1,7 @@
 // Package memory is the in-memory implementation of the unit of work and of
 // every repository the runner uses. It keeps the semantics of the Postgres
 // adapters that the code above them relies on: compare-and-set updates, the
-// (release_id, attempt) uniqueness of proposals, message-processing dedup on
+// (release_id, attempt) uniqueness of fixes, message-processing dedup on
 // both axes, foreign keys and cascades, and leases. The runner's tests and the
 // repository contract test run against it.
 package memory
@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -56,10 +56,10 @@ func (s *Store) RemediationRepository() repository.RemediationRepository {
 	return &remediationRepository{gate: s.autocommit}
 }
 
-// ProposalRepository returns the proposal repository for use outside a unit of
+// FixRepository returns the fix repository for use outside a unit of
 // work, as the previous-tries step's attempt lister uses it.
-func (s *Store) ProposalRepository() repository.ProposalRepository {
-	return &proposalRepository{gate: s.autocommit}
+func (s *Store) FixRepository() repository.FixRepository {
+	return &fixRepository{gate: s.autocommit}
 }
 
 // autocommit runs fn on the committed data under the store's lock.
@@ -69,11 +69,11 @@ func (s *Store) autocommit(fn func(*data) error) error {
 	return fn(s.data)
 }
 
-// StoredProposal is a proposal row as stored: the proposal with the id the
+// StoredFix is a fix row as stored: the fix with the id the
 // store gave it and the verify error the row recorded.
-type StoredProposal struct {
+type StoredFix struct {
 	ID          string
-	Proposal    proposal.Proposal
+	Fix         fix.Fix
 	VerifyError string
 }
 
@@ -84,12 +84,12 @@ func read[T any](s *Store, fn func(*data) T) T {
 	return fn(s.data)
 }
 
-// Proposals returns copies of the committed proposal rows, in insertion order.
-func (s *Store) Proposals() []StoredProposal {
-	return read(s, func(d *data) []StoredProposal {
-		out := make([]StoredProposal, 0, len(d.proposals))
-		for _, row := range d.proposals {
-			out = append(out, StoredProposal{ID: row.id, Proposal: cloneProposal(row.p), VerifyError: row.verifyError})
+// Fixes returns copies of the committed fix rows, in insertion order.
+func (s *Store) Fixes() []StoredFix {
+	return read(s, func(d *data) []StoredFix {
+		out := make([]StoredFix, 0, len(d.fixes))
+		for _, row := range d.fixes {
+			out = append(out, StoredFix{ID: row.id, Fix: cloneFix(row.p), VerifyError: row.verifyError})
 		}
 		return out
 	})
@@ -235,9 +235,9 @@ func (u *UnitOfWork) gate(fn func(*data) error) error {
 	return fn(u.work)
 }
 
-// ProposalRepo returns the proposal repository bound to the transaction.
-func (u *UnitOfWork) ProposalRepo() repository.ProposalRepository {
-	return &proposalRepository{gate: u.gate}
+// FixRepo returns the fix repository bound to the transaction.
+func (u *UnitOfWork) FixRepo() repository.FixRepository {
+	return &fixRepository{gate: u.gate}
 }
 
 // RemediationRepo returns the remediation repository bound to the transaction.

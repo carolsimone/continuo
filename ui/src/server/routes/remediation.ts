@@ -65,7 +65,7 @@ async function safeFailPullRequest(
 ): Promise<void> {
   if (!claimedAt) {
     console.warn(
-      '[remediation] skipping failPullRequest for proposal %s project %s: no claimed_at available (version skew) — the opening sweep will recover this claim',
+      '[remediation] skipping failPullRequest for fix %s project %s: no claimed_at available (version skew) — the opening sweep will recover this claim',
       id,
       project,
     );
@@ -75,7 +75,7 @@ async function safeFailPullRequest(
     await remediation.failPullRequest({ id, claimed_at: claimedAt, project });
   } catch (err: any) {
     console.error(
-      '[remediation] failPullRequest failed for proposal %s project %s (status=%s): %s — the opening sweep will recover this claim',
+      '[remediation] failPullRequest failed for fix %s project %s (status=%s): %s — the opening sweep will recover this claim',
       id,
       project,
       err?.code ?? 'unknown',
@@ -137,21 +137,21 @@ export function createRemediationRouter(
 ): Router {
   const router = Router();
 
-  // GET /api/remediation/proposals?status=&pr_state=&limit=&project=
-  // `project` narrows to proposals whose project set includes it (forwarded to
-  // ListProposals, which matches when `project` is among a proposal's projects).
-  router.get('/proposals', async (req, res) => {
+  // GET /api/remediation/fixes?status=&pr_state=&limit=&project=
+  // `project` narrows to fixes whose project set includes it (forwarded to
+  // ListFixes, which matches when `project` is among a fix's projects).
+  router.get('/fixes', async (req, res) => {
     const params: Record<string, string> = {};
     for (const k of ['status', 'pr_state', 'limit', 'project']) {
       const v = req.query[k];
       if (typeof v === 'string' && v !== '') params[k] = v;
     }
     try {
-      const result = await remediation.listProposals(params);
-      res.json({ proposals: result.proposals ?? [] });
+      const result = await remediation.listFixes(params);
+      res.json({ fixes: result.fixes ?? [] });
     } catch (err: any) {
       console.error(
-        '[remediation] listProposals failed (status=%s): %s',
+        '[remediation] listFixes failed (status=%s): %s',
         err?.code ?? 'unknown',
         err?.message ?? String(err),
       );
@@ -159,17 +159,17 @@ export function createRemediationRouter(
     }
   });
 
-  // GET /api/remediation/proposals/:id
-  router.get('/proposals/:id', async (req, res) => {
+  // GET /api/remediation/fixes/:id
+  router.get('/fixes/:id', async (req, res) => {
     try {
-      const proposal = await remediation.getProposal({ id: req.params.id });
-      res.json(proposal);
+      const fix = await remediation.getFix({ id: req.params.id });
+      res.json(fix);
     } catch (err: any) {
       if (err?.code === grpc.status.NOT_FOUND) {
-        return res.status(404).json({ error: 'proposal not found' });
+        return res.status(404).json({ error: 'fix not found' });
       }
       console.error(
-        '[remediation] getProposal failed for proposal %s (status=%s): %s',
+        '[remediation] getFix failed for fix %s (status=%s): %s',
         req.params.id,
         err?.code ?? 'unknown',
         err?.message ?? String(err),
@@ -180,7 +180,7 @@ export function createRemediationRouter(
 
   // openPullRequestForProject drives BeginPullRequest -> S3 fetch -> GitHub
   // create -> RecordPullRequest for one owning-project group of the
-  // proposal. It mirrors the single-shot flow this route used before the
+  // fix. It mirrors the single-shot flow this route used before the
   // per-project split, scoped to one claim, and never throws: every failure
   // mode resolves to a PullRequestError so the caller can keep looping over
   // the remaining projects instead of losing an already-created PR.
@@ -200,7 +200,7 @@ export function createRemediationRouter(
       if (err?.code === grpc.status.FAILED_PRECONDITION) {
         // agent-remediation maps three distinct causes to FAILED_PRECONDITION:
         // this project already has a pull request (the message embeds its
-        // URL), the proposal has no real source to fix, or the claim raced
+        // URL), the fix has no real source to change, or the claim raced
         // past 'proposed' (a release check reached a verdict, or the
         // attempt budget was exhausted) since pr_projects was read. Only the
         // first is a success — skip creating a duplicate and report the
@@ -215,7 +215,7 @@ export function createRemediationRouter(
           return { ok: true, value: { project, pr_url, pr_number: extractPrNumber(pr_url) }, warnings: [] };
         }
         console.error(
-          '[remediation] beginPullRequest refused for proposal %s project %s: %s',
+          '[remediation] beginPullRequest refused for fix %s project %s: %s',
           id,
           project,
           message,
@@ -223,7 +223,7 @@ export function createRemediationRouter(
         return { ok: false, error: { project, error: message } };
       }
       console.error(
-        '[remediation] beginPullRequest failed for proposal %s project %s (status=%s): %s',
+        '[remediation] beginPullRequest failed for fix %s project %s (status=%s): %s',
         id,
         project,
         err?.code ?? 'unknown',
@@ -270,12 +270,12 @@ export function createRemediationRouter(
     // Release the claim and fail loudly rather than open one.
     if (edits.length === 0) {
       console.error(
-        '[remediation] proposal %s project %s was claimed with no file edits and no single file to fall back to — refusing to open an empty pull request',
+        '[remediation] fix %s project %s was claimed with no file edits and no single file to fall back to — refusing to open an empty pull request',
         id,
         project,
       );
       await safeFailPullRequest(remediation, id, claimedAt, project);
-      return { ok: false, error: { project, error: 'proposal carries no file edits' } };
+      return { ok: false, error: { project, error: 'fix carries no file edits' } };
     }
 
     // Fetch the proposed content of every edited file from S3.
@@ -291,7 +291,7 @@ export function createRemediationRouter(
       );
     } catch (err) {
       console.error(
-        '[remediation] failed to fetch proposed file content for proposal %s project %s: %s',
+        '[remediation] failed to fetch proposed file content for fix %s project %s: %s',
         id,
         project,
         err instanceof Error ? err.message : String(err),
@@ -300,13 +300,13 @@ export function createRemediationRouter(
       return { ok: false, error: { project, error: 'failed to fetch proposed file content from S3' } };
     }
 
-    // Build the PR title and body. A batched proposal resolves several
+    // Build the PR title and body. A batched fix resolves several
     // failing nodes under one attempt, so the title names how many rather
-    // than picking one; a single-node proposal (or a legacy row with no
+    // than picking one; a single-node fix (or a legacy row with no
     // resolved_node_ids) still names that one node exactly as before. A
-    // proposal split across several owning projects suffixes each project's
+    // fix split across several owning projects suffixes each project's
     // title with its name so the PR list isn't several identical titles;
-    // the legacy whole-proposal group (project === '') carries no suffix,
+    // the legacy whole-fix group (project === '') carries no suffix,
     // keeping today's exact title unchanged.
     const nodeIds: string[] = (claim.resolved_node_ids && claim.resolved_node_ids.length > 0)
       ? claim.resolved_node_ids
@@ -317,7 +317,7 @@ export function createRemediationRouter(
       : `[remediation] fix ${nodeIds.length} nodes (release ${releaseId})`;
     if (project) title += ` (${project})`;
 
-    // A single inline preview keeps the body readable on a multi-file proposal;
+    // A single inline preview keeps the body readable on a multi-file fix;
     // the rest of the diffs are one click away in the pull request itself.
     let diff: string | undefined;
     if (edits[0].diff_uri) {
@@ -327,7 +327,7 @@ export function createRemediationRouter(
         // Diff is best-effort — omit on failure, but still log why so a
         // missing diff in a PR body is diagnosable without a repro.
         console.warn(
-          '[remediation] failed to fetch proposed diff for proposal %s project %s (continuing without it): %s',
+          '[remediation] failed to fetch proposed diff for fix %s project %s (continuing without it): %s',
           id,
           project,
           err instanceof Error ? err.message : String(err),
@@ -336,7 +336,7 @@ export function createRemediationRouter(
     }
 
     // The owners of the fixed nodes are asked to review the pull request. A
-    // claim of a proposal that records no owners (a row with no remediation id)
+    // claim of a fix that records no owners (a row with no remediation id)
     // has no approvers, so it asks nobody and its body names no owners.
     // A team is asked only when its org owns the repository (claim.repo is
     // "owner/name"); another org's team is listed.
@@ -369,7 +369,7 @@ export function createRemediationRouter(
       pr = await creator.create({
         repo: claim.repo,
         baseBranch: 'main',
-        // The commit the proposal was generated against. The branch is cut
+        // The commit the fix was generated against. The branch is cut
         // from main's head, and the creator refuses (FileChangedOnBaseBranchError)
         // when a file the fix edits is no longer the same on main, rather
         // than overwrite main's newer version of it.
@@ -389,7 +389,7 @@ export function createRemediationRouter(
       // failure, and the operator is told which files changed and what to do.
       if (err instanceof FileChangedOnBaseBranchError) {
         console.warn(
-          '[remediation] pull request not opened for proposal %s project %s: %s',
+          '[remediation] pull request not opened for fix %s project %s: %s',
           id,
           project,
           err.message,
@@ -397,14 +397,14 @@ export function createRemediationRouter(
         await safeFailPullRequest(remediation, id, claimedAt, project);
         return { ok: false, error: { project, error: changedOnBaseBranchText(err) } };
       }
-      // Log the proposal id plus the error's status/message (Octokit errors
+      // Log the fix id plus the error's status/message (Octokit errors
       // carry both) so a GitHub-side rejection is diagnosable without a
       // repro. Never log the full error object here: an Octokit
       // RequestError can carry the outgoing request, including the
       // Authorization header used to authenticate as the GitHub App.
       const e = err as { status?: number; message?: string };
       console.error(
-        '[remediation] pull request creation failed for proposal %s project %s (status=%s): %s',
+        '[remediation] pull request creation failed for fix %s project %s (status=%s): %s',
         id,
         project,
         e?.status ?? 'unknown',
@@ -431,7 +431,7 @@ export function createRemediationRouter(
       });
     } catch (err) {
       console.error(
-        '[remediation] recordPullRequest failed for proposal %s project %s (PR %s); proposal may remain in pr_state=opening — the reconciler opening sweep recovers it automatically (see REMEDIATION_PR_OPENING_GRACE_PERIOD):',
+        '[remediation] recordPullRequest failed for fix %s project %s (PR %s); fix may remain in pr_state=opening — the reconciler opening sweep recovers it automatically (see REMEDIATION_PR_OPENING_GRACE_PERIOD):',
         id,
         project,
         pr.url,
@@ -443,25 +443,25 @@ export function createRemediationRouter(
     // some owners; each refusal is logged and reported beside the pull request.
     const warnings: PullRequestWarning[] = [];
     for (const warning of pr.warnings ?? []) {
-      console.warn('[remediation] reviewer request refused for proposal %s project %s: %s', id, project, warning);
+      console.warn('[remediation] reviewer request refused for fix %s project %s: %s', id, project, warning);
       warnings.push({ project, warning });
     }
     return { ok: true, value: { project, pr_url: pr.url, pr_number: pr.number }, warnings };
   }
 
-  // POST /api/remediation/proposals/:id/pull-request
+  // POST /api/remediation/fixes/:id/pull-request
   // Operator gating is enforced automatically by the app-level requireApiAuth
   // middleware applied to all /api routes — no role check is needed here.
   //
-  // A proposal opens one pull request per owning project — pr_projects names
-  // the sorted groups ([""] for a legacy, unsplit proposal). Every group is
+  // A fix opens one pull request per owning project — pr_projects names
+  // the sorted groups ([""] for a legacy, unsplit fix). Every group is
   // attempted; a group that already has a pull request is skipped and listed
   // as-is, and a group that fails is reported in `errors` without losing the
   // groups that already succeeded. The response is 200 when every group
   // succeeded, 207 when some but not all did, and 502 only when none did. A
   // group whose pull request opened but whose owners GitHub would not take as
   // reviewers is a success, listed in `warnings` with the reason.
-  router.post('/proposals/:id/pull-request', async (req, res) => {
+  router.post('/fixes/:id/pull-request', async (req, res) => {
     const id = req.params.id;
 
     // 503 when GitHub App credentials are not configured.
@@ -470,17 +470,17 @@ export function createRemediationRouter(
     }
     const creator = prCreator;
 
-    // Fetch the proposal first to learn which owning-project groups its pull
+    // Fetch the fix first to learn which owning-project groups its pull
     // requests split into.
-    let proposal: any;
+    let fix: any;
     try {
-      proposal = await remediation.getProposal({ id });
+      fix = await remediation.getFix({ id });
     } catch (err: any) {
       if (err?.code === grpc.status.NOT_FOUND) {
-        return res.status(404).json({ error: 'proposal not found' });
+        return res.status(404).json({ error: 'fix not found' });
       }
       console.error(
-        '[remediation] getProposal failed for proposal %s (status=%s): %s',
+        '[remediation] getFix failed for fix %s (status=%s): %s',
         id,
         err?.code ?? 'unknown',
         err?.message ?? String(err),
@@ -489,9 +489,9 @@ export function createRemediationRouter(
     }
 
     // pr_projects is always non-empty on the wire — [""] for a legacy,
-    // unsplit proposal — but tolerate an absent/empty field defensively
+    // unsplit fix — but tolerate an absent/empty field defensively
     // against an older peer that predates it.
-    const projects: string[] = [...(proposal.pr_projects && proposal.pr_projects.length > 0 ? proposal.pr_projects : [''])].sort();
+    const projects: string[] = [...(fix.pr_projects && fix.pr_projects.length > 0 ? fix.pr_projects : [''])].sort();
     const openedBy = (req as any).user?.userId ?? '';
 
     const pull_requests: PullRequestResult[] = [];

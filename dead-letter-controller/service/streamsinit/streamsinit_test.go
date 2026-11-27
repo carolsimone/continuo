@@ -116,11 +116,11 @@ func TestRunCreatesEveryGroupOfTheContract(t *testing.T) {
 
 func TestRunCreatesAStreamThatHasNoGroup(t *testing.T) {
 	admin := newFakeAdmin()
-	plan := Plan{Groups: map[string][]string{streams.RemediationProposedV1: {}}, CreateStreams: true}
+	plan := Plan{Groups: map[string][]string{streams.FixProposedV1: {}}, CreateStreams: true}
 	if err := Run(context.Background(), admin, plan, discardLogger()); err != nil {
 		t.Fatal(err)
 	}
-	if !admin.streams[streams.RemediationProposedV1] {
+	if !admin.streams[streams.FixProposedV1] {
 		t.Fatalf("the group-less stream was not created: %v", admin.streams)
 	}
 	if len(admin.groups) != 0 {

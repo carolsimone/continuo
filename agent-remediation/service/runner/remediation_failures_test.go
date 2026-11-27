@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
@@ -89,7 +89,7 @@ func TestSweeper_EndsARemediationWhoseTryCannotOpen(t *testing.T) {
 	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run, the last time with: ")
 	assert.Contains(t, rem.Failure, "commit failed")
 	assert.Empty(t, rem.LeaseOwner, "the sweeper lets go of the lease")
-	assert.Empty(t, h.proposals(), "no attempt row was ever written")
+	assert.Empty(t, h.fixes(), "no attempt row was ever written")
 }
 
 // The count is of failures before a try could open: a try that opens clears
@@ -160,9 +160,9 @@ func TestSweeper_EndsAVerifyingRemediationThatCannotBeLoaded(t *testing.T) {
 	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status, "the try is left for a redrive to resume")
 	row := h.attempt(1)
-	assert.Equal(t, proposal.StatusFailed, row.Proposal.Status)
+	assert.Equal(t, fix.StatusFailed, row.Fix.Status)
 	assert.Equal(t, deadLetteredReason(rem), row.VerifyError, "the verifying attempt row is failed with the reason")
-	assert.Equal(t, []string{svcACheck1}, []string{row.Proposal.ReleaseChecks[0].CheckID}, "it keeps the run it recorded")
+	assert.Equal(t, []string{svcACheck1}, []string{row.Fix.ReleaseChecks[0].CheckID}, "it keeps the run it recorded")
 }
 
 // sweepUnclaimed lets go of the runner's lease on the remediation and sweeps,
@@ -203,14 +203,14 @@ func TestSweeper_OnlyFailedPollLoadsInARowEndAVerifyingRemediation(t *testing.T)
 	failPolls(remediationFailureLimit - 1)
 	h.sweepUnclaimed(id)
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "four in a row after a good poll do not end it")
-	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
 
 	failPolls(1)
 	h.sweepUnclaimed(id)
 	rem = h.remediation(id)
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status, "the fifth in a row ends it")
 	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
-	assert.Equal(t, proposal.StatusFailed, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusFailed, h.attempt(1).Fix.Status)
 }
 
 // The same in a drafting try, where every step loads the remediation first: a
@@ -249,5 +249,5 @@ func TestSweeper_OnlyFailedDriveLoadsInARowEndADraftingRemediation(t *testing.T)
 	rem = h.remediation(id)
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status, "the fifth in a row ends it")
 	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
-	assert.Equal(t, proposal.StatusFailed, h.inFlightRow().Status)
+	assert.Equal(t, fix.StatusFailed, h.inFlightRow().Status)
 }

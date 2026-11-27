@@ -19,275 +19,275 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RemediationProposals_ListProposals_FullMethodName     = "/remediation.v1.RemediationProposals/ListProposals"
-	RemediationProposals_GetProposal_FullMethodName       = "/remediation.v1.RemediationProposals/GetProposal"
-	RemediationProposals_BeginPullRequest_FullMethodName  = "/remediation.v1.RemediationProposals/BeginPullRequest"
-	RemediationProposals_RecordPullRequest_FullMethodName = "/remediation.v1.RemediationProposals/RecordPullRequest"
-	RemediationProposals_FailPullRequest_FullMethodName   = "/remediation.v1.RemediationProposals/FailPullRequest"
+	RemediationFixes_ListFixes_FullMethodName         = "/remediation.v1.RemediationFixes/ListFixes"
+	RemediationFixes_GetFix_FullMethodName            = "/remediation.v1.RemediationFixes/GetFix"
+	RemediationFixes_BeginPullRequest_FullMethodName  = "/remediation.v1.RemediationFixes/BeginPullRequest"
+	RemediationFixes_RecordPullRequest_FullMethodName = "/remediation.v1.RemediationFixes/RecordPullRequest"
+	RemediationFixes_FailPullRequest_FullMethodName   = "/remediation.v1.RemediationFixes/FailPullRequest"
 )
 
-// RemediationProposalsClient is the client API for RemediationProposals service.
+// RemediationFixesClient is the client API for RemediationFixes service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// RemediationProposals serves the proposal read-path and pull-request lifecycle
-// for the agent-remediation. The UI reads proposals via ListProposals/GetProposal
+// RemediationFixes serves the fix read-path and pull-request lifecycle
+// for the agent-remediation. The UI reads fixes via ListFixes/GetFix
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
-type RemediationProposalsClient interface {
-	// ListProposals returns proposals filtered by status, pr_state, release_id,
+type RemediationFixesClient interface {
+	// ListFixes returns fixes filtered by status, pr_state, release_id,
 	// project, and limit.
-	ListProposals(ctx context.Context, in *ListProposalsRequest, opts ...grpc.CallOption) (*ListProposalsResponse, error)
-	// GetProposal returns a single proposal by ID.
-	GetProposal(ctx context.Context, in *GetProposalRequest, opts ...grpc.CallOption) (*Proposal, error)
-	// BeginPullRequest atomically claims a proposal for PR creation and returns
+	ListFixes(ctx context.Context, in *ListFixesRequest, opts ...grpc.CallOption) (*ListFixesResponse, error)
+	// GetFix returns a single fix by ID.
+	GetFix(ctx context.Context, in *GetFixRequest, opts ...grpc.CallOption) (*Fix, error)
+	// BeginPullRequest atomically claims a fix for PR creation and returns
 	// the data needed to open a GitHub pull-request.
 	BeginPullRequest(ctx context.Context, in *BeginPullRequestRequest, opts ...grpc.CallOption) (*BeginPullRequestResponse, error)
 	// RecordPullRequest stores the PR URL, number, and opener after a PR is opened.
 	RecordPullRequest(ctx context.Context, in *RecordPullRequestRequest, opts ...grpc.CallOption) (*RecordPullRequestResponse, error)
-	// FailPullRequest marks a proposal's PR attempt as failed.
+	// FailPullRequest marks a fix's PR attempt as failed.
 	FailPullRequest(ctx context.Context, in *FailPullRequestRequest, opts ...grpc.CallOption) (*FailPullRequestResponse, error)
 }
 
-type remediationProposalsClient struct {
+type remediationFixesClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewRemediationProposalsClient(cc grpc.ClientConnInterface) RemediationProposalsClient {
-	return &remediationProposalsClient{cc}
+func NewRemediationFixesClient(cc grpc.ClientConnInterface) RemediationFixesClient {
+	return &remediationFixesClient{cc}
 }
 
-func (c *remediationProposalsClient) ListProposals(ctx context.Context, in *ListProposalsRequest, opts ...grpc.CallOption) (*ListProposalsResponse, error) {
+func (c *remediationFixesClient) ListFixes(ctx context.Context, in *ListFixesRequest, opts ...grpc.CallOption) (*ListFixesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListProposalsResponse)
-	err := c.cc.Invoke(ctx, RemediationProposals_ListProposals_FullMethodName, in, out, cOpts...)
+	out := new(ListFixesResponse)
+	err := c.cc.Invoke(ctx, RemediationFixes_ListFixes_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *remediationProposalsClient) GetProposal(ctx context.Context, in *GetProposalRequest, opts ...grpc.CallOption) (*Proposal, error) {
+func (c *remediationFixesClient) GetFix(ctx context.Context, in *GetFixRequest, opts ...grpc.CallOption) (*Fix, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Proposal)
-	err := c.cc.Invoke(ctx, RemediationProposals_GetProposal_FullMethodName, in, out, cOpts...)
+	out := new(Fix)
+	err := c.cc.Invoke(ctx, RemediationFixes_GetFix_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *remediationProposalsClient) BeginPullRequest(ctx context.Context, in *BeginPullRequestRequest, opts ...grpc.CallOption) (*BeginPullRequestResponse, error) {
+func (c *remediationFixesClient) BeginPullRequest(ctx context.Context, in *BeginPullRequestRequest, opts ...grpc.CallOption) (*BeginPullRequestResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BeginPullRequestResponse)
-	err := c.cc.Invoke(ctx, RemediationProposals_BeginPullRequest_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, RemediationFixes_BeginPullRequest_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *remediationProposalsClient) RecordPullRequest(ctx context.Context, in *RecordPullRequestRequest, opts ...grpc.CallOption) (*RecordPullRequestResponse, error) {
+func (c *remediationFixesClient) RecordPullRequest(ctx context.Context, in *RecordPullRequestRequest, opts ...grpc.CallOption) (*RecordPullRequestResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RecordPullRequestResponse)
-	err := c.cc.Invoke(ctx, RemediationProposals_RecordPullRequest_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, RemediationFixes_RecordPullRequest_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *remediationProposalsClient) FailPullRequest(ctx context.Context, in *FailPullRequestRequest, opts ...grpc.CallOption) (*FailPullRequestResponse, error) {
+func (c *remediationFixesClient) FailPullRequest(ctx context.Context, in *FailPullRequestRequest, opts ...grpc.CallOption) (*FailPullRequestResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FailPullRequestResponse)
-	err := c.cc.Invoke(ctx, RemediationProposals_FailPullRequest_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, RemediationFixes_FailPullRequest_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// RemediationProposalsServer is the server API for RemediationProposals service.
-// All implementations must embed UnimplementedRemediationProposalsServer
+// RemediationFixesServer is the server API for RemediationFixes service.
+// All implementations must embed UnimplementedRemediationFixesServer
 // for forward compatibility.
 //
-// RemediationProposals serves the proposal read-path and pull-request lifecycle
-// for the agent-remediation. The UI reads proposals via ListProposals/GetProposal
+// RemediationFixes serves the fix read-path and pull-request lifecycle
+// for the agent-remediation. The UI reads fixes via ListFixes/GetFix
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
-type RemediationProposalsServer interface {
-	// ListProposals returns proposals filtered by status, pr_state, release_id,
+type RemediationFixesServer interface {
+	// ListFixes returns fixes filtered by status, pr_state, release_id,
 	// project, and limit.
-	ListProposals(context.Context, *ListProposalsRequest) (*ListProposalsResponse, error)
-	// GetProposal returns a single proposal by ID.
-	GetProposal(context.Context, *GetProposalRequest) (*Proposal, error)
-	// BeginPullRequest atomically claims a proposal for PR creation and returns
+	ListFixes(context.Context, *ListFixesRequest) (*ListFixesResponse, error)
+	// GetFix returns a single fix by ID.
+	GetFix(context.Context, *GetFixRequest) (*Fix, error)
+	// BeginPullRequest atomically claims a fix for PR creation and returns
 	// the data needed to open a GitHub pull-request.
 	BeginPullRequest(context.Context, *BeginPullRequestRequest) (*BeginPullRequestResponse, error)
 	// RecordPullRequest stores the PR URL, number, and opener after a PR is opened.
 	RecordPullRequest(context.Context, *RecordPullRequestRequest) (*RecordPullRequestResponse, error)
-	// FailPullRequest marks a proposal's PR attempt as failed.
+	// FailPullRequest marks a fix's PR attempt as failed.
 	FailPullRequest(context.Context, *FailPullRequestRequest) (*FailPullRequestResponse, error)
-	mustEmbedUnimplementedRemediationProposalsServer()
+	mustEmbedUnimplementedRemediationFixesServer()
 }
 
-// UnimplementedRemediationProposalsServer must be embedded to have
+// UnimplementedRemediationFixesServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedRemediationProposalsServer struct{}
+type UnimplementedRemediationFixesServer struct{}
 
-func (UnimplementedRemediationProposalsServer) ListProposals(context.Context, *ListProposalsRequest) (*ListProposalsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListProposals not implemented")
+func (UnimplementedRemediationFixesServer) ListFixes(context.Context, *ListFixesRequest) (*ListFixesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFixes not implemented")
 }
-func (UnimplementedRemediationProposalsServer) GetProposal(context.Context, *GetProposalRequest) (*Proposal, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetProposal not implemented")
+func (UnimplementedRemediationFixesServer) GetFix(context.Context, *GetFixRequest) (*Fix, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetFix not implemented")
 }
-func (UnimplementedRemediationProposalsServer) BeginPullRequest(context.Context, *BeginPullRequestRequest) (*BeginPullRequestResponse, error) {
+func (UnimplementedRemediationFixesServer) BeginPullRequest(context.Context, *BeginPullRequestRequest) (*BeginPullRequestResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BeginPullRequest not implemented")
 }
-func (UnimplementedRemediationProposalsServer) RecordPullRequest(context.Context, *RecordPullRequestRequest) (*RecordPullRequestResponse, error) {
+func (UnimplementedRemediationFixesServer) RecordPullRequest(context.Context, *RecordPullRequestRequest) (*RecordPullRequestResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecordPullRequest not implemented")
 }
-func (UnimplementedRemediationProposalsServer) FailPullRequest(context.Context, *FailPullRequestRequest) (*FailPullRequestResponse, error) {
+func (UnimplementedRemediationFixesServer) FailPullRequest(context.Context, *FailPullRequestRequest) (*FailPullRequestResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FailPullRequest not implemented")
 }
-func (UnimplementedRemediationProposalsServer) mustEmbedUnimplementedRemediationProposalsServer() {}
-func (UnimplementedRemediationProposalsServer) testEmbeddedByValue()                              {}
+func (UnimplementedRemediationFixesServer) mustEmbedUnimplementedRemediationFixesServer() {}
+func (UnimplementedRemediationFixesServer) testEmbeddedByValue()                          {}
 
-// UnsafeRemediationProposalsServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to RemediationProposalsServer will
+// UnsafeRemediationFixesServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RemediationFixesServer will
 // result in compilation errors.
-type UnsafeRemediationProposalsServer interface {
-	mustEmbedUnimplementedRemediationProposalsServer()
+type UnsafeRemediationFixesServer interface {
+	mustEmbedUnimplementedRemediationFixesServer()
 }
 
-func RegisterRemediationProposalsServer(s grpc.ServiceRegistrar, srv RemediationProposalsServer) {
-	// If the following call panics, it indicates UnimplementedRemediationProposalsServer was
+func RegisterRemediationFixesServer(s grpc.ServiceRegistrar, srv RemediationFixesServer) {
+	// If the following call panics, it indicates UnimplementedRemediationFixesServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&RemediationProposals_ServiceDesc, srv)
+	s.RegisterService(&RemediationFixes_ServiceDesc, srv)
 }
 
-func _RemediationProposals_ListProposals_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListProposalsRequest)
+func _RemediationFixes_ListFixes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFixesRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RemediationProposalsServer).ListProposals(ctx, in)
+		return srv.(RemediationFixesServer).ListFixes(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RemediationProposals_ListProposals_FullMethodName,
+		FullMethod: RemediationFixes_ListFixes_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RemediationProposalsServer).ListProposals(ctx, req.(*ListProposalsRequest))
+		return srv.(RemediationFixesServer).ListFixes(ctx, req.(*ListFixesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RemediationProposals_GetProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetProposalRequest)
+func _RemediationFixes_GetFix_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFixRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RemediationProposalsServer).GetProposal(ctx, in)
+		return srv.(RemediationFixesServer).GetFix(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RemediationProposals_GetProposal_FullMethodName,
+		FullMethod: RemediationFixes_GetFix_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RemediationProposalsServer).GetProposal(ctx, req.(*GetProposalRequest))
+		return srv.(RemediationFixesServer).GetFix(ctx, req.(*GetFixRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RemediationProposals_BeginPullRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _RemediationFixes_BeginPullRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BeginPullRequestRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RemediationProposalsServer).BeginPullRequest(ctx, in)
+		return srv.(RemediationFixesServer).BeginPullRequest(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RemediationProposals_BeginPullRequest_FullMethodName,
+		FullMethod: RemediationFixes_BeginPullRequest_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RemediationProposalsServer).BeginPullRequest(ctx, req.(*BeginPullRequestRequest))
+		return srv.(RemediationFixesServer).BeginPullRequest(ctx, req.(*BeginPullRequestRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RemediationProposals_RecordPullRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _RemediationFixes_RecordPullRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RecordPullRequestRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RemediationProposalsServer).RecordPullRequest(ctx, in)
+		return srv.(RemediationFixesServer).RecordPullRequest(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RemediationProposals_RecordPullRequest_FullMethodName,
+		FullMethod: RemediationFixes_RecordPullRequest_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RemediationProposalsServer).RecordPullRequest(ctx, req.(*RecordPullRequestRequest))
+		return srv.(RemediationFixesServer).RecordPullRequest(ctx, req.(*RecordPullRequestRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RemediationProposals_FailPullRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _RemediationFixes_FailPullRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FailPullRequestRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RemediationProposalsServer).FailPullRequest(ctx, in)
+		return srv.(RemediationFixesServer).FailPullRequest(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RemediationProposals_FailPullRequest_FullMethodName,
+		FullMethod: RemediationFixes_FailPullRequest_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RemediationProposalsServer).FailPullRequest(ctx, req.(*FailPullRequestRequest))
+		return srv.(RemediationFixesServer).FailPullRequest(ctx, req.(*FailPullRequestRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// RemediationProposals_ServiceDesc is the grpc.ServiceDesc for RemediationProposals service.
+// RemediationFixes_ServiceDesc is the grpc.ServiceDesc for RemediationFixes service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var RemediationProposals_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "remediation.v1.RemediationProposals",
-	HandlerType: (*RemediationProposalsServer)(nil),
+var RemediationFixes_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "remediation.v1.RemediationFixes",
+	HandlerType: (*RemediationFixesServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "ListProposals",
-			Handler:    _RemediationProposals_ListProposals_Handler,
+			MethodName: "ListFixes",
+			Handler:    _RemediationFixes_ListFixes_Handler,
 		},
 		{
-			MethodName: "GetProposal",
-			Handler:    _RemediationProposals_GetProposal_Handler,
+			MethodName: "GetFix",
+			Handler:    _RemediationFixes_GetFix_Handler,
 		},
 		{
 			MethodName: "BeginPullRequest",
-			Handler:    _RemediationProposals_BeginPullRequest_Handler,
+			Handler:    _RemediationFixes_BeginPullRequest_Handler,
 		},
 		{
 			MethodName: "RecordPullRequest",
-			Handler:    _RemediationProposals_RecordPullRequest_Handler,
+			Handler:    _RemediationFixes_RecordPullRequest_Handler,
 		},
 		{
 			MethodName: "FailPullRequest",
-			Handler:    _RemediationProposals_FailPullRequest_Handler,
+			Handler:    _RemediationFixes_FailPullRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

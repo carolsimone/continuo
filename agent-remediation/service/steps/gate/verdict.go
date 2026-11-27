@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -27,14 +27,14 @@ const timedOutError = "release check timed out"
 // reported (the poll stops at the first status it cannot read), and the
 // per-node errors of the failed ones.
 type read struct {
-	checks     []proposal.ReleaseCheck
+	checks     []fix.ReleaseCheck
 	read       int
 	nodeErrors map[string]string
 }
 
 // decide turns what a poll read into the gate's verdict.
 //
-// The try is one proposal over one set of edits, so the statuses are combined
+// The try is one fix over one set of edits, so the statuses are combined
 // rather than acted on individually: one failure fails it (the edits cannot be
 // split, and the errors of every failed check together are the evidence the next
 // try reads), otherwise every check must have reached a terminal phase before the
@@ -73,9 +73,9 @@ func (g *ReleaseCheck) decide(in step.GateInput, got read) step.GateVerdict {
 	var runningSince []time.Time
 	for _, r := range seen {
 		switch r.Phase {
-		case proposal.PhaseFailed:
+		case fix.PhaseFailed:
 			anyFailed = true
-		case proposal.PhasePassed:
+		case fix.PhasePassed:
 		default:
 			allTerminal = false
 			if r.ActivatedAt != nil {
@@ -111,7 +111,7 @@ func (g *ReleaseCheck) decide(in step.GateInput, got read) step.GateVerdict {
 	return waiting(name, ids, seen, phases)
 }
 
-func timedOut(ids []string, seen, phases []proposal.ReleaseCheck) step.GateVerdict {
+func timedOut(ids []string, seen, phases []fix.ReleaseCheck) step.GateVerdict {
 	return step.GateVerdict{
 		Result: remediation.CheckResult{
 			Check:    string(nameReleaseCheck),
@@ -124,7 +124,7 @@ func timedOut(ids []string, seen, phases []proposal.ReleaseCheck) step.GateVerdi
 	}
 }
 
-func waiting(name string, ids []string, seen, phases []proposal.ReleaseCheck) step.GateVerdict {
+func waiting(name string, ids []string, seen, phases []fix.ReleaseCheck) step.GateVerdict {
 	return step.GateVerdict{
 		Result:        remediation.CheckResult{Check: name, Waiting: true, CheckIDs: ids},
 		ReleaseChecks: seen,
@@ -134,17 +134,17 @@ func waiting(name string, ids []string, seen, phases []proposal.ReleaseCheck) st
 
 // observedPhases are the checks this poll saw queued or running. A terminal
 // phase is written with the outcome of the try instead.
-func observedPhases(checks []proposal.ReleaseCheck) []proposal.ReleaseCheck {
-	var out []proposal.ReleaseCheck
+func observedPhases(checks []fix.ReleaseCheck) []fix.ReleaseCheck {
+	var out []fix.ReleaseCheck
 	for _, r := range checks {
-		if r.Phase != proposal.PhasePassed && r.Phase != proposal.PhaseFailed {
+		if r.Phase != fix.PhasePassed && r.Phase != fix.PhaseFailed {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-func checkIDs(checks []proposal.ReleaseCheck) []string {
+func checkIDs(checks []fix.ReleaseCheck) []string {
 	ids := make([]string, len(checks))
 	for i, r := range checks {
 		ids[i] = r.CheckID
@@ -185,16 +185,16 @@ func draftedNodes(drafts []step.ClusterDraft) []string {
 // fix that broke something downstream of itself, or a handed-over node that
 // still fails) every failing node is named instead, so the reason describes
 // what actually failed. A failure that names no node records the failed check
-// and its own reason and detail (proposal.FailedCheckReason), so the try never
+// and its own reason and detail (fix.FailedCheckReason), so the try never
 // ends with a blank reason and the next try is told what the check reported.
-func verifyError(own []string, nodeErrors map[string]string, checks []proposal.ReleaseCheck) string {
+func verifyError(own []string, nodeErrors map[string]string, checks []fix.ReleaseCheck) string {
 	if named := namedErrors(nodeErrors, stillFailing(own, nodeErrors)); named != "" {
 		return named
 	}
 	if all := namedErrors(nodeErrors, sortedNodes(nodeErrors)); all != "" {
 		return all
 	}
-	return proposal.FailedCheckReason(checks)
+	return fix.FailedCheckReason(checks)
 }
 
 // stillFailing is the nodes of own that the failure still reports an error
@@ -232,13 +232,13 @@ func sortedNodes(nodeErrors map[string]string) []string {
 }
 
 // applyStatus records one status read onto a check.
-func applyStatus(r proposal.ReleaseCheck, st ports.ReleaseCheckStatus) proposal.ReleaseCheck {
+func applyStatus(r fix.ReleaseCheck, st ports.ReleaseCheckStatus) fix.ReleaseCheck {
 	r.Phase = st.Phase
 	if !st.ActivatedAt.IsZero() {
 		at := st.ActivatedAt
 		r.ActivatedAt = &at
 	}
-	if st.Phase == proposal.PhaseFailed {
+	if st.Phase == fix.PhaseFailed {
 		r.Error = namedErrors(st.NodeErrors, sortedNodes(st.NodeErrors))
 		if r.Error == "" {
 			r.Error = st.CheckError

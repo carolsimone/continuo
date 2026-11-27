@@ -217,18 +217,18 @@ func (u *fakeUoW) LockReleaseQueue(context.Context) error                       
 
 var _ uow.UnitOfWork = (*fakeUoW)(nil)
 
-// --- fakeProposalReader ---
+// --- fakeFixReader ---
 
-type fakeProposalReader struct {
-	items []ports.ProposalSummary
+type fakeFixReader struct {
+	items []ports.FixSummary
 	err   error
 }
 
-func (f *fakeProposalReader) ListProposalsForRelease(context.Context, string) ([]ports.ProposalSummary, error) {
+func (f *fakeFixReader) ListFixesForRelease(context.Context, string) ([]ports.FixSummary, error) {
 	return f.items, f.err
 }
 
-var _ ports.ProposalReader = (*fakeProposalReader)(nil)
+var _ ports.FixReader = (*fakeFixReader)(nil)
 
 // --- fakeClock ---
 
@@ -247,7 +247,7 @@ func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
 		Clock:     fakeClock{t: now},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Proposals: &fakeProposalReader{},
+		Fixes:     &fakeFixReader{},
 
 		Rejections: serialization.ReleaseRejectedJSON{},
 	}
@@ -276,7 +276,7 @@ func TestRetryRemediationHandler_Accepted(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["rel-1"] = rejectedReleaseForRetry(t, "rel-1", now)
-	deps.Proposals = &fakeProposalReader{items: []ports.ProposalSummary{
+	deps.Fixes = &fakeFixReader{items: []ports.FixSummary{
 		{ID: "p1", NodeID: "finance", Attempt: 1, Status: "escalated", RemediationRound: 1},
 	}}
 
@@ -290,12 +290,12 @@ func TestRetryRemediationHandler_Accepted(t *testing.T) {
 	require.EqualValues(t, 2, body["remediation_round"])
 }
 
-func TestRetryRemediationHandler_ProposalOpen(t *testing.T) {
+func TestRetryRemediationHandler_FixOpen(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["rel-1"] = rejectedReleaseForRetry(t, "rel-1", now)
-	deps.Proposals = &fakeProposalReader{items: []ports.ProposalSummary{
-		{ID: "p2", NodeID: "finance", Attempt: 2, Status: "proposed", PRState: "open", PRURL: "https://x/pr/7"},
+	deps.Fixes = &fakeFixReader{items: []ports.FixSummary{
+		{ID: "p2", NodeID: "finance", Attempt: 2, Status: "proposed", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/7"}}},
 	}}
 
 	rec := postRetryRemediation(newTestServer(deps), "rel-1")
@@ -303,8 +303,8 @@ func TestRetryRemediationHandler_ProposalOpen(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rec.Code)
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Equal(t, "proposal_open", body["error"])
-	require.Equal(t, "p2", body["proposal_id"])
+	require.Equal(t, "fix_open", body["error"])
+	require.Equal(t, "p2", body["fix_id"])
 	require.Equal(t, "https://x/pr/7", body["pr_url"])
 }
 
@@ -342,21 +342,21 @@ func TestRetryRemediationHandler_ReaderDown(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["rel-1"] = rejectedReleaseForRetry(t, "rel-1", now)
-	deps.Proposals = &fakeProposalReader{err: context.DeadlineExceeded}
+	deps.Fixes = &fakeFixReader{err: context.DeadlineExceeded}
 
 	rec := postRetryRemediation(newTestServer(deps), "rel-1")
 
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Equal(t, "proposal_reader_unavailable", body["error"])
+	require.Equal(t, "fix_reader_unavailable", body["error"])
 }
 
 func TestRetryRemediationHandler_RetryInProgress(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["rel-1"] = rejectedReleaseForRetry(t, "rel-1", now)
-	deps.Proposals = &fakeProposalReader{items: nil}
+	deps.Fixes = &fakeFixReader{items: nil}
 
 	rec := postRetryRemediation(newTestServer(deps), "rel-1")
 
@@ -383,9 +383,9 @@ func TestRetryRemediationHandler_GenericErrorIsInternal(t *testing.T) {
 		NewUoW: func() uow.UnitOfWork {
 			return &loadErrUoW{fakeUoW: u, releaseRepo: repo}
 		},
-		Clock:     fakeClock{t: now},
-		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Proposals: &fakeProposalReader{},
+		Clock:  fakeClock{t: now},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fixes:  &fakeFixReader{},
 
 		Rejections: serialization.ReleaseRejectedJSON{},
 	}

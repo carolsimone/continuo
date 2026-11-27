@@ -1,18 +1,17 @@
-// Package event defines the remediation.pr_opened:v1 payload and deterministic
+// Package event defines the fix.pr_opened:v1 payload and deterministic
 // identifiers used for outbox dedup.
 package event
 
 import "github.com/google/uuid"
 
-const PROpenedEventType = "remediation_pr_opened"
+const PROpenedEventType = "fix_pr_opened"
 
 var prOpenedNamespace = uuid.MustParse("7e5a1b8f-9c34-4d7a-b2f5-8e1c6a9d3f2b")
 
 // PROpenedEventID derives a stable id from (releaseID, attempt, project) so a
 // re-emission of the same PR-opened fact dedups to one downstream event. Each
-// owning-project PR of a split proposal gets its own id; the legacy project ""
-// (a whole-proposal PR) reproduces the pre-split (releaseID, attempt) id
-// byte-for-byte, so an unsplit proposal's dedup key never shifts.
+// owning-project PR of a split fix gets its own id; the empty project (a PR
+// that covers the whole fix) keys its id on (releaseID, attempt) alone.
 func PROpenedEventID(releaseID string, attempt int, project string) uuid.UUID {
 	name := releaseID + "|" + itoa(attempt)
 	if project != "" {
@@ -23,14 +22,14 @@ func PROpenedEventID(releaseID string, attempt int, project string) uuid.UUID {
 
 // PROpened is the event payload emitted when a remediation PR is successfully opened.
 type PROpened struct {
-	ProposalID string
-	ReleaseID  string
-	NodeID     string
+	FixID     string
+	ReleaseID string
+	NodeID    string
 	// ResolvedNodeIDs is the failing nodes this PR fixes, sorted — the subset
 	// of the attempt's fixed nodes this owning project's edits address.
 	ResolvedNodeIDs []string
 	// Project is the owning-project group this PR covers; omitted (its DTO field
-	// is omitempty) for a legacy whole-proposal PR.
+	// is omitempty) for a PR that covers the whole fix.
 	Project  string
 	PrURL    string
 	PrNumber int

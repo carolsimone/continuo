@@ -50,7 +50,7 @@ service CatalogQuery {
   // newest. Each entry carries the classified failure, the version that
   // resolved it (when one exists) with a server-rendered diff against the
   // version it superseded (8 KiB cap, truncated flag), and any fix-PR
-  // proposals. limit defaults to 5, max 20, applied before code bodies load;
+  // fixes. limit defaults to 5, max 20, applied before code bodies load;
   // include_code=false keeps failing and resolving code bodies off the wire
   // (the diff is always present). No match is an EMPTY list, never NOT_FOUND:
   // a signature is a search key, and "no precedent" is a valid answer.
@@ -250,14 +250,14 @@ message GetPrecedentsRequest {
   bool include_code = 5;
 }
 
-// PrecedentProposal is one fix PR opened for a precedent's rejection.
-message PrecedentProposal {
-  string proposal_id = 1;
+// PrecedentFix is one fix PR opened for a precedent's rejection.
+message PrecedentFix {
+  string fix_id = 1;
   string pr_url = 2;
   int32 pr_number = 3;
   // pr_state is the PR's live state: open until the close-loop mirrors a
-  // terminal outcome, merged/rejected afterwards; rows recorded before the
-  // per-PR split keep the open-time snapshot.
+  // terminal outcome, merged/rejected afterwards. It is read from the fix's
+  // :PullRequest of the rejection's project.
   string pr_state = 4;
 }
 
@@ -266,7 +266,7 @@ message PrecedentProposal {
 // ancestor of the rejected node rather than the rejected node itself. diff is
 // the merged-truth diff (the version the merge superseded to the promoted
 // merged version) when the edit was amended and a promoted version straddles
-// the merge, otherwise the proposal's own edit diff.
+// the merge, otherwise the fix's own edit diff.
 message PrecedentEdit {
   string node_id = 1;
   string path = 2;
@@ -275,7 +275,7 @@ message PrecedentEdit {
   // diff_is_shipped is true only when diff was rendered from the promoted
   // merged NodeVersion — the code that actually shipped. It is false when the
   // edit was amended but no post-close version straddle was found yet, so diff
-  // fell back to the proposal-time diff: consumers must not then claim the diff
+  // fell back to the diff the fix proposed: consumers must not then claim the diff
   // is what shipped.
   bool diff_is_shipped = 5;
 }
@@ -300,7 +300,7 @@ message Precedent {
   // the resolving version; "" when unresolved or no prior version exists.
   string resolution_diff = 11;
   bool resolution_diff_truncated = 12;
-  repeated PrecedentProposal proposals = 13;
+  repeated PrecedentFix fixes = 13;
   // edited carries the provenance of a merged fix PR that resolved this
   // rejection: one entry per node the PR edited.
   repeated PrecedentEdit edited = 14;

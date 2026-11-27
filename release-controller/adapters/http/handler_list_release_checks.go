@@ -20,10 +20,10 @@ type releaseCheckSummary struct {
 	FailReason  string `json:"fail_reason,omitempty"`
 }
 
-// handleListReleaseChecks lists the fixes' release checks that verify one
-// release, newest first. `verifies` is required: the listing exists for the
-// release page, and a global list of fixes' release checks is not a read anyone
-// needs. Unpaginated: bounded by rounds × attempts × edited projects.
+// handleListReleaseChecks lists the release checks of the fixes that verify
+// one release, newest first. `verifies` is required: the listing exists for
+// the release page, and a global list of the release checks of fixes is not a
+// read anyone needs. Unpaginated: bounded by rounds × attempts × edited projects.
 func (s *Server) handleListReleaseChecks(w http.ResponseWriter, r *http.Request) {
 	verifies := r.URL.Query().Get("verifies")
 	if verifies == "" {

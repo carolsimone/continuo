@@ -25,10 +25,10 @@ func PkgConstantsForTest() map[string]string {
 		"ReleaseCheckFinishedV1": ReleaseCheckFinishedV1,
 		"RemediationRetryRequestedV1": RemediationRetryRequestedV1,
 		"HealTriggeredV1": HealTriggeredV1,
-		"RemediationProposedV1": RemediationProposedV1,
+		"FixProposedV1": FixProposedV1,
 		"RemediationHandedOverV1": RemediationHandedOverV1,
-		"RemediationPrOpenedV1": RemediationPrOpenedV1,
-		"RemediationPrClosedV1": RemediationPrClosedV1,
+		"FixPrOpenedV1": FixPrOpenedV1,
+		"FixPrClosedV1": FixPrClosedV1,
 		"ExecutionControllerTaskDispatch": ExecutionControllerTaskDispatch,
 		"RunControllerTaskStatusUpdated": RunControllerTaskStatusUpdated,
 		"DeadLetterControllerOutboxDeadLetters": DeadLetterControllerOutboxDeadLetters,
@@ -54,7 +54,7 @@ func PkgConstantsForTest() map[string]string {
 		"RemediationRetryRequested": RemediationRetryRequested,
 		"AgentRemediationHealTriggered": AgentRemediationHealTriggered,
 		"CatalogHealTriggeredRejections": CatalogHealTriggeredRejections,
-		"CatalogRemediationPrOpenedProposals": CatalogRemediationPrOpenedProposals,
-		"CatalogRemediationPrClosedProvenance": CatalogRemediationPrClosedProvenance,
+		"CatalogFixPrOpenedFixes": CatalogFixPrOpenedFixes,
+		"CatalogFixPrClosedProvenance": CatalogFixPrClosedProvenance,
 	}
 }

@@ -279,7 +279,7 @@ func TestRenderPrecedents_AmendedCaveat(t *testing.T) {
 
 // TestRenderPrecedents_AmendedNotShippedCaveat verifies that an Edited entry
 // amended before merge but whose merged version is not recorded yet
-// (DiffIsShipped==false, so Diff is the proposal-time fallback) renders a
+// (DiffIsShipped==false, so Diff is the fallback, the diff the fix proposed) renders a
 // caveat that does NOT claim the diff shipped.
 func TestRenderPrecedents_AmendedNotShippedCaveat(t *testing.T) {
 	ps := []Precedent{{

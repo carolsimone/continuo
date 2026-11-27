@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -158,9 +158,9 @@ func TestExpectation_HandedOverReadsTheEventFromTheOutbox(t *testing.T) {
 	id := uuid.New()
 	rem := remediation.Remediation{ID: id, TenantID: "tenant-1", Flow: "rejected-release"}
 	trigger := remediation.Trigger{ReleaseID: "rel-1", Round: 1}
-	attempt := Attempt{Proposal: proposal.Proposal{Attempt: 1, NodeOutcomes: map[string]proposal.NodeOutcome{
-		"a": {Status: proposal.StatusSkipped, Reason: "why a", Code: model.HandoverReasonDeclined},
-		"b": {Status: proposal.StatusFailed, Reason: "why b", Code: model.HandoverReasonPreflightRoundsSpent},
+	attempt := Attempt{Fix: fix.Fix{Attempt: 1, NodeOutcomes: map[string]fix.NodeOutcome{
+		"a": {Status: fix.StatusSkipped, Reason: "why a", Code: model.HandoverReasonDeclined},
+		"b": {Status: fix.StatusFailed, Reason: "why b", Code: model.HandoverReasonPreflightRoundsSpent},
 	}}}
 	event := events.RemediationHandedOver{
 		RemediationID: id.String(), ReleaseID: "rel-1", RemediationRound: 1, Flow: "rejected-release", Tries: 1,
@@ -258,11 +258,11 @@ func TestExpectation_HandedOverReadsTheEventFromTheOutbox(t *testing.T) {
 	})
 }
 
-// A scenario that ends fixed or in a proposal expects no hand-over event, and
+// A scenario whose every node ends in a proposed fix expects no hand-over event, and
 // a row on another stream is not one.
 func TestExpectation_NoHandedOverFailsOnAnEventOnlyOnItsStream(t *testing.T) {
 	id := uuid.New()
-	other := outbox.Entry{StreamName: streams.RemediationProposedV1, Payload: []byte(`{}`)}
+	other := outbox.Entry{StreamName: streams.FixProposedV1, Payload: []byte(`{}`)}
 	handedOver := handedOverRow(t, "tenant-1", events.RemediationHandedOver{RemediationID: id.String()})
 
 	quiet := (&scenarioRun{w: handOverWorld{outbox: []outbox.Entry{other}}, id: id}).expect(remediation.Trigger{})

@@ -33,7 +33,7 @@ import (
 
 // TestE2E_Remediation_CompileFailureProposesFix drives a dbt COMPILE failure end
 // to end and proves it (a) rejects the release with per-node compile detail and
-// (b) produces a remediation proposal:
+// (b) produces a remediation fix:
 //
 //	POST /releases (COMPILE_FIXTURE_PROJECT, malformed-Jinja model baked in image)
 //	→ release.requested → AdvanceQueue: Received → Compiling → compile.requested:v1
@@ -44,10 +44,10 @@ import (
 //	→ remediation classifier maps stage→SourceCompile, ExtractDbtFilePath(log)→file_path,
 //	  classifies the parse/compilation error as healable → heal.triggered:v1 (source="compile")
 //	→ agent-remediation proposeFromSource: reads model source from GitHub (stub-github),
-//	  asks stub-llm to fix it → proposal row (source="compile", file_path)
+//	  asks stub-llm to fix it → fix row (source="compile", file_path)
 //	→ a release check lays the corrected file over the fixture project's dbt
 //	  project and compiles and validates it; when it reports passed the
-//	  proposal is finalized → remediation.proposed:v1.
+//	  fix is finalized → fix.proposed:v1.
 //
 // Unlike the validation path, the compile leg is the FIRST leg and rejects
 // before any change-derivation, so no seeding of the live release or the production pointers
@@ -82,8 +82,8 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 		"COMPILE_FIXTURE_IMAGE_TAG must be set alongside COMPILE_FIXTURE_PROJECT")
 
 	// 35 minutes: strictly greater than the 34 this test's stage budgets sum to
-	// (rejection 12 + rejected event 2 + trigger 4 + decision 0.5 + proposal 15
-	// + proposal row 0.5). The proposal budget covers the release check that
+	// (rejection 12 + rejected event 2 + trigger 4 + decision 0.5 + fix 15
+	// + fix row 0.5). The fix budget covers the release check that
 	// lays the corrected file over the fixture project and compiles it.
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
@@ -101,7 +101,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
-	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.FixProposedV1)
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
@@ -160,12 +160,12 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	require.Equal(t, "compile", decision.Source, "decision source must be 'compile'")
 	require.Equal(t, "emit", decision.Decision, "a compile parse/syntax error must route to emit, not drop")
 
-	// 6. remediation.proposed:v1 must be emitted for the compile failure with
+	// 6. fix.proposed:v1 must be emitted for the compile failure with
 	//    source=="compile". The agent posts a release check that lays the
 	//    corrected file over the fixture project's dbt project and compiles it;
 	//    the event follows only once that run reports passed, so this budget
 	//    covers a whole second release check.
-	var proposed remediationProposedPayload
+	var proposed fixProposedPayload
 	pollUntil(t, ctx, 15*time.Minute, 3*time.Second, func() (bool, error) {
 		msgs := proposedTap.Entries()
 		for _, msg := range msgs {
@@ -173,7 +173,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 			if !ok || raw == "" {
 				continue
 			}
-			var p remediationProposedPayload
+			var p fixProposedPayload
 			if json.Unmarshal([]byte(raw), &p) != nil {
 				continue
 			}
@@ -183,33 +183,33 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for %s (compile) for release %s", streams.RemediationProposedV1, releaseID))
+	}, fmt.Sprintf("timeout waiting for %s (compile) for release %s", streams.FixProposedV1, releaseID))
 
 	require.Equal(t, "compile", proposed.Source, "proposed event source must be 'compile'")
 	require.Equal(t, fixtureProject, proposed.NodeID, "proposed node_id is the project name")
-	require.NotEmpty(t, proposed.ProposedSQLURI, "compile proposal must carry a proposed_sql_uri")
-	require.NotEmpty(t, proposed.DiffURI, "compile proposal must carry a diff_uri")
+	require.NotEmpty(t, proposed.ProposedSQLURI, "compile fix must carry a proposed_sql_uri")
+	require.NotEmpty(t, proposed.DiffURI, "compile fix must carry a diff_uri")
 	require.True(t, proposed.SourceResolved,
-		"compile proposals are source-resolved (read from GitHub, not candidate SQL)")
+		"compile fixes are source-resolved (read from GitHub, not candidate SQL)")
 
-	// 7. The proposal row must persist source=='compile', a non-empty file_path,
+	// 7. The fix row must persist source=='compile', a non-empty file_path,
 	//    and status=='proposed'.
-	var row compileProposalRow
+	var row compileFixRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row,
 			`SELECT source, release_id, node_id, status, file_path, source_resolved
-			   FROM proposal
+			   FROM fix
 			  WHERE release_id = $1 AND node_id = $2
 			  LIMIT 1`,
 			releaseID, fixtureProject)
 		return err == nil, nil
-	}, fmt.Sprintf("timeout waiting for compile proposal row for release %s", releaseID))
+	}, fmt.Sprintf("timeout waiting for compile fix row for release %s", releaseID))
 
-	require.Equal(t, "compile", row.Source, "proposal source must be 'compile'")
-	require.Equal(t, "proposed", row.Status, "proposal status must be 'proposed'")
-	require.NotEmpty(t, row.FilePath, "compile proposal must persist the offending file_path")
-	require.True(t, row.SourceResolved, "compile proposal row must have source_resolved=true")
-	t.Logf("✅ compile failure rejected with per-node detail and a remediation proposal: file_path=%s sql_uri=%s",
+	require.Equal(t, "compile", row.Source, "fix source must be 'compile'")
+	require.Equal(t, "proposed", row.Status, "fix status must be 'proposed'")
+	require.NotEmpty(t, row.FilePath, "compile fix must persist the offending file_path")
+	require.True(t, row.SourceResolved, "compile fix row must have source_resolved=true")
+	t.Logf("✅ compile failure rejected with per-node detail and a remediation fix: file_path=%s sql_uri=%s",
 		row.FilePath, proposed.ProposedSQLURI)
 }
 
@@ -277,9 +277,9 @@ func assertRejectedStageCompile(t *testing.T, ctx context.Context, rejectedTap *
 	}, fmt.Sprintf("timeout waiting for release.rejected:v1 with stage=compile for release %s", releaseID))
 }
 
-// compileProposalRow captures the proposal fields asserted for a compile-stage
+// compileFixRow captures the fix fields asserted for a compile-stage
 // fix: source, status, the persisted offending file_path, and source_resolved.
-type compileProposalRow struct {
+type compileFixRow struct {
 	Source         string `db:"source"`
 	ReleaseID      string `db:"release_id"`
 	NodeID         string `db:"node_id"`

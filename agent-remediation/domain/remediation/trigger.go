@@ -3,7 +3,7 @@ package remediation
 import (
 	"sort"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
@@ -87,7 +87,7 @@ type TriggerNode struct {
 	Unfixable *Unfixable
 }
 
-// Unfixable is the classifier's verdict that no fix proposal can help a node:
+// Unfixable is the classifier's verdict that no fix can help a node:
 // Reason is the hand-over reason it is given, Detail is what actually failed,
 // the failure's key error line cleaned of credentials and email addresses.
 type Unfixable struct {
@@ -126,19 +126,19 @@ func (t Trigger) Projects() []string {
 	for _, n := range t.Nodes {
 		names = append(names, n.Project)
 	}
-	return proposal.UnionProjects(names)
+	return fix.UnionProjects(names)
 }
 
 // Failure is one cluster of failing nodes to fix: the trigger it came from, the
 // cluster's shape, the node the fix edits, its member nodes, and the try and
-// proposal attempt it belongs to.
+// attempt it belongs to.
 type Failure struct {
 	Trigger      Trigger
 	Kind         workflow.ClusterKind
 	TargetNodeID string
 	Target       TriggerNode
 	Members      []TriggerNode
-	// Attempt is the proposal attempt number of the try.
+	// Attempt is the number of the try's attempt, which keys its fix row.
 	Attempt int
 	// Try is the try's number within its remediation, whose round is the
 	// trigger's.

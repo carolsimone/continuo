@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -28,8 +28,8 @@ import (
 // outputCalls records the approvers each output of a remediation was handed.
 type outputCalls struct {
 	mu     sync.Mutex
-	pass   [][]proposal.Approver
-	giveUp [][]proposal.Approver
+	pass   [][]fix.Approver
+	giveUp [][]fix.Approver
 }
 
 // recordingPass is the pull_request output, recording what it is handed.
@@ -77,15 +77,15 @@ func TestRunner_HandsTheOutputsTheApproversOfTheirNodes(t *testing.T) {
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 
 	require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Equal(t, [][]proposal.Approver{{
+	assert.Equal(t, [][]fix.Approver{{
 		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
 	}}, calls.pass, "the pass output is handed the fixed node's approver")
-	assert.Equal(t, [][]proposal.Approver{{
+	assert.Equal(t, [][]fix.Approver{{
 		{NodeID: "svc-b", Owner: "", Source: model.ApproverSourceNone},
 	}}, calls.giveUp, "the give-up output is handed the handed-over node's approver")
 	assert.Equal(t, 2, h.bundle.ownerReadCount(), "one bundle read for the fixed nodes and one for the handed-over ones")
@@ -99,12 +99,12 @@ func TestRunner_ThePassReadsTheBundleOnceForItsNodes(t *testing.T) {
 	h.bundle.owners = map[string]string{"svc-a": "finance", "svc-b": "e2e"}
 	id := h.accept(trigger("compile", compileNode("svc-a"), compileNode("svc-b")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 
 	require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Equal(t, [][]proposal.Approver{{
+	assert.Equal(t, [][]fix.Approver{{
 		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
 		{NodeID: "svc-b", Owner: "e2e", Source: model.ApproverSourceBundle},
 	}}, calls.pass)
@@ -127,7 +127,7 @@ func TestRunner_AHandOverWithNoTryHandsOverTheApproversOfItsNodes(t *testing.T) 
 
 	require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, calls.pass)
-	assert.Equal(t, [][]proposal.Approver{{
+	assert.Equal(t, [][]fix.Approver{{
 		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
 		{NodeID: "svc-b", Owner: "e2e", Source: model.ApproverSourceBundle},
 	}}, calls.giveUp)
@@ -153,7 +153,7 @@ func TestRunner_ABundleReadErrorFallsBackAndThePassCommits(t *testing.T) {
 	h.bundle.owners = map[string]string{"svc-a": "finance"}
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	h.bundle.err = errors.New("s3 answered HTTP 503")
 
 	require.NoError(t, h.poll(id))
@@ -163,8 +163,8 @@ func TestRunner_ABundleReadErrorFallsBackAndThePassCommits(t *testing.T) {
 	assert.Zero(t, rem.Failures)
 	assert.Zero(t, h.flowRows(id, 1)["release_check"][0].Failures, "the gate counted no failure")
 	assert.Len(t, h.proposedEvents(), 1)
-	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
-	assert.Equal(t, [][]proposal.Approver{{
+	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+	assert.Equal(t, [][]fix.Approver{{
 		{NodeID: "svc-a", Owner: "", Source: model.ApproverSourceNone},
 	}}, calls.pass, "a node with no contract file falls back to none")
 	assert.Contains(t, logs.String(), "level=WARN")
@@ -198,16 +198,16 @@ func TestRunner_ABundleReadErrorFallsBackAndTheHandOverCommits(t *testing.T) {
 func TestRunner_APythonNodeWithNoBundleOwnerTakesItsContractOwner(t *testing.T) {
 	for name, tc := range map[string]struct {
 		refuse     int
-		wantPass   [][]proposal.Approver
-		wantGiveUp [][]proposal.Approver
+		wantPass   [][]fix.Approver
+		wantGiveUp [][]fix.Approver
 	}{
 		"fixed": {
 			refuse:   0,
-			wantPass: [][]proposal.Approver{{{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}}},
+			wantPass: [][]fix.Approver{{{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}}},
 		},
 		"handed over": {
 			refuse:     100,
-			wantGiveUp: [][]proposal.Approver{{{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}}},
+			wantGiveUp: [][]fix.Approver{{{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}}},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -215,7 +215,7 @@ func TestRunner_APythonNodeWithNoBundleOwnerTakesItsContractOwner(t *testing.T) 
 			h.archive.(*checkoutOf).files[contractYAML] = brokenContract + "team:\n  name: sales-team\n"
 			calls := h.recordOutputs()
 			h.llm.answer = contractAnswer
-			h.checks.answer(proposal.PhasePassed, nil)
+			h.checks.answer(fix.PhasePassed, nil)
 			id := h.accept(trigger("validation", contractNode()))
 
 			require.NoError(t, h.runner.Drive(ctx, id))
@@ -241,14 +241,14 @@ func TestRunner_ThePassedRowStoresTheApproversOfItsFixedAndHandedOverNodes(t *te
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
-	require.Empty(t, h.attempt(1).Proposal.Approvers, "a row in flight has none yet")
+	h.checks.answer(fix.PhasePassed, nil)
+	require.Empty(t, h.attempt(1).Fix.Approvers, "a row in flight has none yet")
 
 	require.NoError(t, h.poll(id))
 
-	row := h.attempt(1).Proposal
-	assert.Equal(t, proposal.StatusProposed, row.Status)
-	assert.Equal(t, []proposal.Approver{
+	row := h.attempt(1).Fix
+	assert.Equal(t, fix.StatusProposed, row.Status)
+	assert.Equal(t, []fix.Approver{
 		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
 		{NodeID: "svc-b", Owner: "growth", Source: model.ApproverSourceBundle},
 	}, row.Approvers)
@@ -270,7 +270,7 @@ func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
 		setup   func(h *harness)
 		trigger func() remediation.Trigger
 		attempt int
-		status  proposal.Status
+		status  fix.Status
 		code    model.HandoverReason
 	}{
 		"no repository": {
@@ -279,20 +279,20 @@ func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
 				trig.Repo = ""
 				return trig
 			},
-			attempt: 1, status: proposal.StatusFailed, code: model.HandoverReasonNoRepository,
+			attempt: 1, status: fix.StatusFailed, code: model.HandoverReasonNoRepository,
 		},
 		"the tries are spent": {
 			setup: func(h *harness) {
 				for attempt := 1; attempt <= 3; attempt++ {
-					h.attemptWithNoRemediation(attempt, proposal.StatusFailed)
+					h.attemptWithNoRemediation(attempt, fix.StatusFailed)
 				}
 			},
 			trigger: func() remediation.Trigger { return trigger("compile", compileNode("svc-b"), compileNode("svc-a")) },
-			attempt: 4, status: proposal.StatusEscalated, code: model.HandoverReasonTriesSpent,
+			attempt: 4, status: fix.StatusEscalated, code: model.HandoverReasonTriesSpent,
 		},
 		"a try with nothing to verify": {
 			trigger: func() remediation.Trigger { return trigger("compile", noFile("svc-b"), noFile("svc-a")) },
-			attempt: 1, status: proposal.StatusSkipped, code: model.HandoverReasonDeclined,
+			attempt: 1, status: fix.StatusSkipped, code: model.HandoverReasonDeclined,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -306,9 +306,9 @@ func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
 			require.NoError(t, h.drive(id))
 
 			require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-			row := h.attempt(tc.attempt).Proposal
+			row := h.attempt(tc.attempt).Fix
 			assert.Equal(t, tc.status, row.Status)
-			assert.Equal(t, []proposal.Approver{
+			assert.Equal(t, []fix.Approver{
 				{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
 				{NodeID: "svc-b", Owner: "growth", Source: model.ApproverSourceBundle},
 			}, row.Approvers)
@@ -333,7 +333,7 @@ func TestRunner_ANodeWithNoOwnerIsRecordedWithNone(t *testing.T) {
 
 	require.NoError(t, h.drive(id))
 
-	assert.Equal(t, []proposal.Approver{{NodeID: "svc-a", Source: model.ApproverSourceNone}}, h.attempt(1).Proposal.Approvers)
+	assert.Equal(t, []fix.Approver{{NodeID: "svc-a", Source: model.ApproverSourceNone}}, h.attempt(1).Fix.Approvers)
 	assert.Equal(t, []events.HandedOverNode{{
 		NodeID: "svc-a", Reason: string(model.HandoverReasonNoRepository), Message: "the trigger carried no repository for rel-1",
 	}}, h.handedOverEvent().Nodes)
@@ -346,7 +346,7 @@ func TestRunner_ANodeWithNoOwnerIsRecordedWithNone(t *testing.T) {
 // passes, and when the tries are spent. Carrying it writes no row and counts
 // no try for it again.
 func TestRunner_AContractOwnerOutlivesTheTryThatReadIt(t *testing.T) {
-	contractOwner := proposal.Approver{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}
+	contractOwner := fix.Approver{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}
 	for name, tc := range map[string]struct {
 		failedTries int
 		attempt     int
@@ -369,13 +369,13 @@ func TestRunner_AContractOwnerOutlivesTheTryThatReadIt(t *testing.T) {
 			id := h.accept(trigger("validation", contractNode(), validationNode(h)))
 
 			for try := 1; try <= tc.failedTries; try++ {
-				h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+				h.checks.answer(fix.PhaseFailed, map[string]string{"svc-a": "still broken"})
 				require.NoError(t, h.drive(id))
 				require.Equal(t, remediation.TryVerifying, h.try(id, try).Status, "try %d", try)
 				require.NoError(t, h.poll(id))
 			}
 			if tc.failedTries < 3 {
-				h.checks.answer(proposal.PhasePassed, nil)
+				h.checks.answer(fix.PhasePassed, nil)
 				require.NoError(t, h.drive(id))
 				require.NoError(t, h.poll(id))
 			} else {
@@ -385,7 +385,7 @@ func TestRunner_AContractOwnerOutlivesTheTryThatReadIt(t *testing.T) {
 			require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 			require.Len(t, calls.giveUp, 1)
 			assert.Contains(t, calls.giveUp[0], contractOwner, "the hand-over names the contract's owner")
-			assert.Contains(t, h.attempt(tc.attempt).Proposal.Approvers, contractOwner, "the attempt row stores it")
+			assert.Contains(t, h.attempt(tc.attempt).Fix.Approvers, contractOwner, "the attempt row stores it")
 			for _, n := range h.handedOverEvent().Nodes {
 				if n.NodeID == contractNodeID {
 					assert.Equal(t, "sales-team", n.Owner)

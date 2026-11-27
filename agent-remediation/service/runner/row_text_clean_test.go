@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
 
@@ -18,15 +18,15 @@ func TestRunner_GateFailRecordsTheVerifyErrorCleaned(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": dirtyDetail})
+	h.checks.answer(fix.PhaseFailed, map[string]string{"svc-a": dirtyDetail})
 
 	require.NoError(t, h.poll(id))
 
 	first := h.attempt(1)
-	assert.Equal(t, proposal.StatusFailed, first.Proposal.Status)
+	assert.Equal(t, fix.StatusFailed, first.Fix.Status)
 	assert.Equal(t, "svc-a: "+cleanDetail, first.VerifyError)
-	require.Len(t, first.Proposal.ReleaseChecks, 1)
-	assert.Equal(t, "svc-a: "+cleanDetail, first.Proposal.ReleaseChecks[0].Error)
+	require.Len(t, first.Fix.ReleaseChecks, 1)
+	assert.Equal(t, "svc-a: "+cleanDetail, first.Fix.ReleaseChecks[0].Error)
 }
 
 // failStepWithTheDirtyError records five failures of a step whose last error holds a
@@ -52,9 +52,9 @@ func TestSweeper_ASystemFailureFailsADraftingRowWithAReasonThatIsCleaned(t *test
 	h.failStepWithTheDirtyError(id)
 
 	row := h.attempt(1)
-	assert.Equal(t, proposal.StatusFailed, row.Proposal.Status)
-	assert.Contains(t, row.Proposal.Rationale, cleanDetail)
-	requireClean(t, row.Proposal.Rationale, "the reason of the drafting attempt's row")
+	assert.Equal(t, fix.StatusFailed, row.Fix.Status)
+	assert.Contains(t, row.Fix.Rationale, cleanDetail)
+	requireClean(t, row.Fix.Rationale, "the reason of the drafting attempt's row")
 }
 
 func TestRunner_ASystemFailureFailsAVerifyingRowWithAReasonThatIsCleaned(t *testing.T) {
@@ -62,7 +62,7 @@ func TestRunner_ASystemFailureFailsAVerifyingRowWithAReasonThatIsCleaned(t *test
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	gate := h.flowRows(id, 1)["release_check"][0]
 	gate.Failures, gate.LastError = 5, dirtyDetail
 	h.saveStep(gate)
@@ -71,7 +71,7 @@ func TestRunner_ASystemFailureFailsAVerifyingRowWithAReasonThatIsCleaned(t *test
 
 	require.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
 	row := h.attempt(1)
-	assert.Equal(t, proposal.StatusFailed, row.Proposal.Status)
+	assert.Equal(t, fix.StatusFailed, row.Fix.Status)
 	assert.Contains(t, row.VerifyError, cleanDetail)
 	requireClean(t, row.VerifyError, "the reason of the verifying attempt's row")
 }

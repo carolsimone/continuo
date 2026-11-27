@@ -363,7 +363,7 @@ func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
 // (source, release, node) at round 1 and then round 2 must record two
 // decisions and enqueue two triggers, and the triggers must be
 // distinguishable — different remediation_round, different event_id — so the
-// agent never conflates a retry's proposal with the original attempt's.
+// agent never conflates a retry's fix with the original attempt's.
 func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	deps := depsWith(u, `Database Error: column "x" does not exist`, nil)

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
@@ -31,18 +31,18 @@ func (f *fakeTries) ListTriesOfRelease(_ context.Context, tenantID, releaseID st
 
 var _ repository.TryLister = (*fakeTries)(nil)
 
-type fakeProposals struct {
-	views   []proposal.View
+type fakeFixes struct {
+	views   []fix.View
 	err     error
-	filters []repository.ProposalFilter
+	filters []repository.FixFilter
 }
 
-func (f *fakeProposals) List(_ context.Context, filter repository.ProposalFilter) ([]proposal.View, error) {
+func (f *fakeFixes) List(_ context.Context, filter repository.FixFilter) ([]fix.View, error) {
 	f.filters = append(f.filters, filter)
 	return f.views, f.err
 }
 
-var _ repository.AttemptLister = (*fakeProposals)(nil)
+var _ repository.AttemptLister = (*fakeFixes)(nil)
 
 // diffObjects answers each stored diff by its uri, and fails any other.
 type diffObjects map[string]string
@@ -119,12 +119,12 @@ func TestPreviousTries_IncludesEarlierRoundsAndAttemptsWithNoRemediation(t *test
 		triedSnapshot(t, 2, 1, 4, "model.a", editOf("select a\n", "select c\n"), broken),
 		triedSnapshot(t, 2, 2, 5, "model.a", editOf("select a\n", "select d\n")),
 	}}
-	attempts := &fakeProposals{views: []proposal.View{
+	attempts := &fakeFixes{views: []fix.View{
 		{
 			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a", "model.b"}, VerifyError: "unowned attempt still broken",
-			Edits: []proposal.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}, {Path: "models/b.sql", DiffURI: "s3://diffs/missing"}, {Path: "models/c.sql"}},
+			Edits: []fix.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}, {Path: "models/b.sql", DiffURI: "s3://diffs/missing"}, {Path: "models/c.sql"}},
 		},
-		// The proposal rows of the runner's own tries, read from the journal instead.
+		// The fix rows of the runner's own tries, read from the journal instead.
 		{Attempt: 2, RemediationRound: 1, RemediationID: uuid.NewString(), ResolvedNodeIDs: []string{"model.a"}, VerifyError: "x"},
 		{Attempt: 4, RemediationRound: 2, RemediationID: uuid.NewString(), ResolvedNodeIDs: []string{"model.a"}, VerifyError: "x"},
 		// An attempt with no remediation at another node.
@@ -139,7 +139,7 @@ func TestPreviousTries_IncludesEarlierRoundsAndAttemptsWithNoRemediation(t *test
 			Round: round, Try: try, Attempt: attempt,
 			Clusters: []remediation.ClusterRecord{{
 				Type: "dbt-validation", TargetNodeID: "model.a", Members: []string{"model.a"},
-				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: proposal.ComputeUnifiedDiff("select a\n", content, "models/a.sql")}},
+				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: fix.ComputeUnifiedDiff("select a\n", content, "models/a.sql")}},
 				Rounds: [][]remediation.Finding{nil},
 			}},
 			Gate: gate,
@@ -158,7 +158,7 @@ func TestPreviousTries_IncludesEarlierRoundsAndAttemptsWithNoRemediation(t *test
 		record(2, 1, 4, "select c\n"),
 	}, got, "the attempt with no remediation and every earlier try at the node, oldest first; the try being made is left out")
 	assert.Equal(t, [][2]string{{"acme", "rel-1"}}, tries.calls)
-	assert.Equal(t, []repository.ProposalFilter{{ReleaseID: "rel-1", Source: "validation"}}, attempts.filters)
+	assert.Equal(t, []repository.FixFilter{{ReleaseID: "rel-1", Source: "validation"}}, attempts.filters)
 }
 
 func TestPreviousTries_AnUnreadableTryIsLeftOut(t *testing.T) {
@@ -166,7 +166,7 @@ func TestPreviousTries_AnUnreadableTryIsLeftOut(t *testing.T) {
 	bad.Steps[0].Output = []byte("not json")
 	good := triedSnapshot(t, 1, 2, 2, "model.a", editOf("a\n", "c\n"))
 
-	got := gatherPreviousTries(t, &fakeTries{snaps: []remediation.Snapshot{bad, good}}, &fakeProposals{}, nil)
+	got := gatherPreviousTries(t, &fakeTries{snaps: []remediation.Snapshot{bad, good}}, &fakeFixes{}, nil)
 
 	require.Len(t, got, 1)
 	assert.Equal(t, 2, got[0].Try)
@@ -176,10 +176,10 @@ func TestPreviousTries_AHistoryThatCannotBeReadIsAStepError(t *testing.T) {
 	ctx := context.Background()
 	in := step.ContextInput{Failure: previousTriesFailure()}
 
-	_, err := shared.NewPreviousTries(&fakeTries{err: errors.New("db down")}, &fakeProposals{}, nil, discardLogger()).Gather(ctx, in)
+	_, err := shared.NewPreviousTries(&fakeTries{err: errors.New("db down")}, &fakeFixes{}, nil, discardLogger()).Gather(ctx, in)
 	require.ErrorContains(t, err, "db down")
 
-	_, err = shared.NewPreviousTries(&fakeTries{}, &fakeProposals{err: errors.New("db down")}, nil, discardLogger()).Gather(ctx, in)
+	_, err = shared.NewPreviousTries(&fakeTries{}, &fakeFixes{err: errors.New("db down")}, nil, discardLogger()).Gather(ctx, in)
 	require.ErrorContains(t, err, "db down")
 }
 
@@ -193,9 +193,9 @@ func TestPreviousTries_NoReadersGiveNoTries(t *testing.T) {
 }
 
 func TestPreviousTries_NoEvidenceReaderShowsAttemptsWithNoRemediationWithoutDiffs(t *testing.T) {
-	attempts := &fakeProposals{views: []proposal.View{{
+	attempts := &fakeFixes{views: []fix.View{{
 		Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, VerifyError: "unowned attempt still broken",
-		Edits: []proposal.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}},
+		Edits: []fix.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}},
 	}}}
 
 	got := gatherPreviousTries(t, &fakeTries{}, attempts, nil)
@@ -214,18 +214,18 @@ func TestPreviousTries_NoEvidenceReaderShowsAttemptsWithNoRemediationWithoutDiff
 // its edits and diffs kept); both are left out, and another row with no
 // remediation is still listed.
 func TestPreviousTries_LeavesOutAnAttemptTheStartupSweepFailed(t *testing.T) {
-	attempts := &fakeProposals{views: []proposal.View{
+	attempts := &fakeFixes{views: []fix.View{
 		{
-			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
-			Rationale: "the model's rationale", VerifyError: proposal.NoRemediationInFlightReason,
-			Edits: []proposal.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/swept"}},
+			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
+			Rationale: "the model's rationale", VerifyError: fix.NoRemediationInFlightReason,
+			Edits: []fix.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/swept"}},
 		},
 		{
-			Attempt: 2, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
-			Rationale: proposal.NoRemediationInFlightReason,
+			Attempt: 2, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
+			Rationale: fix.NoRemediationInFlightReason,
 		},
 		{
-			Attempt: 3, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
+			Attempt: 3, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
 			Rationale: "the model's rationale", VerifyError: "judged and still broken",
 		},
 	}}

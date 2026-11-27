@@ -491,21 +491,21 @@ func TestWriteBatch_LinksOpenRejectionsToTheNewVersion(t *testing.T) {
 }
 
 // The open-rejection guard looks at [:RESOLVED_BY] edges to a :NodeVersion
-// only: a merged fix PR's [:RESOLVED_BY] to a :Proposal does not stop the
+// only: a merged fix PR's [:RESOLVED_BY] to a :Fix does not stop the
 // promotion's own link.
 func TestWriteBatch_ForwardLinkGuardIsPerNodeVersionFamily(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode("analytics.revenue")
-	f.seedRejection("rel-proposal", "analytics.revenue", promotedAtOf(0))
-	f.exec(`MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel-proposal'})
-		MERGE (p:Proposal {tenant_id: $tenant_id, proposal_id: 'prop-1'})
+	f.seedRejection("rel-fix", "analytics.revenue", promotedAtOf(0))
+	f.exec(`MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel-fix'})
+		MERGE (p:Fix {tenant_id: $tenant_id, fix_id: 'fix-1'})
 		MERGE (rej)-[:RESOLVED_BY]->(p)`, nil)
 
 	res := f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
 	assert.Equal(t, 1, res.RejectionsResolved)
 	assert.Equal(t, int64(2), f.count(`
-		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-proposal'})-[r:RESOLVED_BY]->() RETURN count(r) AS n`, nil),
-		"the rejection carries the proposal's edge and the version's")
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-fix'})-[r:RESOLVED_BY]->() RETURN count(r) AS n`, nil),
+		"the rejection carries the fix's edge and the version's")
 }
 
 // A promotion older than the node's watermark is not the code the node runs,

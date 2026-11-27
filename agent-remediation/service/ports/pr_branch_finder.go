@@ -23,8 +23,8 @@ type PullRequestRef struct {
 }
 
 // PullRequestBranchFinder looks up an existing pull request by its head
-// branch, so the reconciler's opening sweep can recover a proposal whose PR
-// was created on GitHub but never recorded onto the proposal row.
+// branch, so the reconciler's opening sweep can recover a fix whose PR
+// was created on GitHub but never recorded onto the fix row.
 type PullRequestBranchFinder interface {
 	// FindByBranch returns the pull request open (or, if closed, most recently
 	// created) for repo's head branch. found is false when no pull request

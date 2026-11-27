@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
@@ -102,7 +102,7 @@ func TestWorker_TwoWorkersNeverDriveOneRemediation(t *testing.T) {
 
 	assert.Equal(t, 1, h.llm.calls(), "one model call: one worker wrote each step")
 	assert.Len(t, h.checks.requests(), 1, "one release check")
-	assert.Len(t, h.proposals(), 1, "one attempt row")
+	assert.Len(t, h.fixes(), 1, "one attempt row")
 	assert.Len(t, h.store.Tries(id), 1)
 	rows := h.stepRows(id, 1, 1)
 	require.NotEmpty(t, rows)
@@ -184,8 +184,8 @@ func TestWorker_EndsARemediationWhoseStepKeepsFailing(t *testing.T) {
 	assert.Contains(t, rem.Failure, "model is down")
 	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status, "the try is left for a redrive to resume")
 	assert.Len(t, h.deadLetters(), 1, "the trigger is dead-lettered")
-	require.Len(t, h.proposals(), 1)
-	assert.Equal(t, proposal.StatusFailed, h.proposals()[0].Proposal.Status, "the in-flight attempt row is failed with the reason")
+	require.Len(t, h.fixes(), 1)
+	assert.Equal(t, fix.StatusFailed, h.fixes()[0].Fix.Status, "the in-flight attempt row is failed with the reason")
 	assert.Equal(t, 5, h.llm.calls(), "the model was called once for each failure")
 }
 
@@ -277,25 +277,25 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsTakenOver(t *testing.T) {
 	h := newHarness(t)
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, u.ProposalRepo().InsertGenerating(ctx, proposal.Proposal{
+	require.NoError(t, u.FixRepo().InsertGenerating(ctx, fix.Fix{
 		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Attempt: 1,
-		Status: proposal.StatusGenerating, ResolvedNodeIDs: []string{"svc-a"},
-		NodeOutcomes: map[string]proposal.NodeOutcome{"svc-a": {Status: proposal.StatusGenerating}},
+		Status: fix.StatusGenerating, ResolvedNodeIDs: []string{"svc-a"},
+		NodeOutcomes: map[string]fix.NodeOutcome{"svc-a": {Status: fix.StatusGenerating}},
 		CreatedAt:    t0,
 	}))
 	require.NoError(t, u.Commit())
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
-	require.Len(t, h.proposals(), 1, "one row for the attempt")
-	p := h.proposals()[0].Proposal
-	assert.Equal(t, proposal.StatusProposed, p.Status)
+	require.Len(t, h.fixes(), 1, "one row for the attempt")
+	p := h.fixes()[0].Fix
+	assert.Equal(t, fix.StatusProposed, p.Status)
 	assert.Equal(t, id.String(), p.RemediationID, "the runner's row took over the row with no remediation")
-	for _, row := range h.proposals() {
-		assert.NotEqual(t, proposal.StatusGenerating, row.Proposal.Status)
+	for _, row := range h.fixes() {
+		assert.NotEqual(t, fix.StatusGenerating, row.Fix.Status)
 	}
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
@@ -306,10 +306,10 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsSettledWhenTheAttemptFails(
 	h := newHarness(t)
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, u.ProposalRepo().InsertGenerating(ctx, proposal.Proposal{
+	require.NoError(t, u.FixRepo().InsertGenerating(ctx, fix.Fix{
 		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Attempt: 1,
-		Status: proposal.StatusGenerating, ResolvedNodeIDs: []string{"svc-a"},
-		NodeOutcomes: map[string]proposal.NodeOutcome{"svc-a": {Status: proposal.StatusGenerating}},
+		Status: fix.StatusGenerating, ResolvedNodeIDs: []string{"svc-a"},
+		NodeOutcomes: map[string]fix.NodeOutcome{"svc-a": {Status: fix.StatusGenerating}},
 		CreatedAt:    t0,
 	}))
 	require.NoError(t, u.Commit())
@@ -322,9 +322,9 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsSettledWhenTheAttemptFails(
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	require.Len(t, h.proposals(), 1)
-	assert.Equal(t, proposal.StatusFailed, h.proposals()[0].Proposal.Status)
-	assert.Equal(t, id.String(), h.proposals()[0].Proposal.RemediationID)
+	require.Len(t, h.fixes(), 1)
+	assert.Equal(t, fix.StatusFailed, h.fixes()[0].Fix.Status)
+	assert.Equal(t, id.String(), h.fixes()[0].Fix.RemediationID)
 }
 
 // The step that opens a try, and the hand-over that ends the remediation when

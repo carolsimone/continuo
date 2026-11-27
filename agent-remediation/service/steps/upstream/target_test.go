@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -51,7 +51,7 @@ func TestTarget_ReadsTheAncestorFromTheBundleAtTheTriggersLocation(t *testing.T)
 		Source:        targetSource,
 		FilePath:      targetFile,
 		Project:       targetSvc,
-		OwnChangeDiff: proposal.ComputeUnifiedDiff("select older from raw", targetSource, targetID),
+		OwnChangeDiff: fix.ComputeUnifiedDiff("select older from raw", targetSource, targetID),
 	}, gatheredTarget(t, out))
 	assert.Equal(t, []bundleCall{{"s3://bundle/rel-1", targetID, "rel-1"}}, bundle.calls)
 	assert.Equal(t, []string{targetID}, versions.calls)
@@ -256,6 +256,6 @@ func TestTarget_TheSourceIsKeptRawAndTheDiffComparesTwoCleanedTexts(t *testing.T
 
 	got := gatheredTarget(t, out)
 	assert.Equal(t, "select 'ops@acme.com' as owner, 1", got.Source, "the edit's original is the real file")
-	assert.Equal(t, proposal.ComputeUnifiedDiff(stored, "select '[redacted:email]' as owner, 1", targetID), got.OwnChangeDiff,
+	assert.Equal(t, fix.ComputeUnifiedDiff(stored, "select '[redacted:email]' as owner, 1", targetID), got.OwnChangeDiff,
 		"catalog's redaction of the stored version never shows as a change")
 }

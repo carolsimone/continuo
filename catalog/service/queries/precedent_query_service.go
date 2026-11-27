@@ -56,11 +56,11 @@ func (s *PrecedentQueryService) GetPrecedents(
 			// A precedent is resolved by an own-timeline version, by a merged
 			// PR's drawn edits, or — even when that PR drew no edits because
 			// every edit target was absent from the graph — by the presence of
-			// the [:RESOLVED_BY]->(:Proposal) edge itself, so Resolved agrees
+			// the [:RESOLVED_BY]->(:Fix) edge itself, so Resolved agrees
 			// with the identity query's resolved-first ordering.
-			Resolved:         v.ResolvingVersion != nil || len(v.Edited) > 0 || v.ResolvedByProposal,
+			Resolved:         v.ResolvingVersion != nil || len(v.Edited) > 0 || v.ResolvedByFix,
 			ResolvingVersion: v.ResolvingVersion,
-			Proposals:        v.Proposals,
+			Fixes:            v.Fixes,
 		}
 		// The own-timeline resolution diff is rendered as before and preferred
 		// when present: it is the authoritative record when a resolving version
@@ -84,11 +84,11 @@ func (s *PrecedentQueryService) GetPrecedents(
 // renderEditedDiffs copies each edited-provenance entry, replacing its Diff
 // with the merged-truth diff (the version the merge superseded vs the promoted
 // merged version) when the edit was amended and a straddling version was
-// selected; otherwise it keeps the edge's own stored proposal diff. The merged
+// selected; otherwise it keeps the edge's own stored fix diff. The merged
 // diff is capped at diffByteCap like every other rendered diff. DiffIsShipped
 // is set true only on the merged-truth branch, so a consumer can tell an
 // amended edit whose shipped code is recorded from one that fell back to the
-// proposal-time diff because no post-close version has been promoted yet.
+// proposed diff because no post-close version has been promoted yet.
 func renderEditedDiffs(edited []casebase.EditedView) []casebase.EditedView {
 	if len(edited) == 0 {
 		return nil

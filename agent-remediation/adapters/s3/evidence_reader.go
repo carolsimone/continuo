@@ -14,7 +14,7 @@ import (
 )
 
 // maxEvidenceBytes caps an evidence object (candidate SQL, a dbt or runner
-// log, a run result, a proposal's content or diff) held in memory, the
+// log, a run result, a fix's content or diff) held in memory, the
 // ceiling the code-bundle reader uses.
 const maxEvidenceBytes int64 = 64 << 20
 

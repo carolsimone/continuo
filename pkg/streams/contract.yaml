@@ -208,9 +208,9 @@ streams:
 
   # ---------------- agent-remediation streams ----------------
 
-  - name: remediation.proposed:v1
-    const: RemediationProposedV1
-    description: One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
+  - name: fix.proposed:v1
+    const: FixProposedV1
+    description: One verified fix per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
     producers: [agent-remediation]
     consumers: []
 
@@ -220,23 +220,23 @@ streams:
     producers: [agent-remediation]
     consumers: []
 
-  - name: remediation.pr_opened:v1
-    const: RemediationPrOpenedV1
-    description: Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
+  - name: fix.pr_opened:v1
+    const: FixPrOpenedV1
+    description: Emitted when an operator opens a GitHub PR from a fix, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base fixes group.
     producers: [agent-remediation]
     consumers:
       - component: catalog
-        group: catalog-remediation-pr-opened-proposals
-        const: CatalogRemediationPrOpenedProposals
+        group: catalog-fix-pr-opened-fixes
+        const: CatalogFixPrOpenedFixes
 
-  - name: remediation.pr_closed:v1
-    const: RemediationPrClosedV1
+  - name: fix.pr_closed:v1
+    const: FixPrClosedV1
     description: Terminal PR outcome (merged, or closed without merge), one per (release, attempt, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
     producers: [agent-remediation]
     consumers:
       - component: catalog
-        group: catalog-remediation-pr-closed-provenance
-        const: CatalogRemediationPrClosedProvenance
+        group: catalog-fix-pr-closed-provenance
+        const: CatalogFixPrClosedProvenance
 
 # Redis grants a component needs beyond the streams it produces and consumes. The
 # rules generator turns each entry into key patterns and commands of that
@@ -389,7 +389,7 @@ vocabularies:
 
   - name: handover_reason
     const: HandoverReason
-    description: Why a failing node of a rejected release is left to a human instead of a fix proposal. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it.
+    description: Why a failing node of a rejected release is left to a human instead of a fix. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it.
     values:
       - value: tries_spent
         const: TriesSpent
@@ -418,7 +418,7 @@ vocabularies:
 
   - name: approver_source
     const: ApproverSource
-    description: Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a proposal, which the gRPC reads carry to the release page.
+    description: Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a fix, which the gRPC reads carry to the release page.
     values:
       - value: bundle
         const: Bundle

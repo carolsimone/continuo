@@ -597,7 +597,7 @@ func (r *remediationRepository) DeleteFinishedOlderThan(_ context.Context, reten
 				}
 			}
 			d.steps = slices.DeleteFunc(d.steps, func(s *remediation.StepRun) bool { return s.RemediationID == id })
-			for _, row := range d.proposals {
+			for _, row := range d.fixes {
 				if row.p.RemediationID == id.String() {
 					row.p.RemediationID = ""
 				}

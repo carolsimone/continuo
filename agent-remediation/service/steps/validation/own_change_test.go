@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -40,7 +40,7 @@ func TestOwnChangeDiff_IsTheDiffFromThePromotedVersion(t *testing.T) {
 
 	out := gather(t, validation.NewOwnChangeDiff(versions, discardLogger()), failure(nil), withSource("select 2"))
 
-	want := proposal.ComputeUnifiedDiff("select 1", "select 2", "model.svc.a")
+	want := fix.ComputeUnifiedDiff("select 1", "select 2", "model.svc.a")
 	assert.Equal(t, remediation.Text(want), ownDiff(t, out))
 	assert.Equal(t, []string{"model.svc.a"}, versions.calls)
 }
@@ -87,7 +87,7 @@ func TestOwnChangeDiff_ComparesTwoCleanedTexts(t *testing.T) {
 
 	out := gather(t, validation.NewOwnChangeDiff(versions, discardLogger()), failure(nil), withSource("select 'ops@acme.com' as owner\nselect 2"))
 
-	want := proposal.ComputeUnifiedDiff(stored, "select '[redacted:email]' as owner\nselect 2", "model.svc.a")
+	want := fix.ComputeUnifiedDiff(stored, "select '[redacted:email]' as owner\nselect 2", "model.svc.a")
 	assert.Equal(t, remediation.Text(want), ownDiff(t, out), "catalog's redaction of the stored version never shows as a change")
 
 	unchanged := gather(t, validation.NewOwnChangeDiff(versions, discardLogger()), failure(nil), withSource("select 'ops@acme.com' as owner\nselect 1"))

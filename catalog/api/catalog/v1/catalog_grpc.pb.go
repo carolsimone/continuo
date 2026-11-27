@@ -79,7 +79,7 @@ type CatalogQueryClient interface {
 	// newest. Each entry carries the classified failure, the version that
 	// resolved it (when one exists) with a server-rendered diff against the
 	// version it superseded (8 KiB cap, truncated flag), and any fix-PR
-	// proposals. limit defaults to 5, max 20, applied before code bodies load;
+	// fixes. limit defaults to 5, max 20, applied before code bodies load;
 	// include_code=false keeps failing and resolving code bodies off the wire
 	// (the diff is always present). No match is an EMPTY list, never NOT_FOUND:
 	// a signature is a search key, and "no precedent" is a valid answer.
@@ -261,7 +261,7 @@ type CatalogQueryServer interface {
 	// newest. Each entry carries the classified failure, the version that
 	// resolved it (when one exists) with a server-rendered diff against the
 	// version it superseded (8 KiB cap, truncated flag), and any fix-PR
-	// proposals. limit defaults to 5, max 20, applied before code bodies load;
+	// fixes. limit defaults to 5, max 20, applied before code bodies load;
 	// include_code=false keeps failing and resolving code bodies off the wire
 	// (the diff is always present). No match is an EMPTY list, never NOT_FOUND:
 	// a signature is a search key, and "no precedent" is a valid answer.

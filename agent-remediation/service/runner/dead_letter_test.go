@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
@@ -201,7 +201,7 @@ func TestRunner_RedriveResumesTheFailedRemediation(t *testing.T) {
 	require.NoError(t, h.drive(id), "the sixth drive ends the remediation")
 	require.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
 	require.Equal(t, remediation.TryChecking, h.try(id, 1).Status, "the try is left where it stopped")
-	require.Equal(t, proposal.StatusFailed, h.attempt(1).Proposal.Status)
+	require.Equal(t, fix.StatusFailed, h.attempt(1).Fix.Status)
 	require.Equal(t, 1, h.llm.calls())
 	dls := h.deadLetters()
 	require.Len(t, dls, 1)
@@ -223,9 +223,9 @@ func TestRunner_RedriveResumesTheFailedRemediation(t *testing.T) {
 	assert.Zero(t, gate[0].Failures, "the failed step's failures are reset")
 	assert.Empty(t, gate[0].LastError)
 	row := h.attempt(1)
-	assert.Equal(t, proposal.StatusGenerating, row.Proposal.Status, "the attempt is in flight again")
-	assert.Equal(t, proposal.StatusGenerating, row.Proposal.NodeOutcomes["svc-a"].Status)
-	assert.Empty(t, row.Proposal.Rationale)
+	assert.Equal(t, fix.StatusGenerating, row.Fix.Status, "the attempt is in flight again")
+	assert.Equal(t, fix.StatusGenerating, row.Fix.NodeOutcomes["svc-a"].Status)
+	assert.Empty(t, row.Fix.Rationale)
 	msgs := h.store.ProcessedMessages()
 	require.Len(t, msgs, 2)
 	for _, m := range msgs {
@@ -234,11 +234,11 @@ func TestRunner_RedriveResumesTheFailedRemediation(t *testing.T) {
 
 	require.NoError(t, h.drive(id))
 	require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
 	assert.Len(t, h.store.Tries(id), 1, "the remediation finished on the try it was on")
 	assert.Equal(t, 1, h.llm.calls(), "the committed prompt step's model call is not repeated")
 	prompts := h.stepRows(id, 1, 1)["dbt-compile"]
@@ -289,7 +289,7 @@ func TestRunner_ARedriveOfASupersededRoundResumesNothing(t *testing.T) {
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
 	assert.Equal(t, "1-0", rem.TriggerMessageID)
 	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status)
-	assert.Equal(t, proposal.StatusFailed, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusFailed, h.attempt(1).Fix.Status)
 	assert.Len(t, h.store.Remediations(), 2)
 	msgs := h.store.ProcessedMessages()
 	require.Len(t, msgs, 3)
@@ -306,8 +306,8 @@ func TestRunner_ARedriveOfAVerifyingTryIsPolledAgain(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	verifying := h.attempt(1).Proposal
-	require.Equal(t, proposal.StatusVerifying, verifying.Status)
+	verifying := h.attempt(1).Fix
+	require.Equal(t, fix.StatusVerifying, verifying.Status)
 	gate := h.flowRows(id, 1)["release_check"][0]
 	gate.Failures = 5
 	gate.LastError = "rebuilt run ids differ"
@@ -315,7 +315,7 @@ func TestRunner_ARedriveOfAVerifyingTryIsPolledAgain(t *testing.T) {
 	require.NoError(t, h.sweeper().Sweep(ctx))
 	require.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
 	require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	require.Equal(t, proposal.StatusFailed, h.attempt(1).Proposal.Status)
+	require.Equal(t, fix.StatusFailed, h.attempt(1).Fix.Status)
 	dls := h.deadLetters()
 	require.Len(t, dls, 1)
 	_, dl := deadLetterOf(t, dls[0])
@@ -324,21 +324,21 @@ func TestRunner_ARedriveOfAVerifyingTryIsPolledAgain(t *testing.T) {
 	h.redrive(dls[0], "2-0")
 
 	row := h.attempt(1)
-	assert.Equal(t, proposal.StatusVerifying, row.Proposal.Status)
+	assert.Equal(t, fix.StatusVerifying, row.Fix.Status)
 	assert.Empty(t, row.VerifyError)
-	assert.Equal(t, verifying.Edits, row.Proposal.Edits)
-	assert.Equal(t, verifying.ReleaseChecks, row.Proposal.ReleaseChecks)
-	assert.Equal(t, verifying.NodeOutcomes, row.Proposal.NodeOutcomes)
-	assert.Equal(t, verifying.Rationale, row.Proposal.Rationale)
+	assert.Equal(t, verifying.Edits, row.Fix.Edits)
+	assert.Equal(t, verifying.ReleaseChecks, row.Fix.ReleaseChecks)
+	assert.Equal(t, verifying.NodeOutcomes, row.Fix.NodeOutcomes)
+	assert.Equal(t, verifying.Rationale, row.Fix.Rationale)
 	gate = h.flowRows(id, 1)["release_check"][0]
 	assert.Zero(t, gate.Failures)
 	assert.Equal(t, remediation.StepWaiting, gate.Status)
 
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poller(func() {}).Poll(ctx))
 
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
 	assert.Equal(t, 1, h.llm.calls())
 }
 
@@ -364,7 +364,7 @@ func TestRunner_ASecondSystemFailureAfterARedriveIsASecondDeadLetter(t *testing.
 	secondEnv, second := deadLetterOf(t, dls[1])
 	assert.NotEqual(t, firstEnv.EventID, secondEnv.EventID)
 	assert.Equal(t, "2-0", second.OriginalMessageID)
-	assert.Equal(t, proposal.StatusFailed, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusFailed, h.attempt(1).Fix.Status)
 }
 
 // A remediation that ended as a system failure keeps its try open for a
@@ -398,7 +398,7 @@ func TestRunner_APausedTryIsNotDrivenPolledOrSwept(t *testing.T) {
 		h.countRemediationFailures(id, 5)
 		require.NoError(t, h.sweeper().Sweep(ctx))
 		require.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
-		h.checks.answer(proposal.PhasePassed, nil)
+		h.checks.answer(fix.PhasePassed, nil)
 
 		require.NoError(t, h.poller(func() {}).Poll(ctx))
 		require.NoError(t, h.sweeper().Sweep(ctx))

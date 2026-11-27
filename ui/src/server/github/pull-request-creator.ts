@@ -8,7 +8,7 @@ export interface CreatePRInput {
   /** Branch to merge into */
   baseBranch: string;
   /**
-   * The commit the files were written against (the proposal's commit_sha).
+   * The commit the files were written against (the fix's commit_sha).
    * The head branch is always cut from the base branch's head; when this is
    * set and is not that head, every path the pull request writes or deletes
    * (each file's path and, for a renamed file, its renamed_from) must be the
@@ -410,9 +410,9 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
       });
 
       // Step 4: move the head branch onto the new commit. The branch name is
-      // scoped to this proposal attempt, so the only tip force can overwrite
+      // scoped to this attempt, so the only tip force can overwrite
       // is one left by an earlier run of this same attempt. That is normally a
-      // discarded commit of the same proposal — but not always: if the earlier
+      // discarded commit of the same fix — but not always: if the earlier
       // run opened the pull request and then failed to record it, the claim
       // can be retried while the branch already carries a pull request someone
       // may have pushed to. The reconciler's opening sweep records rather than

@@ -3,13 +3,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import ReleaseDetailPage from './ReleaseDetailPage';
-import { NodeValidationResult, ReleaseDetail, ProposalDTO } from './types';
+import { NodeValidationResult, ReleaseDetail, FixDTO } from './types';
 import type { ApproverSource } from '../server/generated/vocabulary.gen';
 import { reasonLabel } from './release-helpers';
 
-vi.mock('./remediation-api', () => ({ fetchProposals: vi.fn() }));
-import { fetchProposals } from './remediation-api';
-const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
+vi.mock('./remediation-api', () => ({ fetchFixes: vi.fn() }));
+import { fetchFixes } from './remediation-api';
+const mockFetchFixes = fetchFixes as ReturnType<typeof vi.fn>;
 
 const node = (o: Partial<NodeValidationResult> & { stage: string; node_id: string }): NodeValidationResult => ({
   status: 'failed', ...o,
@@ -25,7 +25,7 @@ const makeRelease = (
   bootstrap: false, remediation_round,
 });
 
-const proposal = (o: Partial<ProposalDTO> & { source: string; node_id: string }): ProposalDTO => ({
+const fix = (o: Partial<FixDTO> & { source: string; node_id: string }): FixDTO => ({
   id: 'p', release_id: 'rel-1', error_signature: 's', attempt: 1, status: 'proposed',
   confidence: 'high', rationale: '', proposed_sql_uri: '', diff_uri: '', candidate_fix_sql_uri: '',
   candidate_fix_diff_uri: '', source_resolved: true, repo: '', commit_sha: '', file_path: '',
@@ -70,7 +70,7 @@ function renderPage(rel: ReleaseDetail) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFetchProposals.mockResolvedValue([]);
+  mockFetchFixes.mockResolvedValue([]);
   mockPost.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
   releaseChecksResponse = [];
 });
@@ -85,8 +85,8 @@ describe('ReleaseDetailPage — stage sections', () => {
     expect(screen.queryByText('Validation')).toBeNull();
   });
 
-  it('attaches a proposal link only to its own stage row (no cross-stage leak)', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc' })]);
+  it('attaches a fix link only to its own stage row (no cross-stage leak)', async () => {
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'svc' })]);
     renderPage(makeRelease([
       node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' }),
       node({ stage: 'validation', node_id: 'svc' }),
@@ -118,8 +118,8 @@ describe('ReleaseDetailPage — stage sections', () => {
 });
 
 describe('ReleaseDetailPage — FIX cell is status-aware', () => {
-  it('shows a disabled "Generating fix…" chip while a proposal is in flight', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'generating' })]);
+  it('shows a disabled "Generating fix…" chip while a fix is in flight', async () => {
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'svc', status: 'generating' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
     await screen.findByText('models/x.sql');
     const chip = await screen.findByText(/Generating fix/);
@@ -128,8 +128,8 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     expect(screen.queryByText(/Proposed fix available/)).toBeNull();
   });
 
-  it('shows the "Proposed fix available →" link once the proposal is proposed', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'proposed' })]);
+  it('shows the "Proposed fix available →" link once the fix is proposed', async () => {
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'svc', status: 'proposed' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
     await screen.findByText('models/x.sql');
     await waitFor(() => expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument());
@@ -137,9 +137,9 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
   });
 
   it('prefers the proposed link over a generating chip when both exist for a node', async () => {
-    mockFetchProposals.mockResolvedValue([
-      proposal({ source: 'compile', node_id: 'svc', attempt: 1, status: 'generating' }),
-      proposal({ source: 'compile', node_id: 'svc', attempt: 2, status: 'proposed' }),
+    mockFetchFixes.mockResolvedValue([
+      fix({ source: 'compile', node_id: 'svc', attempt: 1, status: 'generating' }),
+      fix({ source: 'compile', node_id: 'svc', attempt: 2, status: 'proposed' }),
     ]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
     await screen.findByText('models/x.sql');
@@ -148,7 +148,7 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
   });
 
   it('shows a disabled "Checking the fix…" chip while a release check is judging the fix', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'validation', node_id: 'svc', status: 'verifying' })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'validation', node_id: 'svc', status: 'verifying' })]);
     renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
     await screen.findByText('contracts/svc.yaml');
     const chip = await screen.findByText(/Checking the fix/);
@@ -159,9 +159,9 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
   });
 
   it('prefers the proposed link over a verifying chip when both exist for a node', async () => {
-    mockFetchProposals.mockResolvedValue([
-      proposal({ source: 'validation', node_id: 'svc', attempt: 1, status: 'verifying' }),
-      proposal({ source: 'validation', node_id: 'svc', attempt: 2, status: 'proposed' }),
+    mockFetchFixes.mockResolvedValue([
+      fix({ source: 'validation', node_id: 'svc', attempt: 1, status: 'verifying' }),
+      fix({ source: 'validation', node_id: 'svc', attempt: 2, status: 'proposed' }),
     ]);
     renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
     await screen.findByText('contracts/svc.yaml');
@@ -170,9 +170,9 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
   });
 
   it('prefers the verifying chip over a generating chip when both exist for a node', async () => {
-    mockFetchProposals.mockResolvedValue([
-      proposal({ source: 'validation', node_id: 'svc', attempt: 1, status: 'generating' }),
-      proposal({ source: 'validation', node_id: 'svc', attempt: 2, status: 'verifying' }),
+    mockFetchFixes.mockResolvedValue([
+      fix({ source: 'validation', node_id: 'svc', attempt: 1, status: 'generating' }),
+      fix({ source: 'validation', node_id: 'svc', attempt: 2, status: 'verifying' }),
     ]);
     renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
     await screen.findByText('contracts/svc.yaml');
@@ -181,7 +181,7 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
   });
 
   it('shows why a skipped attempt stopped in the FIX cell instead of leaving it empty', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'skipped' })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'svc', status: 'skipped' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
     await screen.findByText('models/x.sql');
     expect(await screen.findByText(/No source to fix at this commit\. Fix it in the repository\./)).toBeInTheDocument();
@@ -189,17 +189,17 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
 
-  it('renders nothing in the FIX cell when no proposal exists', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+  it('renders nothing in the FIX cell when no fix exists', async () => {
+    mockFetchFixes.mockResolvedValue([]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
     await screen.findByText('models/x.sql');
-    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    await waitFor(() => expect(mockFetchFixes).toHaveBeenCalled());
     expect(screen.queryByText(/Proposed fix available/)).toBeNull();
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
 
-  it('lights every node a batched proposal resolves and stops polling once all are proposed', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({
+  it('lights every node a batched fix resolves and stops polling once all are proposed', async () => {
+    mockFetchFixes.mockResolvedValue([fix({
       source: 'validation', node_id: 's.a', status: 'proposed',
       resolved_node_ids: ['s.a', 's.b'],
       node_outcomes: { 's.a': { status: 'proposed', reason: '' }, 's.b': { status: 'proposed', reason: '' } },
@@ -214,7 +214,7 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
   });
 
   it('shows a per-node note for a member the batched attempt skipped while another verifies', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({
+    mockFetchFixes.mockResolvedValue([fix({
       source: 'validation', node_id: 's.a', status: 'verifying',
       resolved_node_ids: ['s.a', 's.b'],
       node_outcomes: { 's.a': { status: 'verifying', reason: '' }, 's.b': { status: 'skipped', reason: 'No source to fix at this commit.' } },
@@ -231,15 +231,15 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
 
 describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   const batched = (outcomes: Record<string, { status: string; reason: string; code?: string }>, rationale = '') =>
-    proposal({
+    fix({
       source: 'validation', node_id: 's.a', status: 'failed', rationale,
-      resolved_node_ids: Object.keys(outcomes), node_outcomes: outcomes as ProposalDTO['node_outcomes'],
+      resolved_node_ids: Object.keys(outcomes), node_outcomes: outcomes as FixDTO['node_outcomes'],
     });
   const releaseOf = (...ids: string[]) =>
     makeRelease(ids.map(id => node({ stage: 'validation', node_id: id })), 'validation_failed');
 
   it('shows the hand-over text and, beneath it, the message for a coded node', async () => {
-    mockFetchProposals.mockResolvedValue([batched({
+    mockFetchFixes.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: 'duplicate column amount', code: 'tries_spent' },
     })]);
     const { container } = renderPage(releaseOf('s.a'));
@@ -252,7 +252,7 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   });
 
   it('shows the text alone for a coded node with no message', async () => {
-    mockFetchProposals.mockResolvedValue([batched({
+    mockFetchFixes.mockResolvedValue([batched({
       's.a': { status: 'skipped', reason: '', code: 'no_repository' },
     })]);
     const { container } = renderPage(releaseOf('s.a'));
@@ -262,7 +262,7 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   });
 
   it('shows each coded node its own text and message in one batched attempt', async () => {
-    mockFetchProposals.mockResolvedValue([batched({
+    mockFetchFixes.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: 'first', code: 'declined' },
       's.b': { status: 'escalated', reason: 'second', code: 'preflight_rounds_spent' },
     })]);
@@ -276,7 +276,7 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   it('truncates a long message behind a more toggle and keeps the hand-over text visible', async () => {
     const long = 'the change that broke this node lives in finance; a fix in this node\'s own project cannot ship before it: '
       + 'column amount_cents is missing from the upstream model';
-    mockFetchProposals.mockResolvedValue([batched({
+    mockFetchFixes.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: long, code: 'tries_spent' },
     })]);
     const { container } = renderPage(releaseOf('s.a'));
@@ -300,8 +300,8 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
     expect(full).not.toHaveClass('nodes-error-full--visible');
   });
 
-  it('does not show the proposal rationale under a hand-over text', async () => {
-    mockFetchProposals.mockResolvedValue([batched({
+  it('does not show the fix rationale under a hand-over text', async () => {
+    mockFetchFixes.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: '', code: 'no_type' },
     }, 'rationale of another node\'s fix')]);
     renderPage(releaseOf('s.a'));
@@ -310,7 +310,7 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   });
 
   it('renders the message as plain text, never as HTML', async () => {
-    mockFetchProposals.mockResolvedValue([batched({
+    mockFetchFixes.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: '<b>bold</b> <img src=x onerror=alert(1)>', code: 'declined' },
     })]);
     const { container } = renderPage(releaseOf('s.a'));
@@ -329,13 +329,13 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
     ['no_repository', 'The release names no repository, so no fix can be opened.'],
     ['unverifiable_edits', "The agent's edits could not be checked by a release. Fix it in the repository."],
   ])('shows the text of %s', async (code, text) => {
-    mockFetchProposals.mockResolvedValue([batched({ 's.a': { status: 'failed', reason: '', code } })]);
+    mockFetchFixes.mockResolvedValue([batched({ 's.a': { status: 'failed', reason: '', code } })]);
     renderPage(releaseOf('s.a'));
     expect(await screen.findByText(text)).toBeInTheDocument();
   });
 
   it("keeps today's note for a node whose outcome has no code", async () => {
-    mockFetchProposals.mockResolvedValue([batched({
+    mockFetchFixes.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: '', code: '' },
       's.b': { status: 'skipped', reason: 'No source to fix at this commit.' },
       's.c': { status: 'escalated', reason: '', code: '' },
@@ -346,8 +346,8 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
     expect(screen.getByText('Attempt budget spent.')).toBeInTheDocument();
   });
 
-  it("keeps today's note for a proposal with no node outcomes at all", async () => {
-    mockFetchProposals.mockResolvedValue([proposal({
+  it("keeps today's note for a fix with no node outcomes at all", async () => {
+    mockFetchFixes.mockResolvedValue([fix({
       source: 'validation', node_id: 's.a', status: 'failed', rationale: 'the model gave up',
     })]);
     renderPage(releaseOf('s.a'));
@@ -363,16 +363,16 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
     approvers: ReturnType<typeof approver>[] | undefined,
     attempt = 1,
   ) =>
-    proposal({
+    fix({
       source: 'validation', node_id: 's.a', status: 'failed', attempt,
-      resolved_node_ids: Object.keys(outcomes), node_outcomes: outcomes as ProposalDTO['node_outcomes'],
+      resolved_node_ids: Object.keys(outcomes), node_outcomes: outcomes as FixDTO['node_outcomes'],
       approvers,
     });
   const releaseOf = (...ids: string[]) =>
     makeRelease(ids.map(id => node({ stage: 'validation', node_id: id })), 'validation_failed');
 
   it('shows the owner of a node whose fix is ready to review', async () => {
-    mockFetchProposals.mockResolvedValue([batched(
+    mockFetchFixes.mockResolvedValue([batched(
       { 's.a': { status: 'proposed', reason: '' } },
       [approver('s.a', 'acme/finance')],
     )]);
@@ -382,7 +382,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
   });
 
   it('shows the owner of a node handed over to a human, beneath the hand-over text', async () => {
-    mockFetchProposals.mockResolvedValue([batched(
+    mockFetchFixes.mockResolvedValue([batched(
       { 's.a': { status: 'failed', reason: 'duplicate column amount', code: 'tries_spent' } },
       [approver('s.a', 'alice', 'contract_file')],
     )]);
@@ -392,7 +392,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
   });
 
   it('says no reviewer is asked for a node with no owner', async () => {
-    mockFetchProposals.mockResolvedValue([batched(
+    mockFetchFixes.mockResolvedValue([batched(
       { 's.a': { status: 'failed', reason: '', code: 'no_type' } },
       [approver('s.a', '')],
     )]);
@@ -402,7 +402,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
   });
 
   it('shows each node its own owner in one batched attempt', async () => {
-    mockFetchProposals.mockResolvedValue([batched(
+    mockFetchFixes.mockResolvedValue([batched(
       {
         's.a': { status: 'proposed', reason: '' },
         's.b': { status: 'failed', reason: '', code: 'declined' },
@@ -417,7 +417,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
   });
 
   it('shows no owner note for a legacy attempt, which records no approvers', async () => {
-    mockFetchProposals.mockResolvedValue([
+    mockFetchFixes.mockResolvedValue([
       batched({ 's.a': { status: 'proposed', reason: '' } }, undefined),
       batched({ 's.b': { status: 'failed', reason: '', code: 'declined' } }, []),
     ]);
@@ -430,7 +430,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
 
   it('shows no owner note for a node the attempt recorded no approver for', async () => {
     // A node with no entry was not recorded, which is not the same as a node with no owner.
-    mockFetchProposals.mockResolvedValue([batched(
+    mockFetchFixes.mockResolvedValue([batched(
       {
         's.a': { status: 'failed', reason: '', code: 'classifier_infra' },
         's.b': { status: 'failed', reason: '', code: 'declined' },
@@ -445,7 +445,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
   });
 
   it('shows no owner note while a fix is being written or verified', async () => {
-    mockFetchProposals.mockResolvedValue([
+    mockFetchFixes.mockResolvedValue([
       batched({ 's.a': { status: 'generating', reason: '' } }, [approver('s.a', 'alice')]),
       batched({ 's.b': { status: 'verifying', reason: '' } }, [approver('s.b', 'bob')]),
     ]);
@@ -456,7 +456,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
   });
 
   it("shows the owner the node's latest settled attempt names", async () => {
-    mockFetchProposals.mockResolvedValue([
+    mockFetchFixes.mockResolvedValue([
       batched({ 's.a': { status: 'failed', reason: '', code: 'tries_spent' } }, [approver('s.a', 'old-owner')], 1),
       batched({ 's.a': { status: 'proposed', reason: '' } }, [approver('s.a', 'new-owner')], 2),
     ]);
@@ -466,7 +466,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
   });
 
   it('renders the owner as plain text, never as HTML', async () => {
-    mockFetchProposals.mockResolvedValue([batched(
+    mockFetchFixes.mockResolvedValue([batched(
       { 's.a': { status: 'failed', reason: '', code: 'declined' } },
       [approver('s.a', '<b>bold</b> <img src=x onerror=alert(1)>')],
     )]);
@@ -661,8 +661,8 @@ describe('ReleaseDetailPage — reject detail', () => {
   });
 });
 
-describe('ReleaseDetailPage — proposal polling gated on rejected', () => {
-  it('does not poll proposals while validating even with a failed node, then starts fresh once the release is rejected', async () => {
+describe('ReleaseDetailPage — fix polling gated on rejected', () => {
+  it('does not poll fixes while validating even with a failed node, then starts fresh once the release is rejected', async () => {
     vi.useFakeTimers();
     try {
       const base = {
@@ -687,7 +687,7 @@ describe('ReleaseDetailPage — proposal polling gated on rejected', () => {
         return Promise.resolve({ ok: true, text: () => Promise.resolve(''), json: () => Promise.resolve({}) });
       }) as unknown as typeof fetch;
 
-      mockFetchProposals.mockResolvedValue([proposal({ source: 'validation', node_id: 'svc', status: 'proposed' })]);
+      mockFetchFixes.mockResolvedValue([fix({ source: 'validation', node_id: 'svc', status: 'proposed' })]);
 
       render(
         <MemoryRouter initialEntries={['/releases/rel-1']}>
@@ -697,16 +697,16 @@ describe('ReleaseDetailPage — proposal polling gated on rejected', () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(screen.getByText('svc')).toBeInTheDocument();
-      expect(mockFetchProposals).not.toHaveBeenCalled();
+      expect(mockFetchFixes).not.toHaveBeenCalled();
 
-      // The next poll transitions the release to rejected. Proposal polling
+      // The next poll transitions the release to rejected. Fix polling
       // must start now (not have been running all along) and surface the
-      // already-ready proposal without a manual reload. Fake timers are active,
+      // already-ready fix without a manual reload. Fake timers are active,
       // so flush the effect's immediate refresh() call directly instead of
       // waitFor (which polls on real timers and would hang).
       await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(mockFetchProposals).toHaveBeenCalled();
+      expect(mockFetchFixes).toHaveBeenCalled();
       expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -714,11 +714,11 @@ describe('ReleaseDetailPage — proposal polling gated on rejected', () => {
   });
 });
 
-describe('ReleaseDetailPage — proposal polling settles per node on a batched attempt', () => {
+describe('ReleaseDetailPage — fix polling settles per node on a batched attempt', () => {
   it('stops after the first refresh once every failed node is terminal (one proposed, one skipped)', async () => {
     vi.useFakeTimers();
     try {
-      mockFetchProposals.mockResolvedValue([proposal({
+      mockFetchFixes.mockResolvedValue([fix({
         source: 'validation', node_id: 's.a', status: 'proposed',
         resolved_node_ids: ['s.a', 's.b'],
         node_outcomes: { 's.a': { status: 'proposed', reason: '' }, 's.b': { status: 'skipped', reason: 'No source to fix at this commit.' } },
@@ -729,7 +729,7 @@ describe('ReleaseDetailPage — proposal polling settles per node on a batched a
       ], 'validation_failed'));
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(mockFetchProposals).toHaveBeenCalledTimes(1);
+      expect(mockFetchFixes).toHaveBeenCalledTimes(1);
       expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
       expect(screen.getByText(/No source to fix at this commit\. Fix it in the repository\./)).toBeInTheDocument();
 
@@ -737,7 +737,7 @@ describe('ReleaseDetailPage — proposal polling settles per node on a batched a
       // so the interval must have been cleared — advancing several more poll
       // intervals issues no further fetch.
       await act(async () => { await vi.advanceTimersByTimeAsync(5000 * 4); });
-      expect(mockFetchProposals).toHaveBeenCalledTimes(1);
+      expect(mockFetchFixes).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -746,7 +746,7 @@ describe('ReleaseDetailPage — proposal polling settles per node on a batched a
   it('keeps polling while one resolved node is still verifying, even though another is already proposed', async () => {
     vi.useFakeTimers();
     try {
-      mockFetchProposals.mockResolvedValue([proposal({
+      mockFetchFixes.mockResolvedValue([fix({
         source: 'validation', node_id: 's.a', status: 'proposed',
         resolved_node_ids: ['s.a', 's.b'],
         node_outcomes: { 's.a': { status: 'proposed', reason: '' }, 's.b': { status: 'verifying', reason: '' } },
@@ -757,13 +757,13 @@ describe('ReleaseDetailPage — proposal polling settles per node on a batched a
       ], 'validation_failed'));
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(mockFetchProposals).toHaveBeenCalledTimes(1);
+      expect(mockFetchFixes).toHaveBeenCalledTimes(1);
       expect(screen.getByText(/Checking the fix/)).toBeInTheDocument();
 
       // s.b is still 'verifying' — not settled — so the next tick must still
       // issue a fetch (the cap is also suspended while any node verifies).
       await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-      expect(mockFetchProposals).toHaveBeenCalledTimes(2);
+      expect(mockFetchFixes).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
@@ -772,7 +772,7 @@ describe('ReleaseDetailPage — proposal polling settles per node on a batched a
 
 describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
   it('shows Try again for a rejected release at a dead end and posts the retry', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, rationale: '' })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, rationale: '' })]);
     mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
@@ -781,7 +781,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
   });
 
   it('presents the retry as a titled action banner, not a bare button', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, rationale: '' })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, rationale: '' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     // The action must read as the next thing to do: a banner that says what
@@ -790,12 +790,12 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(btn.closest('.action-banner')).not.toBeNull();
   });
 
-  it('bumps the round shown in the header and restarts proposal polling after a successful retry (202)', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+  it('bumps the round shown in the header and restarts fix polling after a successful retry (202)', async () => {
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
     mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
-    const callsBeforeRetry = mockFetchProposals.mock.calls.length;
+    const callsBeforeRetry = mockFetchFixes.mock.calls.length;
 
     fireEvent.click(btn);
 
@@ -803,38 +803,38 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
       const pill = document.querySelector('.pill');
       expect(pill!.textContent).toBe('rejected · round 2');
     });
-    await waitFor(() => expect(mockFetchProposals.mock.calls.length).toBeGreaterThan(callsBeforeRetry));
+    await waitFor(() => expect(mockFetchFixes.mock.calls.length).toBeGreaterThan(callsBeforeRetry));
   });
 
   it('hides Try again once the FIX cell already shows a proposed fix', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'proposed' })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'proposed' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     await screen.findByText(/Proposed fix available/);
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
-  it('hides Try again when the current round has no proposals yet (a retry is already in progress)', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+  it('hides Try again when the current round has no fixes yet (a retry is already in progress)', async () => {
+    mockFetchFixes.mockResolvedValue([]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     await screen.findByText('finance');
-    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    await waitFor(() => expect(mockFetchFixes).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
-  it('shows Try again when the only round-1 proposal is proposed but its PR was rejected', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({
+  it('shows Try again when the only round-1 fix is proposed but its PR was rejected', async () => {
+    mockFetchFixes.mockResolvedValue([fix({
       source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', remediation_round: 1,
     })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     expect(await screen.findByRole('button', { name: 'Try again (round 1 of 3)' })).toBeInTheDocument();
   });
 
-  it('hides Try again when a batched proposal has one owning project rejected but another still open', async () => {
+  it('hides Try again when a batched fix has one owning project rejected but another still open', async () => {
     // The server mirrors the singular pr_state from pull_requests[0] — here
     // project 'a' (alphabetically first, and rejected) — so a reader that
     // only looks at the singular field would misjudge this attempt as a dead
     // end even though project 'b' still has a PR open for review.
-    mockFetchProposals.mockResolvedValue([proposal({
+    mockFetchFixes.mockResolvedValue([fix({
       source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', remediation_round: 1,
       pr_projects: ['a', 'b'],
       pull_requests: [
@@ -850,30 +850,30 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     await screen.findByText('finance');
-    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    await waitFor(() => expect(mockFetchFixes).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
-  it('hides Try again when the only round-1 proposal is proposed with no PR yet', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({
+  it('hides Try again when the only round-1 fix is proposed with no PR yet', async () => {
+    mockFetchFixes.mockResolvedValue([fix({
       source: 'compile', node_id: 'finance', status: 'proposed', pr_state: '', remediation_round: 1,
     })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     await screen.findByText('finance');
-    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    await waitFor(() => expect(mockFetchFixes).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
   it('hides Try again when the release has no failed nodes', async () => {
-    mockFetchProposals.mockResolvedValue([]);
+    mockFetchFixes.mockResolvedValue([]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'ok' })]));
     await screen.findByText('finance');
-    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    await waitFor(() => expect(mockFetchFixes).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
   it('shows the retry-in-progress message on a 409 retry_in_progress', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
     mockPost.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'retry_in_progress' }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
@@ -882,18 +882,18 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
-  it('shows a link to the open PR when retry answers 409 proposal_open', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
-    mockPost.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'proposal_open', pr_url: 'https://x/pr/7' }) });
+  it('shows a link to the open PR when retry answers 409 fix_open', async () => {
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockPost.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'fix_open', pr_url: 'https://x/pr/7' }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     fireEvent.click(btn);
     expect(await screen.findByText(/A fix is already proposed: https:\/\/x\/pr\/7/)).toBeInTheDocument();
   });
 
-  it('says a fix is already proposed when 409 proposal_open carries no pr_url', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
-    mockPost.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'proposal_open' }) });
+  it('says a fix is already proposed when 409 fix_open carries no pr_url', async () => {
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockPost.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'fix_open' }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     fireEvent.click(btn);
@@ -901,7 +901,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
   });
 
   it('maps a release-controller refusal reason to its message', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
     mockPost.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'not_healable' }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
@@ -909,20 +909,20 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(await screen.findByText(/This rejection is not something the agent can fix\./)).toBeInTheDocument();
   });
 
-  it('maps a 502 proposal_reader_unavailable refusal to its message', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
-    mockPost.mockResolvedValue({ ok: false, status: 502, json: async () => ({ error: 'proposal_reader_unavailable' }) });
+  it('maps a 502 fix_reader_unavailable refusal to its message', async () => {
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockPost.mockResolvedValue({ ok: false, status: 502, json: async () => ({ error: 'fix_reader_unavailable' }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     fireEvent.click(btn);
     expect(await screen.findByText('agent-remediation is unreachable — try again in a moment.')).toBeInTheDocument();
   });
 
-  it('treats a proposal with remediation_round 0 as round 1 (Try again shows on a round-1 dead end)', async () => {
+  it('treats a fix with remediation_round 0 as round 1 (Try again shows on a round-1 dead end)', async () => {
     // A missing remediation_round arrives over the wire as 0, not undefined —
     // ui/src/server/remediation-client.ts loads the proto with `defaults:
-    // true`. The proposal must still be read as belonging to round 1.
-    mockFetchProposals.mockResolvedValue([proposal({
+    // true`. The fix must still be read as belonging to round 1.
+    mockFetchFixes.mockResolvedValue([fix({
       source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 0,
     })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
@@ -930,21 +930,21 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
   });
 
   it('says push a new commit when the release is on round 3 at a dead end', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 3 })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 3 })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })], 'compile_failed', 3));
     expect(await screen.findByText(/Retried 3 times — push a new commit to start over\./)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
   it('explains a skipped attempt in the FIX cell', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'skipped', rationale: 'offending file not found at commit' })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'skipped', rationale: 'offending file not found at commit' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     expect(await screen.findByText(/offending file not found at commit/)).toBeInTheDocument();
     expect(screen.getByText(/fix it in the repository/i)).toBeInTheDocument();
   });
 
   it('explains an escalated attempt in the FIX cell', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated' })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     expect(await screen.findByText(/Attempt budget spent\./)).toBeInTheDocument();
   });
@@ -963,13 +963,13 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(pill!.textContent).toBe('rejected');
   });
 
-  it('keeps Try again hidden right after a 202 even though only the old round\'s proposal has been refetched, then reflects the new round live', async () => {
+  it('keeps Try again hidden right after a 202 even though only the old round\'s fix has been refetched, then reflects the new round live', async () => {
     vi.useFakeTimers();
     try {
-      // Round 1's only proposal is a terminal, non-actionable escalation — the
+      // Round 1's only fix is a terminal, non-actionable escalation — the
       // release-controller would not have accepted a retry otherwise.
-      const round1Escalated = proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 1 });
-      mockFetchProposals.mockResolvedValue([round1Escalated]);
+      const round1Escalated = fix({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 1 });
+      mockFetchFixes.mockResolvedValue([round1Escalated]);
       mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
 
       renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
@@ -981,14 +981,14 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
 
       const pill = document.querySelector('.pill');
       expect(pill!.textContent).toBe('rejected · round 2');
-      // The wire still only carries round 1's terminal proposal — the button
+      // The wire still only carries round 1's terminal fix — the button
       // must not reappear off that stale, already-spent round.
       expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
 
       // Round 2's first attempt lands on the next poll tick.
-      mockFetchProposals.mockResolvedValue([
+      mockFetchFixes.mockResolvedValue([
         round1Escalated,
-        proposal({ source: 'compile', node_id: 'finance', status: 'generating', attempt: 4, remediation_round: 2 }),
+        fix({ source: 'compile', node_id: 'finance', status: 'generating', attempt: 4, remediation_round: 2 }),
       ]);
       await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
       expect(screen.getByText(/Generating fix/)).toBeInTheDocument();
@@ -1025,7 +1025,7 @@ describe('ReleaseDetailPage — release checks section', () => {
   it('renders no section when the release has no release checks', async () => {
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     await screen.findByText('finance');
-    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    await waitFor(() => expect(mockFetchFixes).toHaveBeenCalled());
     expect(screen.queryByText('Release checks')).toBeNull();
   });
 });

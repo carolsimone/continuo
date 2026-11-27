@@ -25,23 +25,23 @@ var (
 	ErrNotHealable     = errors.New("rejection reason is not healable")
 	ErrNotRetryable    = errors.New("release was rejected without a stored rejection payload")
 	// ErrRetryInProgress refuses a retry when the current remediation round has
-	// not yet produced a proposal row: either its trigger has not reached
+	// not yet produced a fix row: either its trigger has not reached
 	// agent-remediation yet, or the classifier dropped it. Either way, spending
 	// another round now would race the round already in flight.
 	ErrRetryInProgress = errors.New("a remediation round is in progress")
-	// ErrProposalReaderUnavailable wraps a failure of the gRPC read to
+	// ErrFixReaderUnavailable wraps a failure of the gRPC read to
 	// agent-remediation, distinct from a legitimate "an attempt is open" answer.
-	ErrProposalReaderUnavailable = errors.New("could not read remediation proposals")
+	ErrFixReaderUnavailable = errors.New("could not read remediation fixes")
 )
 
-// ErrProposalOpen refuses a retry because an attempt is still in flight or a
+// ErrFixOpen refuses a retry because an attempt is still in flight or a
 // fix is already proposed; it names what to look at instead.
-type ErrProposalOpen struct {
-	ProposalID string
-	PRURL      string
+type ErrFixOpen struct {
+	FixID string
+	PRURL string
 }
 
-func (e ErrProposalOpen) Error() string { return "a proposal is already open for this release" }
+func (e ErrFixOpen) Error() string { return "a fix is already open for this release" }
 
 // IsHealableReason reports whether a reject reason is one the classifier turns
 // into a heal trigger, which is the `healable` flag the reject_reason
@@ -66,7 +66,7 @@ type RetryRemediationResult struct {
 // release, so it is reported the same as an unknown id), when the candidate is
 // not rejected, when its reason is not healable, when the round cap is
 // reached, when the candidate has no stored rejection, when the current round
-// has not yet produced a proposal row (a second click before the first has
+// has not yet produced a fix row (a second click before the first has
 // landed), or when an attempt is still in flight or a fix is already proposed
 // — the caller should look at that instead of retrying. It refuses with
 // maintenance.ErrActive while maintenance mode is on.
@@ -103,15 +103,15 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 		return RetryRemediationResult{}, releasecheck.ErrRoundsExhausted
 	}
 
-	proposals, err := deps.Proposals.ListProposalsForRelease(ctx, releaseID)
+	fixes, err := deps.Fixes.ListFixesForRelease(ctx, releaseID)
 	if err != nil {
-		return RetryRemediationResult{}, fmt.Errorf("%w: %v", ErrProposalReaderUnavailable, err)
+		return RetryRemediationResult{}, fmt.Errorf("%w: %v", ErrFixReaderUnavailable, err)
 	}
-	current := currentRoundProposals(proposals, r.RemediationRound())
+	current := currentRoundFixes(fixes, r.RemediationRound())
 	if len(current) == 0 {
 		return RetryRemediationResult{}, ErrRetryInProgress
 	}
-	if open, ok := openProposal(current, proposals); ok {
+	if open, ok := openFix(current, fixes); ok {
 		return RetryRemediationResult{}, open
 	}
 
@@ -154,18 +154,18 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	return RetryRemediationResult{ReleaseID: releaseID, RemediationRound: round}, nil
 }
 
-// effectiveRound is the remediation round a proposal belongs to: its own
-// RemediationRound field, or 1 for a proposal that names no round.
-func effectiveRound(p ports.ProposalSummary) int {
+// effectiveRound is the remediation round a fix belongs to: its own
+// RemediationRound field, or 1 for a fix that names no round.
+func effectiveRound(p ports.FixSummary) int {
 	if p.RemediationRound == 0 {
 		return 1
 	}
 	return p.RemediationRound
 }
 
-// currentRoundProposals filters ps to the ones belonging to round.
-func currentRoundProposals(ps []ports.ProposalSummary, round int) []ports.ProposalSummary {
-	out := make([]ports.ProposalSummary, 0, len(ps))
+// currentRoundFixes filters ps to the ones belonging to round.
+func currentRoundFixes(ps []ports.FixSummary, round int) []ports.FixSummary {
+	out := make([]ports.FixSummary, 0, len(ps))
 	for _, p := range ps {
 		if effectiveRound(p) == round {
 			out = append(out, p)
@@ -174,12 +174,12 @@ func currentRoundProposals(ps []ports.ProposalSummary, round int) []ports.Propos
 	return out
 }
 
-// openProposal reports the attempt that makes a retry pointless: one from the
+// openFix reports the attempt that makes a retry pointless: one from the
 // current round still in flight or already proposed, or — checked across
 // every round — one whose PR is being opened, open, or merged. Node id order
 // is sorted before picking so the answer is deterministic when several nodes
 // qualify.
-func openProposal(current, all []ports.ProposalSummary) (ErrProposalOpen, bool) {
+func openFix(current, all []ports.FixSummary) (ErrFixOpen, bool) {
 	if open, ok := openInCurrentRound(current); ok {
 		return open, true
 	}
@@ -195,8 +195,8 @@ func openProposal(current, all []ports.ProposalSummary) (ErrProposalOpen, bool) 
 // non-rejected state, a fix may still land and a new round would duplicate it.
 // Only each node's latest attempt is consulted; an earlier attempt superseded
 // by a later one on the same node does not count.
-func openInCurrentRound(current []ports.ProposalSummary) (ErrProposalOpen, bool) {
-	latest := map[string]ports.ProposalSummary{}
+func openInCurrentRound(current []ports.FixSummary) (ErrFixOpen, bool) {
+	latest := map[string]ports.FixSummary{}
 	for _, p := range current {
 		if cur, ok := latest[p.NodeID]; !ok || p.Attempt > cur.Attempt {
 			latest[p.NodeID] = p
@@ -206,25 +206,25 @@ func openInCurrentRound(current []ports.ProposalSummary) (ErrProposalOpen, bool)
 		p := latest[id]
 		switch p.Status {
 		case "generating", "verifying":
-			return ErrProposalOpen{ProposalID: p.ID, PRURL: p.PRURL}, true
+			return ErrFixOpen{FixID: p.ID}, true
 		case "proposed":
 			if isDeadEnd(p) {
 				continue
 			}
-			return ErrProposalOpen{ProposalID: p.ID, PRURL: representativePRURL(p)}, true
+			return ErrFixOpen{FixID: p.ID, PRURL: representativePRURL(p)}, true
 		}
 	}
-	return ErrProposalOpen{}, false
+	return ErrFixOpen{}, false
 }
 
-// openPRAcrossRounds reports whether any proposal from any round — not just the
+// openPRAcrossRounds reports whether any fix from any round — not just the
 // current one — has a pull request that is opening, open, or merged: a fix
 // already out for human review makes a new round redundant regardless of which
 // round proposed it. A batched attempt's per-project pull requests are all
 // weighed, so one project's still-open PR blocks even when a sibling project's
 // PR was rejected.
-func openPRAcrossRounds(all []ports.ProposalSummary) (ErrProposalOpen, bool) {
-	byNode := map[string]ports.ProposalSummary{}
+func openPRAcrossRounds(all []ports.FixSummary) (ErrFixOpen, bool) {
+	byNode := map[string]ports.FixSummary{}
 	for _, p := range all {
 		if !hasOutstandingPR(p) {
 			continue
@@ -235,19 +235,19 @@ func openPRAcrossRounds(all []ports.ProposalSummary) (ErrProposalOpen, bool) {
 	}
 	ids := sortedNodeIDs(byNode)
 	if len(ids) == 0 {
-		return ErrProposalOpen{}, false
+		return ErrFixOpen{}, false
 	}
 	p := byNode[ids[0]]
-	return ErrProposalOpen{ProposalID: p.ID, PRURL: representativePRURL(p)}, true
+	return ErrFixOpen{FixID: p.ID, PRURL: representativePRURL(p)}, true
 }
 
 // isDeadEnd reports whether a proposed attempt has run out of road: every
 // owning project's pull request has been rejected, so no fix from this attempt
 // can still land. An owning project with no pull request yet, or one in any
 // non-rejected state, means the attempt is still live.
-func isDeadEnd(p ports.ProposalSummary) bool {
-	byProject := map[string]ports.ProposalPR{}
-	for _, pr := range p.EffectivePRs() {
+func isDeadEnd(p ports.FixSummary) bool {
+	byProject := map[string]ports.FixPR{}
+	for _, pr := range p.PullRequests {
 		byProject[pr.Project] = pr
 	}
 	for _, project := range owningProjects(p) {
@@ -260,25 +260,19 @@ func isDeadEnd(p ports.ProposalSummary) bool {
 }
 
 // owningProjects names the projects whose fixes an attempt must land before it
-// is exhausted: PRProjects when the attempt carries them, otherwise the
-// projects named by its effective pull requests (the unsplit single-group
-// case, whose one group is named by the empty string).
-func owningProjects(p ports.ProposalSummary) []string {
+// is exhausted: PRProjects, or the one group of a fix not split by project,
+// named by the empty string, when the attempt names none.
+func owningProjects(p ports.FixSummary) []string {
 	if len(p.PRProjects) > 0 {
 		return p.PRProjects
 	}
-	prs := p.EffectivePRs()
-	projects := make([]string, 0, len(prs))
-	for _, pr := range prs {
-		projects = append(projects, pr.Project)
-	}
-	return projects
+	return []string{""}
 }
 
 // hasOutstandingPR reports whether any of an attempt's pull requests is being
 // opened, open, or merged.
-func hasOutstandingPR(p ports.ProposalSummary) bool {
-	for _, pr := range p.EffectivePRs() {
+func hasOutstandingPR(p ports.FixSummary) bool {
+	for _, pr := range p.PullRequests {
 		switch pr.PRState {
 		case "opening", "open", "merged":
 			return true
@@ -289,22 +283,26 @@ func hasOutstandingPR(p ports.ProposalSummary) bool {
 
 // representativePRURL is the pull request URL to name when an attempt blocks a
 // retry: the first non-rejected pull request's URL in project order, so a human
-// is pointed at a PR that could still land rather than a closed one; the
-// attempt's singular URL when it carries no per-project pull requests.
-func representativePRURL(p ports.ProposalSummary) string {
-	prs := append([]ports.ProposalPR(nil), p.EffectivePRs()...)
+// is pointed at a PR that could still land rather than a closed one; the first
+// pull request's URL when every one was rejected, and "" when the attempt has
+// none.
+func representativePRURL(p ports.FixSummary) string {
+	prs := append([]ports.FixPR(nil), p.PullRequests...)
 	sort.Slice(prs, func(i, j int) bool { return prs[i].Project < prs[j].Project })
 	for _, pr := range prs {
 		if pr.PRState != "rejected" {
 			return pr.PRURL
 		}
 	}
-	return p.PRURL
+	if len(prs) > 0 {
+		return prs[0].PRURL
+	}
+	return ""
 }
 
 // sortedNodeIDs returns m's keys in sorted order, so a scan over the map
 // picks the same entry every time.
-func sortedNodeIDs(m map[string]ports.ProposalSummary) []string {
+func sortedNodeIDs(m map[string]ports.FixSummary) []string {
 	ids := make([]string, 0, len(m))
 	for id := range m {
 		ids = append(ids, id)

@@ -231,7 +231,7 @@ const bulkNodes = 1201
 // share a content hash (composite identities), a contract history with a
 // revert (two promotions of one contract version) and a retired node's
 // contract, two pull requests of one
-// proposal, a retired node, a node with two labels, a self-loop, two
+// fix, a retired node, a node with two labels, a self-loop, two
 // identical relationships between one pair and two that differ only in their
 // properties, relationship properties, datetimes stored with an offset
 // (datetime()) and with a zone name (a Go time in UTC), lists, a long string
@@ -263,9 +263,9 @@ CREATE (cuv:CodeUnitVersion {tenant_id: $tenant_id, unit_id: 'macros/m.sql', che
 CREATE (rej:Rejection {tenant_id: $tenant_id, release_id: 'r6', node_id: 'analytics.table_d', stage: 'compile',
   category: 'compile', reason: 'syntax', at: $utc, error_excerpt: 'line 1\nline 2 – ünïcode', mark: $mark})
 CREATE (sig:ErrorSignature {tenant_id: $tenant_id, signature: 'sig-1', category: 'compile', reason: 'syntax', mark: $mark})
-CREATE (p:Proposal {tenant_id: $tenant_id, proposal_id: 'p1', status: 'opened', mark: $mark})
-CREATE (pra:PullRequest {tenant_id: $tenant_id, proposal_id: 'p1', project: 'svc-a', pr_number: 12, mark: $mark})
-CREATE (prb:PullRequest {tenant_id: $tenant_id, proposal_id: 'p1', project: 'svc-b', pr_number: 13, merged: false, mark: $mark})
+CREATE (p:Fix {tenant_id: $tenant_id, fix_id: 'p1', status: 'opened', mark: $mark})
+CREATE (pra:PullRequest {tenant_id: $tenant_id, fix_id: 'p1', project: 'svc-a', pr_number: 12, mark: $mark})
+CREATE (prb:PullRequest {tenant_id: $tenant_id, fix_id: 'p1', project: 'svc-b', pr_number: 13, merged: false, mark: $mark})
 CREATE (pm:ProcessedMessage {tenant_id: $tenant_id, group: $group, message_id: '1762077600000-0',
   outbox_entry_id: $outbox_entry_id, processed_at: datetime(), mark: $mark})
 CREATE (a)-[:CURRENT {promoted_at: $utc, release_id: 'r7'}]->(va2)

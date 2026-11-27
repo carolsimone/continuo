@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -23,20 +23,20 @@ var ctx = context.Background()
 
 func TestMemoryUnitOfWork_CommitPublishesAndRollbackDiscards(t *testing.T) {
 	store := memory.NewStore()
-	p := proposal.Proposal{ReleaseID: "rel", Attempt: 1, NodeID: "n", Status: proposal.StatusFailed}
+	p := fix.Fix{ReleaseID: "rel", Attempt: 1, NodeID: "n", Status: fix.StatusFailed}
 
 	u := memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, u.ProposalRepo().Upsert(ctx, p))
+	require.NoError(t, u.FixRepo().Upsert(ctx, p))
 	require.NoError(t, u.Rollback())
-	require.Empty(t, store.Proposals(), "a rolled back write leaves no trace")
+	require.Empty(t, store.Fixes(), "a rolled back write leaves no trace")
 
 	u = memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, u.ProposalRepo().Upsert(ctx, p))
+	require.NoError(t, u.FixRepo().Upsert(ctx, p))
 	require.NoError(t, u.Commit())
-	require.Len(t, store.Proposals(), 1)
-	require.Equal(t, 1, store.Proposals()[0].Proposal.RemediationRound, "an unset round defaults to 1 as in Postgres")
+	require.Len(t, store.Fixes(), 1)
+	require.Equal(t, 1, store.Fixes()[0].Fix.RemediationRound, "an unset round defaults to 1 as in Postgres")
 }
 
 func TestMemoryUnitOfWork_FailNextCommitFailsOnceAndDiscardsTheWrites(t *testing.T) {
@@ -47,41 +47,41 @@ func TestMemoryUnitOfWork_FailNextCommitFailsOnceAndDiscardsTheWrites(t *testing
 			return err
 		}
 		defer func() { _ = u.Rollback() }()
-		if err := u.ProposalRepo().Upsert(ctx, proposal.Proposal{ReleaseID: "rel", Attempt: 1, Status: proposal.StatusFailed}); err != nil {
+		if err := u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Attempt: 1, Status: fix.StatusFailed}); err != nil {
 			return err
 		}
 		return u.Commit()
 	}
 	store.FailNextCommit()
 	require.Error(t, write())
-	require.Empty(t, store.Proposals())
+	require.Empty(t, store.Fixes())
 	require.NoError(t, write(), "only the next commit fails")
-	require.Len(t, store.Proposals(), 1)
+	require.Len(t, store.Fixes(), 1)
 }
 
-func TestMemoryProposalRepository_UniqueOnReleaseAndAttemptAndCompareAndSet(t *testing.T) {
+func TestMemoryFixRepository_UniqueOnReleaseAndAttemptAndCompareAndSet(t *testing.T) {
 	store := memory.NewStore()
-	repo := store.ProposalRepository()
-	gen := proposal.Proposal{
+	repo := store.FixRepository()
+	gen := fix.Fix{
 		ReleaseID: "rel", Attempt: 1, NodeID: "n", ResolvedNodeIDs: []string{"n"}, Source: "validation",
-		NodeOutcomes: map[string]proposal.NodeOutcome{"n": {Status: proposal.StatusGenerating}},
+		NodeOutcomes: map[string]fix.NodeOutcome{"n": {Status: fix.StatusGenerating}},
 	}
 	require.NoError(t, repo.InsertGenerating(ctx, gen))
 	require.NoError(t, repo.InsertGenerating(ctx, gen))
-	require.Len(t, store.Proposals(), 1, "a redelivered attempt collides on (release, attempt)")
+	require.Len(t, store.Fixes(), 1, "a redelivered attempt collides on (release, attempt)")
 
 	n, err := repo.CountAttempts(ctx, "rel", 1)
 	require.NoError(t, err)
 	require.Zero(t, n, "an in-flight attempt is not counted")
 
 	verifying := gen
-	verifying.Status = proposal.StatusVerifying
+	verifying.Status = fix.StatusVerifying
 	verifying.Source = "changed"
-	verifying.NodeOutcomes = map[string]proposal.NodeOutcome{"n": {Status: proposal.StatusVerifying}}
+	verifying.NodeOutcomes = map[string]fix.NodeOutcome{"n": {Status: fix.StatusVerifying}}
 	require.NoError(t, repo.Upsert(ctx, verifying))
-	stored := store.Proposals()
+	stored := store.Fixes()
 	require.Len(t, stored, 1)
-	require.Equal(t, "validation", stored[0].Proposal.Source, "the conflict update keeps the identity columns")
+	require.Equal(t, "validation", stored[0].Fix.Source, "the conflict update keeps the identity columns")
 	id := stored[0].ID
 
 	hit, err := repo.MarkVerifyFailed(ctx, id, "rejected", nil)
@@ -96,29 +96,29 @@ func TestMemoryProposalRepository_UniqueOnReleaseAndAttemptAndCompareAndSet(t *t
 	require.False(t, hit, "the row is no longer verifying")
 	view, err := repo.Get(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, proposal.StatusFailed, view.Status)
+	require.Equal(t, fix.StatusFailed, view.Status)
 	require.Equal(t, "rejected", view.VerifyError)
-	require.Equal(t, proposal.StatusFailed, view.NodeOutcomes["n"].Status)
+	require.Equal(t, fix.StatusFailed, view.NodeOutcomes["n"].Status)
 
 	n, err = repo.CountAttempts(ctx, "rel", 1)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
 
-func TestMemoryProposalRepository_FailGeneratingFailsOnlyInFlightRows(t *testing.T) {
+func TestMemoryFixRepository_FailGeneratingFailsOnlyInFlightRows(t *testing.T) {
 	store := memory.NewStore()
-	repo := store.ProposalRepository()
-	require.NoError(t, repo.InsertGenerating(ctx, proposal.Proposal{
-		ReleaseID: "rel", Attempt: 1, NodeOutcomes: map[string]proposal.NodeOutcome{"a": {Status: proposal.StatusGenerating}},
+	repo := store.FixRepository()
+	require.NoError(t, repo.InsertGenerating(ctx, fix.Fix{
+		ReleaseID: "rel", Attempt: 1, NodeOutcomes: map[string]fix.NodeOutcome{"a": {Status: fix.StatusGenerating}},
 	}))
-	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{ReleaseID: "rel", Attempt: 2, Status: proposal.StatusProposed}))
+	require.NoError(t, repo.Upsert(ctx, fix.Fix{ReleaseID: "rel", Attempt: 2, Status: fix.StatusProposed}))
 	n, err := repo.FailGenerating(ctx, "rel", "the worker crashed")
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	got := store.Proposals()
-	require.Equal(t, proposal.StatusFailed, got[0].Proposal.Status)
-	require.Equal(t, proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: "the worker crashed"}, got[0].Proposal.NodeOutcomes["a"])
-	require.Equal(t, proposal.StatusProposed, got[1].Proposal.Status)
+	got := store.Fixes()
+	require.Equal(t, fix.StatusFailed, got[0].Fix.Status)
+	require.Equal(t, fix.NodeOutcome{Status: fix.StatusFailed, Reason: "the worker crashed"}, got[0].Fix.NodeOutcomes["a"])
+	require.Equal(t, fix.StatusProposed, got[1].Fix.Status)
 }
 
 func TestMemoryMessageProcessing_DedupsOnBothAxes(t *testing.T) {
@@ -181,14 +181,14 @@ func TestMemoryOutbox_CreateStampsTheEntryAndRequiresItsMessage(t *testing.T) {
 
 func TestMemoryStore_ARepositoryUsedBeforeBeginIsAnError(t *testing.T) {
 	u := memory.NewUnitOfWork(memory.NewStore())
-	_, err := u.ProposalRepo().CountAttempts(ctx, "rel", 1)
+	_, err := u.FixRepo().CountAttempts(ctx, "rel", 1)
 	require.Error(t, err)
 }
 
-func TestMemoryRemediationRepository_AProposalNeedsItsRemediationAndMarkFixVerifiedRefusesAZero(t *testing.T) {
+func TestMemoryRemediationRepository_AFixNeedsItsRemediationAndMarkFixVerifiedRefusesAZero(t *testing.T) {
 	store := memory.NewStore()
-	repo := store.ProposalRepository()
-	err := repo.InsertGenerating(ctx, proposal.Proposal{ReleaseID: "rel", Attempt: 1, RemediationID: uuid.NewString()})
+	repo := store.FixRepository()
+	err := repo.InsertGenerating(ctx, fix.Fix{ReleaseID: "rel", Attempt: 1, RemediationID: uuid.NewString()})
 	require.Error(t, err)
 
 	hit, err := repo.MarkFixVerified(ctx, remediation.Verified{})
@@ -203,29 +203,29 @@ func TestMemoryRemediationRepository_TriesNeedTheirRemediation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestMemoryProposalRepository_RecordApproversAddsToTheRowsApprovers(t *testing.T) {
+func TestMemoryFixRepository_RecordApproversAddsToTheRowsApprovers(t *testing.T) {
 	store := memory.NewStore()
-	repo := store.ProposalRepository()
-	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
-		Source: "validation", ReleaseID: "rel", NodeID: "model.a", Attempt: 1, Status: proposal.StatusVerifying,
-		Approvers: []proposal.Approver{{NodeID: "model.b", Owner: "finance", Source: model.ApproverSourceBundle}},
+	repo := store.FixRepository()
+	require.NoError(t, repo.Upsert(ctx, fix.Fix{
+		Source: "validation", ReleaseID: "rel", NodeID: "model.a", Attempt: 1, Status: fix.StatusVerifying,
+		Approvers: []fix.Approver{{NodeID: "model.b", Owner: "finance", Source: model.ApproverSourceBundle}},
 	}))
 
-	require.NoError(t, repo.RecordApprovers(ctx, "rel", 1, []proposal.Approver{
+	require.NoError(t, repo.RecordApprovers(ctx, "rel", 1, []fix.Approver{
 		{NodeID: "model.c", Source: model.ApproverSourceNone},
 		{NodeID: "model.a", Owner: "sales", Source: model.ApproverSourceBundle},
 		{NodeID: "model.b", Owner: "ops", Source: model.ApproverSourceContractFile},
 	}))
 
-	require.Equal(t, []proposal.Approver{
+	require.Equal(t, []fix.Approver{
 		{NodeID: "model.a", Owner: "sales", Source: model.ApproverSourceBundle},
 		{NodeID: "model.b", Owner: "ops", Source: model.ApproverSourceContractFile},
 		{NodeID: "model.c", Source: model.ApproverSourceNone},
-	}, store.Proposals()[0].Proposal.Approvers)
+	}, store.Fixes()[0].Fix.Approvers)
 
-	view, err := repo.Get(ctx, store.Proposals()[0].ID)
+	view, err := repo.Get(ctx, store.Fixes()[0].ID)
 	require.NoError(t, err)
-	require.Equal(t, store.Proposals()[0].Proposal.Approvers, view.Approvers)
+	require.Equal(t, store.Fixes()[0].Fix.Approvers, view.Approvers)
 
-	require.ErrorIs(t, repo.RecordApprovers(ctx, "rel", 2, []proposal.Approver{{NodeID: "model.a"}}), repository.ErrNotFound)
+	require.ErrorIs(t, repo.RecordApprovers(ctx, "rel", 2, []fix.Approver{{NodeID: "model.a"}}), repository.ErrNotFound)
 }

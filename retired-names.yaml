@@ -297,3 +297,12 @@ names:
     use: production pointer (production_pointers, ProductionPointer)
   - pattern: 'reannounce-current|print-current'
     use: announce-topology --reannounce-live, --print-live
+  # Fix group: a change to a rejected release's code that continuo proposes,
+  # checked by a release check and offered as a pull request, is a fix (the
+  # fix and fix_pull_request tables, fix_id, the fix package, the gRPC
+  # RemediationFixes, catalog's :Fix). The verb stays: the status proposed,
+  # proposed_content and catalog's [:PROPOSED] edge.
+  - pattern: '(?i)\w*proposals?\w*'
+    use: fix (fix, fixes, fix_id, Fix)
+  - pattern: '\w*remediation[._-](proposed|pr_opened|pr_closed)\w*|\w*[rR]emediation(Proposed|PrOpened|PrClosed)\w*|REMEDIATION_(PROPOSED|PR_OPENED|PR_CLOSED)\w*'
+    use: fix.proposed:v1, fix.pr_opened:v1, fix.pr_closed:v1

@@ -12,39 +12,39 @@ import (
 )
 
 // pullRequest returns the properties of the tenant's :PullRequest of
-// (proposalID, project), reached from its :Proposal through [:HAS_PR], and
+// (fixID, project), reached from its :Fix through [:HAS_PR], and
 // checks there is exactly one.
-func (f *swapFixture) pullRequest(proposalID, project string) map[string]any {
+func (f *swapFixture) pullRequest(fixID, project string) map[string]any {
 	f.t.Helper()
 	recs := f.rows(`
-		MATCH (:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})-[:HAS_PR]->
-		      (pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: $project})
-		RETURN properties(pl) AS p`, map[string]any{"proposal_id": proposalID, "project": project})
-	require.Len(f.t, recs, 1, "exactly one :PullRequest for (proposal, project)")
+		MATCH (:Fix {tenant_id: $tenant_id, fix_id: $fix_id})-[:HAS_PR]->
+		      (pl:PullRequest {tenant_id: $tenant_id, fix_id: $fix_id, project: $project})
+		RETURN properties(pl) AS p`, map[string]any{"fix_id": fixID, "project": project})
+	require.Len(f.t, recs, 1, "exactly one :PullRequest for (fix, project)")
 	v, _ := recs[0].Get("p")
 	return v.(map[string]any)
 }
 
-// resolvedByProposal counts the [:RESOLVED_BY] edges from the tenant's
-// rejections to its :Proposal proposalID.
-func (f *swapFixture) resolvedByProposal(proposalID string) int64 {
+// resolvedByFix counts the [:RESOLVED_BY] edges from the tenant's
+// rejections to its :Fix fixID.
+func (f *swapFixture) resolvedByFix(fixID string) int64 {
 	f.t.Helper()
 	return f.count(`
-		MATCH (:Rejection {tenant_id: $tenant_id})-[r:RESOLVED_BY]->(:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
-		RETURN count(r) AS n`, map[string]any{"proposal_id": proposalID})
+		MATCH (:Rejection {tenant_id: $tenant_id})-[r:RESOLVED_BY]->(:Fix {tenant_id: $tenant_id, fix_id: $fix_id})
+		RETURN count(r) AS n`, map[string]any{"fix_id": fixID})
 }
 
-// editedEdges counts the [:EDITED] edges from the tenant's :Proposal
-// proposalID.
-func (f *swapFixture) editedEdges(proposalID string) int64 {
+// editedEdges counts the [:EDITED] edges from the tenant's :Fix
+// fixID.
+func (f *swapFixture) editedEdges(fixID string) int64 {
 	f.t.Helper()
 	return f.count(`
-		MATCH (:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})-[r:EDITED]->()
-		RETURN count(r) AS n`, map[string]any{"proposal_id": proposalID})
+		MATCH (:Fix {tenant_id: $tenant_id, fix_id: $fix_id})-[r:EDITED]->()
+		RETURN count(r) AS n`, map[string]any{"fix_id": fixID})
 }
 
-// A merged outcome stamps the :PullRequest RecordProposal opened, draws one
-// [:RESOLVED_BY] per resolved node to the one shared :Proposal with the
+// A merged outcome stamps the :PullRequest RecordFix opened, draws one
+// [:RESOLVED_BY] per resolved node to the one shared :Fix with the
 // any-edit-amended flag, and one [:EDITED] per edit to the edit's :Node with
 // its path, amended flag, diff and project. A redelivery converges.
 func TestRecordPullRequestOutcome_Merged(t *testing.T) {
@@ -53,27 +53,27 @@ func TestRecordPullRequestOutcome_Merged(t *testing.T) {
 	closedAt := time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC)
 	f.seedLiveNode("nu")
 
-	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, openPullRequest("prop", "core", 42, openedAt))
+	f.recordFix(casebase.Fix{FixID: "fix", ReleaseID: "rel", NodeID: "na"}, openPullRequest("fix", "core", 42, openedAt))
 	outcome := casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
+		FixID: "fix", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
 		ResolvedNodeIDs: []string{"na", "nb"},
 		Edits:           []casebase.EditOutcome{{Path: "models/revenue.sql", TargetNodeID: "nu", Amended: true, Diff: "d"}},
 	}
 	f.recordOutcome(outcome)
 	f.recordOutcome(outcome)
 
-	pl := f.pullRequest("prop", "core")
+	pl := f.pullRequest("fix", "core")
 	assert.Equal(t, "merged", pl["pr_state"])
 	closed, ok := pl["closed_at"].(time.Time)
 	require.True(t, ok, "closed_at must round-trip as a time.Time, got %T", pl["closed_at"])
 	assert.True(t, closedAt.Equal(closed))
-	assert.Equal(t, int64(1), f.count(`MATCH (p:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'}) RETURN count(p) AS n`, nil),
-		"every resolved node converges on one shared :Proposal")
+	assert.Equal(t, int64(1), f.count(`MATCH (p:Fix {tenant_id: $tenant_id, fix_id: 'fix'}) RETURN count(p) AS n`, nil),
+		"every resolved node converges on one shared :Fix")
 
 	for _, node := range []string{"na", "nb"} {
 		recs := f.rows(`
 			MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: $node_id})-[rb:RESOLVED_BY]->
-			      (:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'})
+			      (:Fix {tenant_id: $tenant_id, fix_id: 'fix'})
 			RETURN rb.amended AS amended, rej.stub AS stub`, map[string]any{"node_id": node})
 		require.Len(t, recs, 1, "exactly one RESOLVED_BY for %s after redelivery", node)
 		amended, _ := recs[0].Get("amended")
@@ -83,7 +83,7 @@ func TestRecordPullRequestOutcome_Merged(t *testing.T) {
 	}
 
 	edited := f.rows(`
-		MATCH (:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'})-[ed:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: 'nu'})
+		MATCH (:Fix {tenant_id: $tenant_id, fix_id: 'fix'})-[ed:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: 'nu'})
 		RETURN properties(ed) AS p`, nil)
 	require.Len(t, edited, 1, "exactly one EDITED after redelivery")
 	v, _ := edited[0].Get("p")
@@ -99,16 +99,16 @@ func TestRecordPullRequestOutcome_Merged(t *testing.T) {
 func TestRecordPullRequestOutcome_MergedSkipsAbsentNode(t *testing.T) {
 	f := newSwapFixture(t)
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged",
+		FixID: "fix", ReleaseID: "rel", Project: "core", Outcome: "merged",
 		ClosedAt:        time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC),
 		ResolvedNodeIDs: []string{"na"},
 		Edits:           []casebase.EditOutcome{{Path: "models/x.sql", TargetNodeID: "missing"}},
 	})
 
-	assert.Zero(t, f.editedEdges("prop"), "no EDITED when the target :Node is absent")
+	assert.Zero(t, f.editedEdges("fix"), "no EDITED when the target :Node is absent")
 	assert.Nil(t, f.node("missing"), "the case base never creates a :Node")
-	assert.Equal(t, int64(1), f.resolvedByProposal("prop"), "the resolved node's edge still lands")
-	assert.Equal(t, "merged", f.pullRequest("prop", "core")["pr_state"])
+	assert.Equal(t, int64(1), f.resolvedByFix("fix"), "the resolved node's edge still lands")
+	assert.Equal(t, "merged", f.pullRequest("fix", "core")["pr_state"])
 }
 
 // A merged PR's [:EDITED] link to a node stays when a later release drops the
@@ -119,12 +119,12 @@ func TestRecordPullRequestOutcome_EditedLinkSurvivesNodeRetirement(t *testing.T)
 	f.promoteAt("r1", 1, releaseOf(modelNode("analytics.table_a"), modelNode("analytics.table_e")), base)
 
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "r1", Project: "core", Outcome: "merged", ClosedAt: base.Add(time.Hour),
+		FixID: "fix", ReleaseID: "r1", Project: "core", Outcome: "merged", ClosedAt: base.Add(time.Hour),
 		ResolvedNodeIDs: []string{"analytics.table_a"},
 		Edits:           []casebase.EditOutcome{{Path: "models/table_e.sql", TargetNodeID: "analytics.table_e", Diff: "d"}},
 	})
 	editedOfE := `
-		MATCH (:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'})-[ed:EDITED {path: 'models/table_e.sql'}]->
+		MATCH (:Fix {tenant_id: $tenant_id, fix_id: 'fix'})-[ed:EDITED {path: 'models/table_e.sql'}]->
 		      (:Node {tenant_id: $tenant_id, unique_id: 'analytics.table_e'})
 		RETURN count(ed) AS n`
 	require.Equal(t, int64(1), f.count(editedOfE, nil))
@@ -137,10 +137,10 @@ func TestRecordPullRequestOutcome_EditedLinkSurvivesNodeRetirement(t *testing.T)
 
 	// The edit of a node that is already retired still attaches to it.
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop-2", ReleaseID: "r2", Project: "core", Outcome: "merged", ClosedAt: base.Add(3 * time.Hour),
+		FixID: "fix-2", ReleaseID: "r2", Project: "core", Outcome: "merged", ClosedAt: base.Add(3 * time.Hour),
 		Edits: []casebase.EditOutcome{{Path: "models/table_e.sql", TargetNodeID: "analytics.table_e"}},
 	})
-	assert.Equal(t, int64(1), f.editedEdges("prop-2"), "a retired node still takes a later fix PR's [:EDITED]")
+	assert.Equal(t, int64(1), f.editedEdges("fix-2"), "a retired node still takes a later fix PR's [:EDITED]")
 }
 
 // A rejected outcome stamps only the :PullRequest's terminal state and draws
@@ -149,18 +149,18 @@ func TestRecordPullRequestOutcome_Rejected(t *testing.T) {
 	f := newSwapFixture(t)
 	openedAt := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
 	f.seedLiveNode("nu")
-	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, openPullRequest("prop", "core", 42, openedAt))
+	f.recordFix(casebase.Fix{FixID: "fix", ReleaseID: "rel", NodeID: "na"}, openPullRequest("fix", "core", 42, openedAt))
 
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "rejected",
+		FixID: "fix", ReleaseID: "rel", Project: "core", Outcome: "rejected",
 		ClosedAt:        time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC),
 		ResolvedNodeIDs: []string{"na"},
 		Edits:           []casebase.EditOutcome{{Path: "models/x.sql", TargetNodeID: "nu", Amended: true, Diff: "d"}},
 	})
 
-	assert.Equal(t, "rejected", f.pullRequest("prop", "core")["pr_state"])
-	assert.Zero(t, f.resolvedByProposal("prop"), "a rejected outcome draws no RESOLVED_BY")
-	assert.Zero(t, f.editedEdges("prop"), "a rejected outcome draws no EDITED")
+	assert.Equal(t, "rejected", f.pullRequest("fix", "core")["pr_state"])
+	assert.Zero(t, f.resolvedByFix("fix"), "a rejected outcome draws no RESOLVED_BY")
+	assert.Zero(t, f.editedEdges("fix"), "a rejected outcome draws no EDITED")
 }
 
 // Every [:RESOLVED_BY] of a merged PR carries the OR of its edits' amended
@@ -179,7 +179,7 @@ func TestRecordPullRequestOutcome_AmendedOrReduction(t *testing.T) {
 			f.seedLiveNode("ny")
 
 			f.recordOutcome(casebase.PullRequestOutcome{
-				ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged",
+				FixID: "fix", ReleaseID: "rel", Project: "core", Outcome: "merged",
 				ClosedAt:        time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC),
 				ResolvedNodeIDs: []string{"na", "nb"},
 				Edits: []casebase.EditOutcome{
@@ -191,13 +191,13 @@ func TestRecordPullRequestOutcome_AmendedOrReduction(t *testing.T) {
 			for _, node := range []string{"na", "nb"} {
 				assert.Equal(t, tc.wantResolved, f.scalar(`
 					MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: $node_id})-[rb:RESOLVED_BY]->
-					      (:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'})
+					      (:Fix {tenant_id: $tenant_id, fix_id: 'fix'})
 					RETURN rb.amended AS v`, map[string]any{"node_id": node}),
 					"RESOLVED_BY.amended of %s is the OR across all edits", node)
 			}
 			for target, want := range map[string]bool{"nx": tc.editAmended[0], "ny": tc.editAmended[1]} {
 				assert.Equal(t, want, f.scalar(`
-					MATCH (:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'})-[ed:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: $uid})
+					MATCH (:Fix {tenant_id: $tenant_id, fix_id: 'fix'})-[ed:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: $uid})
 					RETURN ed.amended AS v`, map[string]any{"uid": target}),
 					"EDITED.amended of %s is its own edit's", target)
 			}
@@ -211,19 +211,19 @@ func TestRecordPullRequestOutcome_MergedWithEmptyLists(t *testing.T) {
 	f := newSwapFixture(t)
 	openedAt := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
 	closedAt := time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC)
-	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, openPullRequest("prop", "core", 42, openedAt))
+	f.recordFix(casebase.Fix{FixID: "fix", ReleaseID: "rel", NodeID: "na"}, openPullRequest("fix", "core", 42, openedAt))
 
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
+		FixID: "fix", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
 	})
 
-	pl := f.pullRequest("prop", "core")
+	pl := f.pullRequest("fix", "core")
 	assert.Equal(t, "merged", pl["pr_state"])
 	closed, ok := pl["closed_at"].(time.Time)
 	require.True(t, ok, "closed_at must round-trip as a time.Time, got %T", pl["closed_at"])
 	assert.True(t, closedAt.Equal(closed))
-	assert.Zero(t, f.resolvedByProposal("prop"))
-	assert.Zero(t, f.editedEdges("prop"))
+	assert.Zero(t, f.resolvedByFix("fix"))
+	assert.Zero(t, f.editedEdges("fix"))
 }
 
 // The open and close events are consumed by independent groups, so the close
@@ -234,20 +234,20 @@ func TestRecordPullRequestOutcome_CloseBeforeOpenFillsPRFactsWithoutResettingSta
 	f := newSwapFixture(t)
 	openedAt := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	closedAt := time.Date(2026, 8, 20, 11, 30, 0, 0, time.UTC)
-	pr := openPullRequest("prop", "core", 77, openedAt)
+	pr := openPullRequest("fix", "core", 77, openedAt)
 
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
+		FixID: "fix", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
 		PrURL: pr.PrURL, PrNumber: pr.PrNumber, ResolvedNodeIDs: []string{"na"},
 	})
-	afterClose := f.pullRequest("prop", "core")
+	afterClose := f.pullRequest("fix", "core")
 	assert.Equal(t, pr.PrURL, afterClose["pr_url"], "a close-first :PullRequest takes pr_url from the close")
 	assert.EqualValues(t, pr.PrNumber, afterClose["pr_number"])
 	assert.Equal(t, "merged", afterClose["pr_state"])
 	assert.NotContains(t, afterClose, "opened_by", "the open-only facts wait for the open")
 
-	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, pr)
-	afterOpen := f.pullRequest("prop", "core")
+	f.recordFix(casebase.Fix{FixID: "fix", ReleaseID: "rel", NodeID: "na"}, pr)
+	afterOpen := f.pullRequest("fix", "core")
 	assert.Equal(t, "merged", afterOpen["pr_state"], "the open does not reset the terminal state")
 	closed, ok := afterOpen["closed_at"].(time.Time)
 	require.True(t, ok, "closed_at survives the open, got %T", afterOpen["closed_at"])
@@ -266,15 +266,15 @@ func TestRecordPullRequestOutcome_OpenBeforeCloseYieldsTerminalStateAndAllFacts(
 	f := newSwapFixture(t)
 	openedAt := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	closedAt := time.Date(2026, 8, 20, 11, 30, 0, 0, time.UTC)
-	pr := openPullRequest("prop", "core", 88, openedAt)
+	pr := openPullRequest("fix", "core", 88, openedAt)
 
-	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, pr)
+	f.recordFix(casebase.Fix{FixID: "fix", ReleaseID: "rel", NodeID: "na"}, pr)
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
+		FixID: "fix", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
 		PrURL: pr.PrURL, PrNumber: pr.PrNumber, ResolvedNodeIDs: []string{"na"},
 	})
 
-	pl := f.pullRequest("prop", "core")
+	pl := f.pullRequest("fix", "core")
 	assert.Equal(t, "merged", pl["pr_state"])
 	closed, ok := pl["closed_at"].(time.Time)
 	require.True(t, ok, "closed_at must round-trip as a time.Time, got %T", pl["closed_at"])

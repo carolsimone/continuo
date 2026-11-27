@@ -4,27 +4,27 @@ package remediation.v1;
 
 option go_package = "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1;remediationv1";
 
-// RemediationProposals serves the proposal read-path and pull-request lifecycle
-// for the agent-remediation. The UI reads proposals via ListProposals/GetProposal
+// RemediationFixes serves the fix read-path and pull-request lifecycle
+// for the agent-remediation. The UI reads fixes via ListFixes/GetFix
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
-service RemediationProposals {
-  // ListProposals returns proposals filtered by status, pr_state, release_id,
+service RemediationFixes {
+  // ListFixes returns fixes filtered by status, pr_state, release_id,
   // project, and limit.
-  rpc ListProposals(ListProposalsRequest) returns (ListProposalsResponse);
-  // GetProposal returns a single proposal by ID.
-  rpc GetProposal(GetProposalRequest) returns (Proposal);
-  // BeginPullRequest atomically claims a proposal for PR creation and returns
+  rpc ListFixes(ListFixesRequest) returns (ListFixesResponse);
+  // GetFix returns a single fix by ID.
+  rpc GetFix(GetFixRequest) returns (Fix);
+  // BeginPullRequest atomically claims a fix for PR creation and returns
   // the data needed to open a GitHub pull-request.
   rpc BeginPullRequest(BeginPullRequestRequest) returns (BeginPullRequestResponse);
   // RecordPullRequest stores the PR URL, number, and opener after a PR is opened.
   rpc RecordPullRequest(RecordPullRequestRequest) returns (RecordPullRequestResponse);
-  // FailPullRequest marks a proposal's PR attempt as failed.
+  // FailPullRequest marks a fix's PR attempt as failed.
   rpc FailPullRequest(FailPullRequestRequest) returns (FailPullRequestResponse);
 }
 
-// Proposal is a read-only projection of a remediation proposal row, including
-// all PR-lifecycle columns. Fields mirror proposal.View (snake_case).
-message Proposal {
+// Fix is a read-only projection of a remediation fix row, including
+// all PR-lifecycle columns. Fields mirror fix.View (snake_case).
+message Fix {
   string id = 1;
   string source = 2;
   string release_id = 3;
@@ -34,10 +34,10 @@ message Proposal {
   string status = 7;
   string confidence = 8;
   string rationale = 9;
-  // single-file view of the proposal: edits[0]'s content_uri when edits is
+  // single-file view of the fix: edits[0]'s content_uri when edits is
   // non-empty, otherwise the candidate-only fix artifact
   string proposed_sql_uri = 10;
-  // single-file view of the proposal: edits[0]'s diff_uri when edits is
+  // single-file view of the fix: edits[0]'s diff_uri when edits is
   // non-empty, otherwise the diff of the candidate-only fix artifact
   string diff_uri = 11;
   string candidate_fix_sql_uri = 12;
@@ -45,8 +45,8 @@ message Proposal {
   bool source_resolved = 14;
   string repo = 15;
   string commit_sha = 16;
-  // single-file view of the proposal: edits[0]'s path when edits is
-  // non-empty, empty when the proposal carries only a candidate fix
+  // single-file view of the fix: edits[0]'s path when edits is
+  // non-empty, empty when only candidate_fix_sql_uri is set
   string file_path = 17;
   string model = 18;
   // created_at is an RFC3339-formatted timestamp string.
@@ -81,17 +81,17 @@ message Proposal {
   // release_checks holds one release check of the fix per edited project; the
   // first entry is the view mirrored onto release_check_id.
   repeated ReleaseCheck release_checks = 32;
-  // pull_requests is one entry per (proposal, project) pull request; empty
-  // for a proposal that never entered the PR lifecycle. project = "" is the
-  // legacy whole-proposal group. The singular pr_* fields above mirror
+  // pull_requests is one entry per (fix, project) pull request; empty
+  // for a fix that never entered the PR lifecycle. project = "" is the
+  // legacy whole-fix group. The singular pr_* fields above mirror
   // pull_requests[0] for old readers that predate the per-project split.
   repeated PullRequest pull_requests = 33;
-  // pr_projects is the sorted owning-project groups this proposal's pull
-  // requests split into; [""] for a legacy (unsplit) proposal.
+  // pr_projects is the sorted owning-project groups this fix's pull
+  // requests split into; [""] for a legacy (unsplit) fix.
   repeated string pr_projects = 34;
   // projects is every project this attempt touched — the failing nodes'
   // projects plus the edited ones, sorted — the same set the
-  // ListProposalsRequest.project filter matches a proposal on.
+  // ListFixesRequest.project filter matches a fix on.
   repeated string projects = 35;
   // approvers is who must approve what this attempt did with each node a
   // remediation settled at its end, the fixed nodes and the handed-over ones,
@@ -100,43 +100,43 @@ message Proposal {
   repeated Approver approvers = 36;
 }
 
-// ListProposalsRequest filters the proposal list. Empty fields are ignored.
-message ListProposalsRequest {
+// ListFixesRequest filters the fix list. Empty fields are ignored.
+message ListFixesRequest {
   string status = 1;
   string pr_state = 2;
   int32 limit = 3;
-  string release_id = 4; // when set, only proposals of this release
-  string project = 5; // when set, only proposals whose projects contain it
+  string release_id = 4; // when set, only fixes of this release
+  string project = 5; // when set, only fixes whose projects contain it
 }
 
-message ListProposalsResponse {
-  repeated Proposal proposals = 1;
+message ListFixesResponse {
+  repeated Fix fixes = 1;
 }
 
-message GetProposalRequest {
+message GetFixRequest {
   string id = 1;
 }
 
-// BeginPullRequestRequest identifies the proposal to claim for PR creation.
+// BeginPullRequestRequest identifies the fix to claim for PR creation.
 message BeginPullRequestRequest {
   string id = 1;
   // project is the owning-project group to claim; "" is the legacy
-  // whole-proposal group. Must be one of the proposal's pr_projects.
+  // whole-fix group. Must be one of the fix's pr_projects.
   string project = 2;
 }
 
 // BeginPullRequestResponse carries all data needed to open a GitHub pull-request.
 message BeginPullRequestResponse {
-  string proposal_id = 1;
+  string fix_id = 1;
   string repo = 2;
   string commit_sha = 3;
-  // single-file view of the proposal: edits[0]'s path when edits is
-  // non-empty, empty when the proposal carries only a candidate fix
+  // single-file view of the fix: edits[0]'s path when edits is
+  // non-empty, empty when only candidate_fix_sql_uri is set
   string file_path = 4;
-  // single-file view of the proposal: edits[0]'s content_uri when edits is
+  // single-file view of the fix: edits[0]'s content_uri when edits is
   // non-empty, otherwise the candidate-only fix artifact
   string proposed_sql_uri = 5;
-  // single-file view of the proposal: edits[0]'s diff_uri when edits is
+  // single-file view of the fix: edits[0]'s diff_uri when edits is
   // non-empty, otherwise the diff of the candidate-only fix artifact
   string diff_uri = 6;
   string release_id = 7;
@@ -157,10 +157,10 @@ message BeginPullRequestResponse {
   // node_id is their representative.
   repeated string resolved_node_ids = 16;
   // project is the owning-project group this claim covers, echoing the
-  // request's project; "" is the legacy whole-proposal group.
+  // request's project; "" is the legacy whole-fix group.
   string project = 17;
-  // approvers is who must approve the claim's fix: the proposal's approvers of
-  // the nodes in resolved_node_ids, sorted by node_id. A node the proposal
+  // approvers is who must approve the claim's fix: the fix's approvers of
+  // the nodes in resolved_node_ids, sorted by node_id. A node the fix
   // records no approver for has no entry.
   repeated Approver approvers = 18;
 }
@@ -172,13 +172,13 @@ message RecordPullRequestRequest {
   int32 pr_number = 3;
   string opened_by = 4;
   // project is the owning-project group this PR covers; "" is the legacy
-  // whole-proposal group.
+  // whole-fix group.
   string project = 5;
 }
 
 message RecordPullRequestResponse {}
 
-// FailPullRequestRequest identifies the proposal whose PR attempt failed.
+// FailPullRequestRequest identifies the fix whose PR attempt failed.
 message FailPullRequestRequest {
   string id = 1;
   // claimed_at is an RFC3339-formatted timestamp string: the claimed_at
@@ -188,7 +188,7 @@ message FailPullRequestRequest {
   // instead of being reset out from under its new owner.
   string claimed_at = 2;
   // project is the owning-project group this claim covers; "" is the legacy
-  // whole-proposal group.
+  // whole-fix group.
   string project = 3;
 }
 
@@ -249,9 +249,9 @@ message ReleaseCheck {
   string error = 6;
 }
 
-// PullRequest is one pull request opened from a proposal, mirroring
-// proposal.PullRequest. One entry per (proposal, project) split; project =
-// "" is the legacy whole-proposal group.
+// PullRequest is one pull request opened from a fix, mirroring
+// fix.PullRequest. One entry per (fix, project) split; project =
+// "" is the legacy whole-fix group.
 message PullRequest {
   string project = 1;
   string repo = 2;

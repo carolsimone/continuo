@@ -6,7 +6,7 @@
 ^run-controller/domain/repository/repositorytest/schedule_contract\.go: RunScheduleContract$
 # Accessors and constructors kept only for tests.
 ^agent-chat/service/chat/session\.go: Session\.ThreadID$
-^agent-remediation/service/proposals/reconciler\.go: Reconciler\.Degraded$
+^agent-remediation/service/fixes/reconciler\.go: Reconciler\.Degraded$
 ^execution-controller/adapters/k8s/client\.go: K8sClient\.setClientsetForTest$
 ^catalog/adapters/grpc/server\.go: Server\.Addr$
 ^run-controller/internal/grpc/server\.go: Server\.Addr$

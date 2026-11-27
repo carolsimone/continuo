@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -44,7 +44,7 @@ func TestChangedAncestorDiffs_DiffsEachAncestorsBundleSourceAgainstItsPromotedVe
 
 	assert.Equal(t, []prompt.ReleaseUpstreamChange{{
 		NodeID: "model.svc.up", Project: "svc", Depth: 1,
-		Diff: proposal.ComputeUnifiedDiff("select 1", "select 2", "model.svc.up"),
+		Diff: fix.ComputeUnifiedDiff("select 1", "select 2", "model.svc.up"),
 	}}, ancestorDiffs(t, out))
 	assert.Equal(t, []bundleCall{{"s3://bundle/rel-1", "model.svc.up", "rel-1"}}, bundle.calls)
 }

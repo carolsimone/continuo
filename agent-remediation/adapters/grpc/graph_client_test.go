@@ -28,7 +28,7 @@ func TestMapPrecedents(t *testing.T) {
 		Category: "sql_error", Reason: "missing_column", ErrorExcerpt: "column x does not exist",
 		RejectedAt: "2026-08-01T00:00:00Z", Resolved: true,
 		ResolutionDiff: "-select 1\n+select 2", ResolutionDiffTruncated: false,
-		Proposals: []*catalogv1.PrecedentProposal{{PrUrl: "https://github.com/acme/repo/pull/7"}},
+		Fixes: []*catalogv1.PrecedentFix{{PrUrl: "https://github.com/acme/repo/pull/7"}},
 	}}}
 	got := grpcadapter.MapPrecedents(resp)
 	if len(got) != 1 || !got[0].Resolved || got[0].PRURL != "https://github.com/acme/repo/pull/7" ||

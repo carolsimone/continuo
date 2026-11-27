@@ -98,14 +98,14 @@ func TestPublish_XAddCarriesTenantAndOutboxEntryID(t *testing.T) {
 	rc.AddHook(capture)
 	t.Cleanup(func() { _ = rc.Close() })
 
-	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.RemediationPrOpenedV1, Payload: []byte(`{"release_id":"r1"}`)}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.FixPrOpenedV1, Payload: []byte(`{"release_id":"r1"}`)}
 	require.NoError(t, (&agentRemediationOutboxPublisher{redis: rc}).Publish(context.Background(), entry))
 
 	require.Len(t, capture.cmds, 1)
 	args := capture.cmds[0].Args()
 	require.GreaterOrEqual(t, len(args), 4)
 	assert.Equal(t, "xadd", args[0])
-	assert.Equal(t, pkgredis.Key(streams.RemediationPrOpenedV1), args[1])
+	assert.Equal(t, pkgredis.Key(streams.FixPrOpenedV1), args[1])
 	assert.Equal(t, "nomkstream", args[2], "the XADD never creates the stream")
 	assert.Equal(t, "*", args[3], "the XADD sets no length cap")
 	fields := map[string]any{}
@@ -157,13 +157,13 @@ func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 // dead-letter-controller's trim loop is the only thing that bounds them.
 func TestXAddArgs_DoNotTrim(t *testing.T) {
 	p := &agentRemediationOutboxPublisher{}
-	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.RemediationPrOpenedV1, Payload: []byte(`{}`)}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.FixPrOpenedV1, Payload: []byte(`{}`)}
 	values, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != pkgredis.Key(streams.RemediationPrOpenedV1) {
+	if args.Stream != pkgredis.Key(streams.FixPrOpenedV1) {
 		t.Fatalf("stream = %q", args.Stream)
 	}
 	if !args.NoMkStream {
@@ -177,7 +177,7 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 	}
 }
 
-// TestRender_ProposedRowStoresItsTenant holds that a remediation.proposed:v1
+// TestRender_ProposedRowStoresItsTenant holds that a fix.proposed:v1
 // row, stored under its tenant, renders as the payload it wraps beside that
 // tenant, and that a row stored under no tenant is refused as permanent:
 // no retry makes it renderable.
@@ -188,7 +188,7 @@ func TestRender_ProposedRowStoresItsTenant(t *testing.T) {
 	t.Run("renders the wrapped payload beside the stored tenant", func(t *testing.T) {
 		stored, err := pkgoutbox.WrapTenant("acme", []byte(body))
 		require.NoError(t, err)
-		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: "remediation_proposed", StreamName: streams.RemediationProposedV1, Payload: stored})
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: "fix_proposed", StreamName: streams.FixProposedV1, Payload: stored})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]any{"payload": body, "tenant_id": "acme"}, values)
 	})
@@ -196,7 +196,7 @@ func TestRender_ProposedRowStoresItsTenant(t *testing.T) {
 	t.Run("the default tenant renders as stored", func(t *testing.T) {
 		stored, err := pkgoutbox.WrapTenant(pkgevents.DefaultTenantID, []byte(body))
 		require.NoError(t, err)
-		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: stored})
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.FixProposedV1, Payload: stored})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]any{"payload": body, "tenant_id": pkgevents.DefaultTenantID}, values)
 	})
@@ -207,7 +207,7 @@ func TestRender_ProposedRowStoresItsTenant(t *testing.T) {
 			"an empty tenant":      `{"tenant_id":"","payload":{"release_id":"r1"}}`,
 			"no payload":           `{"tenant_id":"acme"}`,
 		} {
-			_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: []byte(payload)})
+			_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.FixProposedV1, Payload: []byte(payload)})
 			require.ErrorIs(t, err, pkgevents.ErrPermanent, name)
 			require.ErrorIs(t, err, pkgoutbox.ErrNoTenant, name)
 		}
@@ -219,7 +219,7 @@ func TestRender_ProposedRowStoresItsTenant(t *testing.T) {
 // their payload and render beside the default tenant.
 func TestRender_PrOpenedAndPrClosedRowsKeepTheDefaultTenant(t *testing.T) {
 	p := &agentRemediationOutboxPublisher{}
-	for _, stream := range []string{streams.RemediationPrOpenedV1, streams.RemediationPrClosedV1} {
+	for _, stream := range []string{streams.FixPrOpenedV1, streams.FixPrClosedV1} {
 		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: stream, Payload: []byte(`{"release_id":"r1"}`)})
 		require.NoError(t, err, stream)
 		assert.Equal(t, map[string]any{"payload": `{"release_id":"r1"}`, "tenant_id": pkgevents.DefaultTenantID}, values, stream)
@@ -227,7 +227,7 @@ func TestRender_PrOpenedAndPrClosedRowsKeepTheDefaultTenant(t *testing.T) {
 }
 
 // TestPublish_ProposedRowXAddCarriesItsStoredTenant holds that the XADD of a
-// remediation.proposed:v1 row carries the payload it wraps, the tenant it is
+// fix.proposed:v1 row carries the payload it wraps, the tenant it is
 // stored under and the entry's outbox_entry_id.
 func TestPublish_ProposedRowXAddCarriesItsStoredTenant(t *testing.T) {
 	capture := &captureXAdd{}
@@ -237,12 +237,12 @@ func TestPublish_ProposedRowXAddCarriesItsStoredTenant(t *testing.T) {
 
 	stored, err := pkgoutbox.WrapTenant("acme", []byte(`{"release_id":"r1"}`))
 	require.NoError(t, err)
-	entry := &pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: stored}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.FixProposedV1, Payload: stored}
 	require.NoError(t, (&agentRemediationOutboxPublisher{redis: rc}).Publish(context.Background(), entry))
 
 	require.Len(t, capture.cmds, 1)
 	args := capture.cmds[0].Args()
-	assert.Equal(t, pkgredis.Key(streams.RemediationProposedV1), args[1])
+	assert.Equal(t, pkgredis.Key(streams.FixProposedV1), args[1])
 	fields := map[string]any{}
 	for i := 4; i+1 < len(args); i += 2 {
 		fields[args[i].(string)] = args[i+1]

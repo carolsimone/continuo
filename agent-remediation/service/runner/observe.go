@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -125,7 +125,7 @@ func clusterResult(c remediation.Cluster, checked string) (string, bool) {
 // with neither, such as one skipped because maintenance mode was on, is not
 // counted: it is neither fixed nor left to a human, and the release can be
 // retried. A node is counted under the type of its cluster, or none.
-func (run tryRun) countOutcomes(outcomes map[string]proposal.NodeOutcome) {
+func (run tryRun) countOutcomes(outcomes map[string]fix.NodeOutcome) {
 	flow := run.snap.Remediation.Flow
 	types := nodeTypes(run.snap.Clusters)
 	for _, id := range sortedKeys(outcomes) {
@@ -134,7 +134,7 @@ func (run tryRun) countOutcomes(outcomes map[string]proposal.NodeOutcome) {
 		switch {
 		case o.Code != "":
 			outcome, reason = ports.OutcomeHandedOver, string(o.Code)
-		case o.Status == proposal.StatusProposed:
+		case o.Status == fix.StatusProposed:
 			outcome = ports.OutcomeFixed
 		default:
 			continue

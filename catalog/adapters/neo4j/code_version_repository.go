@@ -152,7 +152,7 @@ CREATE (n)-[:CURRENT {promoted_at: $promoted_at, release_id: $release_id}]->(v)`
 // recorded before this promotion, to the version that just became current:
 // the fix for a recorded failure is the first version promoted after it.
 // "Still open" looks only at [:RESOLVED_BY] edges to a :NodeVersion, because a
-// merged fix PR draws its own [:RESOLVED_BY] to a :Proposal independently of
+// merged fix PR draws its own [:RESOLVED_BY] to a :Fix independently of
 // any version write. The link is guarded on the same watermark as the pointer,
 // so a stale redelivery resolves nothing. The edge is stamped on creation with
 // this promotion's time and release, which the precedent detail diffs from,

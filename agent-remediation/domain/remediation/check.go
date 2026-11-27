@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 )
 
 // Finding is one problem a check found in a draft.
@@ -61,46 +61,46 @@ func (c Checked) Draft() Draft { return c.draft }
 // IsZero reports whether c is the zero value, not made by NewChecked.
 func (c Checked) IsZero() bool { return !c.ok }
 
-// Verified is a proposal whose checked drafts passed the gate. Only
+// Verified is a fix whose checked drafts passed the gate. Only
 // NewVerified makes a non-zero one.
 type Verified struct {
-	proposalID    string
-	releaseChecks []proposal.ReleaseCheck
+	fixID         string
+	releaseChecks []fix.ReleaseCheck
 	checked       []Checked
 }
 
-// NewVerified wraps the checked drafts of one proposal with the release
-// checks that judged them. It errors on an empty proposal id, no checked draft, a
+// NewVerified wraps the checked drafts of one fix with the release
+// checks that judged them. It errors on an empty fix id, no checked draft, a
 // zero Checked, or a gate result that did not pass.
-func NewVerified(proposalID string, checked []Checked, gate []CheckResult, releaseChecks []proposal.ReleaseCheck) (Verified, error) {
-	if proposalID == "" {
-		return Verified{}, errors.New("verified proposal has no id")
+func NewVerified(fixID string, checked []Checked, gate []CheckResult, releaseChecks []fix.ReleaseCheck) (Verified, error) {
+	if fixID == "" {
+		return Verified{}, errors.New("verified fix has no id")
 	}
 	if len(checked) == 0 {
-		return Verified{}, errors.New("verified proposal has no checked draft")
+		return Verified{}, errors.New("verified fix has no checked draft")
 	}
 	for _, c := range checked {
 		if c.IsZero() {
-			return Verified{}, errors.New("verified proposal holds a draft that was not checked")
+			return Verified{}, errors.New("verified fix holds a draft that was not checked")
 		}
 	}
 	if r, bad := firstUnpassed(gate); bad {
 		return Verified{}, fmt.Errorf("gate %q did not pass", r.Check)
 	}
 	return Verified{
-		proposalID:    proposalID,
-		releaseChecks: append([]proposal.ReleaseCheck(nil), releaseChecks...),
+		fixID:         fixID,
+		releaseChecks: append([]fix.ReleaseCheck(nil), releaseChecks...),
 		checked:       append([]Checked(nil), checked...),
 	}, nil
 }
 
-// ProposalID is the id of the proposal the verified drafts belong to.
-func (v Verified) ProposalID() string { return v.proposalID }
+// FixID is the id of the fix the verified drafts belong to.
+func (v Verified) FixID() string { return v.fixID }
 
 // ReleaseChecks returns the release checks that judged the drafts.
-func (v Verified) ReleaseChecks() []proposal.ReleaseCheck {
-	return append([]proposal.ReleaseCheck(nil), v.releaseChecks...)
+func (v Verified) ReleaseChecks() []fix.ReleaseCheck {
+	return append([]fix.ReleaseCheck(nil), v.releaseChecks...)
 }
 
 // IsZero reports whether v is the zero value, not made by NewVerified.
-func (v Verified) IsZero() bool { return v.proposalID == "" }
+func (v Verified) IsZero() bool { return v.fixID == "" }

@@ -3,7 +3,7 @@ package runner
 import (
 	"sort"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/pkg/sanitize"
@@ -21,23 +21,23 @@ const maxRationaleUpstream = 3
 // member's error line is the trigger's raw text, so it is cleaned by
 // sanitize.Text and its quoted data values masked before a pull request shows
 // it.
-func rationaleFactsFor(t remediation.Trigger, c remediation.Cluster, d remediation.Draft) proposal.RationaleFacts {
-	f := proposal.RationaleFacts{
+func rationaleFactsFor(t remediation.Trigger, c remediation.Cluster, d remediation.Draft) fix.RationaleFacts {
+	f := fix.RationaleFacts{
 		TargetNodeID:  c.TargetNodeID,
 		CrossProject:  c.Kind == workflow.ClusterCrossProject,
 		ModelNote:     d.Rationale,
 		UpstreamKnown: t.Source == "validation",
 	}
-	nearest := map[string]proposal.RationaleUpstream{}
+	nearest := map[string]fix.RationaleUpstream{}
 	for _, id := range c.Members {
 		n, ok := nodeByID(t, id)
 		if !ok {
 			continue
 		}
-		f.Members = append(f.Members, proposal.RationaleMember{NodeID: n.NodeID, Project: n.Project, ErrorLine: proposal.RedactDataValues(sanitize.Text(n.ErrorExcerpt))})
+		f.Members = append(f.Members, fix.RationaleMember{NodeID: n.NodeID, Project: n.Project, ErrorLine: fix.RedactDataValues(sanitize.Text(n.ErrorExcerpt))})
 		for _, a := range n.ChangedAncestors {
 			if cur, seen := nearest[a.NodeID]; !seen || a.Depth < cur.Depth {
-				nearest[a.NodeID] = proposal.RationaleUpstream{NodeID: a.NodeID, Project: a.Project, Depth: a.Depth}
+				nearest[a.NodeID] = fix.RationaleUpstream{NodeID: a.NodeID, Project: a.Project, Depth: a.Depth}
 			}
 		}
 	}

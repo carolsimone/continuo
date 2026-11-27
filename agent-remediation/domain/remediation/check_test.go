@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 )
 
 func TestCheckResult_PassedNeedsNoFindingsAndNoWait(t *testing.T) {
@@ -65,11 +65,11 @@ func TestNewVerified_RefusesAnEmptyIDAndNoChecked(t *testing.T) {
 func TestNewVerified_KeepsWhatItWasGiven(t *testing.T) {
 	c, err := NewChecked(Draft{NamedTarget: "model.a"}, nil)
 	require.NoError(t, err)
-	vs := []proposal.ReleaseCheck{{Project: "sales", CheckID: "r1"}}
+	vs := []fix.ReleaseCheck{{Project: "sales", CheckID: "r1"}}
 	v, err := NewVerified("p1", []Checked{c}, []CheckResult{{Check: "release_check"}}, vs)
 	require.NoError(t, err)
 	assert.False(t, v.IsZero())
-	assert.Equal(t, "p1", v.ProposalID())
+	assert.Equal(t, "p1", v.FixID())
 	assert.Equal(t, vs, v.ReleaseChecks())
 	assert.True(t, Verified{}.IsZero())
 }

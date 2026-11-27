@@ -17,8 +17,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
@@ -291,19 +291,19 @@ func (p *fakeReleaseChecks) Status(ctx context.Context, checkID string) (ports.R
 		return ports.ReleaseCheckStatus{}, err
 	}
 	if status == nil {
-		return ports.ReleaseCheckStatus{Phase: proposal.PhaseQueued}, nil
+		return ports.ReleaseCheckStatus{Phase: fix.PhaseQueued}, nil
 	}
 	return status(checkID)
 }
 
 // answer makes every check read as phase, with nodeErrors when it failed and
 // activated at t0 once it left the queue.
-func (p *fakeReleaseChecks) answer(phase proposal.Phase, nodeErrors map[string]string) {
+func (p *fakeReleaseChecks) answer(phase fix.Phase, nodeErrors map[string]string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.status = func(string) (ports.ReleaseCheckStatus, error) {
 		st := ports.ReleaseCheckStatus{Phase: phase, NodeErrors: nodeErrors}
-		if phase != proposal.PhaseQueued {
+		if phase != fix.PhaseQueued {
 			st.ActivatedAt = t0
 		}
 		return st, nil
@@ -453,7 +453,7 @@ func testFiles(tries int) workflow.Set {
 		AcrossClusters: refs("edits_map_to_a_project", "no_path_edited_twice", "one_manifest_kind"),
 		Gate:           refs("release_check"),
 		Tries:          tries,
-		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.RemediationProposedV1)},
+		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.FixProposedV1)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
 		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
 		Approver:       workflow.StepRef{Name: "node_owner"},
@@ -535,7 +535,7 @@ type harness struct {
 const releaseCheckTimeout = 20 * time.Minute
 
 // hookedUoW is a memory unit of work that runs the harness's afterCommit hook
-// after it commits and counts the phase writes of its proposal repository.
+// after it commits and counts the phase writes of its fix repository.
 type hookedUoW struct {
 	uow.UnitOfWork
 	h *harness
@@ -559,18 +559,18 @@ func (u hookedUoW) Commit() error {
 	return nil
 }
 
-func (u hookedUoW) ProposalRepo() repository.ProposalRepository {
-	return phaseCounter{ProposalRepository: u.UnitOfWork.ProposalRepo(), h: u.h}
+func (u hookedUoW) FixRepo() repository.FixRepository {
+	return phaseCounter{FixRepository: u.UnitOfWork.FixRepo(), h: u.h}
 }
 
 type phaseCounter struct {
-	repository.ProposalRepository
+	repository.FixRepository
 	h *harness
 }
 
-func (p phaseCounter) UpdateReleaseCheckPhase(ctx context.Context, id, checkID string, phase proposal.Phase, activatedAt *time.Time) error {
+func (p phaseCounter) UpdateReleaseCheckPhase(ctx context.Context, id, checkID string, phase fix.Phase, activatedAt *time.Time) error {
 	p.h.phaseWrites.Add(1)
-	return p.ProposalRepository.UpdateReleaseCheckPhase(ctx, id, checkID, phase, activatedAt)
+	return p.FixRepository.UpdateReleaseCheckPhase(ctx, id, checkID, phase, activatedAt)
 }
 
 type option func(*harness)
@@ -682,7 +682,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		},
 		Precedents:          noPrecedents{},
 		Upstream:            noUpstream{},
-		PriorAttempts:       h.store.ProposalRepository(),
+		PriorAttempts:       h.store.FixRepository(),
 		Tries:               h.store.RemediationRepository(),
 		CandidateSource:     h.bundle,
 		Versions:            noVersions{},
@@ -832,7 +832,7 @@ func (h *harness) accept(trig remediation.Trigger) uuid.UUID {
 
 // attemptWithNoRemediation records a terminal attempt row that belongs to no
 // remediation, for the release.
-func (h *harness) attemptWithNoRemediation(attempt int, status proposal.Status) {
+func (h *harness) attemptWithNoRemediation(attempt int, status fix.Status) {
 	h.t.Helper()
 	h.attemptWithNoRemediationInRound(1, attempt, status)
 }
@@ -848,18 +848,18 @@ func (h *harness) saveStep(row remediation.StepRun) {
 
 // attemptWithNoRemediationInRound records a terminal attempt row that belongs to
 // no remediation, for the release in one round.
-func (h *harness) attemptWithNoRemediationInRound(round, attempt int, status proposal.Status) {
+func (h *harness) attemptWithNoRemediationInRound(round, attempt int, status fix.Status) {
 	h.t.Helper()
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(h.t, u.Begin(ctx))
-	require.NoError(h.t, u.ProposalRepo().Upsert(ctx, proposal.Proposal{
+	require.NoError(h.t, u.FixRepo().Upsert(ctx, fix.Fix{
 		Source: "compile", ReleaseID: releaseID, RemediationRound: round, Attempt: attempt, Status: status,
 		ResolvedNodeIDs: []string{"svc-a"}, CreatedAt: t0,
 	}))
 	require.NoError(h.t, u.Commit())
 }
 
-func (h *harness) proposals() []memory.StoredProposal { return h.store.Proposals() }
+func (h *harness) fixes() []memory.StoredFix { return h.store.Fixes() }
 
 func (h *harness) remediation(id uuid.UUID) remediation.Remediation {
 	h.t.Helper()
@@ -921,16 +921,16 @@ func (h *harness) poll(id uuid.UUID) error {
 	return h.runner.PollGate(ctx, snap)
 }
 
-// attempt returns the proposal row of one attempt of the release.
-func (h *harness) attempt(n int) memory.StoredProposal {
+// attempt returns the fix row of one attempt of the release.
+func (h *harness) attempt(n int) memory.StoredFix {
 	h.t.Helper()
-	for _, p := range h.proposals() {
-		if p.Proposal.Attempt == n {
+	for _, p := range h.fixes() {
+		if p.Fix.Attempt == n {
 			return p
 		}
 	}
-	h.t.Fatalf("no proposal row for attempt %d", n)
-	return memory.StoredProposal{}
+	h.t.Fatalf("no fix row for attempt %d", n)
+	return memory.StoredFix{}
 }
 
 // try returns one try of the remediation.
@@ -950,7 +950,7 @@ func (h *harness) flowRows(id uuid.UUID, try int) map[string][]remediation.StepR
 	return h.stepRows(id, try, 0)
 }
 
-// proposedPayload is the tenant a remediation.proposed:v1 entry is stored under
+// proposedPayload is the tenant a fix.proposed:v1 entry is stored under
 // and the event payload it wraps.
 func proposedPayload(t *testing.T, e outbox.Entry) (tenantID string, payload []byte) {
 	t.Helper()
@@ -959,11 +959,11 @@ func proposedPayload(t *testing.T, e outbox.Entry) (tenantID string, payload []b
 	return tenantID, payload
 }
 
-// proposedEvents is every outbox entry on remediation.proposed:v1.
+// proposedEvents is every outbox entry on fix.proposed:v1.
 func (h *harness) proposedEvents() []outbox.Entry {
 	var out []outbox.Entry
 	for _, e := range h.store.OutboxEntries() {
-		if e.StreamName == streams.RemediationProposedV1 {
+		if e.StreamName == streams.FixProposedV1 {
 			out = append(out, e)
 		}
 	}

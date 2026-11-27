@@ -26,7 +26,7 @@ const precedentFixtureTenant = "precedent-query-test"
 // caseBaseCleanup returns a closure that removes every node of
 // precedentFixtureTenant a precedent test could have touched: the nodes it
 // seeds and writes carry the test's marker in test_marker or in an identity
-// value (release_id, node_id, unique_id, signature, proposal_id), and the unit
+// value (release_id, node_id, unique_id, signature, fix_id), and the unit
 // of work leaves the tenant's export lease node and processed-message markers.
 // No other tenant's node is touched.
 func caseBaseCleanup(t *testing.T, client neo4jinfra.Neo4jClient, marker string) func() {
@@ -42,7 +42,7 @@ func caseBaseCleanup(t *testing.T, client neo4jinfra.Neo4jClient, marker string)
 			   OR n.node_id CONTAINS $m
 			   OR n.unique_id CONTAINS $m
 			   OR n.signature CONTAINS $m
-			   OR n.proposal_id CONTAINS $m
+			   OR n.fix_id CONTAINS $m
 			DETACH DELETE n`,
 			`MATCH (n:Meta {tenant_id: $tenant_id}) DETACH DELETE n`,
 			`MATCH (n:ProcessedMessage {tenant_id: $tenant_id}) DETACH DELETE n`,
@@ -92,14 +92,14 @@ func (w *caseBaseWriter) RecordRejection(ctx context.Context, rej casebase.Rejec
 	})
 }
 
-func (w *caseBaseWriter) RecordProposal(ctx context.Context, p casebase.Proposal, pr casebase.PullRequest) error {
-	return w.write(ctx, streams.CatalogRemediationPrOpenedProposals, func(ctx context.Context, tx uow.Tx) error {
-		return tx.CaseBase().RecordProposal(ctx, precedentFixtureTenant, p, pr)
+func (w *caseBaseWriter) RecordFix(ctx context.Context, p casebase.Fix, pr casebase.PullRequest) error {
+	return w.write(ctx, streams.CatalogFixPrOpenedFixes, func(ctx context.Context, tx uow.Tx) error {
+		return tx.CaseBase().RecordFix(ctx, precedentFixtureTenant, p, pr)
 	})
 }
 
 func (w *caseBaseWriter) RecordPullRequestOutcome(ctx context.Context, o casebase.PullRequestOutcome) error {
-	return w.write(ctx, streams.CatalogRemediationPrClosedProvenance, func(ctx context.Context, tx uow.Tx) error {
+	return w.write(ctx, streams.CatalogFixPrClosedProvenance, func(ctx context.Context, tx uow.Tx) error {
 		return tx.CaseBase().RecordPullRequestOutcome(ctx, precedentFixtureTenant, o)
 	})
 }

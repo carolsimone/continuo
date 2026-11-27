@@ -832,14 +832,14 @@ func rejectUnbuildableCrossProjectUpstream(ctx context.Context, d *Deps, u uow.U
 // A per_node entry is emitted only for a two-claimant RELATION collision.
 // An identity collision never gets one, regardless of claimant count: the
 // only rename a fixer can express is an alias edit, which changes a node's
-// resolved relation but never its unique_id, so no proposal it could make
+// resolved relation but never its unique_id, so no fix it could make
 // would clear the collision — the same reasoning that already rules out a
 // three-or-more-way relation collision, where fixing one claimant still
-// leaves the relation claimed by the rest. A rename proposal always targets
+// leaves the relation claimed by the rest. A rename fix always targets
 // one claimant against one competitor; with three or more relation
 // claimants, fixing the target still leaves the relation claimed by the N-2
 // competitors that were never named as "the other producer", so the release
-// would fail again immediately on a proposal that looked sufficient — and
+// would fail again immediately on a fix that looked sufficient — and
 // clearing an N-way collision would require N-1 independent PRs, proposed
 // separately, to all merge together. Emitting no per_node entry means
 // remediation builds no evidence and opens no trigger for that claim; it
@@ -882,7 +882,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 		}
 		if c.Kind == release.CollisionIdentity {
 			// No rename a fixer can express changes a unique_id, so no
-			// proposal could ever clear this — emit no per_node entry and
+			// fix could ever clear this — emit no per_node entry and
 			// therefore no heal trigger.
 			continue
 		}

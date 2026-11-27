@@ -43,12 +43,12 @@ type Config struct {
 	GitHubBaseURL string // GitHub REST API base URL; defaults to the public API
 
 	// PRPollInterval is how often the PR-outcome reconciler polls GitHub for
-	// proposals with an open PR. Non-positive values fall back to the default
+	// fixes with an open PR. Non-positive values fall back to the default
 	// so a misconfigured interval can never produce a hot loop; a value that is
 	// not a Go duration at all fails start-up.
 	PRPollInterval time.Duration
 
-	// PROpeningGracePeriod bounds how long a proposal can sit claimed for PR
+	// PROpeningGracePeriod bounds how long a fix can sit claimed for PR
 	// creation (pr_state='opening') with no matching pull request on GitHub
 	// before the reconciler's opening sweep releases it back to 'failed' for
 	// retry. Non-positive values fall back to the default; a value that is not
@@ -92,7 +92,7 @@ type Config struct {
 	// never spends it; when no status can be read at all, it is measured from
 	// when the gate submitted the checks instead.
 	// Non-positive values fall back to the default so a misconfiguration can
-	// never leave a proposal waiting indefinitely; a value that is not a Go
+	// never leave a fix waiting indefinitely; a value that is not a Go
 	// duration at all fails start-up.
 	ReleaseCheckTimeout time.Duration
 
@@ -133,7 +133,7 @@ const defaultLLMCacheTTL = time.Hour
 const defaultWorkflowsDir = "/etc/continuo-workflows"
 
 // defaultPRPollInterval paces the PR-outcome reconciler; one minute keeps the
-// proposal table at most one poll behind GitHub without pressuring rate limits.
+// fix table at most one poll behind GitHub without pressuring rate limits.
 const defaultPRPollInterval = time.Minute
 
 // defaultPROpeningGracePeriod bounds how long the opening sweep waits before

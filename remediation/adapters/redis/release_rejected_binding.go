@@ -176,7 +176,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	}
 
 	// A reason the contract declares and marks not healable is not a model
-	// failure a heal proposal could fix: a rehearsal miss is a project
+	// failure a fix could repair: a rehearsal miss is a project
 	// property, an upload failure or an internal_error is continuo's own, an
 	// invalid_artifact is a manifest or python contract the release ships
 	// unreadable or invalid (or naming another project, or declaring an invalid

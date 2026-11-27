@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -89,7 +89,7 @@ func contractsByProject(projectRepoPaths map[string]string, drafts []step.Cluste
 		if !ok || contract == nil {
 			continue
 		}
-		if project, _, ok := proposal.ProjectForPath(projectRepoPaths, d.Draft.Edits[0].Path); ok {
+		if project, _, ok := fix.ProjectForPath(projectRepoPaths, d.Draft.Edits[0].Path); ok {
 			contracts[project] = contract
 		}
 	}
@@ -99,7 +99,7 @@ func contractsByProject(projectRepoPaths map[string]string, drafts []step.Cluste
 // FirstUnmapped returns the first edit no configured project owns.
 func FirstUnmapped(projectRepoPaths map[string]string, edits []remediation.Edit) (remediation.Edit, bool) {
 	for _, e := range edits {
-		if _, _, ok := proposal.ProjectForPath(projectRepoPaths, e.Path); !ok {
+		if _, _, ok := fix.ProjectForPath(projectRepoPaths, e.Path); !ok {
 			return e, true
 		}
 	}
@@ -111,7 +111,7 @@ func FirstUnmapped(projectRepoPaths map[string]string, edits []remediation.Edit)
 func FirstDuplicate(projectRepoPaths map[string]string, edits []remediation.Edit) (remediation.Edit, bool) {
 	seen := map[string]bool{}
 	for _, e := range edits {
-		if _, _, ok := proposal.ProjectForPath(projectRepoPaths, e.Path); !ok {
+		if _, _, ok := fix.ProjectForPath(projectRepoPaths, e.Path); !ok {
 			continue
 		}
 		if seen[e.Path] {
@@ -131,7 +131,7 @@ func FirstMixed(projectRepoPaths map[string]string, t remediation.Trigger, draft
 	contracts := contractsByProject(projectRepoPaths, drafts)
 	byProject := map[string][]remediation.Edit{}
 	for _, e := range EditsOf(drafts) {
-		if s, _, ok := proposal.ProjectForPath(projectRepoPaths, e.Path); ok {
+		if s, _, ok := fix.ProjectForPath(projectRepoPaths, e.Path); ok {
 			byProject[s] = append(byProject[s], e)
 		}
 	}
@@ -177,7 +177,7 @@ func Group(projectRepoPaths map[string]string, t remediation.Trigger, drafts []s
 	contracts := contractsByProject(projectRepoPaths, drafts)
 	byProject := map[string]*ProjectEdits{}
 	for _, e := range edits {
-		project, prefix, _ := proposal.ProjectForPath(projectRepoPaths, e.Path)
+		project, prefix, _ := fix.ProjectForPath(projectRepoPaths, e.Path)
 		g, ok := byProject[project]
 		if !ok {
 			g = &ProjectEdits{Project: project, Prefix: prefix, Contract: contracts[project]}

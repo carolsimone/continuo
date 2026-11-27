@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
@@ -25,7 +25,7 @@ func TestGatePoller_PollsAVerifyingRemediationAndWakesTheWorker(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 
 	var woken atomic.Int32
 	require.NoError(t, h.poller(func() { woken.Add(1) }).Poll(ctx))
@@ -41,7 +41,7 @@ func TestGatePoller_AFailedGateOpensTheNextTryForTheWorker(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "boom"})
+	h.checks.answer(fix.PhaseFailed, map[string]string{"svc-a": "boom"})
 
 	require.NoError(t, h.poller(func() {}).Poll(ctx))
 
@@ -58,7 +58,7 @@ func TestGatePoller_KeepsTheLeaseThroughAPollThatOutlastsIt(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	// The status read takes eight minutes of the clock, past the five-minute
 	// lease the poller claimed at t0. The clock moves four minutes at a time,
 	// and each time the poller holds the lease again from then.
@@ -82,7 +82,7 @@ func TestGatePoller_KeepsTheLeaseThroughAPollThatOutlastsIt(t *testing.T) {
 
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status, "the verdict read after the first lease ended is committed")
 	assert.Equal(t, remediation.TryPassed, h.try(id, 1).Status)
-	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
 	assert.Len(t, h.proposedEvents(), 1)
 	assert.Empty(t, h.remediation(id).LeaseOwner, "the poller lets go of the lease")
 }
@@ -95,7 +95,7 @@ func TestGatePoller_StopsAPollWhoseLeaseAnotherProcessTook(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 	repo := h.store.RemediationRepository()
 	require.NoError(t, repo.ReleaseLease(ctx, id, workerOwner))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	gate := h.flowRows(id, 1)["release_check"][0]
 	stopped := make(chan bool, 1)
 	var once sync.Once
@@ -124,7 +124,7 @@ func TestGatePoller_StopsAPollWhoseLeaseAnotherProcessTook(t *testing.T) {
 	assert.Equal(t, "somebody-else", h.remediation(id).LeaseOwner, "the other process keeps its lease")
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
 	assert.Empty(t, h.proposedEvents())
 	assert.Equal(t, gate, h.flowRows(id, 1)["release_check"][0], "the gate's row is as it was")
 }
@@ -138,7 +138,7 @@ func TestGatePoller_LeavesARemediationAnotherWorkerHolds(t *testing.T) {
 	claimed, err := repo.Claim(ctx, id, "somebody-else", h.clock.Now(), lease)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 
 	var woken atomic.Int32
 	require.NoError(t, h.poller(func() { woken.Add(1) }).Poll(ctx))

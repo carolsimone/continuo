@@ -1,5 +1,5 @@
 import { HANDOVER_REASONS, type HandoverReason } from '../server/generated/vocabulary.gen';
-import { ApproverDTO, NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseTransition } from './types';
+import { ApproverDTO, NodeValidationResult, FixDTO, PullRequestDTO, ReleaseTransition } from './types';
 
 // releasePillClass maps a status to a design-system pill variant. It handles
 // release lifecycle statuses (promoted/rejected/validating/…), release-check
@@ -27,14 +27,14 @@ export function releasePillClass(status: string): string {
   return 'pill--pending';
 }
 
-// proposalPillClass maps a remediation attempt's lifecycle status to a pill
+// fixPillClass maps a remediation attempt's lifecycle status to a pill
 // variant. The attempt vocabulary (proposed/verifying/generating/failed/
 // escalated/skipped) is distinct from the release one, so each status is
 // mapped on purpose: a proposed fix is the good outcome (green), an attempt
 // still being verified is in progress (the running hue), one still being
 // generated is waiting (grey), and both failed and escalated are dead ends
 // that need a human (red). Anything else falls back to releasePillClass.
-export function proposalPillClass(status: string): string {
+export function fixPillClass(status: string): string {
   switch (status) {
     case 'proposed':   return 'pill--succeeded';
     case 'verifying':  return 'pill--running';
@@ -111,62 +111,62 @@ export function groupByStage(
   return ordered;
 }
 
-// proposalKey is the join key between a per-node result and a remediation
-// proposal. A node_id alone is ambiguous across stages (a compile node_id is a
+// fixKey is the join key between a per-node result and a remediation
+// fix. A node_id alone is ambiguous across stages (a compile node_id is a
 // project name that can collide with a validation node_id), so the key is
-// (stage, node_id); stage and proposal.source share the same literals.
-export function proposalKey(stage: string, nodeId: string): string {
+// (stage, node_id); stage and fix.source share the same literals.
+export function fixKey(stage: string, nodeId: string): string {
   return `${stage}|${nodeId}`;
 }
 
-// proposalNodeIds lists every failing node one remediation attempt addresses.
-// A batched attempt carries resolved_node_ids; a legacy single-node proposal
+// fixNodeIds lists every failing node one remediation attempt addresses.
+// A batched attempt carries resolved_node_ids; a legacy single-node fix
 // (or one from before batching existed) has none, so its representative
 // node_id is the sole member.
-export function proposalNodeIds(p: ProposalDTO): string[] {
+export function fixNodeIds(p: FixDTO): string[] {
   return p.resolved_node_ids && p.resolved_node_ids.length > 0 ? p.resolved_node_ids : [p.node_id];
 }
 
-// proposalStatusForNode reads how a batched attempt ended for one specific
-// node, falling back to the proposal's overall status for a legacy row or a
+// fixStatusForNode reads how a batched attempt ended for one specific
+// node, falling back to the fix's overall status for a legacy row or a
 // node the attempt did not record a separate outcome for.
-export function proposalStatusForNode(p: ProposalDTO, nodeId: string): string {
+export function fixStatusForNode(p: FixDTO, nodeId: string): string {
   return p.node_outcomes?.[nodeId]?.status ?? p.status;
 }
 
-// proposalReasonForNode reads why a batched attempt ended that way for one
-// specific node, falling back to the proposal's overall rationale.
-export function proposalReasonForNode(p: ProposalDTO, nodeId: string): string {
+// fixReasonForNode reads why a batched attempt ended that way for one
+// specific node, falling back to the fix's overall rationale.
+export function fixReasonForNode(p: FixDTO, nodeId: string): string {
   return p.node_outcomes?.[nodeId]?.reason ?? p.rationale;
 }
 
-// proposalCodeForNode reads the handover_reason a batched attempt handed one
-// specific node over for. It reads only that node's own outcome: a proposal
-// describes several nodes, so no proposal-level value stands in for it. An
+// fixCodeForNode reads the handover_reason a batched attempt handed one
+// specific node over for. It reads only that node's own outcome: a fix
+// describes several nodes, so no fix-level value stands in for it. An
 // absent or empty code, and a value that is not a known reason, read as
 // undefined.
-export function proposalCodeForNode(p: ProposalDTO, nodeId: string): HandoverReason | undefined {
+export function fixCodeForNode(p: FixDTO, nodeId: string): HandoverReason | undefined {
   const code = p.node_outcomes?.[nodeId]?.code;
   return code && (HANDOVER_REASONS as readonly string[]).includes(code) ? code : undefined;
 }
 
-// proposalApproverForNode reads who must approve what a batched attempt did
+// fixApproverForNode reads who must approve what a batched attempt did
 // with one specific node. It reads only that node's own entry: an attempt row
 // with no remediation id records none, and a node the attempt recorded no
 // approver for has none either, which says the owner was not recorded, not that
 // the node has no owner (an entry with an empty owner says that).
-export function proposalApproverForNode(p: ProposalDTO, nodeId: string): ApproverDTO | undefined {
+export function fixApproverForNode(p: FixDTO, nodeId: string): ApproverDTO | undefined {
   return p.approvers?.find(a => a.node_id === nodeId);
 }
 
-// proposalPullRequests lists every pull request opened from this proposal.
-// A proposal split across owning projects carries one entry per project in
+// fixPullRequests lists every pull request opened from this fix.
+// A fix split across owning projects carries one entry per project in
 // pull_requests; a legacy row (or one from before the per-project split
 // existed) has none, so its singular pr_* fields — which the server mirrors
 // from pull_requests[0] for exactly this reason — are synthesized into the
-// one (project '') entry they describe. A proposal with no pull request at
+// one (project '') entry they describe. A fix with no pull request at
 // all (pr_url and pr_state both empty) yields an empty list either way.
-export function proposalPullRequests(p: ProposalDTO): PullRequestDTO[] {
+export function fixPullRequests(p: FixDTO): PullRequestDTO[] {
   if (p.pull_requests && p.pull_requests.length > 0) return p.pull_requests;
   if (!p.pr_url && !p.pr_state) return [];
   return [
@@ -184,18 +184,18 @@ export function proposalPullRequests(p: ProposalDTO): PullRequestDTO[] {
   ];
 }
 
-// proposalPrProjects lists the owning-project groups this proposal's pull
+// fixPrProjects lists the owning-project groups this fix's pull
 // requests split into. Absent or empty on a legacy row (or one predating the
 // per-project split), in which case it is a single group named '' — the same
 // default agent-remediation reports for such a row.
-export function proposalPrProjects(p: ProposalDTO): string[] {
+export function fixPrProjects(p: FixDTO): string[] {
   return p.pr_projects && p.pr_projects.length > 0 ? p.pr_projects : [''];
 }
 
-// proposalPrStateForProject reads the pr_state of one owning-project group's
+// fixPrStateForProject reads the pr_state of one owning-project group's
 // pull request, '' when that project has none yet.
-export function proposalPrStateForProject(p: ProposalDTO, project: string): string {
-  return proposalPullRequests(p).find((pr) => pr.project === project)?.pr_state ?? '';
+export function fixPrStateForProject(p: FixDTO, project: string): string {
+  return fixPullRequests(p).find((pr) => pr.project === project)?.pr_state ?? '';
 }
 
 // releaseCheckPhase reads a release check's status as the phase an
@@ -215,7 +215,7 @@ export function releaseCheckPhase(status: string): 'queued' | 'running' | 'passe
 // agent-remediation recorded on its release checks. Running wins. Queued needs positive
 // evidence. Anything else (no phase recorded yet, or only verdicts) is
 // undefined so the chip keeps its flat wording rather than claiming a wait.
-export function attemptReleaseCheckPhase(p: ProposalDTO): 'queued' | 'running' | undefined {
+export function attemptReleaseCheckPhase(p: FixDTO): 'queued' | 'running' | undefined {
   let sawQueued = false;
   for (const v of p.release_checks ?? []) {
     if (v.phase === 'running') return 'running';
@@ -224,61 +224,61 @@ export function attemptReleaseCheckPhase(p: ProposalDTO): 'queued' | 'running' |
   return sawQueued ? 'queued' : undefined;
 }
 
-// effectiveRound is the remediation round a proposal belongs to. The gRPC
+// effectiveRound is the remediation round a fix belongs to. The gRPC
 // client (ui/src/server/remediation-client.ts) loads the proto with
-// `defaults: true`, so a proposal recorded before remediation_round existed
+// `defaults: true`, so a fix recorded before remediation_round existed
 // arrives over the wire as 0, not undefined — a plain `?? 1` fallback would
 // not catch it. Both a missing field and an explicit 0 read as round 1.
-export function effectiveRound(p: ProposalDTO): number {
+export function effectiveRound(p: FixDTO): number {
   return p.remediation_round && p.remediation_round > 0 ? p.remediation_round : 1;
 }
 
-// ProposalGroup aggregates every remediation attempt for one (release, round):
+// FixGroup aggregates every remediation attempt for one (release, round):
 // the attempts newest first, the union of the projects they touch and the
 // nodes they resolve, the newest attempt's status, and the newest attempt
 // that carries a pull request.
-export interface ProposalGroup {
+export interface FixGroup {
   key: string;
   releaseId: string;
   round: number;
-  attempts: ProposalDTO[];       // newest first
-  latest: ProposalDTO;           // attempts[0]
-  projects: string[];            // see proposalProjects; union, sorted
+  attempts: FixDTO[];       // newest first
+  latest: FixDTO;           // attempts[0]
+  projects: string[];            // see fixProjects; union, sorted
   nodeIds: string[];             // resolved-node union, sorted
-  latestPrProposal: ProposalDTO | null;
+  latestPrFix: FixDTO | null;
 }
 
-// proposalProjects lists the projects one attempt touched, as recorded by
-// agent-remediation on the proposal itself: the failing nodes' projects plus
+// fixProjects lists the projects one attempt touched, as recorded by
+// agent-remediation on the fix itself: the failing nodes' projects plus
 // the edited ones — the same set the server's `project` list filter matches
-// a proposal on, so the Projects column and the filter agree. A remediation
+// a fix on, so the Projects column and the filter agree. A remediation
 // node id is "<schema>.<table>" and names no project, so nothing is ever
-// parsed out of resolved_node_ids. A proposal served by an agent-remediation
+// parsed out of resolved_node_ids. A fix served by an agent-remediation
 // that predates the field carries no projects; the owning projects its pull
 // requests split into (the legacy '' sentinel dropped) are the nearest thing
-// it does carry, and a legacy proposal with neither yields none.
-export function proposalProjects(p: ProposalDTO): string[] {
+// it does carry, and a legacy fix with neither yields none.
+export function fixProjects(p: FixDTO): string[] {
   const carried = (p.projects ?? []).filter((s) => s !== '');
   if (carried.length > 0) return Array.from(new Set(carried)).sort();
-  return Array.from(new Set(proposalPrProjects(p).filter((s) => s !== ''))).sort();
+  return Array.from(new Set(fixPrProjects(p).filter((s) => s !== ''))).sort();
 }
 
-// groupProposals buckets proposals by (release_id, remediation round), newest
+// groupFixes buckets fixes by (release_id, remediation round), newest
 // group first by its latest attempt. Within a group the attempts are newest
 // first (created_at, then attempt number). `projects` unions each attempt's
-// proposalProjects; `nodeIds` unions their resolved nodes; `latestPrProposal`
+// fixProjects; `nodeIds` unions their resolved nodes; `latestPrFix`
 // is the newest attempt that has opened a pull request, or null when none
 // has.
-export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
-  const buckets = new Map<string, ProposalDTO[]>();
-  for (const p of proposals) {
+export function groupFixes(fixes: FixDTO[]): FixGroup[] {
+  const buckets = new Map<string, FixDTO[]>();
+  for (const p of fixes) {
     const key = `${p.release_id} ${effectiveRound(p)}`;
     const list = buckets.get(key);
     if (list) list.push(p);
     else buckets.set(key, [p]);
   }
 
-  const groups: ProposalGroup[] = [];
+  const groups: FixGroup[] = [];
   for (const [key, attempts] of buckets) {
     attempts.sort((a, b) => {
       if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
@@ -287,9 +287,9 @@ export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
     const latest = attempts[0];
 
     const projectSet = new Set<string>();
-    for (const p of attempts) for (const s of proposalProjects(p)) projectSet.add(s);
+    for (const p of attempts) for (const s of fixProjects(p)) projectSet.add(s);
     const nodeSet = new Set<string>();
-    for (const p of attempts) for (const n of proposalNodeIds(p)) nodeSet.add(n);
+    for (const p of attempts) for (const n of fixNodeIds(p)) nodeSet.add(n);
 
     groups.push({
       key,
@@ -299,7 +299,7 @@ export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
       latest,
       projects: Array.from(projectSet).sort(),
       nodeIds: Array.from(nodeSet).sort(),
-      latestPrProposal: attempts.find(p => proposalPullRequests(p).some(pr => pr.pr_state)) ?? null,
+      latestPrFix: attempts.find(p => fixPullRequests(p).some(pr => pr.pr_state)) ?? null,
     });
   }
 

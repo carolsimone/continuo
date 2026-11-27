@@ -42,7 +42,7 @@ type ProposeResult struct {
 	Cached                 bool
 }
 
-// LLMProvider performs a single-shot, tool-forced proposal. Implementations
+// LLMProvider makes one single-shot, tool-forced request for a fix. Implementations
 // translate ProposeRequest to their wire format, force the propose_fix tool,
 // and parse the structured result.
 type LLMProvider interface {

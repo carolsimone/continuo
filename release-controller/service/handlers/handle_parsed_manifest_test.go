@@ -441,7 +441,7 @@ func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
 
 // A healable parse kind that names no failed node rejects the release and
 // warns: the remediation classifier works per node, so with no failed nodes
-// nothing downstream has a fix target and the operator gets no proposal for a
+// nothing downstream has a fix target and the operator gets no fix for a
 // reason that otherwise offers one. The unhealable kinds carry no nodes by
 // design and must stay silent.
 func TestHandleParsedManifest_Failed_HealableKindWithoutNodesWarns(t *testing.T) {
@@ -1864,11 +1864,11 @@ func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t 
 	assert.Equal(t, "prev", store.GetLiveRelease().ReleaseID(), "the live release must not move")
 }
 
-// A three-way collision cannot be fixed by one rename proposal: renaming the
+// A three-way collision cannot be fixed by one rename fix: renaming the
 // target still leaves the relation claimed by the other two. It still
 // rejects, naming and failing every claimant, but contributes no per_node
 // entry — remediation would otherwise build evidence and open a trigger for a
-// proposal that could never clear the gate on its own.
+// fix that could never clear the gate on its own.
 func TestHandleParsedManifest_DuplicateTableThreeWayEmitsNoPerNodeEntry(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
 
@@ -1935,7 +1935,7 @@ func TestHandleParsedManifest_DuplicateTableMixedTwoAndThreeWayEmitsOnlyTheTwoWa
 // one: unique_id is the identity key for every downstream lookup keyed on
 // it, so this must reject even though the two nodes write different
 // warehouse tables. It emits no per_node entry — no rename a fixer can
-// express changes a unique_id, so a proposal here could never clear the
+// express changes a unique_id, so a fix here could never clear the
 // gate — but it still names both claimants and both unique_ids in the
 // detail and failing_nodes so an operator can resolve it by hand.
 func TestHandleParsedManifest_DuplicateTableIdentityCollisionRejectsWithNoPerNodeEntry(t *testing.T) {

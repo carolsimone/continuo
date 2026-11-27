@@ -223,7 +223,7 @@ func (v ValidationOp) IsValid() bool {
 	return false
 }
 
-// HandoverReason — Why a failing node of a rejected release is left to a human instead of a fix proposal. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it.
+// HandoverReason — Why a failing node of a rejected release is left to a human instead of a fix. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it.
 // Values come from the vocabulary "handover_reason" in contract.yaml, in
 // declaration order.
 type HandoverReason string
@@ -284,7 +284,7 @@ func (v HandoverReason) IsValid() bool {
 	return false
 }
 
-// ApproverSource — Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a proposal, which the gRPC reads carry to the release page.
+// ApproverSource — Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a fix, which the gRPC reads carry to the release page.
 // Values come from the vocabulary "approver_source" in contract.yaml, in
 // declaration order.
 type ApproverSource string

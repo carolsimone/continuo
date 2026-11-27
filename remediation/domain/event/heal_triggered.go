@@ -89,7 +89,7 @@ type FailingNode struct {
 	Unfixable *Unfixable
 }
 
-// Unfixable is the classifier's verdict on a failing node no fix proposal can
+// Unfixable is the classifier's verdict on a failing node no fix can
 // help: Reason is model.HandoverReasonClassifierInfra or
 // model.HandoverReasonClassifierUnhealableParse, and Detail is what actually
 // failed: the failure's key error line, cleaned of credentials and email

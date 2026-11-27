@@ -31,13 +31,13 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/carolsimone/continuo/agent-remediation/config"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/service/fixes"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
-	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
@@ -282,10 +282,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The proposal repository is bound to the DB rather than to a transaction:
+	// The fix repository is bound to the DB rather than to a transaction:
 	// the gRPC read path, the reconciler, and the steps' prior-attempt reads
 	// all use it outside any unit of work.
-	proposalRepo := postgres.NewProposalRepository(db, cfg.ProjectRepoPaths)
+	fixRepo := postgres.NewFixRepository(db, cfg.ProjectRepoPaths)
 	contracts := repofs.NewLocator(logger)
 
 	// The runner works a heal trigger as a remediation of committed steps. Its
@@ -304,7 +304,7 @@ func main() {
 		packager:  packager,
 		images:    imagePackages,
 		release:   releaseGateway,
-		proposals: proposalRepo,
+		fixes:     fixRepo,
 		tries:     remediationRepo,
 	}, logger)
 	install, err := installFiles(cfg.WorkflowsDir)
@@ -323,7 +323,7 @@ func main() {
 	// having a fix still open, which keeps "Try again" blocked. The sweep runs
 	// before the runner's loops and the consumer start, so no new work begins
 	// while such a row is open.
-	if stop, code := sweepAtStartup(ctx, proposalRepo, logger); stop {
+	if stop, code := sweepAtStartup(ctx, fixRepo, logger); stop {
 		os.Exit(code)
 	}
 	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
@@ -393,11 +393,11 @@ func main() {
 	// remediation.
 	runConsumer("heal_triggered", rredis.NewHealTriggeredConsumer(rc, accept, logger))
 
-	// Start the RemediationProposals gRPC server. The proposal service uses a
+	// Start the RemediationFixes gRPC server. The fix service uses a
 	// DB-bound (non-transactional) repository for reads and the UoW factory for
 	// write operations, matching the consumer's wiring above.
-	proposalSvc := proposals.New(proposals.Deps{
-		Repo:             proposalRepo,
+	fixSvc := fixes.New(fixes.Deps{
+		Repo:             fixRepo,
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ProjectRepoPaths) },
 		Clock:            ports.SystemClock{},
 		ProjectRepoPaths: cfg.ProjectRepoPaths,
@@ -408,7 +408,7 @@ func main() {
 		os.Exit(1)
 	}
 	grpcSrv := grpc.NewServer()
-	remediationv1.RegisterRemediationProposalsServer(grpcSrv, grpcadapter.NewProposalsServer(proposalSvc))
+	remediationv1.RegisterRemediationFixesServer(grpcSrv, grpcadapter.NewFixesServer(fixSvc))
 	go func() {
 		if err := grpcSrv.Serve(lis); err != nil && ctx.Err() == nil {
 			logger.Error("grpc server stopped", "error", err)
@@ -416,27 +416,27 @@ func main() {
 	}()
 
 	// Mirror terminal GitHub PR outcomes (merged / closed-without-merge) onto
-	// proposal rows, and sweep stuck 'opening' claims — recovering a proposal
+	// fix rows, and sweep stuck 'opening' claims — recovering a fix
 	// whose PR was created on GitHub but never recorded, and releasing a
 	// genuinely abandoned claim back to 'failed' — on a fixed cadence.
-	reconciler := proposals.NewReconciler(proposals.ReconcilerDeps{
-		Lister:             proposalRepo,
+	reconciler := fixes.NewReconciler(fixes.ReconcilerDeps{
+		Lister:             fixRepo,
 		Checker:            gh,
-		Recorder:           proposalSvc,
+		Recorder:           fixSvc,
 		Clock:              ports.SystemClock{},
 		Logger:             logger,
 		Interval:           cfg.PRPollInterval,
-		OpeningLister:      proposalRepo,
+		OpeningLister:      fixRepo,
 		BranchFinder:       gh,
-		OpeningRecorder:    proposalSvc,
-		Failer:             proposalSvc,
+		OpeningRecorder:    fixSvc,
+		Failer:             fixSvc,
 		OpeningGracePeriod: cfg.PROpeningGracePeriod,
 		// At a merged PR the reconciler byte-compares each edited file at the
-		// merge commit against the proposal to stamp per-edit amend flags on
+		// merge commit against the fix to stamp per-edit amend flags on
 		// pr_closed: the source reader reads the merged file from GitHub, the S3
-		// store the proposed content and diff, the getter loads the proposal's
+		// store the proposed content and diff, the getter loads the fix's
 		// edits, and ProjectRepoPaths splits them by owning project.
-		Getter:           proposalRepo,
+		Getter:           fixRepo,
 		Sources:          gh,
 		Evidence:         evidenceReader,
 		ProjectRepoPaths: cfg.ProjectRepoPaths,
@@ -503,7 +503,7 @@ func loopBudgets(cfg config.Config) (worker, poller time.Duration) {
 // a shutdown, which stops cleanly (code 0) as the other startup waits do,
 // whatever error the driver reported for its cancelled statement. Any other
 // failure of the sweep stops startup with code 1.
-func sweepAtStartup(ctx context.Context, repo repository.ProposalRepository, logger *slog.Logger) (stop bool, code int) {
+func sweepAtStartup(ctx context.Context, repo repository.FixRepository, logger *slog.Logger) (stop bool, code int) {
 	err := failLegacyInFlight(ctx, repo, logger)
 	switch {
 	case err == nil:
@@ -521,8 +521,8 @@ func sweepAtStartup(ctx context.Context, repo repository.ProposalRepository, log
 // remediation, which nothing drives since the runner stamps a remediation on
 // every row it writes, and logs how many it moved: at Warn when there are any,
 // at Info when there are none. It is idempotent, so every start runs it.
-func failLegacyInFlight(ctx context.Context, repo repository.ProposalRepository, logger *slog.Logger) error {
-	n, err := repo.FailLegacyInFlight(ctx, proposal.NoRemediationInFlightReason)
+func failLegacyInFlight(ctx context.Context, repo repository.FixRepository, logger *slog.Logger) error {
+	n, err := repo.FailLegacyInFlight(ctx, fix.NoRemediationInFlightReason)
 	if err != nil {
 		return err
 	}
@@ -645,8 +645,8 @@ type runnerAdapters struct {
 		ports.ReleaseReader
 		ports.ReleaseChecks
 	}
-	proposals repository.AttemptLister
-	tries     repository.TryLister
+	fixes repository.AttemptLister
+	tries repository.TryLister
 }
 
 // runnerCollaborators is the ports the steps are built from: the adapters main
@@ -674,7 +674,7 @@ func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logge
 		ImagePackages:       a.images,
 		CurrentContracts:    a.graph,
 		Releases:            a.release,
-		PriorAttempts:       a.proposals,
+		PriorAttempts:       a.fixes,
 		Tries:               a.tries,
 		SQLDialect:          cfg.SQLDialect,
 		ReleaseChecks:       a.release,

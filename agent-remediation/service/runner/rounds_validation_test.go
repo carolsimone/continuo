@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -71,7 +71,7 @@ func TestRunner_ALowConfidenceSourceFixGoesBackToTheModel(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterChecked, c.Status)
 	assert.Equal(t, 2, c.Round)
-	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
+	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
 	revised, ok := h.artifacts.get("proposed-fix/rel-1/" + validationNodeID + "/attempt-1.source.sql")
 	require.True(t, ok)
 	assert.Equal(t, revisedSourceText, revised, "the revised answer is the edit that goes to the gate")
@@ -90,7 +90,7 @@ func TestRunner_AnUnchangedSourceFixInTheLastRoundHandsTheClusterOver(t *testing
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 	require.NotNil(t, c.Outcome)
-	assert.Equal(t, proposal.StatusFailed, c.Outcome.Status)
+	assert.Equal(t, fix.StatusFailed, c.Outcome.Status)
 	assert.Equal(t, "the model returned the file unchanged, which is not a fix", c.Outcome.Reason)
 	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, c.Outcome.Code)
 }

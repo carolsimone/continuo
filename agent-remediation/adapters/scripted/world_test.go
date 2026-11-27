@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -204,10 +204,10 @@ func TestReleaseChecks_FailsTheRunsOfTheFirstAttemptsWithTheGateErrors(t *testin
 
 	first, err := p.Status(ctx, "run-1")
 	require.NoError(t, err)
-	assert.Equal(t, ports.ReleaseCheckStatus{Phase: proposal.PhaseFailed, ActivatedAt: startTime, NodeErrors: map[string]string{"model.a": "still broken"}}, first)
+	assert.Equal(t, ports.ReleaseCheckStatus{Phase: fix.PhaseFailed, ActivatedAt: startTime, NodeErrors: map[string]string{"model.a": "still broken"}}, first)
 	second, err := p.Status(ctx, "run-2")
 	require.NoError(t, err)
-	assert.Equal(t, ports.ReleaseCheckStatus{Phase: proposal.PhasePassed, ActivatedAt: startTime}, second)
+	assert.Equal(t, ports.ReleaseCheckStatus{Phase: fix.PhasePassed, ActivatedAt: startTime}, second)
 	_, err = p.Status(ctx, "run-3")
 	require.Error(t, err)
 	assert.Len(t, p.requests(), 2)
@@ -288,14 +288,14 @@ func TestWorld_ReadsBackWhatTheStoreHolds(t *testing.T) {
 	require.NoError(t, err)
 	u := w.NewUoW()
 	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, u.ProposalRepo().Upsert(ctx, proposal.Proposal{ReleaseID: "rel", Attempt: 2, Status: proposal.StatusFailed}))
-	require.NoError(t, u.ProposalRepo().Upsert(ctx, proposal.Proposal{ReleaseID: "rel", Attempt: 1, Status: proposal.StatusSkipped}))
+	require.NoError(t, u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Attempt: 2, Status: fix.StatusFailed}))
+	require.NoError(t, u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Attempt: 1, Status: fix.StatusSkipped}))
 	require.NoError(t, u.Commit())
 
 	attempts := w.Attempts()
 	require.Len(t, attempts, 2)
-	assert.Equal(t, 1, attempts[0].Proposal.Attempt)
-	assert.Equal(t, 2, attempts[1].Proposal.Attempt)
+	assert.Equal(t, 1, attempts[0].Fix.Attempt)
+	assert.Equal(t, 2, attempts[1].Fix.Attempt)
 	assert.Empty(t, w.Remediations())
 	assert.Empty(t, w.Tries(uuid.Nil))
 }

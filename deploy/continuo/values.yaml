@@ -407,7 +407,7 @@ credentials:
 # the box. Set this to your own projects and it REPLACES that demo map entirely —
 # a production install maps only the projects it runs, so a demo entry can never
 # linger to mis-own a path. A project with no entry has its fix recorded as
-# unverifiable and its proposal skipped; an explicit empty value ("") maps a
+# unverifiable and its fix skipped; an explicit empty value ("") maps a
 # project whose dbt project folder is the repository root. Restart agent-remediation
 # after changing this. Example:
 #   projectRepos:
@@ -664,9 +664,9 @@ contracts:
 # redrives with HTTP 503 / gRPC UNAVAILABLE and the message "continuo is in
 # maintenance mode"; run-controller consumes each cron slot that comes due with
 # no run (it is not caught up afterwards); release-controller activates no
-# queued release; agent-remediation records each fix attempt that comes due as
+# queued release; agent-remediation records each attempt that comes due as
 # skipped, and **Retry remediation** starts it once maintenance is off. Runs,
-# releases and fixes' release checks already in progress complete. Enforced by ui,
+# releases and the release checks of fixes already in progress complete. Enforced by ui,
 # run-controller, release-controller, agent-remediation and
 # dead-letter-controller, which refuse to start on any value other than true or
 # false. Changing it restarts every continuo component (the shared ConfigMap
@@ -1188,7 +1188,7 @@ components:
       REMEDIATION_PR_OPENING_GRACE_PERIOD: "10m"
       PROJECT_REPO_MAP_PATH: /etc/continuo/project_repos.yaml
       RELEASE_CONTROLLER_URL: http://release-controller:8088
-      # How long a fix proposal waits for one of its release checks to
+      # How long a fix waits for one of its release checks to
       # reach a verdict. Counted from when that check leaves the release
       # queue and starts running, so a backlog never spends it.
       RELEASE_CHECK_TIMEOUT: "20m"

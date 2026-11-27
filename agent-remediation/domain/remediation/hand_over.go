@@ -3,7 +3,7 @@ package remediation
 import (
 	"sort"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
@@ -19,9 +19,9 @@ type HandOver struct {
 
 // HandOvers is every node of an attempt's outcomes whose outcome carries a
 // code, sorted by node id, each with its outcome's reason as the message,
-// cleaned (proposal.NodeOutcome.Cleaned). A node whose outcome carries no code,
+// cleaned (fix.NodeOutcome.Cleaned). A node whose outcome carries no code,
 // such as one a verified fix covers, is not handed over.
-func HandOvers(outcomes map[string]proposal.NodeOutcome) []HandOver {
+func HandOvers(outcomes map[string]fix.NodeOutcome) []HandOver {
 	var out []HandOver
 	for id, o := range outcomes {
 		if o.Code == "" {

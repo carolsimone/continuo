@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
@@ -140,13 +140,13 @@ type clusterRow struct {
 const clusterColumns = `remediation_id, try, cluster, kind, target_node_id, members, type_name, status, round, outcome, updated_at`
 
 func (row clusterRow) toDomain() (remediation.Cluster, error) {
-	var outcome *proposal.NodeOutcome
+	var outcome *fix.NodeOutcome
 	if len(row.Outcome) > 0 {
 		var o nodeOutcomeRow
 		if err := json.Unmarshal(row.Outcome, &o); err != nil {
 			return remediation.Cluster{}, fmt.Errorf("decode outcome of cluster %d of remediation %s: %w", row.Cluster, row.RemediationID, err)
 		}
-		outcome = &proposal.NodeOutcome{Status: proposal.Status(o.Status), Reason: o.Reason, Code: model.HandoverReason(o.Code)}
+		outcome = &fix.NodeOutcome{Status: fix.Status(o.Status), Reason: o.Reason, Code: model.HandoverReason(o.Code)}
 	}
 	var members []string
 	if len(row.Members) > 0 {
@@ -927,7 +927,7 @@ func (r *RemediationRepository) ListFailingSteps(ctx context.Context, minFailure
 // DeleteFinishedOlderThan deletes at most limit finished remediations last
 // updated more than retention ago, oldest first, with the database's clock. The
 // foreign keys delete their tries, clusters and steps and clear the
-// remediation_id of their proposals.
+// remediation_id of their fixes.
 func (r *RemediationRepository) DeleteFinishedOlderThan(ctx context.Context, retention time.Duration, limit int) (int64, error) {
 	res, err := r.q.ExecContext(ctx, `
 		DELETE FROM remediation WHERE id IN (

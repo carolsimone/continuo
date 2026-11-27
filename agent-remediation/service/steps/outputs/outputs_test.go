@@ -12,7 +12,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
@@ -54,16 +54,16 @@ func newRemediation(t *testing.T, store *memory.Store) remediation.Remediation {
 	return rem
 }
 
-func verifying(rem remediation.Remediation) proposal.Proposal {
-	return proposal.Proposal{
+func verifying(rem remediation.Remediation) fix.Fix {
+	return fix.Fix{
 		Source: "validation", ReleaseID: "rel-1", RemediationID: rem.ID.String(), RemediationRound: 1,
 		NodeID: "model.a", ResolvedNodeIDs: []string{"model.a", "model.b"}, ErrorSignature: "sig-a",
-		Attempt: 1, Status: proposal.StatusVerifying,
-		NodeOutcomes:  map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}, "model.b": {Status: proposal.StatusVerifying}},
-		ReleaseChecks: []proposal.ReleaseCheck{{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a1", Phase: proposal.PhaseQueued}},
-		Confidence:    proposal.ConfidenceHigh, Rationale: "the column was renamed", Model: "model-x",
+		Attempt: 1, Status: fix.StatusVerifying,
+		NodeOutcomes:  map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusVerifying}, "model.b": {Status: fix.StatusVerifying}},
+		ReleaseChecks: []fix.ReleaseCheck{{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a1", Phase: fix.PhaseQueued}},
+		Confidence:    fix.ConfidenceHigh, Rationale: "the column was renamed", Model: "model-x",
 		ProposedSQLURI: "s3://b/a.sql", DiffURI: "s3://b/a.diff", SourceResolved: true,
-		Edits: []proposal.FileEdit{
+		Edits: []fix.FileEdit{
 			{Path: "dbt/projects/sales/models/a.sql", ContentURI: "s3://b/a.sql", DiffURI: "s3://b/a.diff", TargetNodeID: "model.a"},
 			{Path: "dbt/projects/finance/models/b.sql", ContentURI: "s3://b/b.sql", DiffURI: "s3://b/b.diff", TargetNodeID: "model.b"},
 		},
@@ -71,19 +71,19 @@ func verifying(rem remediation.Remediation) proposal.Proposal {
 	}
 }
 
-func seed(t *testing.T, store *memory.Store, p proposal.Proposal) string {
+func seed(t *testing.T, store *memory.Store, p fix.Fix) string {
 	t.Helper()
-	require.NoError(t, store.ProposalRepository().Upsert(ctx, p))
-	rows := store.Proposals()
+	require.NoError(t, store.FixRepository().Upsert(ctx, p))
+	rows := store.Fixes()
 	return rows[len(rows)-1].ID
 }
 
-func verified(t *testing.T, proposalID string) remediation.Verified {
+func verified(t *testing.T, fixID string) remediation.Verified {
 	t.Helper()
 	checked, err := remediation.NewChecked(remediation.Draft{}, nil)
 	require.NoError(t, err)
-	v, err := remediation.NewVerified(proposalID, []remediation.Checked{checked}, nil,
-		[]proposal.ReleaseCheck{{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a1", Phase: proposal.PhasePassed}})
+	v, err := remediation.NewVerified(fixID, []remediation.Checked{checked}, nil,
+		[]fix.ReleaseCheck{{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a1", Phase: fix.PhasePassed}})
 	require.NoError(t, err)
 	return v
 }
@@ -115,7 +115,7 @@ func TestPullRequest_ZeroVerifiedWritesNothing(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, u.Commit())
 
-	assert.Equal(t, proposal.StatusVerifying, store.Proposals()[0].Proposal.Status)
+	assert.Equal(t, fix.StatusVerifying, store.Fixes()[0].Fix.Status)
 	assert.Empty(t, store.OutboxEntries())
 }
 
@@ -130,10 +130,10 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 	require.NoError(t, outputs.NewPullRequest(fixedClock{}).Pass(ctx, u, step.OutputInput{Remediation: rem, Trigger: trigger()}, verified(t, id)))
 	require.NoError(t, u.Commit())
 
-	row := store.Proposals()[0].Proposal
-	assert.Equal(t, proposal.StatusProposed, row.Status)
-	assert.Equal(t, proposal.StatusProposed, row.NodeOutcomes["model.a"].Status)
-	assert.Equal(t, proposal.PhasePassed, row.ReleaseChecks[0].Phase)
+	row := store.Fixes()[0].Fix
+	assert.Equal(t, fix.StatusProposed, row.Status)
+	assert.Equal(t, fix.StatusProposed, row.NodeOutcomes["model.a"].Status)
+	assert.Equal(t, fix.PhasePassed, row.ReleaseChecks[0].Phase)
 
 	entries := store.OutboxEntries()
 	require.Len(t, entries, 1)
@@ -143,7 +143,7 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 	assert.Equal(t, event.AggregateType, e.AggregateType)
 	assert.Equal(t, event.AggregateIDForRelease("rel-1"), e.AggregateID)
 	assert.Equal(t, event.EventType, e.EventType)
-	assert.Equal(t, streams.RemediationProposedV1, e.StreamName)
+	assert.Equal(t, streams.FixProposedV1, e.StreamName)
 	assert.Equal(t, "pending", e.Status)
 	assert.Nil(t, e.MessageProcessingID)
 
@@ -191,14 +191,14 @@ func TestPullRequest_ASecondPassOnAFinalizedRowWritesNothing(t *testing.T) {
 		require.NoError(t, u.Commit())
 	}
 	assert.Len(t, store.OutboxEntries(), 1, "the repeated pass emits nothing")
-	assert.Equal(t, proposal.StatusProposed, store.Proposals()[0].Proposal.Status)
+	assert.Equal(t, fix.StatusProposed, store.Fixes()[0].Fix.Status)
 }
 
 func TestPullRequest_StoresTheApproversOfTheFixedNodesWithTheVerifiedRow(t *testing.T) {
 	store := memory.NewStore()
 	rem := newRemediation(t, store)
 	id := seed(t, store, verifying(rem))
-	approvers := []proposal.Approver{
+	approvers := []fix.Approver{
 		{NodeID: "model.a", Owner: "finance", Source: model.ApproverSourceBundle},
 		{NodeID: "model.b", Source: model.ApproverSourceNone},
 	}
@@ -209,19 +209,19 @@ func TestPullRequest_StoresTheApproversOfTheFixedNodesWithTheVerifiedRow(t *test
 	require.NoError(t, pr.Pass(ctx, u, step.OutputInput{Remediation: rem, Trigger: trigger(), Approvers: approvers}, verified(t, id)))
 	require.NoError(t, u.Commit())
 
-	row := store.Proposals()[0].Proposal
-	assert.Equal(t, proposal.StatusProposed, row.Status)
+	row := store.Fixes()[0].Fix
+	assert.Equal(t, fix.StatusProposed, row.Status)
 	assert.Equal(t, approvers, row.Approvers, "the row that is marked verified carries its fixed nodes' approvers")
 	assert.Len(t, store.OutboxEntries(), 1)
 
 	// A pass on a row that is already final changes nothing, the approvers
 	// included.
-	other := []proposal.Approver{{NodeID: "model.c", Owner: "ops", Source: model.ApproverSourceBundle}}
+	other := []fix.Approver{{NodeID: "model.c", Owner: "ops", Source: model.ApproverSourceBundle}}
 	u = memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, pr.Pass(ctx, u, step.OutputInput{Remediation: rem, Trigger: trigger(), Approvers: other}, verified(t, id)))
 	require.NoError(t, u.Commit())
-	assert.Equal(t, approvers, store.Proposals()[0].Proposal.Approvers)
+	assert.Equal(t, approvers, store.Fixes()[0].Fix.Approvers)
 }
 
 func TestPullRequest_ARefusedPassStoresNoApprovers(t *testing.T) {
@@ -232,12 +232,12 @@ func TestPullRequest_ARefusedPassStoresNoApprovers(t *testing.T) {
 	u := memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
 	err := outputs.NewPullRequest(fixedClock{}).Pass(ctx, u,
-		step.OutputInput{Remediation: rem, Trigger: trigger(), Approvers: []proposal.Approver{{NodeID: "model.a", Owner: "finance"}}},
+		step.OutputInput{Remediation: rem, Trigger: trigger(), Approvers: []fix.Approver{{NodeID: "model.a", Owner: "finance"}}},
 		remediation.Verified{})
 	require.Error(t, err)
 	require.NoError(t, u.Commit())
 
-	assert.Empty(t, store.Proposals()[0].Proposal.Approvers)
+	assert.Empty(t, store.Fixes()[0].Fix.Approvers)
 }
 
 // handedOverEntryID is the id of the outbox entry that carries the
@@ -281,7 +281,7 @@ func TestHandOver_EmitsOneEventWithEveryHandedOverNode(t *testing.T) {
 
 	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: rem, Trigger: trigger(), HandedOver: handedOver()}))
 
-	assert.Empty(t, store.Proposals(), "the output writes no proposal row")
+	assert.Empty(t, store.Fixes(), "the output writes no fix row")
 	entries := store.OutboxEntries()
 	require.Len(t, entries, 1)
 	e := entries[0]
@@ -350,13 +350,13 @@ func TestHandOver_NoNodeToHandOverWritesNothing(t *testing.T) {
 	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: rem, Trigger: trigger()}))
 
 	assert.Empty(t, store.OutboxEntries())
-	assert.Empty(t, store.Proposals())
+	assert.Empty(t, store.Fixes())
 }
 
 func TestHandOver_NamesEachNodesOwner(t *testing.T) {
 	store := memory.NewStore()
 	rem := endedRemediation(t, store)
-	approvers := []proposal.Approver{
+	approvers := []fix.Approver{
 		{NodeID: "model.a", Owner: "finance", Source: model.ApproverSourceBundle},
 		{NodeID: "model.b", Source: model.ApproverSourceNone},
 	}
@@ -384,7 +384,7 @@ func TestHandOver_NamesEachNodesOwner(t *testing.T) {
 func TestHandOver_AnApproverOfAnotherNodeIsNotNamed(t *testing.T) {
 	store := memory.NewStore()
 	rem := endedRemediation(t, store)
-	approvers := []proposal.Approver{
+	approvers := []fix.Approver{
 		{NodeID: "model.a", Owner: "finance", Source: model.ApproverSourceBundle},
 		{NodeID: "model.fixed", Owner: "growth", Source: model.ApproverSourceBundle},
 	}

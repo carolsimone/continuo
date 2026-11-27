@@ -302,7 +302,7 @@ func TestPromoteRelease_KeepsDroppedNode(t *testing.T) {
 		CREATE (d)-[:CURRENT {release_id: 'r7'}]->(v)
 		CREATE (rej:Rejection {tenant_id: $tenant_id, release_id: 'r6', node_id: $d, category: 'compile', reason: 'syntax'})
 		CREATE (d)-[:FAILED {release_id: 'r6'}]->(rej)
-		CREATE (p:Proposal {tenant_id: $tenant_id, proposal_id: 'prop-d'})
+		CREATE (p:Fix {tenant_id: $tenant_id, fix_id: 'fix-d'})
 		CREATE (rej)-[:PROPOSED {project: 'svc'}]->(p)
 		CREATE (p)-[:EDITED {path: 'models/table_d.sql'}]->(d)`, map[string]any{"d": d})
 	nodesBefore := f.count(`MATCH (n {tenant_id: $tenant_id}) WHERE NOT n:ProcessedMessage RETURN count(n) AS n`, nil)
@@ -323,7 +323,7 @@ func TestPromoteRelease_KeepsDroppedNode(t *testing.T) {
 	edgeOf := func(cypher string) int64 { return f.count(cypher, map[string]any{"d": d}) }
 	assert.Equal(t, int64(1), edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:CURRENT]->(:NodeVersion {tenant_id: $tenant_id}) RETURN count(r) AS n`), ":CURRENT kept")
 	assert.Equal(t, int64(1), edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:FAILED]->(:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS n`), ":FAILED kept")
-	assert.Equal(t, int64(1), edgeOf(`MATCH (:Proposal {tenant_id: $tenant_id})-[r:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: $d}) RETURN count(r) AS n`), ":EDITED kept")
+	assert.Equal(t, int64(1), edgeOf(`MATCH (:Fix {tenant_id: $tenant_id})-[r:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: $d}) RETURN count(r) AS n`), ":EDITED kept")
 	assert.Zero(t, edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:DEPENDS_ON]->() RETURN count(r) AS n`), "a retired node loses its outgoing :DEPENDS_ON")
 	assert.Equal(t, []string{"analytics.table_b->analytics.table_a"}, f.edges())
 	assert.Equal(t, nodesBefore, f.count(`MATCH (n {tenant_id: $tenant_id}) WHERE NOT n:ProcessedMessage RETURN count(n) AS n`, nil), "nothing is deleted")

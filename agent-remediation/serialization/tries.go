@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
 
@@ -61,7 +61,7 @@ func TryRecordOf(snap remediation.Snapshot) (remediation.TryRecord, error) {
 
 // outcomeText is how a later try is shown the outcome a cluster ended with: its
 // status, the code in parentheses when it carries one, then its reason.
-func outcomeText(o proposal.NodeOutcome) string {
+func outcomeText(o fix.NodeOutcome) string {
 	if o.Code == "" {
 		return string(o.Status) + ": " + o.Reason
 	}
@@ -91,7 +91,7 @@ func clusterRecord(c remediation.Cluster, rows []remediation.StepRun) (remediati
 		return cr, fmt.Errorf("decode the pre-flight draft of cluster %d in round %d: %w", c.Cluster, last.Round, err)
 	}
 	for _, e := range pass.Draft.Edits {
-		if diff := proposal.EditDiff(e.Original, e.Content, e.Path, e.RenamedFrom); diff != "" {
+		if diff := fix.EditDiff(e.Original, e.Content, e.Path, e.RenamedFrom); diff != "" {
 			cr.Edits = append(cr.Edits, remediation.EditRecord{Path: e.Path, Diff: diff})
 		}
 	}

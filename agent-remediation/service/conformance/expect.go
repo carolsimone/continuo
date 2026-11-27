@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -61,14 +61,14 @@ func (e *expectation) ended() {
 
 // attempts expects the release's attempts, in attempt order, to have these
 // statuses, and returns them.
-func (e *expectation) attempts(want ...proposal.Status) []Attempt {
+func (e *expectation) attempts(want ...fix.Status) []Attempt {
 	got := e.sr.w.Attempts()
-	statuses := make([]proposal.Status, 0, len(got))
+	statuses := make([]fix.Status, 0, len(got))
 	numbered := true
 	for i, a := range got {
-		statuses = append(statuses, a.Proposal.Status)
-		numbered = numbered && a.Proposal.Attempt == i+1
-		e.that(a.Proposal.RemediationID == e.sr.id.String(), "attempt %d carries remediation %q", a.Proposal.Attempt, a.Proposal.RemediationID)
+		statuses = append(statuses, a.Fix.Status)
+		numbered = numbered && a.Fix.Attempt == i+1
+		e.that(a.Fix.RemediationID == e.sr.id.String(), "attempt %d carries remediation %q", a.Fix.Attempt, a.Fix.RemediationID)
 	}
 	e.that(numbered, "the attempts are numbered %v", attemptNumbers(got))
 	e.that(slices.Equal(statuses, want), "the attempts are %v, want %v", statuses, want)
@@ -77,15 +77,15 @@ func (e *expectation) attempts(want ...proposal.Status) []Attempt {
 
 // nodes expects every failing node of the trigger to have ended attempt a
 // with status.
-func (e *expectation) nodes(a Attempt, status proposal.Status) {
+func (e *expectation) nodes(a Attempt, status fix.Status) {
 	e.members(a, e.trigger.NodeIDs(), status)
 }
 
 // members expects each named node to have ended attempt a with status.
-func (e *expectation) members(a Attempt, nodeIDs []string, status proposal.Status) {
+func (e *expectation) members(a Attempt, nodeIDs []string, status fix.Status) {
 	for _, id := range nodeIDs {
-		o, ok := a.Proposal.NodeOutcomes[id]
-		e.that(ok && o.Status == status, "node %s ended attempt %d as %q (%s), want %q", id, a.Proposal.Attempt, o.Status, o.Reason, status)
+		o, ok := a.Fix.NodeOutcomes[id]
+		e.that(ok && o.Status == status, "node %s ended attempt %d as %q (%s), want %q", id, a.Fix.Attempt, o.Status, o.Reason, status)
 	}
 }
 
@@ -93,12 +93,12 @@ func (e *expectation) members(a Attempt, nodeIDs []string, status proposal.Statu
 // edits, and no other run.
 func (e *expectation) checksPerEditedProject(a Attempt, projectRepoPaths map[string]string) {
 	edited := map[string]bool{}
-	for _, ed := range a.Proposal.Edits {
-		project, _, ok := proposal.ProjectForPath(projectRepoPaths, ed.Path)
-		e.that(ok, "attempt %d edits %s, which belongs to no project", a.Proposal.Attempt, ed.Path)
+	for _, ed := range a.Fix.Edits {
+		project, _, ok := fix.ProjectForPath(projectRepoPaths, ed.Path)
+		e.that(ok, "attempt %d edits %s, which belongs to no project", a.Fix.Attempt, ed.Path)
 		edited[project] = true
 	}
-	e.that(len(edited) > 0, "attempt %d has no edit", a.Proposal.Attempt)
+	e.that(len(edited) > 0, "attempt %d has no edit", a.Fix.Attempt)
 	runs := map[string]int{}
 	for _, r := range e.sr.w.Checks() {
 		runs[r.Project]++
@@ -117,15 +117,15 @@ func (e *expectation) checks(n int) {
 	e.that(len(got) == n, "%d release checks were submitted, want %d", len(got), n)
 }
 
-// proposedEvents expects n remediation.proposed events in the outbox.
+// proposedEvents expects n fix.proposed events in the outbox.
 func (e *expectation) proposedEvents(n int) {
 	got := 0
 	for _, entry := range e.sr.w.Outbox() {
-		if entry.StreamName == streams.RemediationProposedV1 {
+		if entry.StreamName == streams.FixProposedV1 {
 			got++
 		}
 	}
-	e.that(got == n, "%d remediation.proposed events were enqueued, want %d", got, n)
+	e.that(got == n, "%d fix.proposed events were enqueued, want %d", got, n)
 }
 
 // handedOverEvent is one remediation.handed_over event of the outbox, with the
@@ -160,7 +160,7 @@ func (e *expectation) handedOverEvents() []handedOverEvent {
 }
 
 // noHandedOver expects no remediation.handed_over event: every node ended
-// fixed or in a proposal, and none is left to a human.
+// in a proposed fix, and none is left to a human.
 func (e *expectation) noHandedOver() {
 	got := e.handedOverEvents()
 	e.that(len(got) == 0, "%d remediation.handed_over events were enqueued, want none", len(got))
@@ -183,8 +183,8 @@ func codes(code model.HandoverReason, nodeIDs ...string) map[string]model.Handov
 // code and the message its outcome on attempt a carries, which is never empty.
 func (e *expectation) handedOver(a Attempt, tries int, want map[string]model.HandoverReason) {
 	for _, id := range sortedKeys(want) {
-		o := a.Proposal.NodeOutcomes[id]
-		e.that(o.Code == want[id], "node %s ended attempt %d with the code %q (%s), want %q", id, a.Proposal.Attempt, o.Code, o.Reason, want[id])
+		o := a.Fix.NodeOutcomes[id]
+		e.that(o.Code == want[id], "node %s ended attempt %d with the code %q (%s), want %q", id, a.Fix.Attempt, o.Code, o.Reason, want[id])
 	}
 	got := e.handedOverEvents()
 	if len(got) != 1 {
@@ -212,8 +212,8 @@ func (e *expectation) handedOver(a Attempt, tries int, want map[string]model.Han
 		e.that(ok, "the hand-over event names node %s (%s), which the scenario does not hand over", n.NodeID, n.Reason)
 		e.that(ok && n.Reason == string(w), "the hand-over event gives node %s the reason %q, want %q", n.NodeID, n.Reason, w)
 		e.that(strings.TrimSpace(n.Message) != "", "the hand-over event gives node %s (%s) no message", n.NodeID, n.Reason)
-		e.that(n.Message == a.Proposal.NodeOutcomes[n.NodeID].Reason, "the hand-over event's message for node %s is %q, but its outcome says %q",
-			n.NodeID, n.Message, a.Proposal.NodeOutcomes[n.NodeID].Reason)
+		e.that(n.Message == a.Fix.NodeOutcomes[n.NodeID].Reason, "the hand-over event's message for node %s is %q, but its outcome says %q",
+			n.NodeID, n.Message, a.Fix.NodeOutcomes[n.NodeID].Reason)
 	}
 	e.that(slices.Equal(named, sortedKeys(want)), "the hand-over event names the nodes %v, want %v", named, sortedKeys(want))
 }
@@ -283,10 +283,10 @@ func (e *expectation) distinctModelRequests() {
 }
 
 // proposed expects one attempt, proposed for every failing node, with one
-// release check per project it edits and one remediation.proposed event.
+// release check per project it edits and one fix.proposed event.
 func (e *expectation) proposed(f Fixture) {
-	if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
-		e.nodes(as[0], proposal.StatusProposed)
+	if as := e.attempts(fix.StatusProposed); len(as) == 1 {
+		e.nodes(as[0], fix.StatusProposed)
 		e.checksPerEditedProject(as[0], f.ProjectRepoPaths)
 	}
 	e.proposedEvents(1)
@@ -362,8 +362,8 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 		e.contextOnlyInRound1(m, typ)
 		e.clusterCalls(m, len(e.sr.script.MemberAnswers[m.TargetNodeID]))
 	}
-	if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
-		e.nodes(as[0], proposal.StatusProposed)
+	if as := e.attempts(fix.StatusProposed); len(as) == 1 {
+		e.nodes(as[0], fix.StatusProposed)
 	}
 	e.noHandedOver()
 }
@@ -376,7 +376,7 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt, code model.HandoverReason) {
 	e.that(c.Status == remediation.ClusterFellBack, "cluster %d is %s, not fell_back", c.Cluster, c.Status)
 	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
-	e.members(a, c.Members, proposal.StatusSkipped)
+	e.members(a, c.Members, fix.StatusSkipped)
 	e.handedOverInFirstTry(a, codes(code, c.Members...))
 	e.checks(0)
 }
@@ -506,13 +506,13 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 // and no model call.
 func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, roundsSpent bool) {
 	e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
-	want, code := proposal.StatusFailed, model.HandoverReasonPreflightRoundsSpent
+	want, code := fix.StatusFailed, model.HandoverReasonPreflightRoundsSpent
 	if roundsSpent {
 		finding, ok := e.firstFinding(c, typ)
 		e.that(ok, "pre-flight refused nothing in cluster %d", c.Cluster)
 		e.that(c.Outcome != nil && c.Outcome.Reason == finding.Message, "cluster %d ended with %+v, want the reason %q", c.Cluster, c.Outcome, finding.Message)
 	} else {
-		want, code = proposal.StatusSkipped, model.HandoverReasonDeclined
+		want, code = fix.StatusSkipped, model.HandoverReasonDeclined
 		e.modelCalls(0)
 	}
 	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
@@ -526,11 +526,11 @@ func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type,
 // verifyError expects attempt a failed by its release check, with every gate
 // error the fixture scripts in its verify error.
 func (e *expectation) verifyError(a Attempt, gateErrors map[string]string) {
-	e.that(a.VerifyError != "", "attempt %d carries no verify error", a.Proposal.Attempt)
+	e.that(a.VerifyError != "", "attempt %d carries no verify error", a.Fix.Attempt)
 	for _, node := range sortedKeys(gateErrors) {
 		msg := gateErrors[node]
 		e.that(strings.Contains(a.VerifyError, msg), "attempt %d's verify error %q does not name %s's error %q",
-			a.Proposal.Attempt, a.VerifyError, node, msg)
+			a.Fix.Attempt, a.VerifyError, node, msg)
 	}
 }
 
@@ -543,7 +543,7 @@ func sortedKeys[V any](m map[string]V) []string {
 func attemptNumbers(as []Attempt) []int {
 	out := make([]int, 0, len(as))
 	for _, a := range as {
-		out = append(out, a.Proposal.Attempt)
+		out = append(out, a.Fix.Attempt)
 	}
 	return out
 }

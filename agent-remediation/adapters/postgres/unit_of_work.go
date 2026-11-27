@@ -25,8 +25,8 @@ type UnitOfWork struct {
 var _ uow.UnitOfWork = (*UnitOfWork)(nil)
 
 // NewUnitOfWork constructs a Postgres-backed UnitOfWork. projectRepoPaths is
-// forwarded to the transaction-scoped ProposalRepository so a per-project PR
-// claim can split a proposal's edits by owning project.
+// forwarded to the transaction-scoped FixRepository so a per-project PR
+// claim can split a fix's edits by owning project.
 func NewUnitOfWork(db *sqlx.DB, logger *slog.Logger, projectRepoPaths map[string]string) *UnitOfWork {
 	return &UnitOfWork{db: db, logger: logger, projectRepoPaths: projectRepoPaths}
 }
@@ -58,9 +58,9 @@ func (u *UnitOfWork) Rollback() error {
 	return err
 }
 
-// ProposalRepo returns the ProposalRepository bound to the current transaction.
-func (u *UnitOfWork) ProposalRepo() repository.ProposalRepository {
-	return NewProposalRepository(u.tx, u.projectRepoPaths)
+// FixRepo returns the FixRepository bound to the current transaction.
+func (u *UnitOfWork) FixRepo() repository.FixRepository {
+	return NewFixRepository(u.tx, u.projectRepoPaths)
 }
 
 // RemediationRepo returns the RemediationRepository bound to the current

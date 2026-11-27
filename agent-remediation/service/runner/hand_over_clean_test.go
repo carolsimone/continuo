@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
@@ -31,12 +31,12 @@ const (
 // remediation.handed_over:v1 event.
 func (h *harness) requireHandOverTextClean() {
 	h.t.Helper()
-	for _, p := range h.proposals() {
-		for node, o := range p.Proposal.NodeOutcomes {
+	for _, p := range h.fixes() {
+		for node, o := range p.Fix.NodeOutcomes {
 			if o.Code == "" {
 				continue
 			}
-			requireClean(h.t, o.Reason, fmt.Sprintf("the %s outcome of %s on the row of attempt %d (%s)", o.Code, node, p.Proposal.Attempt, p.Proposal.Status))
+			requireClean(h.t, o.Reason, fmt.Sprintf("the %s outcome of %s on the row of attempt %d (%s)", o.Code, node, p.Fix.Attempt, p.Fix.Status))
 		}
 	}
 	for _, e := range h.handedOverEvents() {
@@ -58,7 +58,7 @@ func requireClean(t *testing.T, text, what string) {
 // address, each replaced by its fixed marker.
 func TestRunner_HandOverMessagesAreCleaned(t *testing.T) {
 	h := newHarness(t)
-	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "connect failed, password=" + rawCredential})
+	h.checks.answer(fix.PhaseFailed, map[string]string{"svc-a": "connect failed, password=" + rawCredential})
 	id := h.accept(trigger("compile",
 		compileNode("svc-a"),
 		unfixable(compileNode("svc-c"), model.HandoverReasonClassifierInfra, dirtyDetail)))
@@ -68,15 +68,15 @@ func TestRunner_HandOverMessagesAreCleaned(t *testing.T) {
 		require.NoError(t, h.poll(id))
 	}
 
-	spent := proposal.NodeOutcome{
-		Status: proposal.StatusEscalated,
+	spent := fix.NodeOutcome{
+		Status: fix.StatusEscalated,
 		Reason: "tried 3 times; the last try failed: svc-a: connect failed, password=[redacted:secret]",
 		Code:   model.HandoverReasonTriesSpent,
 	}
-	classifier := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: cleanDetail, Code: model.HandoverReasonClassifierInfra}
-	escalated := h.attempt(4).Proposal
-	assert.Equal(t, proposal.StatusEscalated, escalated.Status)
-	assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": spent, "svc-c": classifier}, escalated.NodeOutcomes)
+	classifier := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: cleanDetail, Code: model.HandoverReasonClassifierInfra}
+	escalated := h.attempt(4).Fix
+	assert.Equal(t, fix.StatusEscalated, escalated.Status)
+	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent, "svc-c": classifier}, escalated.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 1, 3,
 		handedOverNode("svc-a", spent),
 		handedOverNode("svc-c", classifier),
@@ -97,7 +97,7 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 		require.NoError(t, h.runner.Drive(ctx, id))
 
 		assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-		assert.Equal(t, cleanDetail, h.attempt(1).Proposal.NodeOutcomes["svc-c"].Reason)
+		assert.Equal(t, cleanDetail, h.attempt(1).Fix.NodeOutcomes["svc-c"].Reason)
 		assert.Equal(t, cleanDetail, h.handedOverEvent().Nodes[0].Message)
 		h.requireHandOverTextClean()
 	})
@@ -107,7 +107,7 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		assert.Equal(t, cleanDetail, h.attempt(1).Proposal.NodeOutcomes["svc-c"].Reason)
+		assert.Equal(t, cleanDetail, h.attempt(1).Fix.NodeOutcomes["svc-c"].Reason)
 		assert.Equal(t, cleanDetail, h.handedOverEvent().Nodes[0].Message)
 		h.requireHandOverTextClean()
 	})
@@ -119,7 +119,7 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		assert.Equal(t, cleanDetail, h.attempt(1).Proposal.NodeOutcomes["svc-c"].Reason)
+		assert.Equal(t, cleanDetail, h.attempt(1).Fix.NodeOutcomes["svc-c"].Reason)
 		h.requireHandOverTextClean()
 	})
 	t.Run("a verified fix", func(t *testing.T) {
@@ -127,12 +127,12 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 		id := h.accept(trigger("compile", compileNode("svc-a"), dirty()))
 		require.NoError(t, h.runner.Drive(ctx, id))
 		h.requireHandOverTextClean() // the row that is in flight, then the verifying one
-		h.checks.answer(proposal.PhasePassed, nil)
+		h.checks.answer(fix.PhasePassed, nil)
 
 		require.NoError(t, h.poll(id))
 
-		assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
-		assert.Equal(t, cleanDetail, h.attempt(1).Proposal.NodeOutcomes["svc-c"].Reason)
+		assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+		assert.Equal(t, cleanDetail, h.attempt(1).Fix.NodeOutcomes["svc-c"].Reason)
 		assert.Equal(t, cleanDetail, h.handedOverEvent().Nodes[0].Message)
 		h.requireHandOverTextClean()
 	})
@@ -145,7 +145,7 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 		require.NoError(t, h.runner.NextTry(ctx, id))
 
 		row := h.inFlightRow()
-		assert.Equal(t, proposal.StatusGenerating, row.Status)
+		assert.Equal(t, fix.StatusGenerating, row.Status)
 		assert.Equal(t, cleanDetail, row.NodeOutcomes["svc-c"].Reason)
 		h.requireHandOverTextClean()
 	})
@@ -172,8 +172,8 @@ func TestRunner_AReopenedAttemptRowHoldsCleanMessages(t *testing.T) {
 
 	h.redrive(dls[0], "2-0")
 
-	reopened := h.attempt(1).Proposal
-	assert.Equal(t, proposal.StatusVerifying, reopened.Status)
+	reopened := h.attempt(1).Fix
+	assert.Equal(t, fix.StatusVerifying, reopened.Status)
 	assert.Equal(t, cleanDetail, reopened.NodeOutcomes["svc-c"].Reason)
 	h.requireHandOverTextClean()
 }

@@ -193,7 +193,7 @@ func TestReleaseCheckRepository_SavesAnOntologyCheck(t *testing.T) {
 // TestReleaseCheckRepository_ActiveCandidateProjectsWithKind proves the list holds the
 // projects of the candidate checks of one manifest kind that have not ended, each
 // once and sorted, and leaves out the checks that ended, the checks of other kinds
-// and the fixes' release checks.
+// and the release checks of fixes.
 func TestReleaseCheckRepository_ActiveCandidateProjectsWithKind(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseCheckRepository(db, nil)
@@ -1146,7 +1146,7 @@ func TestReleaseCheckRepository_ListFiltersByKindAndVerifiedRelease(t *testing.T
 }
 
 // While maintenance holds candidate releases, the queue activates only
-// fixes' release checks: NextQueuedOfKind finds the oldest received check of one
+// the release checks of fixes: NextQueuedOfKind finds the oldest received check of one
 // kind, past any older check of the other kind.
 func TestReleaseCheckRepository_NextQueuedOfKind(t *testing.T) {
 	db := openTestDB(t)

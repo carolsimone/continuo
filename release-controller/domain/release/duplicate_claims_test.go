@@ -169,7 +169,7 @@ func TestDuplicateClaims_SameAliasDifferentNames_CollisionFound(t *testing.T) {
 // sharing it means one of the two nodes is silently erased wherever that key
 // is used, independent of the fact that their resolved relations differ.
 // This is also the exact state the duplicate-table fixer's own rename
-// proposal can produce: the fixer can only edit a claimant's alias (it
+// fix can produce: the fixer can only edit a claimant's alias (it
 // cannot rename the claimant's .sql file), so a fix that clears a RELATION
 // collision leaves unique_id untouched — and if the underlying problem was
 // actually two nodes sharing a declared name, the alias-only edit could

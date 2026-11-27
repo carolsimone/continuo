@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
@@ -93,7 +93,7 @@ func (r *Runner) resume(ctx context.Context, u uow.UnitOfWork, snap remediation.
 			return fmt.Errorf("reset the failures of step %s: %w", st.Step, err)
 		}
 	}
-	reopenTo := proposal.StatusGenerating
+	reopenTo := fix.StatusGenerating
 	switch t.Status {
 	case remediation.TryDrafting, remediation.TryChecking:
 		restarted := *t
@@ -103,7 +103,7 @@ func (r *Runner) resume(ctx context.Context, u uow.UnitOfWork, snap remediation.
 			return fmt.Errorf("restart the deadline of try %d: %w", t.Try, err)
 		}
 	case remediation.TryVerifying:
-		reopenTo = proposal.StatusVerifying
+		reopenTo = fix.StatusVerifying
 	}
 	return r.reopenAttempt(ctx, u, snap, reopenTo)
 }
@@ -118,21 +118,21 @@ func tryOpenTime(status remediation.TryStatus) time.Duration {
 
 // reopenAttempt moves the attempt row of snap's try, which the system failure
 // failed, back to status to, in u's transaction: a row reopened generating
-// takes back the per-node outcomes the failure rewrote, which the proposal
+// takes back the per-node outcomes the failure rewrote, which the fix
 // repository undoes, and a row reopened verifying the outcomes the try's
 // clusters give (nodeOutcomes), which the clusters still give, since nothing
 // changes them once the try is verifying, the message of each coded outcome
 // cleaned as every row the runner writes has it. A row that is not failed already
 // says how its attempt ended and is left as it is: the drive or the poll that
 // follows acts on it as it finds it.
-func (r *Runner) reopenAttempt(ctx context.Context, u uow.UnitOfWork, snap remediation.Snapshot, to proposal.Status) error {
+func (r *Runner) reopenAttempt(ctx context.Context, u uow.UnitOfWork, snap remediation.Snapshot, to fix.Status) error {
 	rem := snap.Remediation
 	attempt := snap.Try.Attempt
-	var outcomes map[string]proposal.NodeOutcome
-	if to == proposal.StatusVerifying {
-		outcomes = proposal.CleanedOutcomes(nodeOutcomes(snap.Clusters))
+	var outcomes map[string]fix.NodeOutcome
+	if to == fix.StatusVerifying {
+		outcomes = fix.CleanedOutcomes(nodeOutcomes(snap.Clusters))
 	}
-	reopened, err := u.ProposalRepo().ReopenTryAttempt(ctx, rem.ID, attempt, to, outcomes)
+	reopened, err := u.FixRepo().ReopenTryAttempt(ctx, rem.ID, attempt, to, outcomes)
 	if err != nil {
 		return fmt.Errorf("reopen the row of attempt %d: %w", attempt, err)
 	}

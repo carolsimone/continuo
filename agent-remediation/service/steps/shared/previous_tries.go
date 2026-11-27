@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
@@ -18,7 +18,7 @@ import (
 // the cluster's failure in its release, in this remediation round and the ones
 // before it, each with what it changed and why it was refused. It reads the
 // runner's own tries from their journal and the attempts recorded with no
-// remediation from their proposal rows.
+// remediation from their fix rows.
 type PreviousTries struct {
 	tries    repository.TryLister
 	attempts repository.AttemptLister
@@ -54,11 +54,11 @@ func (*PreviousTries) Meta() step.Meta {
 // and its try) whose clusters held any of its member nodes, oldest first. The
 // runner's tries come from the journal of every remediation of the release; a
 // try whose journal does not decode is left out and logged. The attempts with
-// no remediation are the release's proposal rows of the trigger's source that
+// no remediation are the release's fix rows of the trigger's source that
 // belong to no remediation and name a member, except a row the startup sweep
 // failed (nothing judged it); a diff of theirs that cannot be read is left out
 // and logged, since the attempt still shows with its error. An error reading
-// the journal or the proposal rows is the step's, so the runner tries the step
+// the journal or the fix rows is the step's, so the runner tries the step
 // again rather than show the model a partial history.
 func (s *PreviousTries) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	f := in.Failure
@@ -97,16 +97,16 @@ func (s *PreviousTries) runnerTries(ctx context.Context, f remediation.Failure) 
 }
 
 // attemptsWithNoRemediation reads the attempts at the failure's members that
-// belong to no remediation from their proposal rows, each as a record of one
+// belong to no remediation from their fix rows, each as a record of one
 // cluster holding the nodes the attempt addressed, its diffs and its
 // verify error.
 func (s *PreviousTries) attemptsWithNoRemediation(ctx context.Context, f remediation.Failure) ([]remediation.TryRecord, error) {
 	if s.attempts == nil {
 		return nil, nil
 	}
-	views, err := s.attempts.List(ctx, repository.ProposalFilter{ReleaseID: f.Trigger.ReleaseID, Source: f.Trigger.Source})
+	views, err := s.attempts.List(ctx, repository.FixFilter{ReleaseID: f.Trigger.ReleaseID, Source: f.Trigger.Source})
 	if err != nil {
-		return nil, fmt.Errorf("list the proposals of release %s: %w", f.Trigger.ReleaseID, err)
+		return nil, fmt.Errorf("list the fixes of release %s: %w", f.Trigger.ReleaseID, err)
 	}
 	members := memberIDs(f)
 	var out []remediation.TryRecord
@@ -131,13 +131,13 @@ func (s *PreviousTries) attemptsWithNoRemediation(ctx context.Context, f remedia
 // remediation: the sweep stores its reason as the verify error of a verifying
 // row and as the rationale of a generating one. No gate judged such a row, so it
 // is no evidence that its change fails.
-func sweptAtStartup(v proposal.View) bool {
-	return v.VerifyError == proposal.NoRemediationInFlightReason || v.Rationale == proposal.NoRemediationInFlightReason
+func sweptAtStartup(v fix.View) bool {
+	return v.VerifyError == fix.NoRemediationInFlightReason || v.Rationale == fix.NoRemediationInFlightReason
 }
 
 // attemptDiffs reads an attempt's stored diffs. An edit with no diff, or whose
 // diff cannot be read, is left out, and a nil evidence reader reads none.
-func (s *PreviousTries) attemptDiffs(ctx context.Context, v proposal.View) []remediation.EditRecord {
+func (s *PreviousTries) attemptDiffs(ctx context.Context, v fix.View) []remediation.EditRecord {
 	if s.evidence == nil {
 		return nil
 	}

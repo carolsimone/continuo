@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	rametrics "github.com/carolsimone/continuo/agent-remediation/adapters/metrics"
+	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
@@ -111,7 +111,7 @@ func TestRunner_CountsOneTryPerClusterPerTry(t *testing.T) {
 
 	require.NoError(t, h.drive(id))
 	assert.Len(t, m.gotTries(), 2, "the second try waits on its release checks")
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.ElementsMatch(t, []string{
@@ -131,7 +131,7 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 		h := newHarness(t, withMetrics(m))
 		id := h.accept(trigger("compile", compileNode("svc-a")))
 		require.NoError(t, h.runner.Drive(ctx, id))
-		h.checks.answer(proposal.PhasePassed, nil)
+		h.checks.answer(fix.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.Equal(t, []string{sample("dbt-compile", "passed")}, m.gotTries())
@@ -278,7 +278,7 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 		h.failGate(id, "svc-b")
 		require.NoError(t, h.drive(id))
 		assert.Empty(t, m.gotOutcomes(), "the first try is not the end")
-		h.checks.answer(proposal.PhasePassed, nil)
+		h.checks.answer(fix.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.ElementsMatch(t, []string{
@@ -297,7 +297,7 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 		h := newHarness(t, withMetrics(m))
 		id := h.accept(trigger("compile", unfixable(compileNode("svc-a"), "classifier_infra", "the warehouse dropped"), compileNode("svc-b")))
 		require.NoError(t, h.runner.Drive(ctx, id))
-		h.checks.answer(proposal.PhasePassed, nil)
+		h.checks.answer(fix.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.Equal(t, []string{sample("dbt-compile", "passed")}, m.gotTries(), "the unfixable node's cluster ran no step")
@@ -371,7 +371,7 @@ func TestRunner_CountsEachNodeWhenItsRemediationEnds(t *testing.T) {
 		id := h.accept(trigger("compile", compileNode("svc-a"), test))
 		require.NoError(t, h.runner.Drive(ctx, id))
 		assert.Empty(t, m.gotOutcomes(), "a remediation that waits on its release checks has not ended")
-		h.checks.answer(proposal.PhasePassed, nil)
+		h.checks.answer(fix.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.ElementsMatch(t, []string{
@@ -383,7 +383,7 @@ func TestRunner_CountsEachNodeWhenItsRemediationEnds(t *testing.T) {
 	t.Run("tries spent counts each node once, at the last try", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m))
-		h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+		h.checks.answer(fix.PhaseFailed, map[string]string{"svc-a": "still broken"})
 		id := h.accept(trigger("compile", compileNode("svc-a")))
 		for try := 1; try <= 3; try++ {
 			require.NoError(t, h.drive(id))
@@ -445,7 +445,7 @@ func markProposedByHand(h *harness, id string) error {
 	if err != nil {
 		return err
 	}
-	_, err = h.store.ProposalRepository().MarkFixVerified(ctx, verified)
+	_, err = h.store.FixRepository().MarkFixVerified(ctx, verified)
 	return err
 }
 
@@ -457,38 +457,38 @@ func TestRunner_CountsTheNodesOfARemediationWhoseAttemptRowMoved(t *testing.T) {
 	test := compileNode("test.sales.not_null")
 	test.NodeType = "dbt-test"
 	for name, tc := range map[string]struct {
-		move  func(h *harness, proposalID string) error
-		phase proposal.Phase
+		move  func(h *harness, fixID string) error
+		phase fix.Phase
 		want  []string
 	}{
 		"the gate passed, the row was proposed by hand": {
 			move: func(h *harness, id string) error {
 				return markProposedByHand(h, id)
 			},
-			phase: proposal.PhasePassed,
+			phase: fix.PhasePassed,
 			want:  []string{sample("dbt-compile", "fixed", ""), sample("none", "handed_over", "no_type")},
 		},
 		"the gate failed, the row was proposed by hand": {
 			move: func(h *harness, id string) error {
 				return markProposedByHand(h, id)
 			},
-			phase: proposal.PhaseFailed,
+			phase: fix.PhaseFailed,
 			want:  []string{sample("dbt-compile", "fixed", ""), sample("none", "handed_over", "no_type")},
 		},
 		"the gate passed, the row was failed by hand": {
 			move: func(h *harness, id string) error {
-				_, err := h.store.ProposalRepository().MarkVerifyFailed(ctx, id, "failed by hand", nil)
+				_, err := h.store.FixRepository().MarkVerifyFailed(ctx, id, "failed by hand", nil)
 				return err
 			},
-			phase: proposal.PhasePassed,
+			phase: fix.PhasePassed,
 			want:  []string{sample("none", "handed_over", "no_type")},
 		},
 		"the gate failed, the row was failed by hand": {
 			move: func(h *harness, id string) error {
-				_, err := h.store.ProposalRepository().MarkVerifyFailed(ctx, id, "failed by hand", nil)
+				_, err := h.store.FixRepository().MarkVerifyFailed(ctx, id, "failed by hand", nil)
 				return err
 			},
-			phase: proposal.PhaseFailed,
+			phase: fix.PhaseFailed,
 			want:  []string{sample("none", "handed_over", "no_type")},
 		},
 	} {
@@ -541,7 +541,7 @@ func TestRunner_CountsEachCommittedStepWithItsDuration(t *testing.T) {
 	assert.Equal(t, []time.Duration{7 * time.Second}, m.durations(sample("dbt-compile", "propose")))
 
 	h.clock.set(h.clock.Now().Add(10 * time.Minute))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, []time.Duration{10 * time.Minute}, m.durations(sample("", "gate")), "from the submit to the verdict")
@@ -693,7 +693,7 @@ func TestRunner_CountsEachSystemFailureOnce(t *testing.T) {
 		h.clock.set(t0.Add(time.Hour))
 		h.redrive(dls[0], "2-0")
 		require.NoError(t, h.drive(id))
-		h.checks.answer(proposal.PhasePassed, nil)
+		h.checks.answer(fix.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.Equal(t, []string{sample("step_failures")}, m.gotFailures())
@@ -713,7 +713,7 @@ func TestRemediationMetrics_TypeLabelComesFromTheLoadedFiles(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 	h.failGate(id, "svc-a")
 	require.NoError(t, h.drive(id))
-	h.checks.answer(proposal.PhasePassed, nil)
+	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	rec := httptest.NewRecorder()
