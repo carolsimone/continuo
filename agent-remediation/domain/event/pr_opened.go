@@ -10,9 +10,8 @@ var prOpenedNamespace = uuid.MustParse("7e5a1b8f-9c34-4d7a-b2f5-8e1c6a9d3f2b")
 
 // PROpenedEventID derives a stable id from (releaseID, attempt, project) so a
 // re-emission of the same PR-opened fact dedups to one downstream event. Each
-// owning-project PR of a split fix gets its own id; the legacy project ""
-// (a whole-fix PR) reproduces the pre-split (releaseID, attempt) id
-// byte-for-byte, so an unsplit fix's dedup key never shifts.
+// owning-project PR of a split fix gets its own id; the empty project (a PR
+// that covers the whole fix) keys its id on (releaseID, attempt) alone.
 func PROpenedEventID(releaseID string, attempt int, project string) uuid.UUID {
 	name := releaseID + "|" + itoa(attempt)
 	if project != "" {
@@ -30,7 +29,7 @@ type PROpened struct {
 	// of the attempt's fixed nodes this owning project's edits address.
 	ResolvedNodeIDs []string
 	// Project is the owning-project group this PR covers; omitted (its DTO field
-	// is omitempty) for a legacy whole-fix PR.
+	// is omitempty) for a PR that covers the whole fix.
 	Project  string
 	PrURL    string
 	PrNumber int

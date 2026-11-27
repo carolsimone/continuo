@@ -60,6 +60,7 @@ This release adds three values keys, `agentRemediation.workflows.files`, `contra
 
 - **An install upgrades by starting with empty databases.** TL;DR: the migrations of `continuo_run_controller`, `continuo_execution`, `continuo_release`, `continuo_remediation` and `continuo_agent_remediation` are squashed into one baseline each, `V1__baseline.sql`, that builds the same tables, columns, constraints, indexes and rows. Flyway refuses one of those databases that the earlier migrations built (`Validate failed: Migration checksum mismatch for migration version 1`), so the `db-init-migrate` Job fails and the upgrade stops.
   - Before the upgrade, drop those five databases. Leave your warehouse alone. `continuo_agent_chat` and `continuo_dead_letter` can stay: their migrations did not change. With `databaseInit.enabled: true` the migration Job creates the five again; otherwise create each one empty, owned by the migration login (`deploy/CREDENTIALS.md`). The Job then migrates them and grants each login its rights, as on a new install.
+  - Empty catalog's Neo4j graph too, before the upgrade: delete every node (`MATCH (n) DETACH DELETE n`), or give Neo4j a new volume. catalog creates its schema under this version's names at startup and reads no node or property an earlier version wrote, so a graph it did not build breaks its backups and drops earlier fixes from the precedents.
   - After the upgrade, release every project again as a bootstrap release, and set each schedule's cron again.
   - On Postgres 18 a `NOT NULL` constraint the earlier migrations created on a table or column they renamed later kept its old name, such as `cancelled_schedules_schedule_id_not_null` on `cancelled_runs.run_id`. The baseline gives every `NOT NULL` constraint its default name. Nothing in continuo names one.
   - release-controller no longer checks at startup for the columns that held topologies inline, since no database built by the baseline has them. It still refuses to start on a database whose release tables are absent.
@@ -129,14 +130,14 @@ This release adds three values keys, `agentRemediation.workflows.files`, `contra
   - The public API: `GET /api/v1/live-release` answers `{"live_release_id", "node_count", "updated_at"}`. The ui's own API serves it at `GET /api/releases/live-release`, and release-controller's internal API at `GET /live-release`.
   - The release database keeps the live release in `live_release` and each project's production pointer in `production_pointers`. The install starts with empty databases (see above).
   - Tools in the release-controller image: `seed-production-pointers` writes a production pointer for every project of the live release, replacing any the project already has (run it when a project of the live release has none), and `announce-topology --reannounce-live` and `--print-live` act on the live release's topology.
-
-### Added
-
 - **A change continuo proposes to a rejected release's code is a fix.** TL;DR: every name of such a change says fix, and the three streams of a fix are `fix.proposed:v1`, `fix.pr_opened:v1` and `fix.pr_closed:v1`. An install's own `rejected-release` flow file says `emits: fix.proposed` (step 2). Nothing reads the old names.
-  - Redis: catalog reads `fix.pr_opened:v1` through the consumer group `catalog-fix-pr-opened-fixes` and `fix.pr_closed:v1` through `catalog-fix-pr-closed-provenance`, and their payloads name a fix with `fix_id`. No component reads `fix.proposed:v1`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade (step 5).
+  - Redis rules: `continuo_agent_remediation` writes the three streams of a fix, and `continuo_catalog` reads `fix.pr_opened:v1` through the consumer group `catalog-fix-pr-opened-fixes` and `fix.pr_closed:v1` through `catalog-fix-pr-closed-provenance`, and their payloads name a fix with `fix_id`. No component reads `fix.proposed:v1`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade (step 5).
   - The flow file: agent-remediation refuses to start on an `output` whose `emits` names no stream of the streams contract, so a flow file of yours that replaces `rejected-release` sets `emits: fix.proposed` on its `pull_request` output, and so does `remediation-check files`.
   - agent-remediation's gRPC is `remediation.v1.RemediationFixes` (`ListFixes`, message `Fix`, `fix_id`), and catalog's precedents carry `PrecedentFix`. The release page says fix.
   - agent-remediation keeps fixes in `fix` and their pull requests in `fix_pull_request` (`fix_id`), and catalog's case base keeps them as `:Fix` nodes. catalog reads a fix's pull request only from its `:PullRequest` node. The install starts with empty databases (see above), and catalog with an empty Neo4j graph: catalog does not move a graph's earlier nodes to `:Fix`.
+
+### Added
+
 - **A runner system failure is dead-lettered, and a redrive resumes it.** TL;DR: a system failure also dead-letters the remediation's heal trigger on `consumer.dead_letter:v1`, and the attempt row's reason says so. Fix the cause, then redrive the dead letter with `continuo dlq`: the same remediation goes on from the try and step it stopped at, and a step that already finished does not run again. A redrive of a round that "Try again" already replaced starts nothing.
 - **The release page says why a node was handed to a human.** TL;DR: each failing node remediation does not fix carries a reason code, and the FIX cell says what it means and what to do, with the node's own message behind `more`.
   - The codes are `tries_spent`, `unverifiable_edits`, `preflight_rounds_spent`, `declined`, `no_type`, `no_repository`, `classifier_infra` and `classifier_unhealable_parse`. Each node outcome that agent-remediation's `remediation.v1.RemediationFixes` returns carries its code as `code`.
@@ -189,8 +190,8 @@ This release adds three values keys, `agentRemediation.workflows.files`, `contra
 - **Redis rule changes for the streams.** TL;DR: every login's rules name the streams at `:v1` and by their new names, and agent-remediation can write the new `remediation.handed_over:v1`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade, not before: the pods still running the old version lose access to the streams they use. The bundled Redis needs nothing and restarts once, because its rules change.
   - `continuo_remediation` reads `remediation.retry_requested:v1` and writes `heal.triggered:v1`.
   - `continuo_release_controller` reads `release.parsed:v1` and writes `release.promoted:v1` and `remediation.retry_requested:v1`.
-  - `continuo_agent_remediation` reads `heal.triggered:v1` and writes `remediation.handed_over:v1`.
-  - `continuo_catalog` reads `heal.triggered:v1` and `release.promoted:v1`.
+  - `continuo_agent_remediation` reads `heal.triggered:v1` and writes `remediation.handed_over:v1`, `fix.proposed:v1`, `fix.pr_opened:v1` and `fix.pr_closed:v1`.
+  - `continuo_catalog` reads `heal.triggered:v1`, `release.promoted:v1`, `fix.pr_opened:v1` and `fix.pr_closed:v1`.
   - `continuo_topology_controller` writes `release.parsed:v1`.
   - `continuo_run_controller` reads `release.promoted:v1` and `task.status.updated:v1`.
   - `continuo_execution_controller` reads `release.promoted:v1` and writes `task.status.updated:v1`.

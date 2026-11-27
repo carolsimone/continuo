@@ -44,7 +44,7 @@ type PRClosed struct {
 	// of the attempt's fixed nodes this owning project's edits address.
 	ResolvedNodeIDs []string
 	// Project is the owning-project group this PR covers; omitted (its DTO field
-	// is omitempty) for a legacy whole-fix PR.
+	// is omitempty) for a PR that covers the whole fix.
 	Project  string
 	PrURL    string
 	PrNumber int
