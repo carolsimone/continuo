@@ -35,7 +35,7 @@ func TestRunner_GateFailRecordsTheVerifyErrorCleaned(t *testing.T) {
 func (h *harness) failStepWithTheDirtyError(id uuid.UUID) {
 	h.t.Helper()
 	h.saveStep(remediation.StepRun{
-		RemediationID: id, Try: 1, Cluster: 1, Step: "dbt_log", Kind: "context", Round: 1,
+		RemediationID: id, Try: 1, Cluster: 1, Step: "dbt_log", Kind: "context", Draft: 1,
 		Status: remediation.StepFailed, Failures: 5, LastError: dirtyDetail, StartedAt: t0,
 	})
 	require.NoError(h.t, h.sweeper().Sweep(ctx))

@@ -2,12 +2,12 @@ import type { NodeRun } from './types';
 
 export function kindLabel(kind: string): string {
   switch (kind) {
-    case 'cron':            return 'Scheduled';
-    case 'trigger':         return 'Manual trigger';
-    case 'rerun':           return 'Manual rerun';
-    case 'rebase':          return 'Manual rebase';
-    case 'single_node_run': return 'Manual node run';
-    case 'promote_seed':    return 'Seed reload';
+    case 'cron':            return 'Cron run';
+    case 'manual':          return 'Manual run';
+    case 'rerun':           return 'Rerun';
+    case 'rebase':          return 'Rebase';
+    case 'single_node_run': return 'Single-node run';
+    case 'promote_seed':    return 'Promote-seed run';
     default:                return kind;
   }
 }
@@ -73,12 +73,12 @@ export function computeNodeStats(runs: NodeRun[]): NodeStats {
 export interface SnapshotGroup {
   imageTag: string;
   runCount: number;             // eligible runs sharing this snapshot
-  representativeRunId: string;  // the run the trigger executes against
+  representativeRunId: string;  // the run a single-node run of this snapshot executes against
   status: string;               // task_status of the representative run
   lastRunAt: string | null;     // created_at of the representative run
 }
 
-// Stale-mode (snapshot_of_run) eligibility mirrors run-controller.TriggerSingleNodeRun's
+// Stale-mode (snapshot_of_run) eligibility mirrors run-controller.StartSingleNodeRun's
 // validation: the source RUN must be terminal (scheduler-level status), not the
 // per-task status on this node. A FAILED run where this node stayed PENDING is a
 // valid source; an in-flight run where this node already succeeded is NOT.
@@ -90,7 +90,7 @@ export function isSnapshotSourceEligible(r: NodeRun): boolean {
 // Collapse a node's runs into the distinct snapshots it can be re-run against.
 // Runs that share an image_tag are one snapshot; the
 // snapshot's representative is its most-recent terminal run, which is the run the
-// stale-mode trigger executes against. Groups come back newest-snapshot-first.
+// stale-mode single-node run executes against. Groups come back newest-snapshot-first.
 export function groupRunsBySnapshot(runs: NodeRun[]): SnapshotGroup[] {
   const eligible = runs.filter(isSnapshotSourceEligible);
   const byRecent = [...eligible].sort(

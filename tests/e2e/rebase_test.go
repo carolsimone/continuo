@@ -50,12 +50,12 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	t.Log("Verifying scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, srcID)
 
-	// ── Trigger rebase against the failed source ────────────────────────────
-	t.Log("Triggering rebase against failed source run...")
-	rebaseResp, err := clients.runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(),
+	// ── Start a rebase of the failed source ───────────────────────────────
+	t.Log("Starting a rebase of the failed source run...")
+	rebaseResp, err := clients.runClient.StartRebase(ctx, &runv1.StartRebaseRequest{RequestId: uuid.NewString(),
 		SourceRunId: srcIDStr,
 	})
-	require.NoError(t, err, "TriggerRebase must succeed against a FAILED source")
+	require.NoError(t, err, "StartRebase must succeed against a FAILED source")
 	require.NotEmpty(t, rebaseResp.RunId, "rebase must return a new run_id")
 	require.NotEqual(t, srcIDStr, rebaseResp.RunId, "rebase must mint a NEW run id, not mutate the source")
 
@@ -65,7 +65,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 
 	// ── Source row stays unchanged ──────────────────────────────────────────
 	srcKind := queryRunKind(t, clients.runControllerDB, srcID)
-	assert.Equal(t, "trigger", srcKind, "source row must NOT mutate — kind stays 'trigger'")
+	assert.Equal(t, "manual", srcKind, "source row must NOT mutate — kind stays 'manual'")
 
 	// ── New run row: kind='rebase', source_run_id=src ───────────────────────
 	newKind := queryRunKind(t, clients.runControllerDB, newRunID)
@@ -192,12 +192,12 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	t.Log("Verifying source scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, srcID)
 
-	// ── Trigger rebase against the failed source ────────────────────────────
-	t.Log("Triggering rebase against failed source run...")
-	rebaseResp, err := clients.runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(),
+	// ── Start a rebase of the failed source ───────────────────────────────
+	t.Log("Starting a rebase of the failed source run...")
+	rebaseResp, err := clients.runClient.StartRebase(ctx, &runv1.StartRebaseRequest{RequestId: uuid.NewString(),
 		SourceRunId: srcIDStr,
 	})
-	require.NoError(t, err, "TriggerRebase must succeed against a FAILED source")
+	require.NoError(t, err, "StartRebase must succeed against a FAILED source")
 	require.NotEmpty(t, rebaseResp.RunId)
 
 	rebaseRunID, err := uuid.Parse(rebaseResp.RunId)

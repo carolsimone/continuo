@@ -122,7 +122,7 @@ func TestPublish_XAddCarriesTenantAndOutboxEntryID(t *testing.T) {
 // one, as the classifier stores it.
 func healTriggeredFixture() pkgevents.HealTriggered {
 	return pkgevents.HealTriggered{
-		Source: "validation", ReleaseID: "rel-1", RemediationRound: 2, Repo: "o/r", CommitSHA: "abc",
+		Source: "validation", ReleaseID: "rel-1", Round: 2, Repo: "o/r", CommitSHA: "abc",
 		CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json", ClassifiedAt: "2026-06-23T00:00:00Z",
 		Nodes: []pkgevents.HealTriggeredNode{
 			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object", DBTLogURI: "s3://b/a.log"},

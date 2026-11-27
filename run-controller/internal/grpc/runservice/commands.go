@@ -37,7 +37,7 @@ func (s *Server) StartRun(ctx context.Context, req *runv1.StartRunRequest) (*run
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
 	if operation.IsSingleNodeOnly() {
-		return nil, status.Errorf(codes.InvalidArgument, "operation %q targets a single node; use TriggerSingleNodeRun", operation)
+		return nil, status.Errorf(codes.InvalidArgument, "operation %q targets a single node; use StartSingleNodeRun", operation)
 	}
 	res, err := s.commands.StartRun(ctx, svchandlers.StartRunCommand{
 		TenantID: tenantID, RequestID: requestID, ScheduleName: req.GetScheduleName(),
@@ -49,9 +49,9 @@ func (s *Server) StartRun(ctx context.Context, req *runv1.StartRunRequest) (*run
 	return &runv1.StartRunResponse{RunId: res.RunID.String()}, nil
 }
 
-// TriggerRerun reruns a failed or cancelled run of the request's tenant, once
+// StartRerun reruns a failed or cancelled run of the request's tenant, once
 // per request id.
-func (s *Server) TriggerRerun(ctx context.Context, req *runv1.TriggerRerunRequest) (*runv1.TriggerRerunResponse, error) {
+func (s *Server) StartRerun(ctx context.Context, req *runv1.StartRerunRequest) (*runv1.StartRerunResponse, error) {
 	tenantID, requestID, err := commandScope(ctx, req.GetRequestId())
 	if err != nil {
 		return nil, err
@@ -60,18 +60,18 @@ func (s *Server) TriggerRerun(ctx context.Context, req *runv1.TriggerRerunReques
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.commands.TriggerRerun(ctx, svchandlers.TriggerRerunCommand{
+	res, err := s.commands.StartRerun(ctx, svchandlers.StartRerunCommand{
 		TenantID: tenantID, RequestID: requestID, SourceRunID: sourceID, Initiator: identity.FromContext(ctx),
 	})
 	if err != nil {
-		return nil, s.commandError("TriggerRerun", err, "source_run_id", sourceID)
+		return nil, s.commandError("StartRerun", err, "source_run_id", sourceID)
 	}
-	return &runv1.TriggerRerunResponse{RunId: res.RunID.String(), ScheduleName: res.ScheduleName}, nil
+	return &runv1.StartRerunResponse{RunId: res.RunID.String(), ScheduleName: res.ScheduleName}, nil
 }
 
-// TriggerRebase rebases a failed or cancelled run of the request's tenant onto
+// StartRebase rebases a failed or cancelled run of the request's tenant onto
 // the live release, once per request id.
-func (s *Server) TriggerRebase(ctx context.Context, req *runv1.TriggerRebaseRequest) (*runv1.TriggerRebaseResponse, error) {
+func (s *Server) StartRebase(ctx context.Context, req *runv1.StartRebaseRequest) (*runv1.StartRebaseResponse, error) {
 	tenantID, requestID, err := commandScope(ctx, req.GetRequestId())
 	if err != nil {
 		return nil, err
@@ -80,22 +80,22 @@ func (s *Server) TriggerRebase(ctx context.Context, req *runv1.TriggerRebaseRequ
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.commands.TriggerRebase(ctx, svchandlers.TriggerRebaseCommand{
+	res, err := s.commands.StartRebase(ctx, svchandlers.StartRebaseCommand{
 		RequestID: requestID,
-		TriggerRebaseInput: svchandlers.TriggerRebaseInput{
+		StartRebaseInput: svchandlers.StartRebaseInput{
 			TenantID: tenantID, SourceRunID: sourceID, IncludeChangedUpstream: req.GetIncludeChangedUpstream(),
 			ExpectedReleaseID: req.GetExpectedReleaseId(), Initiator: identity.FromContext(ctx),
 		},
 	})
 	if err != nil {
-		return nil, s.commandError("TriggerRebase", err, "source_run_id", sourceID)
+		return nil, s.commandError("StartRebase", err, "source_run_id", sourceID)
 	}
-	return &runv1.TriggerRebaseResponse{RunId: res.RunID.String(), ScheduleName: res.ScheduleName}, nil
+	return &runv1.StartRebaseResponse{RunId: res.RunID.String(), ScheduleName: res.ScheduleName}, nil
 }
 
-// TriggerSingleNodeRun runs one node of the request's tenant, once per
+// StartSingleNodeRun runs one node of the request's tenant, once per
 // request id.
-func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *runv1.TriggerSingleNodeRunRequest) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (s *Server) StartSingleNodeRun(ctx context.Context, req *runv1.StartSingleNodeRunRequest) (*runv1.StartSingleNodeRunResponse, error) {
 	tenantID, requestID, err := commandScope(ctx, req.GetRequestId())
 	if err != nil {
 		return nil, err
@@ -123,21 +123,21 @@ func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *runv1.TriggerSin
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
 	target := run.NodeID{ProjectName: req.GetProjectName(), SchemaName: req.GetSchemaName(), TableName: req.GetTableName()}
-	res, err := s.commands.TriggerSingleNodeRun(ctx, svchandlers.TriggerSingleNodeRunCommand{
+	res, err := s.commands.StartSingleNodeRun(ctx, svchandlers.StartSingleNodeRunCommand{
 		RequestID: requestID,
-		TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
+		StartSingleNodeRunInput: svchandlers.StartSingleNodeRunInput{
 			TenantID: tenantID, Target: target, MetadataSource: run.MetadataSource(req.GetMetadataSource()),
 			Operation: operation, SourceRunID: sourceID, Initiator: identity.FromContext(ctx),
 			AcknowledgedDependents: seedreload.NormalizeObjects(req.GetAcknowledgedDependents()),
 		},
 	})
 	if err != nil {
-		return nil, s.commandError("TriggerSingleNodeRun", err, "target", target)
+		return nil, s.commandError("StartSingleNodeRun", err, "target", target)
 	}
-	return &runv1.TriggerSingleNodeRunResponse{RunId: res.RunID.String(), ScheduleName: res.ScheduleName}, nil
+	return &runv1.StartSingleNodeRunResponse{RunId: res.RunID.String(), ScheduleName: res.ScheduleName}, nil
 }
 
-// PreviewRebase reports what TriggerRebase would run for the same source and
+// PreviewRebase reports what StartRebase would run for the same source and
 // option on the live release, without creating a run. It is a read: it takes
 // no request id and stores nothing.
 func (s *Server) PreviewRebase(ctx context.Context, req *runv1.PreviewRebaseRequest) (*runv1.PreviewRebaseResponse, error) {

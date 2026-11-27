@@ -12,9 +12,9 @@ import (
 // TryRecordOf reads one try of a remediation from its journal, as snap holds
 // it (snap.Try and that try's clusters and steps), into the record a later try
 // is shown. It reads only the rows StepRun.ShownToLaterTries names. Each
-// cluster's edits are the draft of its last pre-flight round, one per edit that
-// changes its file, with the diff from the file's original; its rounds are the
-// findings of each pre-flight round; its outcome is the outcome it ended with,
+// cluster's edits are its last draft, one per edit that
+// changes its file, with the diff from the file's original; its drafts are the
+// findings of each draft's pre-flight pass; its outcome is the outcome it ended with,
 // if any, as its status, the code it was handed over with and its reason. The
 // flow-level check rows give the try's cross-cluster findings and, from the row
 // marked Gate, the gate's, in the order the rows were written (by id). Clusters
@@ -78,9 +78,9 @@ func clusterRecord(c remediation.Cluster, rows []remediation.StepRun) (remediati
 	if c.Outcome != nil {
 		cr.Outcome = outcomeText(*c.Outcome)
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Round < rows[j].Round })
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Draft < rows[j].Draft })
 	for _, row := range rows {
-		cr.Rounds = append(cr.Rounds, row.Findings)
+		cr.Drafts = append(cr.Drafts, row.Findings)
 	}
 	if len(rows) == 0 {
 		return cr, nil
@@ -88,7 +88,7 @@ func clusterRecord(c remediation.Cluster, rows []remediation.StepRun) (remediati
 	last := rows[len(rows)-1]
 	pass, err := DecodeRecord[PreflightRecord](last.Output)
 	if err != nil {
-		return cr, fmt.Errorf("decode the pre-flight draft of cluster %d in round %d: %w", c.Cluster, last.Round, err)
+		return cr, fmt.Errorf("decode the pre-flight draft of cluster %d in round %d: %w", c.Cluster, last.Draft, err)
 	}
 	for _, e := range pass.Draft.Edits {
 		if diff := fix.EditDiff(e.Original, e.Content, e.Path, e.RenamedFrom); diff != "" {

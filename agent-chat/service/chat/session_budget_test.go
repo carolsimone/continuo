@@ -36,7 +36,7 @@ func newBudgetSession(t *testing.T, provider *scriptedProvider, exec *fakeExecut
 func TestSession_BudgetOverrunStillExecutesProducedToolCalls(t *testing.T) {
 	provider := &scriptedProvider{results: []*ports.TurnResult{
 		{
-			Text:      "Triggering.",
+			Text:      "Starting.",
 			ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_status", Args: map[string]string{"schedule-name": "daily"}}},
 			Usage:     ports.Usage{InputTokens: 80, OutputTokens: 40},
 		},

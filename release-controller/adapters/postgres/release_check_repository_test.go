@@ -430,11 +430,11 @@ func TestReleaseCheckRepository_RoundTripsFailDetail(t *testing.T) {
 		got.FailDetail())
 }
 
-// TestReleaseCheckRepository_RoundTripsRemediationRoundAndPayload verifies that a
-// rejected candidate's remediation round and rejection payload persist across
-// a StartRemediationRound + Save + Get round trip, and that a candidate
+// TestReleaseCheckRepository_RoundTripsRoundAndPayload verifies that a
+// rejected candidate's round and rejection payload persist across
+// a StartRound + Save + Get round trip, and that a candidate
 // rejected without ever setting a payload reads back nil.
-func TestReleaseCheckRepository_RoundTripsRemediationRoundAndPayload(t *testing.T) {
+func TestReleaseCheckRepository_RoundTripsRoundAndPayload(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseCheckRepository(db, nil)
 	ctx := context.Background()
@@ -447,7 +447,7 @@ func TestReleaseCheckRepository_RoundTripsRemediationRoundAndPayload(t *testing.
 	r.SetRejectionPayload([]byte(`{"release_id":"rel-x"}`))
 	require.NoError(t, repo.Save(ctx, r))
 
-	n, err := r.StartRemediationRound(time.Unix(303, 0).UTC())
+	n, err := r.StartRound(time.Unix(303, 0).UTC())
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 	require.NoError(t, repo.Save(ctx, r))
@@ -455,7 +455,7 @@ func TestReleaseCheckRepository_RoundTripsRemediationRoundAndPayload(t *testing.
 	got, err := repo.Get(ctx, "rel-remediation")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, 2, got.RemediationRound())
+	assert.Equal(t, 2, got.Round())
 	assert.JSONEq(t, `{"release_id":"rel-x"}`, string(got.RejectionPayload()))
 
 	noPayload := releasecheck.NewCandidate("rel-no-payload", "finance", "tag", false, false, "owner/repo", "abc123",
@@ -468,7 +468,7 @@ func TestReleaseCheckRepository_RoundTripsRemediationRoundAndPayload(t *testing.
 	gotNoPayload, err := repo.Get(ctx, "rel-no-payload")
 	require.NoError(t, err)
 	require.NotNil(t, gotNoPayload)
-	assert.Equal(t, 1, gotNoPayload.RemediationRound())
+	assert.Equal(t, 1, gotNoPayload.Round())
 	assert.Nil(t, gotNoPayload.RejectionPayload())
 }
 
@@ -1049,7 +1049,7 @@ func TestDeleteFinishedBefore_DeletesTheContractBundleOfANeverPromotedCheck(t *t
 // TestReleaseCheckRepository_FixKindRoundTrips verifies that a check's kind
 // (candidate or fix), a fix's source-overlay URI and the round and number of
 // the try it proves survive a Save/Get round trip through check_kind,
-// source_overlay_uri, remediation_round and try.
+// source_overlay_uri, round and try.
 func TestReleaseCheckRepository_FixKindRoundTrips(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseCheckRepository(db, nil)
@@ -1067,7 +1067,7 @@ func TestReleaseCheckRepository_FixKindRoundTrips(t *testing.T) {
 	assert.Equal(t, releasecheck.KindFix, gotFix.Kind())
 	assert.Equal(t, "s3://bucket/svc-a/r-verify/source-overlay.tar.gz", gotFix.SourceOverlayURI())
 	assert.Equal(t, "rel-orig", gotFix.VerifiesReleaseID())
-	assert.Equal(t, 2, gotFix.RemediationRound(), "a fix's round round-trips through remediation_round")
+	assert.Equal(t, 2, gotFix.Round(), "a fix's round round-trips through round")
 	assert.Equal(t, 3, gotFix.Try())
 
 	gotCandidate, err := repo.Get(ctx, "r-plain-candidate")

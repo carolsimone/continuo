@@ -68,7 +68,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerRerun(ctx, client.RequestID(), args[0], cfg.Actor)
+			resp, err := c.StartRerun(ctx, client.RequestID(), args[0], cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

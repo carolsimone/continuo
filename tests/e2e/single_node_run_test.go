@@ -17,7 +17,7 @@ import (
 // TestSingleNodeRunLatest verifies the full single-node-run flow in "latest"
 // metadata mode:
 //
-//  1. Calls TriggerSingleNodeRun (gRPC) for a known seed node.
+//  1. Calls StartSingleNodeRun (gRPC) for a known seed node.
 //  2. Waits for the synthesised run to reach 'succeeded' in runs.
 //  3. Asserts exactly ONE tasks row exists with non-empty image_tag.
 //  4. Asserts the run is stored with kind = "single_node_run" and no
@@ -48,17 +48,17 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-run")
 	seedTopology(t, ctx, clients)
 
-	// Trigger the single-node run via the run-controller gRPC.
-	t.Logf("Calling TriggerSingleNodeRun: %s.%s.%s (latest)", targetProject, targetSchema, targetTable)
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	// Start the single-node run via the run-controller gRPC.
+	t.Logf("Calling StartSingleNodeRun: %s.%s.%s (latest)", targetProject, targetSchema, targetTable)
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun gRPC call failed")
-	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a non-empty run_id")
-	require.NotEmpty(t, resp.ScheduleName, "TriggerSingleNodeRun must return a non-empty schedule_name")
+	require.NoError(t, err, "StartSingleNodeRun gRPC call failed")
+	require.NotEmpty(t, resp.RunId, "StartSingleNodeRun must return a non-empty run_id")
+	require.NotEmpty(t, resp.ScheduleName, "StartSingleNodeRun must return a non-empty schedule_name")
 	t.Logf("Single-node run created: run_id=%s schedule_name=%s", resp.RunId, resp.ScheduleName)
 
 	runID, err := uuid.Parse(resp.RunId)
@@ -131,7 +131,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	}, "ListNodeTasks never returned the new run with populated started_at/completed_at — the task.status.updated:v1 consumer may have lagged")
 
 	require.NotNil(t, top, "ListNodeTasks must return the new run before the timeout")
-	assert.Equal(t, runID.String(), top.RunId, "ListNodeTasks[0].run_id must match the run we just triggered")
+	assert.Equal(t, runID.String(), top.RunId, "ListNodeTasks[0].run_id must match the run we just started")
 	assert.Equal(t, "single_node_run", top.Kind, "ListNodeTasks[0].kind must be 'single_node_run'")
 	assert.NotEmpty(t, top.ImageTag, "ListNodeTasks[0].image_tag must be populated")
 	assert.Equal(t, "succeeded", top.TaskStatus, "ListNodeTasks[0].task_status must be 'succeeded'")
@@ -147,7 +147,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 //  2. Waits for that source run to reach SUCCEEDED.
 //  3. Reads the source run's tasks row for the target node to capture
 //     the "old" image_tag.
-//  4. Calls TriggerSingleNodeRun with metadata_source="snapshot_of_run" and
+//  4. Calls StartSingleNodeRun with metadata_source="snapshot_of_run" and
 //     source_run_id = the source run_id.
 //  5. Waits for the new single-node run to reach SUCCEEDED.
 //  6. Asserts that the new run inherits the source's image_tag,
@@ -179,7 +179,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// ── Step 1: Start the source run ──────────────────────────────────────────
-	t.Log("=== Step 1: Triggering source seed run ===")
+	t.Log("=== Step 1: Starting source seed run ===")
 	srcResp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: srcSchedule,
 	})
@@ -201,18 +201,18 @@ func TestSingleNodeRunStale(t *testing.T) {
 	require.NotEmpty(t, srcImage, "source tasks.image_tag must be non-empty")
 	t.Logf("Source metadata: image_tag=%s", srcImage)
 
-	// ── Step 4: Trigger single-node run in stale mode ─────────────────────────
-	t.Log("=== Step 4: Triggering single-node run in stale (snapshot_of_run) mode ===")
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	// ── Step 4: Start a single-node run in stale mode ───────────────────────
+	t.Log("=== Step 4: Starting single-node run in stale (snapshot_of_run) mode ===")
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "snapshot_of_run",
 		SourceRunId:    srcResp.RunId,
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun (stale) gRPC call failed")
-	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a non-empty run_id")
-	require.NotEmpty(t, resp.ScheduleName, "TriggerSingleNodeRun must return a non-empty schedule_name")
+	require.NoError(t, err, "StartSingleNodeRun (stale) gRPC call failed")
+	require.NotEmpty(t, resp.RunId, "StartSingleNodeRun must return a non-empty run_id")
+	require.NotEmpty(t, resp.ScheduleName, "StartSingleNodeRun must return a non-empty schedule_name")
 	t.Logf("Stale single-node run created: run_id=%s schedule_name=%s", resp.RunId, resp.ScheduleName)
 
 	runID, err := uuid.Parse(resp.RunId)
@@ -244,7 +244,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	t.Log("TestSingleNodeRunStale passed")
 }
 
-// TestSingleNodeRunTargetNotFound verifies that triggering a single-node run
+// TestSingleNodeRunTargetNotFound verifies that starting a single-node run
 // against a target the live release does not hold is refused with NotFound and
 // creates no run.
 func TestSingleNodeRunTargetNotFound(t *testing.T) {
@@ -272,17 +272,17 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 	)
 
 	before := countRunsOfKind(t, clients, "single_node_run")
-	t.Logf("Calling TriggerSingleNodeRun against missing target: %s.%s.%s",
+	t.Logf("Calling StartSingleNodeRun against missing target: %s.%s.%s",
 		ghostProject, ghostSchema, ghostTable)
-	_, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	_, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    ghostProject,
 		SchemaName:     ghostSchema,
 		TableName:      ghostTable,
 		MetadataSource: "latest",
 	})
-	require.Error(t, err, "TriggerSingleNodeRun must refuse a target the live release does not hold")
+	require.Error(t, err, "StartSingleNodeRun must refuse a target the live release does not hold")
 	assert.Equal(t, codes.NotFound, status.Code(err), "a missing target is NotFound: %v", err)
-	assert.Equal(t, before, countRunsOfKind(t, clients, "single_node_run"), "a refused trigger creates no run")
+	assert.Equal(t, before, countRunsOfKind(t, clients, "single_node_run"), "a refused start creates no run")
 
 	t.Log("TestSingleNodeRunTargetNotFound passed")
 }

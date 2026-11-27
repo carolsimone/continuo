@@ -48,7 +48,7 @@ func TestHandleListReleaseChecks_ReturnsOnlyTheChecksOfTheGivenRelease(t *testin
 	}
 	require.Contains(t, byID, "verify-rel-1-r1-t1")
 	require.Contains(t, byID, "verify-rel-1-r2-t1")
-	assert.EqualValues(t, 1, byID["verify-rel-1-r1-t1"]["remediation_round"])
-	assert.EqualValues(t, 2, byID["verify-rel-1-r2-t1"]["remediation_round"])
+	assert.EqualValues(t, 1, byID["verify-rel-1-r1-t1"]["round"])
+	assert.EqualValues(t, 2, byID["verify-rel-1-r2-t1"]["round"])
 	assert.EqualValues(t, 1, byID["verify-rel-1-r2-t1"]["try"], "the try number restarts in each round")
 }

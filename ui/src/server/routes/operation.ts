@@ -1,7 +1,7 @@
 import { NODE_ONLY_OPERATIONS, RUN_OPERATIONS, type RunOperation } from '../shared/operation';
 
 // parseOperation normalises the run-operation body field to the wire values the
-// run-controller trigger RPCs accept. "" and "run" both mean the default run operation
+// run-controller RPCs that start a run accept. "" and "run" both mean the default run operation
 // (sent as ""); "test"/"build" pass through; anything else is rejected (null),
 // so the route can 400 before ever calling gRPC.
 const ALLOWED: ReadonlySet<string> = new Set<string>(['', ...RUN_OPERATIONS]);

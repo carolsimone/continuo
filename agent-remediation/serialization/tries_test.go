@@ -16,12 +16,12 @@ import (
 )
 
 // journalRow is one done journal row of try 1 holding rec as its output.
-func journalRow[R serialization.JournalRecord](t *testing.T, cluster int, step, kind string, round int, rec R, findings ...remediation.Finding) remediation.StepRun {
+func journalRow[R serialization.JournalRecord](t *testing.T, cluster int, step, kind string, draft int, rec R, findings ...remediation.Finding) remediation.StepRun {
 	t.Helper()
 	out, err := serialization.EncodeRecord(rec)
 	require.NoError(t, err)
 	return remediation.StepRun{
-		Try: 1, Cluster: cluster, Step: step, Kind: kind, Round: round,
+		Try: 1, Cluster: cluster, Step: step, Kind: kind, Draft: draft,
 		Status: remediation.StepDone, Output: out, Findings: findings,
 	}
 }
@@ -43,11 +43,11 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 		Remediation: remediation.Remediation{ID: uuid.New(), Round: 2, CurrentTry: 1},
 		Try:         &remediation.Try{Try: 1, Status: remediation.TryFailed},
 		Clusters: []remediation.Cluster{
-			{Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 2},
+			{Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Draft: 2},
 			{Cluster: 2, Kind: workflow.ClusterSingle, TargetNodeID: "model.b", Members: []string{"model.b"}, TypeName: "dbt-validation",
-				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &fix.NodeOutcome{Status: fix.StatusSkipped, Reason: "the model declined"}},
+				Status: remediation.ClusterHandedOver, Draft: 1, Outcome: &fix.NodeOutcome{Status: fix.StatusSkipped, Reason: "the model declined"}},
 			{Cluster: 3, Kind: workflow.ClusterSingle, TargetNodeID: "model.c", Members: []string{"model.c"}, TypeName: "dbt-validation",
-				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &fix.NodeOutcome{
+				Status: remediation.ClusterHandedOver, Draft: 1, Outcome: &fix.NodeOutcome{
 					Status: fix.StatusSkipped, Reason: "the node's source is not in the release's code bundle", Code: model.HandoverReasonDeclined,
 				}},
 		},
@@ -61,7 +61,7 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 			journalRow(t, 0, "no_path_edited_twice", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "no_path_edited_twice", Findings: []remediation.Finding{twice}}}, twice),
 			journalRow(t, 0, "one_manifest_kind", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "one_manifest_kind", Findings: []remediation.Finding{kinds}}}, kinds),
 			journalRow(t, 0, "release_check", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "release_check", Findings: []remediation.Finding{broken}}, Gate: true}, broken),
-			{Try: 1, Step: "hand_over", Kind: "output", Round: 1, Status: remediation.StepDone},
+			{Try: 1, Step: "hand_over", Kind: "output", Draft: 1, Status: remediation.StepDone},
 		},
 	}
 
@@ -87,7 +87,7 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 			{
 				Type: "dbt-validation", TargetNodeID: "model.a", Members: []string{"model.a"},
 				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: fix.ComputeUnifiedDiff("select a\n", "select b\n", "models/a.sql")}},
-				Rounds: [][]remediation.Finding{{unchanged}, nil},
+				Drafts: [][]remediation.Finding{{unchanged}, nil},
 			},
 			{
 				Type: "dbt-validation", TargetNodeID: "model.b", Members: []string{"model.b"},
@@ -112,7 +112,7 @@ func TestTryRecordOf_RefusesASnapshotWithNoTryOrAnUnreadableRow(t *testing.T) {
 		Try:         &remediation.Try{Try: 1},
 		Clusters:    []remediation.Cluster{{Cluster: 1, Members: []string{"model.a"}}},
 		Steps: []remediation.StepRun{{
-			Try: 1, Cluster: 1, Step: remediation.StepPreflight, Kind: remediation.KindRunner, Round: 1,
+			Try: 1, Cluster: 1, Step: remediation.StepPreflight, Kind: remediation.KindRunner, Draft: 1,
 			Status: remediation.StepDone, Output: []byte("not json"),
 		}},
 	}
@@ -132,7 +132,7 @@ func TestTryRecordOf_AMovedFileIsShownAsARename(t *testing.T) {
 		Try:         &remediation.Try{Try: 1, Status: remediation.TryFailed},
 		Clusters: []remediation.Cluster{{
 			Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "analytics.table_b", Members: []string{"analytics.table_b"},
-			TypeName: "duplicate-table", Status: remediation.ClusterChecked, Round: 1,
+			TypeName: "duplicate-table", Status: remediation.ClusterChecked, Draft: 1,
 		}},
 		Steps: []remediation.StepRun{
 			journalRow(t, 1, remediation.StepPreflight, remediation.KindRunner, 1, serialization.PreflightRecord{Draft: moved}),

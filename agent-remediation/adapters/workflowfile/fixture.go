@@ -41,13 +41,13 @@ type fixtureFile struct {
 }
 
 type triggerFile struct {
-	Source           string     `yaml:"source"`
-	ReleaseID        string     `yaml:"release_id"`
-	RemediationRound int        `yaml:"remediation_round"`
-	Repo             string     `yaml:"repo"`
-	CommitSHA        string     `yaml:"commit_sha"`
-	CodeBundleURI    string     `yaml:"code_bundle_uri"`
-	Nodes            []nodeFile `yaml:"nodes"`
+	Source        string     `yaml:"source"`
+	ReleaseID     string     `yaml:"release_id"`
+	Round         int        `yaml:"round"`
+	Repo          string     `yaml:"repo"`
+	CommitSHA     string     `yaml:"commit_sha"`
+	CodeBundleURI string     `yaml:"code_bundle_uri"`
+	Nodes         []nodeFile `yaml:"nodes"`
 }
 
 type nodeFile struct {
@@ -139,14 +139,14 @@ type packagerFile struct {
 }
 
 type answersFile struct {
-	Pass     []answerFile    `yaml:"pass"`
-	Fail     []answerFile    `yaml:"fail"`
-	Decline  []answerFile    `yaml:"decline"`
-	Revision roundAnswerFile `yaml:"revision"`
+	Pass     []answerFile       `yaml:"pass"`
+	Fail     []answerFile       `yaml:"fail"`
+	Decline  []answerFile       `yaml:"decline"`
+	Revision revisionAnswerFile `yaml:"revision"`
 }
 
-// roundAnswerFile is the answer lists of a round after a try's first.
-type roundAnswerFile struct {
+// revisionAnswerFile is the answer lists of a round after a try's first.
+type revisionAnswerFile struct {
 	Pass    []answerFile `yaml:"pass"`
 	Fail    []answerFile `yaml:"fail"`
 	Decline []answerFile `yaml:"decline"`
@@ -364,7 +364,7 @@ func (l *loader) checkUnfixable(file string, n nodeFile, node *yaml.Node, fallba
 
 // refuseMemberRevisions refuses a `revision` block under an entry of
 // member_answers, at the line of its key. The suite plays the first passing try
-// of a member's answers and never a revision round of it, so the block would
+// of a member's answers and never a revision of it, so the block would
 // change nothing; only the fixture's own answers.revision is played.
 func (l *loader) refuseMemberRevisions(file string, root *yaml.Node) {
 	members := valueOf(root, "member_answers")
@@ -474,7 +474,7 @@ func (t triggerFile) toDomain() remediation.Trigger {
 	out := remediation.Trigger{
 		Source:        t.Source,
 		ReleaseID:     t.ReleaseID,
-		Round:         max(t.RemediationRound, 1),
+		Round:         max(t.Round, 1),
 		Repo:          t.Repo,
 		CommitSHA:     t.CommitSHA,
 		CodeBundleURI: t.CodeBundleURI,
@@ -563,7 +563,7 @@ func (a answersFile) toConformance() conformance.Answers {
 		Pass:    answersOf(a.Pass),
 		Fail:    answersOf(a.Fail),
 		Decline: answersOf(a.Decline),
-		Revision: conformance.RoundAnswers{
+		Revision: conformance.RevisionAnswers{
 			Pass:    answersOf(a.Revision.Pass),
 			Fail:    answersOf(a.Revision.Fail),
 			Decline: answersOf(a.Revision.Decline),

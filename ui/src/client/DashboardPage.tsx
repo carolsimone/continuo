@@ -25,7 +25,7 @@ export default function DashboardPage() {
 
   // Reads of /api/schedules are numbered as they are sent. An answer is shown
   // only when no later read has been shown already: a poll that was in flight
-  // when a card asked for a fresh read (after a trigger or a cancel) can answer
+  // when a card asked for a fresh read (after a start or a cancel) can answer
   // after that read, and must not put back the state from before the action.
   const schedulesSent = useRef(0);
   const schedulesShown = useRef(0);

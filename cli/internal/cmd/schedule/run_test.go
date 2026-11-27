@@ -24,7 +24,7 @@ type fakeRunController struct {
 	resp            *runv1.StartRunResponse
 	err             error
 	gotScheduleName string
-	gotTriggerActor string
+	gotStartActor string
 	// gotRequestIDs is the request id of every command the fake received.
 	gotRequestIDs []string
 
@@ -44,21 +44,21 @@ type fakeRunController struct {
 	gotBuildActor        string
 }
 
-func (f *fakeRunController) TriggerSchedule(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+func (f *fakeRunController) StartScheduleRun(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotScheduleName = name
-	f.gotTriggerActor = actor
+	f.gotStartActor = actor
 	return f.resp, f.err
 }
 
-func (f *fakeRunController) TriggerScheduleTest(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+func (f *fakeRunController) StartScheduleTest(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTestScheduleName = name
 	f.gotTestActor = actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeRunController) TriggerScheduleBuild(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+func (f *fakeRunController) StartScheduleBuild(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotBuildScheduleName = name
 	f.gotBuildActor = actor
@@ -75,13 +75,13 @@ func (f *fakeRunController) CancelSchedule(_ context.Context, requestID, name, r
 
 func (f *fakeRunController) Close() error { return nil }
 
-// run invokes the trigger command end-to-end with the provided fake client and args.
+// run invokes the schedule run command end-to-end with the provided fake client and args.
 // It captures stdout/stderr and returns the exit code.
 func run(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := NewTriggerCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewRunCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -98,13 +98,13 @@ func run(t *testing.T, fake client.RunClient, args []string, human bool) (stdout
 	return outBuf.String(), errBuf.String(), exit
 }
 
-// runTriggerWithActor invokes the trigger command with the resolved actor
+// runScheduleRunWithActor invokes the schedule run command with the resolved actor
 // (config.Config.Actor, sourced from CONTINUO_ACTOR) and returns the exit code.
-func runTriggerWithActor(t *testing.T, fake client.RunClient, args []string, actor string) int {
+func runScheduleRunWithActor(t *testing.T, fake client.RunClient, args []string, actor string) int {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: actor}
-	cmd := NewTriggerCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewRunCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -118,14 +118,14 @@ func runTriggerWithActor(t *testing.T, fake client.RunClient, args []string, act
 	return 0
 }
 
-func TestTrigger_ForwardsActor(t *testing.T) {
+func TestScheduleRun_ForwardsActor(t *testing.T) {
 	fake := &fakeRunController{resp: &runv1.StartRunResponse{RunId: "s1"}}
-	exit := runTriggerWithActor(t, fake, []string{"daily"}, "okta.example.com|alice")
+	exit := runScheduleRunWithActor(t, fake, []string{"daily"}, "okta.example.com|alice")
 	assert.Equal(t, 0, exit)
-	assert.Equal(t, "okta.example.com|alice", fake.gotTriggerActor)
+	assert.Equal(t, "okta.example.com|alice", fake.gotStartActor)
 }
 
-func TestTrigger_SuccessEmitsJSON(t *testing.T) {
+func TestScheduleRun_SuccessEmitsJSON(t *testing.T) {
 	fake := &fakeRunController{resp: &runv1.StartRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := run(t, fake, []string{"daily_ingest"}, false)
@@ -136,12 +136,12 @@ func TestTrigger_SuccessEmitsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	assert.Equal(t, "sched_123", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
-	_, err := time.Parse(time.RFC3339, payload["triggered_at"])
-	assert.NoError(t, err, "triggered_at must be RFC3339")
+	_, err := time.Parse(time.RFC3339, payload["created_at"])
+	assert.NoError(t, err, "created_at must be RFC3339")
 	assert.Equal(t, "daily_ingest", fake.gotScheduleName)
 }
 
-func TestTrigger_NotFoundExits3(t *testing.T) {
+func TestScheduleRun_NotFoundExits3(t *testing.T) {
 	fake := &fakeRunController{err: status.Error(codes.NotFound, "schedule 'missing' not found")}
 
 	stdout, _, exit := run(t, fake, []string{"missing"}, false)
@@ -155,7 +155,7 @@ func TestTrigger_NotFoundExits3(t *testing.T) {
 	assert.False(t, envelope.Error.Retryable)
 }
 
-func TestTrigger_FailedPreconditionExits4(t *testing.T) {
+func TestScheduleRun_FailedPreconditionExits4(t *testing.T) {
 	fake := &fakeRunController{err: status.Error(codes.FailedPrecondition, "already running")}
 
 	stdout, _, exit := run(t, fake, []string{"daily_ingest"}, false)
@@ -169,7 +169,7 @@ func TestTrigger_FailedPreconditionExits4(t *testing.T) {
 	assert.True(t, envelope.Error.Retryable)
 }
 
-func TestTrigger_UnavailableExits5(t *testing.T) {
+func TestScheduleRun_UnavailableExits5(t *testing.T) {
 	fake := &fakeRunController{err: status.Error(codes.Unavailable, "server down")}
 
 	_, _, exit := run(t, fake, []string{"daily_ingest"}, false)
@@ -177,7 +177,7 @@ func TestTrigger_UnavailableExits5(t *testing.T) {
 	assert.Equal(t, 5, exit)
 }
 
-func TestTrigger_MissingArgumentExits2(t *testing.T) {
+func TestScheduleRun_MissingArgumentExits2(t *testing.T) {
 	fake := &fakeRunController{}
 
 	stdout, _, exit := run(t, fake, []string{}, false)
@@ -188,14 +188,14 @@ func TestTrigger_MissingArgumentExits2(t *testing.T) {
 	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }
 
-func TestTrigger_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
+func TestScheduleRun_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
 	fake := &fakeRunController{resp: &runv1.StartRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := run(t, fake, []string{"daily_ingest"}, true)
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "Triggered run sched_123 for schedule 'daily_ingest'")
+	assert.Contains(t, stderr, "Started manual run sched_123 of schedule 'daily_ingest'")
 }
 
 const fixedRequestID = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
@@ -207,7 +207,7 @@ func TestScheduleCommands_SendTheRequestIDOfTheInvocation(t *testing.T) {
 	t.Setenv("CONTINUO_REQUEST_ID", fixedRequestID)
 	ok := &runv1.StartRunResponse{RunId: "r1"}
 	cases := map[string]func(fake *fakeRunController) (int, []string){
-		"trigger": func(fake *fakeRunController) (int, []string) {
+		"run": func(fake *fakeRunController) (int, []string) {
 			fake.resp = ok
 			_, _, exit := run(t, fake, []string{"daily"}, false)
 			return exit, fake.gotRequestIDs

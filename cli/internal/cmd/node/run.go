@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewTriggerCommand builds `continuo node trigger <project> <schema> <table> [source-run-id]`.
-// It triggers a fresh single-node run. With three arguments the run uses the
+// NewRunCommand builds `continuo node run <project> <schema> <table> [source-run-id]`.
+// It starts a single-node run. With three arguments the run uses the
 // latest topology metadata; with a fourth it reuses the metadata snapshot of
 // that past run.
 //
@@ -23,11 +23,11 @@ import (
 // The initiating identity is not an argument: it comes from cfg.Actor (the
 // CONTINUO_ACTOR env var) and is forwarded as gRPC metadata. When empty, the
 // run-controller component records its own system identity.
-func NewTriggerCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewRunCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "trigger <project> <schema> <table> [source-run-id]",
-		Short: "Trigger a fresh run of one model node",
-		Long: `Trigger a fresh run of one model node.
+		Use:   "run <project> <schema> <table> [source-run-id]",
+		Short: "Start a single-node run of one model node",
+		Long: `Start a single-node run of one model node: a run of that node alone, started by hand.
 
 Use when the user asks to run, re-run, or rebuild a specific dbt model now.
 By default the run uses the model's current (latest) image and manifest
@@ -63,14 +63,14 @@ Errors:
   unavailable(exit 5)  run-controller is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
-		Example: `  continuo node trigger finance analytics orders
-  continuo node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b`,
+		Example: `  continuo node run finance analytics orders
+  continuo node run finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b`,
 		Annotations: map[string]string{
 			"output_schema": `{"run_id":"string","schedule_name":"string"}`,
 			"exit_codes":    nodeRunExitCodes,
 			"mutating":      "true",
 		},
-		Args: nodeTargetArgs("trigger", stdout, stderr),
+		Args: nodeTargetArgs("run", stdout, stderr),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := parseNodeTarget(args)
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
@@ -82,13 +82,13 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerNodeRun(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor)
+			resp, err := c.StartNodeRun(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered single-node run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
+				return output.HumanSuccess(stderr, "Started single-node run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
 			}
 			payload := map[string]string{
 				"run_id":        resp.GetRunId(),

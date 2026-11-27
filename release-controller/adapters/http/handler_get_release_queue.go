@@ -27,7 +27,7 @@ func (s *Server) handleGetReleaseQueue(w http.ResponseWriter, r *http.Request) {
 		}
 		if p.Active.Kind == releasecheck.KindFix {
 			a["verifies_release_id"] = p.Active.VerifiesReleaseID
-			a["remediation_round"] = p.Active.RemediationRound
+			a["round"] = p.Active.Round
 			a["try"] = p.Active.Try
 		}
 		active = a

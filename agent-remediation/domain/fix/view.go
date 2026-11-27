@@ -38,8 +38,8 @@ type View struct {
 	ID        string
 	Source    string
 	ReleaseID string
-	// RemediationRound is the release's remediation round this try belongs to; the try cap is counted within a round.
-	RemediationRound int
+	// Round is the release's round this try belongs to; the try cap is counted within a round.
+	Round int
 	// RemediationID is the id of the runner's remediation the try belongs
 	// to, empty for a fix row that belongs to no remediation or one whose
 	// remediation was deleted.
@@ -154,13 +154,13 @@ type PRClaim struct {
 	// ResolvedNodeIDs is the failing nodes this try addresses, sorted;
 	// NodeID is their representative.
 	ResolvedNodeIDs []string
-	// RemediationRound and Try name the claimed fix's try: its round, and its
+	// Round and Try name the claimed fix's try: its round, and its
 	// number in that round.
-	RemediationRound int
-	Try              int
-	Rationale        string
-	Confidence       Confidence
-	Model            string
+	Round      int
+	Try        int
+	Rationale  string
+	Confidence Confidence
+	Model      string
 	// Approvers is who must approve the claim's fix: the row's approvers of the
 	// nodes in ResolvedNodeIDs, sorted by node id. A node the row records no
 	// approver for has no entry.
@@ -196,10 +196,10 @@ type OpenPR struct {
 	PRNumber  int
 	ReleaseID string
 	NodeID    string
-	// RemediationRound and Try name the fix's try.
-	RemediationRound int
-	Try              int
-	Project          string
+	// Round and Try name the fix's try.
+	Round   int
+	Try     int
+	Project string
 }
 
 // OpeningPR identifies a fix claimed for PR creation (pr_state='opening')
@@ -219,10 +219,10 @@ type OpeningPR struct {
 	Repo      string
 	ReleaseID string
 	NodeID    string
-	// RemediationRound and Try name the fix's try.
-	RemediationRound int
-	Try              int
-	ClaimedAt        *time.Time
-	CreatedAt        time.Time
-	Project          string
+	// Round and Try name the fix's try.
+	Round     int
+	Try       int
+	ClaimedAt *time.Time
+	CreatedAt time.Time
+	Project   string
 }

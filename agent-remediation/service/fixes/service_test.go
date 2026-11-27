@@ -206,12 +206,12 @@ func TestBuildBranch_PerProjectSuffix(t *testing.T) {
 // remediation/<release_id>/round<r>/try<t>, with no project segment, and stamps the claim with the service clock.
 func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	repo := &fakeRepo{view: fix.View{
-		ReleaseID:        "r-1",
-		NodeID:           "model.p.orders_d",
-		RemediationRound: 2,
-		Try:              1,
-		Repo:             "org/repo",
-		SourceResolved:   true,
+		ReleaseID:      "r-1",
+		NodeID:         "model.p.orders_d",
+		Round:          2,
+		Try:            1,
+		Repo:           "org/repo",
+		SourceResolved: true,
 	}}
 	svc := fixes.New(fixes.Deps{
 		Repo:   repo,
@@ -230,12 +230,12 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 // fix's edits attribute an edit to that project.
 func TestService_Begin_ThreadsProject(t *testing.T) {
 	repo := &fakeRepo{view: fix.View{
-		ID:               "p1",
-		ReleaseID:        "r-1",
-		RemediationRound: 1,
-		Try:              1,
-		Repo:             "org/repo",
-		SourceResolved:   true,
+		ID:             "p1",
+		ReleaseID:      "r-1",
+		Round:          1,
+		Try:            1,
+		Repo:           "org/repo",
+		SourceResolved: true,
 		Edits: []fix.FileEdit{
 			{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
 		},
@@ -260,11 +260,11 @@ func TestService_Begin_ThreadsProject(t *testing.T) {
 // with no edits.
 func TestService_Begin_UnknownProjectRejected(t *testing.T) {
 	repo := &fakeRepo{view: fix.View{
-		ID:               "p1",
-		ReleaseID:        "r-1",
-		RemediationRound: 1,
-		Try:              1,
-		SourceResolved:   true,
+		ID:             "p1",
+		ReleaseID:      "r-1",
+		Round:          1,
+		Try:            1,
+		SourceResolved: true,
 		Edits: []fix.FileEdit{
 			{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
 		},
@@ -292,13 +292,13 @@ func TestService_Begin_UnknownProjectRejected(t *testing.T) {
 // 'opening' by claiming it here.
 func TestService_Begin_NoRepositoryRefused(t *testing.T) {
 	repo := &fakeRepo{view: fix.View{
-		ID:               "p1",
-		ReleaseID:        "r-1",
-		RemediationRound: 1,
-		Try:              1,
-		Repo:             "",
-		SourceResolved:   true,
-		Status:           fix.StatusProposed,
+		ID:             "p1",
+		ReleaseID:      "r-1",
+		Round:          1,
+		Try:            1,
+		Repo:           "",
+		SourceResolved: true,
+		Status:         fix.StatusProposed,
 	}}
 	svc := fixes.New(fixes.Deps{
 		Repo:   repo,
@@ -424,8 +424,8 @@ func TestService_Record_PROpenedPerProjectResolvedSet(t *testing.T) {
 				"model.core.a":    {Status: fix.StatusProposed},
 				"model.finance.b": {Status: fix.StatusProposed},
 			},
-			RemediationRound: 1,
-			Try:              1,
+			Round: 1,
+			Try:   1,
 			Edits: []fix.FileEdit{
 				{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
 				{Path: "services/finance/models/b.sql", MemberNodeIDs: []string{"model.finance.b"}},
@@ -527,8 +527,8 @@ func TestService_RecordOutcome_PRClosedCarriesProjectAndEdits(t *testing.T) {
 	repo := &fakeRepo{
 		view: fix.View{
 			ID: "p1", ReleaseID: "r-1", NodeID: "model.core.a",
-			ResolvedNodeIDs:  []string{"model.core.a", "model.finance.b"},
-			RemediationRound: 1, Try: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
+			ResolvedNodeIDs: []string{"model.core.a", "model.finance.b"},
+			Round:           1, Try: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
 			Edits: []fix.FileEdit{
 				{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
 			},

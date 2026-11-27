@@ -162,7 +162,7 @@ _Avoid_: remediation request, heal event
 
 **Round**:
 One turn of fixing a rejected release. The first rejection starts round 1, and every "Try again" on the release starts the next round.
-_Avoid_: remediation round number, retry
+_Avoid_: round number, retry
 
 **Unfixable node**:
 A failing node no change to the release's code can fix, such as one that failed for an infrastructure reason. It is handed over without a model ever seeing it.

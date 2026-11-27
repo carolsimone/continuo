@@ -32,7 +32,7 @@ func TestHandlers_UndecodablePayloadIsPermanent(t *testing.T) {
 		"an envelope without a time": withField("occurred_at", ""),
 		"another schema version":     withField("schema_version", "2"),
 		"a payload that is not JSON": withField("payload", "{not json"),
-		"a payload with no release":  withField("payload", `{"source":"validation","remediation_round":1,"nodes":[]}`),
+		"a payload with no release":  withField("payload", `{"source":"validation","round":1,"nodes":[]}`),
 		"a payload with no round":    withField("payload", `{"source":"validation","release_id":"r","nodes":[]}`),
 	}
 	for mname, m := range messages {

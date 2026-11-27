@@ -260,8 +260,6 @@ names:
     use: task.status.updated:v1
   - pattern: '(?i)\w*release[._]?promoted[:_]?v2\w*'
     use: release.promoted:v1
-  - pattern: '(?i)\w*remediation[._]?retry[._]?requested[:_]?v2\w*'
-    use: remediation.retry_requested:v1
   # Project kind group: a Python project's release kind is python. The pattern
   # covers the kind's value and the names built from it (ManifestKindPython...,
   # PYTHON_..., test names).
@@ -322,3 +320,41 @@ names:
       - ui/src/server/routes/remediation.ts
       - ui/tests/routes/remediation.test.ts
       - ui/tests/client/release-detail-page.test.tsx
+  # Round and revision group: one turn of fixing a rejected release is a
+  # round (the first rejection starts round 1, and every "Try again" starts
+  # the next), named round in every field, column, message and copy, and the
+  # event that starts the next round is round.requested:v1. The model's new
+  # draft for a cluster after pre-flight refused the last one is a revision:
+  # a type's drafts key counts the drafts a cluster gets in one try, each
+  # cluster and journal row carries its draft number, a cluster that used
+  # every draft is handed over with drafts_spent, and
+  # continuo_remediation_drafts_total counts each pre-flight pass.
+  # The consumer group of round.requested:v1 is remediation-round-requested
+  # (RemediationRoundRequested): component remediation, purpose
+  # round-requested. The patterns leave that name alone.
+  - pattern: '(?i)remediation rounds?'
+    use: round
+  - pattern: 'remediation_rounds?|\w*[rR]emediationRounds?|MAX_REMEDIATION_ROUNDS|\w*remediation_rounds_total'
+    use: round (round, Round, MAX_ROUNDS); the draft metric is continuo_remediation_drafts_total
+  - pattern: '(?i)\w*retry[._-]?requested\w*'
+    use: round.requested:v1 (RoundRequestedV1, remediation-round-requested)
+  - pattern: '(?i)pre-?flight rounds?|\w*preflight_?rounds?_?spent\w*'
+    use: draft, revision or drafts_spent
+  - pattern: 'yaml:"rounds|Agent\.Rounds'
+    use: yaml:"drafts", Agent.Drafts
+  - pattern: 'rounds'
+    use: drafts (a type's drafts key)
+    paths: [agent-remediation/workflows]
+  # Manual run group: a run of a whole schedule started by hand is a manual
+  # run (run kind manual), a run of one node started by hand is a
+  # single-node run, and every command that starts a run is Start...
+  # (StartRun, StartRerun, StartRebase, StartSingleNodeRun). The command line
+  # starts them with schedule run and node run.
+  - pattern: '(?i)\w*trigger[_-]?(rerun|rebase|single[_-]?node[_-]?run)\w*'
+    use: StartRerun, StartRebase, StartSingleNodeRun
+  - pattern: '(?i)(schedule|node)[ _]trigger\w*'
+    use: schedule run, node run
+  - pattern: 'Trigger[ _-]?[rR]uns?|trigger[_-]runs?'
+    use: manual run
+  - pattern: 'KindTrigger|(?i)manual[ _-]trigger|cron\W{1,4}trigger|case .trigger|kind = .trigger|Equal\(t, .trigger'
+    use: the run kind manual (KindManual)

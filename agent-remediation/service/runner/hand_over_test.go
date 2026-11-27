@@ -57,7 +57,7 @@ func (h *harness) handedOverEvent() events.RemediationHandedOver {
 // tries, naming nodes.
 func handedOverOf(id uuid.UUID, round, tries int, nodes ...events.HandedOverNode) events.RemediationHandedOver {
 	return events.RemediationHandedOver{
-		RemediationID: id.String(), ReleaseID: releaseID, RemediationRound: round,
+		RemediationID: id.String(), ReleaseID: releaseID, Round: round,
 		Flow: "rejected-release", Tries: tries, Nodes: nodes,
 	}
 }
@@ -214,7 +214,7 @@ func TestRunner_NoRepositoryHandsEveryNodeOver(t *testing.T) {
 // Spent tries whose last try failed at the gate's runs: the escalated row
 // escalates every node the tries could not fix with tries_spent and the gate's
 // verify error, while a node handed over with a settled code or because its
-// pre-flight rounds were spent keeps its outcome, and the event names them all.
+// drafts were spent keeps its outcome, and the event names them all.
 func TestRunner_TriesSpent(t *testing.T) {
 	const detail = "the warehouse connection dropped; release again once it is back"
 	h := newHarness(t)
@@ -242,7 +242,7 @@ func TestRunner_TriesSpent(t *testing.T) {
 		Reason: "tried 3 times; the last try failed: svc-a: still broken",
 		Code:   model.HandoverReasonTriesSpent,
 	}
-	roundsSpent := fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent}
+	draftsSpent := fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonDraftsSpent}
 	declined := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: noFileReason, Code: model.HandoverReasonDeclined}
 	classifier := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: detail, Code: model.HandoverReasonClassifierInfra}
 	escalated := h.fixRow(fix.HandOverTry).Fix
@@ -250,14 +250,14 @@ func TestRunner_TriesSpent(t *testing.T) {
 	assert.Equal(t, id.String(), escalated.RemediationID)
 	assert.Equal(t, map[string]fix.NodeOutcome{
 		"svc-a": spent,
-		"svc-b": roundsSpent,
+		"svc-b": draftsSpent,
 		"core":  declined,
 		"svc-c": classifier,
 	}, escalated.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 1, 3,
 		handedOverNode("core", declined),
 		handedOverNode("svc-a", spent),
-		handedOverNode("svc-b", roundsSpent),
+		handedOverNode("svc-b", draftsSpent),
 		handedOverNode("svc-c", classifier),
 	), h.handedOverEvent())
 	h.requireHandOverRow(id, 3)
@@ -332,7 +332,7 @@ func TestRunner_TheHandOverRowIsTryZeroOfItsRound(t *testing.T) {
 	spent := fix.NodeOutcome{Status: fix.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
 	escalated := h.fixRowIn(2, fix.HandOverTry).Fix
 	assert.Equal(t, fix.StatusEscalated, escalated.Status)
-	assert.Equal(t, 2, escalated.RemediationRound)
+	assert.Equal(t, 2, escalated.Round)
 	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, escalated.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 2, 0, handedOverNode("svc-a", spent)), h.handedOverEvent())
 	assert.Equal(t, fix.StatusEscalated, h.fixRow(fix.HandOverTry).Fix.Status, "round 1's hand-over row is left as it was")

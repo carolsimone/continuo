@@ -75,21 +75,21 @@ type stubRunServer struct {
 	upsertResp *runv1.UpsertScheduleResponse
 	previewMsg string
 
-	// rebaseExpected is the release the stub treats as live; a TriggerRebase
+	// rebaseExpected is the release the stub treats as live; a StartRebase
 	// naming another release is refused FAILED_PRECONDITION. rebaseReqs holds
-	// every TriggerRebase received.
+	// every StartRebase received.
 	rebaseExpected string
-	rebaseReqs     []*runv1.TriggerRebaseRequest
+	rebaseReqs     []*runv1.StartRebaseRequest
 }
 
-func (s *stubRunServer) TriggerRebase(_ context.Context, req *runv1.TriggerRebaseRequest) (*runv1.TriggerRebaseResponse, error) {
+func (s *stubRunServer) StartRebase(_ context.Context, req *runv1.StartRebaseRequest) (*runv1.StartRebaseResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rebaseReqs = append(s.rebaseReqs, req)
 	if req.GetExpectedReleaseId() != s.rebaseExpected {
 		return nil, status.Error(codes.FailedPrecondition, "the live release changed; preview again")
 	}
-	return &runv1.TriggerRebaseResponse{RunId: "run_rebase_1", ScheduleName: "daily_ingest"}, nil
+	return &runv1.StartRebaseResponse{RunId: "run_rebase_1", ScheduleName: "daily_ingest"}, nil
 }
 
 func (s *stubRunServer) StartRun(_ context.Context, req *runv1.StartRunRequest) (*runv1.StartRunResponse, error) {
@@ -169,26 +169,26 @@ func serveRun(t *testing.T, srv runv1.RunServiceServer) string {
 // Tests
 // ---------------------------------------------------------------------------
 
-func TestCLI_TriggerScheduleAgainstInProcessServer(t *testing.T) {
+func TestCLI_ScheduleRunAgainstInProcessServer(t *testing.T) {
 	endpoint := serveRun(t, &stubRunServer{startResp: &runv1.StartRunResponse{RunId: "run_integ_1"}})
 
-	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "trigger", "daily_ingest").Output()
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "run", "daily_ingest").Output()
 	require.NoError(t, err)
 
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal(out, &payload))
 	assert.Equal(t, "run_integ_1", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
-	assert.NotEmpty(t, payload["triggered_at"])
+	assert.NotEmpty(t, payload["created_at"])
 }
 
-// A trigger refused UNAVAILABLE is tried again, and every try carries the one
+// A schedule run refused UNAVAILABLE is tried again, and every try carries the one
 // request id of the invocation, so the server can recognise the repeat.
-func TestCLI_TriggerRetriesOnUnavailableWithOneRequestID(t *testing.T) {
+func TestCLI_ScheduleRunRetriesOnUnavailableWithOneRequestID(t *testing.T) {
 	srv := &stubRunServer{startResp: &runv1.StartRunResponse{RunId: "run_integ_2"}, startFailures: 2}
 	endpoint := serveRun(t, srv)
 
-	cmd := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "trigger", "daily_ingest")
+	cmd := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "run", "daily_ingest")
 	cmd.Env = append(os.Environ(), "CONTINUO_REQUEST_ID=")
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestCLI_RequestIDComesFromTheEnvironmentWhenSet(t *testing.T) {
 	srv := &stubRunServer{startResp: &runv1.StartRunResponse{RunId: "run_integ_3"}}
 	endpoint := serveRun(t, srv)
 
-	cmd := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "trigger", "daily_ingest")
+	cmd := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "run", "daily_ingest")
 	cmd.Env = append(os.Environ(), "CONTINUO_REQUEST_ID=5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b")
 	_, err := cmd.Output()
 	require.NoError(t, err)

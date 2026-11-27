@@ -221,7 +221,7 @@ func TestGraph_DormantNodeIsMarked(t *testing.T) {
 	assert.Contains(t, long, "No cron or schedule run includes it, except to rebuild a dormant view or materialized view below a seed",
 		"the help says a run includes a dormant node only to rebuild a view below a seed whose load drops the seed's table")
 	assert.Contains(t, long, "a rerun or rebase of that run rebuilds it again if the rebuild did not finish", "the help says a rerun or rebase finishes the rebuild")
-	assert.Contains(t, long, `a run started by hand executes it ("continuo node trigger <project> <schema> <table>")`, "the help names the command that runs it")
+	assert.Contains(t, long, `a run started by hand executes it ("continuo node run <project> <schema> <table>")`, "the help names the command that runs it")
 	assert.Contains(t, cmd.Annotations["output_schema"], `"dormant":"boolean"`, "the output schema declares the field")
 }
 

@@ -68,7 +68,7 @@ const (
 	ClusterGathering ClusterStatus = "gathering"
 	ClusterProposing ClusterStatus = "proposing"
 	// ClusterPreflight: a draft is under the pre-flight checks. A failed check
-	// sends the cluster back to ClusterProposing for a revision round.
+	// sends the cluster back to ClusterProposing for a revision.
 	ClusterPreflight  ClusterStatus = "preflight"
 	ClusterChecked    ClusterStatus = "checked"
 	ClusterHandedOver ClusterStatus = "handed_over"

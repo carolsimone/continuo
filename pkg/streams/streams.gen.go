@@ -40,9 +40,9 @@ const (
 	ReleaseRejectedV1 = "release.rejected:v1"
 	// ReleaseCheckFinishedV1 — A release check of either kind (a candidate release or a fix's release check) reached a terminal status; carries the check's candidate schema so execution-controller can drop it whatever the outcome.
 	ReleaseCheckFinishedV1 = "release_check.finished:v1"
-	// RemediationRetryRequestedV1 — An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
-	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
-	// HealTriggeredV1 — One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
+	// RoundRequestedV1 — An operator's "Try again" on a rejected release; release-controller sends the next round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
+	RoundRequestedV1 = "round.requested:v1"
+	// HealTriggeredV1 — One batched trigger per rejected release and round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
 	HealTriggeredV1 = "heal.triggered:v1"
 	// FixProposedV1 — One verified fix per (release, round, try), carrying every node the try resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	FixProposedV1 = "fix.proposed:v1"
@@ -100,8 +100,8 @@ const (
 	ExecutionControllerReleaseRejected = "execution-controller-release-rejected"
 	// ExecutionControllerReleaseCheckFinished — execution-controller consumer group on release_check.finished:v1.
 	ExecutionControllerReleaseCheckFinished = "execution-controller-release-check-finished"
-	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.
-	RemediationRetryRequested = "remediation-retry-requested"
+	// RemediationRoundRequested — remediation consumer group on round.requested:v1.
+	RemediationRoundRequested = "remediation-round-requested"
 	// AgentRemediationHealTriggered — agent-remediation consumer group on heal.triggered:v1.
 	AgentRemediationHealTriggered = "agent-remediation-heal-triggered"
 	// CatalogHealTriggeredRejections — catalog consumer group on heal.triggered:v1.
@@ -131,7 +131,7 @@ var All = []string{
 	ReleasePromotedV1,
 	ReleaseRejectedV1,
 	ReleaseCheckFinishedV1,
-	RemediationRetryRequestedV1,
+	RoundRequestedV1,
 	HealTriggeredV1,
 	FixProposedV1,
 	RemediationHandedOverV1,
@@ -143,28 +143,28 @@ var All = []string{
 // declares for it, for callers that must know which groups a stream serves
 // (dead-letter-controller's trim loop and the contract it redrives under).
 var Groups = map[string][]string{
-	TaskDispatchV1:              {ExecutionControllerTaskDispatch},
-	TaskStatusUpdatedV1:         {RunControllerTaskStatusUpdated},
-	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
-	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
-	RunCancelledV1:              {ExecutionControllerRunCancelled},
-	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
-	ReleaseParsedV1:             {ReleaseControllerReleaseParsed},
-	ValidationRequestedV1:       {ExecutionControllerValidationRequested},
-	ValidationResultV1:          {ReleaseControllerValidationResult, ExecutionControllerValidationResultTeardown},
-	SeedBuildRequestedV1:        {ExecutionControllerSeedBuildRequested},
-	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
-	CompileRequestedV1:          {ExecutionControllerCompileRequested},
-	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV1:           {CatalogReleaseTopology, CatalogReleaseVersions, CatalogReleaseContracts, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
-	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
-	ReleaseCheckFinishedV1:      {ExecutionControllerReleaseCheckFinished},
-	RemediationRetryRequestedV1: {RemediationRetryRequested},
-	HealTriggeredV1:             {AgentRemediationHealTriggered, CatalogHealTriggeredRejections},
-	FixProposedV1:               {},
-	RemediationHandedOverV1:     {},
-	FixPrOpenedV1:               {CatalogFixPrOpenedFixes},
-	FixPrClosedV1:               {CatalogFixPrClosedProvenance},
+	TaskDispatchV1:          {ExecutionControllerTaskDispatch},
+	TaskStatusUpdatedV1:     {RunControllerTaskStatusUpdated},
+	OutboxDeadLetterV1:      {DeadLetterControllerOutboxDeadLetters},
+	ConsumerDeadLetterV1:    {DeadLetterControllerConsumerDeadLetters},
+	RunCancelledV1:          {ExecutionControllerRunCancelled},
+	ReleaseRequestedV1:      {TopologyControllerReleaseRequested},
+	ReleaseParsedV1:         {ReleaseControllerReleaseParsed},
+	ValidationRequestedV1:   {ExecutionControllerValidationRequested},
+	ValidationResultV1:      {ReleaseControllerValidationResult, ExecutionControllerValidationResultTeardown},
+	SeedBuildRequestedV1:    {ExecutionControllerSeedBuildRequested},
+	SeedBuildCompletedV1:    {ReleaseControllerSeedBuildCompleted},
+	CompileRequestedV1:      {ExecutionControllerCompileRequested},
+	CompileCompletedV1:      {ReleaseControllerCompileCompleted},
+	ReleasePromotedV1:       {CatalogReleaseTopology, CatalogReleaseVersions, CatalogReleaseContracts, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
+	ReleaseRejectedV1:       {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
+	ReleaseCheckFinishedV1:  {ExecutionControllerReleaseCheckFinished},
+	RoundRequestedV1:        {RemediationRoundRequested},
+	HealTriggeredV1:         {AgentRemediationHealTriggered, CatalogHealTriggeredRejections},
+	FixProposedV1:           {},
+	RemediationHandedOverV1: {},
+	FixPrOpenedV1:           {CatalogFixPrOpenedFixes},
+	FixPrClosedV1:           {CatalogFixPrClosedProvenance},
 }
 
 // Retired lists the streams removed from the contract; their keys are deleted

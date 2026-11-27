@@ -73,9 +73,9 @@ covering the cross-project and cross-runtime cases.
 
 `agent-chat` builds its tool catalog from `continuo describe` at boot, so the
 CLI's command tree *is* the set of operations the chat agent can perform. Today
-the CLI covers schedules (list, status, runs, graph, build, test, trigger,
+the CLI covers schedules (list, status, runs, graph, build, test, run,
 cancel, and their crons: set-cron, remove-cron, pause, resume), runs (show,
-graph, attempts, cancel, rerun, rebase), single nodes (build, test, trigger,
+graph, attempts, cancel, rerun, rebase), single nodes (build, test, run,
 diff, history, versions, upstream changes, code units), and failure precedents.
 The UI can do more: browse releases and the release checks of their fixes, read the
 release log and the live release, list and inspect remediation

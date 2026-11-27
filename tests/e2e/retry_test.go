@@ -55,7 +55,7 @@ func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
 	require.NoError(t, err, "StartRun(%s)", retryScheduleName)
 	runID, err := uuid.Parse(resp.RunId)
 	require.NoError(t, err, "StartRun must return the run's id")
-	t.Logf("run %s of %s triggered", runID, retryScheduleName)
+	t.Logf("run %s of %s started", runID, retryScheduleName)
 	taskID := taskOfRun(t, ctx, clients, runID, retryTable)
 
 	ended := waitForTaskEnded(t, ctx, clients, taskID, retryTable, 10*time.Minute)

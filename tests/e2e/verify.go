@@ -93,7 +93,7 @@ func verifyNextLevelDispatched(
 	scheduleID uuid.UUID,
 ) {
 	// Wait for task.dispatch:v1 to contain the next level's dispatches. The tap
-	// saw every entry since before the run was triggered, so a trim of consumed
+	// saw every entry since before the run was started, so a trim of consumed
 	// entries cannot hide one.
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		matchCount := 0
@@ -210,7 +210,7 @@ func verifyRootNodesDispatched(
 	}
 
 	// Wait for task.dispatch:v1 to contain the expected dispatches. The tap saw
-	// every entry since before the run was triggered, so a trim of consumed
+	// every entry since before the run was started, so a trim of consumed
 	// entries cannot hide one.
 	pollUntil(t, ctx, 60*time.Second, 500*time.Millisecond, func() (bool, error) {
 		return len(ofRun()) >= expectedCount, nil
@@ -305,7 +305,7 @@ func verifyNodeExhaustedRetries(
 
 // taskOfRun returns the task_id of tableName's task in runID. run-controller writes
 // every task of a run in the transaction that creates the run, so the row is
-// there once the trigger has returned.
+// there once the start has returned.
 func taskOfRun(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID, tableName string) uuid.UUID {
 	t.Helper()
 	var taskID uuid.UUID

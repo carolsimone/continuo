@@ -1,33 +1,33 @@
 import { useCallback, useState } from 'react';
 import { settlesRequest, type ActionRequestId } from '../request-id';
 
-// The "Trigger run" button's request for a schedule. A press that gets no
+// The "Start run" button's request for a schedule: it starts a manual run. A press that gets no
 // answer and is repeated, while the page still shows the last run the first
 // press saw, sends the same request id, so the run the first press made is
 // returned rather than made twice. `lastRunObservation` is that last run (see
 // Observation in request-id.ts); the id is renewed once the server has given
 // its final answer. onStarted runs once the server has accepted the press.
-export function useTriggerRun(
+export function useManualRun(
   name: string | undefined,
   lastRunObservation: string | null | undefined,
   requestId: Pick<ActionRequestId, 'take' | 'renew'>,
   onStarted?: () => void,
 ): {
-  triggerState: 'idle' | 'loading' | 'success' | 'error';
-  triggerError: string | null;
-  trigger: () => Promise<void>;
+  startState: 'idle' | 'loading' | 'success' | 'error';
+  startError: string | null;
+  start: () => Promise<void>;
 } {
   const { take: takeRequestId, renew: renewRequestId } = requestId;
-  const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [startState, setStartState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [startError, setStartError] = useState<string | null>(null);
 
-  const trigger = useCallback(async () => {
+  const start = useCallback(async () => {
     if (!name) return;
-    setTriggerState('loading');
-    setTriggerError(null);
+    setStartState('loading');
+    setStartError(null);
     try {
       const id = takeRequestId(name, lastRunObservation);
-      const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, {
+      const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/manual-run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ request_id: id }),
@@ -36,19 +36,19 @@ export function useTriggerRun(
       // after another schedule's press took over renews nothing.
       if (settlesRequest(res)) renewRequestId(id);
       if (res.ok) {
-        setTriggerState('success');
-        setTimeout(() => setTriggerState('idle'), 3000);
+        setStartState('success');
+        setTimeout(() => setStartState('idle'), 3000);
         onStarted?.();
       } else {
         const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
-        setTriggerError(body.error ?? 'Request failed — please try again');
-        setTriggerState('error');
+        setStartError(body.error ?? 'Request failed — please try again');
+        setStartState('error');
       }
     } catch {
-      setTriggerError('Request failed — please try again');
-      setTriggerState('error');
+      setStartError('Request failed — please try again');
+      setStartState('error');
     }
   }, [name, lastRunObservation, takeRequestId, renewRequestId, onStarted]);
 
-  return { triggerState, triggerError, trigger };
+  return { startState, startError, start };
 }

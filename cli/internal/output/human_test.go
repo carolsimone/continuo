@@ -10,8 +10,8 @@ import (
 
 func TestHumanSuccess_WritesOneLineToStderr(t *testing.T) {
 	var stderr bytes.Buffer
-	require.NoError(t, HumanSuccess(&stderr, "Triggered run sched_123 for schedule 'daily_ingest'"))
-	assert.Contains(t, stderr.String(), "Triggered run sched_123")
+	require.NoError(t, HumanSuccess(&stderr, "Started manual run sched_123 of schedule 'daily_ingest'"))
+	assert.Contains(t, stderr.String(), "Started manual run sched_123")
 	assert.Equal(t, byte('\n'), stderr.Bytes()[stderr.Len()-1])
 }
 

@@ -34,7 +34,7 @@ var (
 
 	// ErrNothingToRerun is returned by CanBeRerunSource when the source
 	// run has zero non-SUCCEEDED tasks. Its message is distinct from
-	// ErrNothingToRebase so logs and gRPC status text identify which trigger
+	// ErrNothingToRebase so logs and gRPC status text identify which command
 	// the source was rejected for.
 	ErrNothingToRerun = errors.New("source run has no non-SUCCEEDED tasks to rerun")
 

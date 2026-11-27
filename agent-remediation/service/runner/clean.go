@@ -29,22 +29,22 @@ var leftoverPlaceholder = regexp.MustCompile(`(?i)\[redacted[a-z0-9:_-]*\]?`)
 // redaction is what one prompt run of a cluster shows the model, cleaned by
 // one Redactor. The Redactor is built from the journal's raw contents in the
 // same order on every run, so a resumed runner issues the same placeholders:
-// first the evidence the cluster gathered, then the findings of every round
-// before the cluster's own, round by round.
+// first the evidence the cluster gathered, then the findings of every draft
+// before the cluster's own, draft by draft.
 type redaction struct {
 	redactor *sanitize.Redactor
 	evidence remediation.Evidence
 	failure  remediation.Failure
-	// findings are the cleaned findings of the round before the cluster's,
+	// findings are the cleaned findings of the draft before the cluster's,
 	// which a revision shows the model.
 	findings []remediation.Finding
 }
 
-// redactionFor builds the redaction of the cluster's round from ev, the raw
+// redactionFor builds the redaction of the cluster's draft from ev, the raw
 // evidence the cluster gathered, and the raw findings the journal holds for
-// each earlier round's pre-flight pass. Every round's findings go through the
-// Redactor, so a value a finding of round 1 quotes keeps its placeholder in
-// every later round and no number means two values in one request.
+// each earlier draft's pre-flight pass. Every draft's findings go through the
+// Redactor, so a value a finding of draft 1 quotes keeps its placeholder in
+// every later draft and no number means two values in one request.
 func (r *Runner) redactionFor(run tryRun, c remediation.Cluster, ev remediation.Evidence) (redaction, error) {
 	red := redaction{redactor: sanitize.NewRedactor()}
 	red.evidence = cleanEvidence(ev, red.redactor)
@@ -53,10 +53,10 @@ func (r *Runner) redactionFor(run tryRun, c remediation.Cluster, ev remediation.
 		return red, fmt.Errorf("the evidence holds no %s", remediation.KeyFailure)
 	}
 	red.failure = f
-	for round := 1; round < c.Round; round++ {
-		pass, done := run.journal.done(c.Cluster, stepPreflight, round)
+	for draft := 1; draft < c.Draft; draft++ {
+		pass, done := run.journal.done(c.Cluster, stepPreflight, draft)
 		if !done {
-			return red, fmt.Errorf("round %d's pre-flight pass has no done row", round)
+			return red, fmt.Errorf("draft %d's pre-flight pass has no done row", draft)
 		}
 		red.findings = cleanValue(pass.Findings, red.redactor.Clean)
 	}
@@ -64,13 +64,13 @@ func (r *Runner) redactionFor(run tryRun, c remediation.Cluster, ev remediation.
 }
 
 // prompt returns in with the cleaned failure, evidence and findings of the
-// redaction. The previous round's request and answer stay as the journal holds
+// redaction. The previous draft's request and answer stay as the journal holds
 // them: the request was cleaned when it was sent and the answer holds the
 // model's placeholders, so cleaning either again would number its placeholders
 // as text of their own.
 func (red redaction) prompt(in step.PromptInput) step.PromptInput {
 	in.Failure, in.Evidence = red.failure, red.evidence
-	if in.Round > 0 {
+	if in.Revision > 0 {
 		in.Findings = red.findings
 	}
 	return in
@@ -269,7 +269,7 @@ const (
 
 // unknownFinding is the finding unknown_placeholder with message naming token,
 // for file. The token is written without its brackets and colons, so that
-// cleaning the finding for the next round never takes it for a placeholder or
+// cleaning the finding for the next draft never takes it for a placeholder or
 // a secret and the model reads it as it was found.
 func unknownFinding(message, token, file string) remediation.Finding {
 	name := strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(token, "["), "]"), ":", " ")

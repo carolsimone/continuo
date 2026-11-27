@@ -66,7 +66,7 @@ func (v ParseFailureKind) Healable() bool {
 	return false
 }
 
-// RejectReason — Why release-controller ended a release check, a candidate release's or a fix's, short of promotion. Travels as `reason` on release.rejected:v1 and as the check's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a remediation round for nothing.
+// RejectReason — Why release-controller ended a release check, a candidate release's or a fix's, short of promotion. Travels as `reason` on release.rejected:v1 and as the check's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a round for nothing.
 // Values come from the vocabulary "reject_reason" in contract.yaml, in
 // declaration order.
 type RejectReason string
@@ -231,8 +231,8 @@ type HandoverReason string
 const (
 	// HandoverReasonTriesSpent — the tries are spent and the last try failed at the release checks.
 	HandoverReasonTriesSpent HandoverReason = "tries_spent"
-	// HandoverReasonPreflightRoundsSpent — the model's drafts for the node's cluster were refused by pre-flight in every round its type allows.
-	HandoverReasonPreflightRoundsSpent HandoverReason = "preflight_rounds_spent"
+	// HandoverReasonDraftsSpent — pre-flight refused every draft its type allows the node's cluster in one try.
+	HandoverReasonDraftsSpent HandoverReason = "drafts_spent"
 	// HandoverReasonDeclined — a context or prompt step found that no fix can reach the node, so no model call was made for it.
 	HandoverReasonDeclined HandoverReason = "declined"
 	// HandoverReasonNoType — no type of the flow matches the node's failure, so no model call was made for it.
@@ -251,7 +251,7 @@ const (
 func HandoverReasons() []HandoverReason {
 	return []HandoverReason{
 		HandoverReasonTriesSpent,
-		HandoverReasonPreflightRoundsSpent,
+		HandoverReasonDraftsSpent,
 		HandoverReasonDeclined,
 		HandoverReasonNoType,
 		HandoverReasonClassifierInfra,
@@ -266,7 +266,7 @@ func (v HandoverReason) IsValid() bool {
 	switch v {
 	case HandoverReasonTriesSpent:
 		return true
-	case HandoverReasonPreflightRoundsSpent:
+	case HandoverReasonDraftsSpent:
 		return true
 	case HandoverReasonDeclined:
 		return true

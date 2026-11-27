@@ -143,7 +143,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	// The refusal is checked while no run is active on the schedule: an active
 	// run refuses a rebase before the live release is compared.
 	runsBefore := countScheduleRuns(t, ctx, clients, failureTestScheduleName)
-	_, err = clients.runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(),
+	_, err = clients.runClient.StartRebase(ctx, &runv1.StartRebaseRequest{RequestId: uuid.NewString(),
 		SourceRunId:            srcIDStr,
 		IncludeChangedUpstream: true,
 		ExpectedReleaseId:      base.ReleaseID,
@@ -156,7 +156,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 
 	// ── Rebase without the changed upstream nodes ───────────────────────────
 	t.Log("Rebasing the failed part only...")
-	failedOnly := triggerRebaseOnto(t, ctx, clients, srcID, false, live)
+	failedOnly := startRebaseOnto(t, ctx, clients, srcID, false, live)
 	failedOnlyTasks := readRebaseTasks(t, ctx, clients, failedOnly)
 	assertRebasePartition(t, failedOnlyTasks,
 		[]string{"ftable_a", "ftable_b", "ftable_c", "ftable_d"},
@@ -177,7 +177,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 
 	// ── Rebase with the changed upstream nodes ──────────────────────────────
 	t.Log("Rebasing with the changed upstream nodes...")
-	withChanged := triggerRebaseOnto(t, ctx, clients, srcID, true, live)
+	withChanged := startRebaseOnto(t, ctx, clients, srcID, true, live)
 	withChangedTasks := readRebaseTasks(t, ctx, clients, withChanged)
 	assertRebasePartition(t, withChangedTasks,
 		[]string{"ftable_a", "ftable_b"},
@@ -277,17 +277,17 @@ func countScheduleRuns(t *testing.T, ctx context.Context, clients *testClients, 
 	return n
 }
 
-// triggerRebaseOnto rebases source onto live, the release the caller
+// startRebaseOnto rebases source onto live, the release the caller
 // previewed, and checks the new run: a rebase of source on the failure
 // schedule, stamped with live.
-func triggerRebaseOnto(t *testing.T, ctx context.Context, clients *testClients, source uuid.UUID, includeChangedUpstream bool, live announceResult) uuid.UUID {
+func startRebaseOnto(t *testing.T, ctx context.Context, clients *testClients, source uuid.UUID, includeChangedUpstream bool, live announceResult) uuid.UUID {
 	t.Helper()
-	resp, err := clients.runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(),
+	resp, err := clients.runClient.StartRebase(ctx, &runv1.StartRebaseRequest{RequestId: uuid.NewString(),
 		SourceRunId:            source.String(),
 		IncludeChangedUpstream: includeChangedUpstream,
 		ExpectedReleaseId:      live.ReleaseID,
 	})
-	require.NoError(t, err, "TriggerRebase(include_changed_upstream=%v) on the previewed live release", includeChangedUpstream)
+	require.NoError(t, err, "StartRebase(include_changed_upstream=%v) on the previewed live release", includeChangedUpstream)
 	runID, err := uuid.Parse(resp.GetRunId())
 	require.NoError(t, err, "rebase run_id must be a UUID")
 	assert.Equal(t, failureTestScheduleName, resp.GetScheduleName())

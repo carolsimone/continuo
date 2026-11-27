@@ -39,7 +39,7 @@ A flag beats its environment variable, which beats the default.
 
 ```bash
 continuo schedule list
-continuo schedule trigger daily
+continuo schedule run daily
 continuo node history finance analytics fx_transactions_eur
 ```
 
@@ -66,7 +66,7 @@ A command that works prints JSON on stdout and exits 0. A command that fails pri
 
 ## Request ids
 
-`schedule trigger`, `test`, `build` and `cancel`, `node trigger`, `test`, `build` and `full-refresh`, `run rerun` and `run rebase` send a request id: `CONTINUO_REQUEST_ID` (it must be a UUID) or a fresh one. Sending the same id with the same arguments again returns the first run and starts nothing, so a lost answer is safe to retry. The same id with other arguments is a `conflict`. The CLI tries these commands up to three times in all when run-controller is unavailable, with the same id.
+`schedule run`, `test`, `build` and `cancel`, `node run`, `test`, `build` and `full-refresh`, `run rerun` and `run rebase` send a request id: `CONTINUO_REQUEST_ID` (it must be a UUID) or a fresh one. Sending the same id with the same arguments again returns the first run and starts nothing, so a lost answer is safe to retry. The same id with other arguments is a `conflict`. The CLI tries these commands up to three times in all when run-controller is unavailable, with the same id.
 
 The other commands that change state send no request id.
 
@@ -84,12 +84,12 @@ A schedule is a group of models that run together, picked by their first dbt tag
 | `schedule graph <name>` | Shows the nodes of a schedule and the dependencies between them. Each node says whether it is `dormant`: a node continuo builds that belongs to no schedule. A run started by hand runs it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed. An unknown name gives an empty graph. | |
 | `schedule runs <name>` | Lists the schedule's finished runs, newest first. | |
 | `schedule status <name>` | Shows the schedule's latest run and the status of each of its tasks. Prints `{"run":null,"tasks":[]}` if it never ran. | |
-| `schedule trigger <name>` | Starts a run of the whole schedule and prints its `run_id`. Exits 4 if the schedule already has an active run, and 3 if no model carries the name. | yes |
+| `schedule run <name>` | Starts a manual run of the whole schedule and prints its `run_id`. Exits 4 if the schedule already has an active run, and 3 if no model carries the name. | yes |
 | `schedule test <name>` | Starts a run that runs `dbt test` for every model of the schedule. | yes |
 | `schedule build <name>` | Starts a run that runs `dbt build` for every model of the schedule. | yes |
 | `schedule cancel <name> <reason>` | Cancels the schedule's active run. Exits 4 if there is none. | yes |
 | `schedule set-cron <name> <cron> <timezone> [description]` | Sets when the schedule runs on its own. Give the five cron fields as one quoted argument. Prints the cron in words and the next three fire times. | yes |
-| `schedule remove-cron <name>` | Removes the cron. The schedule then runs only when triggered. | yes |
+| `schedule remove-cron <name>` | Removes the cron. The schedule then runs only when someone starts it. | yes |
 | `schedule pause <name>` | Stops the cron from starting runs. Prints `"changed":false` if it is already paused. Exits 3 if the schedule has no cron. | yes |
 | `schedule resume <name>` | Lets the cron start runs again and prints the next fire time. | yes |
 
@@ -113,9 +113,9 @@ A node is one model, seed or python script. Node commands take it as `<project> 
 
 | Command | What it does | Changes state |
 |---|---|:--:|
-| `node list` | Lists nodes with run statistics: success rate, durations, last status and task timeout. Every node the live release builds is listed (never an `unknown-external` node or a dbt test), one that never ran included (`task_count` 0, no `last_run_at`), and each says its `node_type` and whether it is `dormant`. Filter with `--search` (an exact table name), `--project`, `--dormant` (only the dormant nodes, the ones that belong to no schedule; `node trigger` runs one by hand) and `--operation` (`run`, `test` or `build`, default `run`). Page with `--limit` (1 to 200, default 50) and `--offset`. | |
+| `node list` | Lists nodes with run statistics: success rate, durations, last status and task timeout. Every node the live release builds is listed (never an `unknown-external` node or a dbt test), one that never ran included (`task_count` 0, no `last_run_at`), and each says its `node_type` and whether it is `dormant`. Filter with `--search` (an exact table name), `--project`, `--dormant` (only the dormant nodes, the ones that belong to no schedule; `node run` runs one by hand) and `--operation` (`run`, `test` or `build`, default `run`). Page with `--limit` (1 to 200, default 50) and `--offset`. | |
 | `node history <project> <schema> <table>` | Lists the node's recent runs: status, image tag, times, log location and content hash, and on a seed task whose load stopped with `unowned_dependents` the `blocking_objects` to name with `node full-refresh --acknowledge`. `--operation` picks `run`, `test` or `build` (default `run`). | |
-| `node trigger <project> <schema> <table> [source-run-id]` | Starts a run of one node (`dbt run`) and prints its `run_id`. With the id of a past run, it uses that run's image and manifest instead of the latest. Exits 3 if the live release has no such node. | yes |
+| `node run <project> <schema> <table> [source-run-id]` | Starts a single-node run of one node (`dbt run`) and prints its `run_id`. With the id of a past run, it uses that run's image and manifest instead of the latest. Exits 3 if the live release has no such node. | yes |
 | `node test <project> <schema> <table> [source-run-id]` | The same, with `dbt test`. | yes |
 | `node build <project> <schema> <table> [source-run-id]` | The same, with `dbt build`. | yes |
 | `node full-refresh <project> <schema> <table> [source-run-id]` | The same, with `dbt --full-refresh`: rebuilds the model or seed from scratch. A seed's full refresh also rebuilds the continuo views that read it; `--acknowledge <schema>.<name>` (repeatable) names an object outside continuo that the refresh may drop. | yes |

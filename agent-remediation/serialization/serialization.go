@@ -135,22 +135,22 @@ type ProposedEditDTO struct {
 
 // FixProposedDTO is the JSON shape of the fix.proposed:v1 payload.
 type FixProposedDTO struct {
-	EventID          string            `json:"event_id"`
-	Source           string            `json:"source"`
-	ReleaseID        string            `json:"release_id"`
-	RemediationRound int               `json:"remediation_round"`
-	NodeID           string            `json:"node_id"`
-	ResolvedNodeIDs  []string          `json:"resolved_node_ids"`
-	ErrorSignature   string            `json:"error_signature"`
-	ProposedSQLURI   string            `json:"proposed_sql_uri"`
-	DiffURI          string            `json:"diff_uri"`
-	Edits            []ProposedEditDTO `json:"edits"`
-	Rationale        string            `json:"rationale"`
-	Confidence       string            `json:"confidence"`
-	Model            string            `json:"model"`
-	Try              int               `json:"try"`
-	SourceResolved   bool              `json:"source_resolved"`
-	ProposedAt       string            `json:"proposed_at"`
+	EventID         string            `json:"event_id"`
+	Source          string            `json:"source"`
+	ReleaseID       string            `json:"release_id"`
+	Round           int               `json:"round"`
+	NodeID          string            `json:"node_id"`
+	ResolvedNodeIDs []string          `json:"resolved_node_ids"`
+	ErrorSignature  string            `json:"error_signature"`
+	ProposedSQLURI  string            `json:"proposed_sql_uri"`
+	DiffURI         string            `json:"diff_uri"`
+	Edits           []ProposedEditDTO `json:"edits"`
+	Rationale       string            `json:"rationale"`
+	Confidence      string            `json:"confidence"`
+	Model           string            `json:"model"`
+	Try             int               `json:"try"`
+	SourceResolved  bool              `json:"source_resolved"`
+	ProposedAt      string            `json:"proposed_at"`
 }
 
 // FixProposedFromDomain maps the domain event to its DTO.
@@ -163,22 +163,22 @@ func FixProposedFromDomain(e event.FixProposed) FixProposedDTO {
 		}
 	}
 	return FixProposedDTO{
-		EventID:          e.EventID,
-		Source:           e.Source,
-		ReleaseID:        e.ReleaseID,
-		RemediationRound: e.RemediationRound,
-		NodeID:           e.NodeID,
-		ResolvedNodeIDs:  e.ResolvedNodeIDs,
-		ErrorSignature:   e.ErrorSignature,
-		ProposedSQLURI:   e.ProposedSQLURI,
-		DiffURI:          e.DiffURI,
-		Edits:            edits,
-		Rationale:        e.Rationale,
-		Confidence:       e.Confidence,
-		Model:            e.Model,
-		Try:              e.Try,
-		SourceResolved:   e.SourceResolved,
-		ProposedAt:       e.ProposedAt,
+		EventID:         e.EventID,
+		Source:          e.Source,
+		ReleaseID:       e.ReleaseID,
+		Round:           e.Round,
+		NodeID:          e.NodeID,
+		ResolvedNodeIDs: e.ResolvedNodeIDs,
+		ErrorSignature:  e.ErrorSignature,
+		ProposedSQLURI:  e.ProposedSQLURI,
+		DiffURI:         e.DiffURI,
+		Edits:           edits,
+		Rationale:       e.Rationale,
+		Confidence:      e.Confidence,
+		Model:           e.Model,
+		Try:             e.Try,
+		SourceResolved:  e.SourceResolved,
+		ProposedAt:      e.ProposedAt,
 	}
 }
 
@@ -192,21 +192,21 @@ func (d FixProposedDTO) ToDomain() event.FixProposed {
 		}
 	}
 	return event.FixProposed{
-		EventID:          d.EventID,
-		Source:           d.Source,
-		ReleaseID:        d.ReleaseID,
-		RemediationRound: d.RemediationRound,
-		NodeID:           d.NodeID,
-		ResolvedNodeIDs:  d.ResolvedNodeIDs,
-		ErrorSignature:   d.ErrorSignature,
-		ProposedSQLURI:   d.ProposedSQLURI,
-		DiffURI:          d.DiffURI,
-		Edits:            edits,
-		Rationale:        d.Rationale,
-		Confidence:       d.Confidence,
-		Model:            d.Model,
-		Try:              d.Try,
-		SourceResolved:   d.SourceResolved,
-		ProposedAt:       d.ProposedAt,
+		EventID:         d.EventID,
+		Source:          d.Source,
+		ReleaseID:       d.ReleaseID,
+		Round:           d.Round,
+		NodeID:          d.NodeID,
+		ResolvedNodeIDs: d.ResolvedNodeIDs,
+		ErrorSignature:  d.ErrorSignature,
+		ProposedSQLURI:  d.ProposedSQLURI,
+		DiffURI:         d.DiffURI,
+		Edits:           edits,
+		Rationale:       d.Rationale,
+		Confidence:      d.Confidence,
+		Model:           d.Model,
+		Try:             d.Try,
+		SourceResolved:  d.SourceResolved,
+		ProposedAt:      d.ProposedAt,
 	}
 }

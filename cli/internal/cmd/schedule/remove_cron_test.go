@@ -14,7 +14,7 @@ import (
 )
 
 // A schedule with no cron has nothing to remove, and removing it is a success:
-// the schedule runs only when triggered, as it did.
+// the schedule runs only when someone starts it, as it did.
 func TestRemoveCron_OfAManualScheduleSucceeds(t *testing.T) {
 	fake := &fakeCron{}
 
@@ -85,7 +85,7 @@ func TestRemoveCron_HumanModeWritesOneLineToStderr(t *testing.T) {
 	require.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "daily")
-	assert.Contains(t, stderr, "only when triggered")
+	assert.Contains(t, stderr, "only when someone starts it")
 }
 
 func TestRemoveCron_OutputMatchesItsSchema(t *testing.T) {

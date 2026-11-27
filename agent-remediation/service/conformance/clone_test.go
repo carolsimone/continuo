@@ -33,7 +33,7 @@ func TestFixture_CloneSharesNothingWithTheOriginal(t *testing.T) {
 		Release: Release{FailingNodes: map[string]string{"a": "boom"}},
 		Answers: Answers{
 			Pass:     []ports.ProposeResult{{ProposedSQL: "select 2", Files: []ports.ProposedFile{{Path: "p", Content: "c"}}}},
-			Revision: RoundAnswers{Fail: []ports.ProposeResult{{ProposedSQL: "select 3"}}},
+			Revision: RevisionAnswers{Fail: []ports.ProposeResult{{ProposedSQL: "select 3"}}},
 		},
 		MemberAnswers: map[string]Answers{"a": {Pass: []ports.ProposeResult{{ProposedSQL: "select 4"}}}},
 		GateErrors:    map[string]string{"a": "gate"},

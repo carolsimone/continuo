@@ -18,10 +18,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func runTrigger(t *testing.T, fake client.RunClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
+func runScheduleRun(t *testing.T, fake client.RunClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
-	cmd := NewTriggerCommand(func(context.Context, string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewRunCommand(func(context.Context, string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -38,11 +38,11 @@ func runTrigger(t *testing.T, fake client.RunClient, cfg *config.Config, args []
 	return outBuf.String(), errBuf.String(), exit
 }
 
-func TestTriggerNode_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
+func TestNodeRun_SuccessEmitsJSON(t *testing.T) {
+	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	stdout, stderr, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	stdout, stderr, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
@@ -53,30 +53,30 @@ func TestTriggerNode_SuccessEmitsJSON(t *testing.T) {
 	assert.Equal(t, "finance", fake.gotTrigProject)
 }
 
-func TestTriggerNode_ForwardsActorFromConfig(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+func TestNodeRun_ForwardsActorFromConfig(t *testing.T) {
+	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"}
 
-	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, "agent-chat-llm", fake.gotActor)
 }
 
-func TestTriggerNode_EmptyActorWhenUnset(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+func TestNodeRun_EmptyActorWhenUnset(t *testing.T) {
+	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, _ = runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, _ = runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, "", fake.gotActor)
 }
 
-func TestTriggerNode_WrongArgCountExits2(t *testing.T) {
+func TestNodeRun_WrongArgCountExits2(t *testing.T) {
 	fake := &fakeNodeRunController{}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	stdout, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics"})
+	stdout, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics"})
 
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -84,29 +84,29 @@ func TestTriggerNode_WrongArgCountExits2(t *testing.T) {
 	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }
 
-func TestTriggerNode_InvalidArgumentExits2(t *testing.T) {
+func TestNodeRun_InvalidArgumentExits2(t *testing.T) {
 	fake := &fakeNodeRunController{trigErr: status.Error(codes.InvalidArgument, "project_name required")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 2, exit)
 }
 
-func TestTriggerNode_UnavailableExits5(t *testing.T) {
+func TestNodeRun_UnavailableExits5(t *testing.T) {
 	fake := &fakeNodeRunController{trigErr: status.Error(codes.Unavailable, "server down")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 5, exit)
 }
 
-func TestTriggerNode_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+func TestNodeRun_HumanModeUsesStderr(t *testing.T) {
+	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
 
-	stdout, stderr, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	stdout, stderr, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
@@ -116,31 +116,31 @@ func TestTriggerNode_HumanModeUsesStderr(t *testing.T) {
 
 const snapshotSourceRun = "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
 
-func TestTriggerNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+func TestNodeRun_ThreeArgsSelectLatestMetadata(t *testing.T) {
+	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, "", fake.gotTrigSourceRun)
 }
 
-func TestTriggerNode_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+func TestNodeRun_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
+	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
 
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, snapshotSourceRun, fake.gotTrigSourceRun)
 }
 
-func TestTriggerNode_FiveArgsExits2(t *testing.T) {
+func TestNodeRun_FiveArgsExits2(t *testing.T) {
 	fake := &fakeNodeRunController{}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	stdout, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun, "extra"})
+	stdout, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun, "extra"})
 
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -149,20 +149,20 @@ func TestTriggerNode_FiveArgsExits2(t *testing.T) {
 	assert.Equal(t, "", fake.gotTrigSourceRun)
 }
 
-func TestTriggerNode_SourceRunNotFoundExits3(t *testing.T) {
+func TestNodeRun_SourceRunNotFoundExits3(t *testing.T) {
 	fake := &fakeNodeRunController{trigErr: status.Error(codes.NotFound, "source run not found")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
 
 	assert.Equal(t, 3, exit)
 }
 
-func TestTriggerNode_SourceRunNotTerminalExits4(t *testing.T) {
+func TestNodeRun_SourceRunNotTerminalExits4(t *testing.T) {
 	fake := &fakeNodeRunController{trigErr: status.Error(codes.FailedPrecondition, "source run is not terminal")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
 
 	assert.Equal(t, 4, exit)
 }
@@ -170,12 +170,12 @@ func TestTriggerNode_SourceRunNotTerminalExits4(t *testing.T) {
 // An explicitly empty fourth argument (a shell variable that was never set)
 // is a usage error, not a silent fall-back to latest metadata: the caller
 // asked for a snapshot and must not get a run against current code instead.
-func TestTriggerNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
+func TestNodeRun_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
 	for _, empty := range []string{"", "   "} {
 		fake := &fakeNodeRunController{}
 		cfg := &config.Config{Timeout: 2 * time.Second}
 
-		stdout, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders", empty})
+		stdout, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", empty})
 
 		assert.Equal(t, 2, exit, "arg %q", empty)
 		var env map[string]output.CLIError
@@ -191,14 +191,14 @@ func TestTriggerNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
 func TestNodeRunCommands_SendTheRequestIDOfTheInvocation(t *testing.T) {
 	const id = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
 	t.Setenv("CONTINUO_REQUEST_ID", id)
-	resp := &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}
+	resp := &runv1.StartSingleNodeRunResponse{RunId: "run_9"}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 	args := []string{"finance", "analytics", "orders"}
 
 	cases := map[string]func(*fakeNodeRunController) int{
-		"trigger": func(f *fakeNodeRunController) int {
+		"run": func(f *fakeNodeRunController) int {
 			f.trigResp = resp
-			_, _, e := runTrigger(t, f, cfg, args)
+			_, _, e := runScheduleRun(t, f, cfg, args)
 			return e
 		},
 		"test":  func(f *fakeNodeRunController) int { f.testResp = resp; _, _, e := runTest(t, f, cfg, args); return e },

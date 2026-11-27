@@ -67,7 +67,7 @@ CREATE TABLE remediation (
     id uuid NOT NULL,
     tenant_id text NOT NULL,
     release_id text NOT NULL,
-    remediation_round integer NOT NULL,
+    round integer NOT NULL,
     flow text NOT NULL,
     status text NOT NULL,
     trigger_payload jsonb NOT NULL,
@@ -82,8 +82,8 @@ CREATE TABLE remediation (
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL,
     CONSTRAINT remediation_pkey PRIMARY KEY (id),
-    CONSTRAINT remediation_tenant_id_release_id_remediation_round_key UNIQUE (tenant_id, release_id, remediation_round),
-    CONSTRAINT remediation_remediation_round_check CHECK ((remediation_round >= 1)),
+    CONSTRAINT remediation_tenant_id_release_id_round_key UNIQUE (tenant_id, release_id, round),
+    CONSTRAINT remediation_round_check CHECK ((round >= 1)),
     CONSTRAINT remediation_status_check CHECK ((status IN ('running', 'done', 'system_failure')))
 );
 
@@ -152,7 +152,7 @@ CREATE TABLE fix (
     release_check_id text DEFAULT '' NOT NULL,
     verify_error text DEFAULT '' NOT NULL,
     trigger_payload jsonb DEFAULT '{}'::jsonb NOT NULL,
-    remediation_round integer DEFAULT 1 NOT NULL,
+    round integer DEFAULT 1 NOT NULL,
     resolved_node_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
     node_outcomes jsonb DEFAULT '{}'::jsonb NOT NULL,
     release_checks jsonb DEFAULT '[]'::jsonb NOT NULL,
@@ -160,13 +160,13 @@ CREATE TABLE fix (
     remediation_id uuid,
     approvers jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT fix_pkey PRIMARY KEY (id),
-    CONSTRAINT fix_uniq UNIQUE (release_id, remediation_round, try),
+    CONSTRAINT fix_uniq UNIQUE (release_id, round, try),
     CONSTRAINT fix_try_check CHECK ((try >= 0)),
     CONSTRAINT fix_status_check CHECK ((status IN ('generating', 'verifying', 'proposed', 'skipped', 'failed', 'escalated'))),
     CONSTRAINT fix_remediation_id_fkey FOREIGN KEY (remediation_id) REFERENCES remediation(id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_fix_release_round ON fix (release_id, remediation_round);
+CREATE INDEX idx_fix_release_round ON fix (release_id, round);
 
 CREATE INDEX idx_fix_resolved_node_ids ON fix USING gin (resolved_node_ids);
 
@@ -223,7 +223,7 @@ CREATE TABLE remediation_cluster (
     members text[] NOT NULL,
     type_name text DEFAULT '' NOT NULL,
     status text NOT NULL,
-    round integer DEFAULT 1 NOT NULL,
+    draft integer DEFAULT 1 NOT NULL,
     outcome jsonb,
     updated_at timestamptz DEFAULT now() NOT NULL,
     CONSTRAINT remediation_cluster_pkey PRIMARY KEY (remediation_id, try, cluster),
@@ -242,7 +242,7 @@ CREATE TABLE remediation_step (
     cluster integer DEFAULT 0 NOT NULL,
     step text NOT NULL,
     kind text NOT NULL,
-    round integer DEFAULT 1 NOT NULL,
+    draft integer DEFAULT 1 NOT NULL,
     status text NOT NULL,
     input_digest text DEFAULT '' NOT NULL,
     output jsonb,
@@ -259,7 +259,7 @@ CREATE TABLE remediation_step (
     started_at timestamptz DEFAULT now() NOT NULL,
     finished_at timestamptz,
     CONSTRAINT remediation_step_pkey PRIMARY KEY (id),
-    CONSTRAINT remediation_step_remediation_id_try_cluster_step_round_key UNIQUE (remediation_id, try, cluster, step, round),
+    CONSTRAINT remediation_step_remediation_id_try_cluster_step_draft_key UNIQUE (remediation_id, try, cluster, step, draft),
     CONSTRAINT remediation_step_kind_check CHECK ((kind IN ('context', 'prompt', 'check', 'approver', 'output', 'runner'))),
     CONSTRAINT remediation_step_status_check CHECK ((status IN ('running', 'waiting', 'done', 'failed'))),
     CONSTRAINT remediation_step_remediation_id_try_fkey FOREIGN KEY (remediation_id, try) REFERENCES remediation_try(remediation_id, try) ON DELETE CASCADE

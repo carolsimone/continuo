@@ -16,7 +16,7 @@ describe('GET /api/config', () => {
     writeFileSync(
       VALID_CONFIG_PATH,
       JSON.stringify({
-        cancellation_reasons: ['Incorrect trigger', 'Other'],
+        cancellation_reasons: ['Started by mistake', 'Other'],
       }),
     );
     writeFileSync(BAD_CONFIG_PATH, 'not valid json {{{');
@@ -24,7 +24,7 @@ describe('GET /api/config', () => {
     writeFileSync(
       STRAY_KEY_CONFIG_PATH,
       JSON.stringify({
-        cancellation_reasons: ['Incorrect trigger', 'Other'],
+        cancellation_reasons: ['Started by mistake', 'Other'],
         cancel_by_emails: ['placeholder1@example.com'],
       }),
     );
@@ -41,7 +41,7 @@ describe('GET /api/config', () => {
     app.use('/api/config', createConfigRouter(VALID_CONFIG_PATH));
     const res = await request(app).get('/api/config');
     expect(res.status).toBe(200);
-    expect(res.body.cancellation_reasons).toEqual(['Incorrect trigger', 'Other']);
+    expect(res.body.cancellation_reasons).toEqual(['Started by mistake', 'Other']);
   });
 
   it('returns 503 when the config file is missing', async () => {
@@ -65,7 +65,7 @@ describe('GET /api/config', () => {
     app.use('/api/config', createConfigRouter(STRAY_KEY_CONFIG_PATH));
     const res = await request(app).get('/api/config');
     expect(res.status).toBe(200);
-    expect(res.body.cancellation_reasons).toEqual(['Incorrect trigger', 'Other']);
+    expect(res.body.cancellation_reasons).toEqual(['Started by mistake', 'Other']);
     expect(res.body).not.toHaveProperty('cancel_by_emails');
     expect(Object.keys(res.body)).toEqual(['cancellation_reasons']);
   });

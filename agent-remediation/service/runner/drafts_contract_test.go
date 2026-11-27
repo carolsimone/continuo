@@ -89,11 +89,11 @@ func (p *refusingPackager) Pack(_ context.Context, _, _, _, _ string, packages m
 	return []byte(`{"bundle_version": 1}`), nil
 }
 
-// withContractType gives the harness a python-validation type of rounds
-// pre-flight rounds whose one pre-flight check is the packaging tool, over a
+// withContractType gives the harness a python-validation type of drafts
+// drafts whose one pre-flight check is the packaging tool, over a
 // checkout that holds one contract yaml declaring sales.loader, and the
 // packager the type's check calls.
-func withContractType(rounds int, packager ports.ContractPackager) option {
+func withContractType(drafts int, packager ports.ContractPackager) option {
 	return func(h *harness) {
 		h.archive = &checkoutOf{dir: h.t.TempDir(), files: map[string]string{contractYAML: brokenContract}}
 		h.packager = packager
@@ -106,7 +106,7 @@ func withContractType(rounds int, packager ports.ContractPackager) option {
 			Match:   workflow.Match{Cluster: workflow.ClusterSingle, Source: "validation", NodeTypes: []string{"python-node"}},
 			Context: refs("contract_file", "failing_siblings", "image_packages", "dbt_log", "contract_entry", "current_contract", "upstream_changes", "failure_precedents"),
 			Agent: workflow.Agent{
-				Prompt: workflow.StepRef{Name: "python-contract"}, Tools: []workflow.StepRef{}, Rounds: rounds,
+				Prompt: workflow.StepRef{Name: "python-contract"}, Tools: []workflow.StepRef{}, Drafts: drafts,
 			},
 			Preflight: refs("contract_packages"),
 			Revision:  "rev-python-validation",
@@ -139,7 +139,7 @@ func contractAnswer(prompt.ProposeRequest) ports.ProposeResult {
 }
 
 // The tool that packages a contract refuses what the model answered, and its
-// complaint goes back to the model as a finding of the same try's next round.
+// complaint goes back to the model as a finding of the same try's next draft.
 func TestContractPackages_ARefusalGoesBackToTheModel(t *testing.T) {
 	packager := &refusingPackager{refuse: 1, refusal: toolRefusal}
 	h := newHarness(t, withContractType(2, packager))
@@ -148,9 +148,9 @@ func TestContractPackages_ARefusalGoesBackToTheModel(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	passes := h.roundRows(id, 1, "preflight")
+	passes := h.draftRows(id, 1, "preflight")
 	require.Len(t, passes, 2)
-	require.Len(t, passes[1].Findings, 1, "the tool refused round 1's draft")
+	require.Len(t, passes[1].Findings, 1, "the tool refused draft 1")
 	assert.Equal(t, "contract_rejected", passes[1].Findings[0].Code)
 	assert.Contains(t, passes[1].Findings[0].Message, toolRefusal, "the finding keeps the tool's own complaint")
 	assert.Empty(t, passes[2].Findings, "the tool accepted the revised draft")
@@ -158,23 +158,23 @@ func TestContractPackages_ARefusalGoesBackToTheModel(t *testing.T) {
 	reqs := h.llm.all()
 	require.Len(t, reqs, 2, "the refused draft goes back to the model once")
 	want := prompt.Revise(reqs[0], step.AnswerJSON(contractAnswer(reqs[0])), step.FindingLines(passes[1].Findings))
-	assert.Equal(t, want, reqs[1], "round 2 revises round 1's request with its answer and the tool's refusal")
-	assert.Contains(t, reqs[1].User, toolRefusal, "round 2's request carries the tool's message")
+	assert.Equal(t, want, reqs[1], "draft 2 revises draft 1's request with its answer and the tool's refusal")
+	assert.Contains(t, reqs[1].User, toolRefusal, "draft 2's request carries the tool's message")
 	assert.Contains(t, reqs[1].User, "- "+step.FindingLines(passes[1].Findings)[0]+"\n", "as a finding line")
 
 	assert.Equal(t, 2, packager.calls)
-	assert.Equal(t, []map[string]string{harnessPackages, harnessPackages}, packager.packages, "each round packs with the release's package list")
-	assert.Equal(t, 1, h.images.count(), "the package list is read once, by the context step, never again per round")
+	assert.Equal(t, []map[string]string{harnessPackages, harnessPackages}, packager.packages, "each draft packs with the release's package list")
+	assert.Equal(t, 1, h.images.count(), "the package list is read once, by the context step, never again per draft")
 	require.Len(t, h.store.Tries(id), 1, "the revision stays in the same try")
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterChecked, c.Status)
-	assert.Equal(t, 2, c.Round)
+	assert.Equal(t, 2, c.Draft)
 	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status, "the revised draft goes on to the gate")
 }
 
-// With no round left, the tool's refusal ends the cluster as any other
+// With no draft left, the tool's refusal ends the cluster as any other
 // pre-flight finding does.
-func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T) {
+func TestContractPackages_ARefusalInTheLastDraftHandsTheClusterOver(t *testing.T) {
 	packager := &refusingPackager{refuse: 100, refusal: toolRefusal}
 	h := newHarness(t, withContractType(2, packager))
 	h.llm.answer = contractAnswer
@@ -182,13 +182,13 @@ func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	assert.Equal(t, 2, h.llm.calls(), "one model call per round")
+	assert.Equal(t, 2, h.llm.calls(), "one model call per draft")
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
-	assert.Equal(t, 2, c.Round)
+	assert.Equal(t, 2, c.Draft)
 	require.NotNil(t, c.Outcome)
 	assert.Equal(t, fix.StatusFailed, c.Outcome.Status)
-	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, c.Outcome.Code)
+	assert.Equal(t, model.HandoverReasonDraftsSpent, c.Outcome.Code)
 	assert.Contains(t, c.Outcome.Reason, toolRefusal)
 	assert.Empty(t, h.checks.requests())
 }

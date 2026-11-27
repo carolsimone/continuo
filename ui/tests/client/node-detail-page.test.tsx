@@ -144,8 +144,8 @@ describe('NodeDetailPage', () => {
       ],
     }));
     renderPage();
-    expect(await screen.findByText(/scheduled/i)).toBeInTheDocument();
-    expect(await screen.findByText(/manual rerun/i)).toBeInTheDocument();
+    expect(await screen.findByText(/^cron run$/i)).toBeInTheDocument();
+    expect(await screen.findByText(/^rerun$/i)).toBeInTheDocument();
     expect(await screen.findByText(/50% succeeded/i)).toBeInTheDocument();
   });
 
@@ -201,7 +201,7 @@ describe('NodeDetailPage', () => {
     });
   });
 
-  it('gates only the latest trigger (not the option or old-snapshot) when the latest topology has known-zero tests', async () => {
+  it('gates only the latest button (not the option or old-snapshot) when the latest topology has known-zero tests', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
@@ -216,7 +216,7 @@ describe('NodeDetailPage', () => {
     // The latest "Test this node" button is disabled and a hint appears...
     await waitFor(() => expect(screen.getByRole('button', { name: /test this node/i })).toBeDisabled());
     expect(document.querySelector('.info-strip--info')).toBeInTheDocument();
-    // ...but the old-snapshot trigger stays available.
+    // ...but the old-snapshot button stays available.
     expect(screen.getByRole('button', { name: /run with old snapshot/i })).not.toBeDisabled();
   });
 
@@ -244,9 +244,9 @@ describe('NodeDetailPage', () => {
     });
   });
 
-  it('gates the latest test trigger and shows a hint when test_count is unknown', async () => {
+  it('gates the latest test button and shows a hint when test_count is unknown', async () => {
     // An unset test_count (a node predating test_count capture) has no known
-    // tests, so it gates the latest test trigger exactly like a known zero — only
+    // tests, so it gates the latest test button exactly like a known zero — only
     // a known, positive test_count is runnable. The old-snapshot path stays open.
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -381,7 +381,7 @@ describe('NodeDetailPage — foundations', () => {
     });
   });
 
-  it('"Run this node" shows past-tense Triggered with .is-success after click', async () => {
+  it('"Run this node" shows past-tense Started with .is-success after click', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url === '/api/nodes/svc/schema/tbl/run' && init?.method === 'POST') {
@@ -394,7 +394,7 @@ describe('NodeDetailPage — foundations', () => {
     const btn = await screen.findByRole('button', { name: /run this node/i });
     await user.click(btn);
     await waitFor(() => {
-      expect(btn).toHaveTextContent(/^Triggered$/);
+      expect(btn).toHaveTextContent(/^Started$/);
       expect(btn.className).toMatch(/\bis-success\b/);
     });
   });
@@ -816,7 +816,7 @@ describe('NodeDetailPage — dormant node', () => {
       renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
       await pressRunOnTblThenMoveToOther();
 
-      const runButton = () => screen.getByRole('button', { name: /^(Run this node|Triggering…|Triggered)$/ });
+      const runButton = () => screen.getByRole('button', { name: /^(Run this node|Starting…|Started)$/ });
       expect(runButton()).toHaveTextContent(/^Run this node$/);
       expect(runButton()).toBeEnabled();
 
@@ -910,12 +910,12 @@ describe('NodeDetailPage — dormant node', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.tbl' }));
       await screen.findByText('tbl-image');
-      const runButton = () => screen.getByRole('button', { name: /^(Run this node|Triggering…|Triggered)$/ });
-      await waitFor(() => expect(runButton()).toHaveTextContent(/^Triggering…$/));
+      const runButton = () => screen.getByRole('button', { name: /^(Run this node|Starting…|Started)$/ });
+      await waitFor(() => expect(runButton()).toHaveTextContent(/^Starting…$/));
       expect(runButton()).toBeDisabled();
 
       await act(async () => { start.resolve(await started()); });
-      await waitFor(() => expect(runButton()).toHaveTextContent(/^Triggered$/));
+      await waitFor(() => expect(runButton()).toHaveTextContent(/^Started$/));
     });
   });
 });
@@ -1218,17 +1218,17 @@ describe('NodeDetailPage full refresh', () => {
   it.each([
     ['meta never resolves', () => new Promise<Response>(() => {})],
     ['meta fails', () => jsonResp({ error: 'boom' }, 500)],
-  ])('disables both triggers for a navigated-in full_refresh while the node type is unknown (%s)', async (_n, metaResp) => {
+  ])('disables both buttons for a navigated-in full_refresh while the node type is unknown (%s)', async (_n, metaResp) => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return metaResp();
       return jsonResp({ tasks: [] });
     });
     renderPage(undefined, 'full_refresh');
-    const trigger = await screen.findByRole('button', { name: /full refresh this node/i });
-    expect(trigger).toBeDisabled();
+    const fullRefresh = await screen.findByRole('button', { name: /full refresh this node/i });
+    expect(fullRefresh).toBeDisabled();
     expect(screen.getByRole('button', { name: /run with old snapshot/i })).toBeDisabled();
-    fireEvent.click(trigger);
+    fireEvent.click(fullRefresh);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(runPosts()).toHaveLength(0);
   });
@@ -1261,7 +1261,7 @@ describe('NodeDetailPage full refresh', () => {
     ['test', /test this node/i],
     ['build', /build this node/i],
     ['full_refresh', /full refresh this node/i],
-  ])('disables the latest %s action for an inactive node and keeps the old-snapshot trigger', async (op, name) => {
+  ])('disables the latest %s action for an inactive node and keeps the old-snapshot button', async (op, name) => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'old-run' })], { inactive: true }));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
@@ -1283,7 +1283,7 @@ describe('NodeDetailPage full refresh', () => {
     expect(screen.getAllByText(/no longer active in the topology/i)).toHaveLength(1);
   });
 
-  it('keeps the latest full refresh trigger enabled for an active node', async () => {
+  it('keeps the latest full refresh button enabled for an active node', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-seed', [], { inactive: false }));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));

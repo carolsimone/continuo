@@ -17,7 +17,7 @@ import (
 // tenant's run as one that does not exist. The node list and the name
 // suggestions hold the live release's dormant node, which never ran, beside
 // the run's node.
-func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
+func TestRunService_ServesTheReadsOfAManualRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "run-service-reads"
 	promoteRelease(t, runControllerDB,
@@ -29,7 +29,7 @@ func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, runID, got.GetRun().GetRunId())
 	assert.Equal(t, schedule, got.GetRun().GetScheduleName())
-	assert.Equal(t, "trigger", got.GetRun().GetKind())
+	assert.Equal(t, "manual", got.GetRun().GetKind())
 	assert.Equal(t, "running", got.GetRun().GetStatus())
 	assert.NotEmpty(t, got.GetRun().GetReleaseId())
 	assert.NotNil(t, got.GetRun().GetLastProgressAt())

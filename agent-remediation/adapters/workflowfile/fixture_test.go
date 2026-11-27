@@ -27,7 +27,7 @@ type: dbt-validation
 trigger:
   source: validation
   release_id: rel-1
-  remediation_round: 2
+  round: 2
   repo: o/repo
   commit_sha: sha
   code_bundle_uri: s3://bundle
@@ -115,7 +115,7 @@ func TestLoadFixtures_ReadsEveryField(t *testing.T) {
 		},
 		Fail:    []ports.ProposeResult{{}},
 		Decline: []ports.ProposeResult{{Files: []ports.ProposedFile{{Path: "a.yml", Content: "x"}}, Confidence: "low"}},
-		Revision: conformance.RoundAnswers{
+		Revision: conformance.RevisionAnswers{
 			Pass: []ports.ProposeResult{{ProposedSQL: "select 3", Confidence: "high"}},
 			Fail: []ports.ProposeResult{{ProposedSQL: "selec 3"}},
 		},

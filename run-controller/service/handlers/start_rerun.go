@@ -11,17 +11,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// TriggerRerunHandler is the use case behind the TriggerRerun gRPC method: a
+// StartRerunHandler is the use case behind the StartRerun gRPC method: a
 // new run that replays a failed or cancelled source run on the source's own
 // release.
-type TriggerRerunHandler struct {
+type StartRerunHandler struct {
 	creation derivedRunCreation
 }
 
-// NewTriggerRerunHandler constructs the rerun use case; planner plans its
+// NewStartRerunHandler constructs the rerun use case; planner plans its
 // runs.
-func NewTriggerRerunHandler(planner runstart.Planner, logger *slog.Logger) *TriggerRerunHandler {
-	return &TriggerRerunHandler{creation: derivedRunCreation{
+func NewStartRerunHandler(planner runstart.Planner, logger *slog.Logger) *StartRerunHandler {
+	return &StartRerunHandler{creation: derivedRunCreation{
 		planner: planner,
 		logger:  logger,
 		kind:    run.KindRerun,
@@ -37,10 +37,10 @@ func NewTriggerRerunHandler(planner runstart.Planner, logger *slog.Logger) *Trig
 // returns the rerun's schedule name. A selection the planner refuses (a
 // source that names no release, a test source, nothing to execute again) is
 // returned as is, and the caller rolls back.
-func (h *TriggerRerunHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, tenantID string, sourceID uuid.UUID, initiator identity.Identity) (string, error) {
+func (h *StartRerunHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, tenantID string, sourceID uuid.UUID, initiator identity.Identity) (string, error) {
 	return h.creation.createInTransaction(ctx, u, runID, tenantID, sourceID, initiator, h.selectRerun)
 }
 
-func (h *TriggerRerunHandler) selectRerun(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
+func (h *StartRerunHandler) selectRerun(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
 	return h.creation.planner.Rerun(ctx, u, src)
 }

@@ -147,7 +147,7 @@ func sourceFromPayload(stage, reason string) (pkg_model.RemediationSource, bool)
 }
 
 // evidenceFromRejected translates a release.rejected:v1 payload into one
-// FailureEvidence per failed node, none of which names a remediation round: 0
+// FailureEvidence per failed node, none of which names a round: 0
 // is round 1, and a retry stamps its own round on the evidence. Nodes with
 // status != "failed" are skipped, and so is a node validation copied from its
 // production table: no change to the release's code fixes a copy of
@@ -232,7 +232,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 // dead-letters it. A rejection that yields no failed node to classify (a reason
 // the contract marks not healable, a shadow rejection, a stage this build does
 // not know, or only copies of production) is acknowledged with one DEBUG line
-// naming its release, stage and reason. round, when above 0, is the remediation
+// naming its release, stage and reason. round, when above 0, is the
 // round the evidence is stamped with. Any error from classification is
 // returned as is, so the consumer redelivers it.
 func classifyRejectionBody(ctx context.Context, deps handlers.Deps, logger *slog.Logger, stream, tenantID string, rejection []byte, round int) error {
@@ -246,7 +246,7 @@ func classifyRejectionBody(ctx context.Context, deps handlers.Deps, logger *slog
 	}
 	if round > 0 {
 		for i := range evs {
-			evs[i].RemediationRound = round
+			evs[i].Round = round
 		}
 	}
 	return handlers.ClassifyRejection(ctx, deps, tenantID, evs)

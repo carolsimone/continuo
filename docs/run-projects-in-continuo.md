@@ -110,7 +110,7 @@ in it, deliberately:
    A model or snapshot with an owner and no tag is a *dormant* node: a release
    checks it like any other model, so a broken one rejects the release, but no
    cron runs it. You run it by hand from its node page (or with
-   `continuo node trigger`). The one exception is a dormant view below a seed:
+   `continuo node run`). The one exception is a dormant view below a seed:
    a run whose load of the seed drops the seed's table rebuilds it (see
    [Seeds that change](#seeds-that-change)). Run a dormant node once before you
    release a change to any node below it: validation copies the production
@@ -121,7 +121,7 @@ in it, deliberately:
    its own once you give it a cron in the UI (**Add cron** on its card) or with
    `continuo schedule set-cron daily "0 1 * * *" Europe/Paris` (the
    [`continuo` command line](#the-continuo-command-line)), and until then
-   it runs only when triggered.
+   it runs only when someone starts it.
 
    A model, seed or snapshot of an installed dbt package (one your
    `packages.yml` names) is never a node of your project. dbt gives it the
@@ -790,7 +790,7 @@ the other. continuo derived the ordering from the SQL and the contract.
 
 ## 5. Run it
 
-Open the UI, pick the `daily` schedule, and press **Trigger run**.
+Open the UI, pick the `daily` schedule, and press **Start run**.
 
 ![The daily schedule run in the continuo UI: every node green across all four projects after a successful run](img/daily-run-view.png)
 
@@ -998,7 +998,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $API/live-release | jq '.live_release_
 
 Still `rel-marketing-v2`, the release chapter 6 promoted. Production never saw
 `finance:v2`. The `daily` schedule will keep running the last version that
-passed, indefinitely, and its next run, triggered or fired by its cron, will
+passed, indefinitely, and its next run, started by hand or fired by its cron, will
 produce correct data.
 
 💡 This is the part that is hard to get any other way. In a conventional setup this
@@ -1166,7 +1166,7 @@ fork.
 One green run proved the graph you bootstrapped. Close the loop by proving the
 graph as it stands now — new node included, broken release excluded.
 
-Open the UI, pick the `daily` schedule, and press **Trigger run** again.
+Open the UI, pick the `daily` schedule, and press **Start run** again.
 
 The run picks up `channel_roi` as just another node: downstream of finance's
 `ltv_per_user`, so it is dispatched after it, across the same four projects.

@@ -418,12 +418,12 @@ func TestRemediationRepository_ClaimNextSkipsAVerifyingTryAndListVerifyingReturn
 		startTry(t, env, verifying, remediation.TryVerifying, contractBase.Add(time.Hour))
 		cluster := remediation.Cluster{
 			RemediationID: verifying.ID, Try: 1, Cluster: 1, Kind: workflow.ClusterSingle,
-			TargetNodeID: "model.a", Members: []string{"model.a"}, Status: remediation.ClusterChecked, Round: 1,
+			TargetNodeID: "model.a", Members: []string{"model.a"}, Status: remediation.ClusterChecked, Draft: 1,
 			UpdatedAt: contractBase,
 		}
 		require.NoError(t, env.remediations.SaveCluster(ctx, cluster))
 		require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-			RemediationID: verifying.ID, Try: 1, Cluster: 0, Step: "release_check", Kind: "check", Round: 1,
+			RemediationID: verifying.ID, Try: 1, Cluster: 0, Step: "release_check", Kind: "check", Draft: 1,
 			Status: remediation.StepWaiting, WaitingOn: []string{"run-1"}, StartedAt: contractBase,
 		}))
 		drafting := mustCreate(t, env, newRemediation("rel-drafting", 1, contractBase.Add(time.Second)))
@@ -482,7 +482,7 @@ func TestRemediationRepository_SaveStepTwiceOnOneKeyUpdatesTheRow(t *testing.T) 
 		startTry(t, env, r, remediation.TryDrafting, contractBase.Add(time.Hour))
 
 		step := remediation.StepRun{
-			RemediationID: r.ID, Try: 1, Cluster: 1, Step: "draft", Kind: "prompt", Round: 1,
+			RemediationID: r.ID, Try: 1, Cluster: 1, Step: "draft", Kind: "prompt", Draft: 1,
 			Status: remediation.StepRunning, InputDigest: "d1", StartedAt: contractBase,
 		}
 		require.NoError(t, env.remediations.SaveStep(ctx, step))
@@ -522,7 +522,7 @@ func TestRemediationRepository_SaveStepTwiceOnOneKeyUpdatesTheRow(t *testing.T) 
 		sameInstant(t, finished, *got.FinishedAt, "finished_at")
 		require.Nil(t, snap.Steps[1].FinishedAt)
 
-		step.Round = 2
+		step.Draft = 2
 		require.NoError(t, env.remediations.SaveStep(ctx, step))
 		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
@@ -543,7 +543,7 @@ func TestRemediationRepository_GetReturnsTheCurrentTryWithOrderedChildren(t *tes
 		require.NoError(t, env.remediations.SaveTry(ctx, newTry(r.ID, 1, remediation.TryFailed, contractBase.Add(time.Hour))))
 		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 			RemediationID: r.ID, Try: 1, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "old",
-			Members: []string{"old"}, Status: remediation.ClusterFellBack, Round: 1,
+			Members: []string{"old"}, Status: remediation.ClusterFellBack, Draft: 1,
 		}))
 		second := newTry(r.ID, 2, remediation.TryDrafting, contractBase.Add(2*time.Hour))
 		second.FileRevisions = map[string]string{"a.sql": "r1", "b.sql": "r2"}
@@ -551,12 +551,12 @@ func TestRemediationRepository_GetReturnsTheCurrentTryWithOrderedChildren(t *tes
 		outcome := &fix.NodeOutcome{Status: fix.StatusSkipped, Reason: "no fix", Code: model.HandoverReasonDeclined}
 		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 			RemediationID: r.ID, Try: 2, Cluster: 2, Kind: workflow.ClusterSharedUpstream, TargetNodeID: "up",
-			Members: []string{"a", "b"}, TypeName: "dbt", Status: remediation.ClusterHandedOver, Round: 3, Outcome: outcome,
+			Members: []string{"a", "b"}, TypeName: "dbt", Status: remediation.ClusterHandedOver, Draft: 3, Outcome: outcome,
 			UpdatedAt: contractBase,
 		}))
 		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 			RemediationID: r.ID, Try: 2, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "x",
-			Members: []string{"x"}, Status: remediation.ClusterGathering, Round: 1,
+			Members: []string{"x"}, Status: remediation.ClusterGathering, Draft: 1,
 		}))
 		r.CurrentTry = 2
 		require.NoError(t, env.remediations.SaveRemediation(ctx, r))
@@ -573,7 +573,7 @@ func TestRemediationRepository_GetReturnsTheCurrentTryWithOrderedChildren(t *tes
 		require.Equal(t, 2, snap.Clusters[1].Cluster)
 		require.Equal(t, []string{"a", "b"}, snap.Clusters[1].Members)
 		require.Equal(t, "dbt", snap.Clusters[1].TypeName)
-		require.Equal(t, 3, snap.Clusters[1].Round)
+		require.Equal(t, 3, snap.Clusters[1].Draft)
 		require.Equal(t, workflow.ClusterSharedUpstream, snap.Clusters[1].Kind)
 		require.Equal(t, outcome, snap.Clusters[1].Outcome)
 		require.Nil(t, snap.Clusters[0].Outcome)
@@ -622,10 +622,10 @@ func TestRemediationRepository_ClusterAndStepKindsAreChecked(t *testing.T) {
 		startTry(t, env, r, remediation.TryDrafting, contractBase.Add(time.Hour))
 		require.Error(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 			RemediationID: r.ID, Try: 1, Cluster: 1, Kind: "bogus", TargetNodeID: "n", Members: []string{"n"},
-			Status: remediation.ClusterGathering, Round: 1,
+			Status: remediation.ClusterGathering, Draft: 1,
 		}))
 		require.Error(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-			RemediationID: r.ID, Try: 1, Step: "s", Kind: "bogus", Round: 1, Status: remediation.StepRunning, StartedAt: contractBase,
+			RemediationID: r.ID, Try: 1, Step: "s", Kind: "bogus", Draft: 1, Status: remediation.StepRunning, StartedAt: contractBase,
 		}))
 	})
 }
@@ -746,7 +746,7 @@ func TestRemediationRepository_ListFailingSteps(t *testing.T) {
 		ctx := context.Background()
 		step := func(r remediation.Remediation, try int, name string, status remediation.StepStatus, failures int) {
 			require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-				RemediationID: r.ID, Try: try, Cluster: 1, Step: name, Kind: "check", Round: 1,
+				RemediationID: r.ID, Try: try, Cluster: 1, Step: name, Kind: "check", Draft: 1,
 				Status: status, Failures: failures, LastError: "boom", StartedAt: contractBase,
 			}))
 		}
@@ -817,10 +817,10 @@ func TestRemediationRepository_DeleteFinishedOlderThanCascadesAndClearsFixes(t *
 			startTry(t, env, r, remediation.TryPassed, contractBase.Add(time.Hour))
 			require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 				RemediationID: r.ID, Try: 1, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "n",
-				Members: []string{"n"}, Status: remediation.ClusterChecked, Round: 1,
+				Members: []string{"n"}, Status: remediation.ClusterChecked, Draft: 1,
 			}))
 			require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-				RemediationID: r.ID, Try: 1, Cluster: 1, Step: "draft", Kind: "prompt", Round: 1,
+				RemediationID: r.ID, Try: 1, Cluster: 1, Step: "draft", Kind: "prompt", Draft: 1,
 				Status: remediation.StepDone, StartedAt: contractBase,
 			}))
 			r.CurrentTry = 1
@@ -1060,7 +1060,7 @@ func TestRemediationRepository_SaveStepStoresJSONHoldingANUL(t *testing.T) {
 	output, err := json.Marshal(map[string]string{"source": "select 1\x00", "path": `C:\u0000`})
 	require.NoError(t, err)
 	step := remediation.StepRun{
-		RemediationID: r.ID, Try: 1, Cluster: 1, Step: "failing_node_source", Kind: "context", Round: 1,
+		RemediationID: r.ID, Try: 1, Cluster: 1, Step: "failing_node_source", Kind: "context", Draft: 1,
 		Status: remediation.StepDone, Output: output, StartedAt: contractBase,
 		Findings: []remediation.Finding{{Code: "c1", Message: "bad\x00byte"}},
 	}
@@ -1079,7 +1079,7 @@ func TestRemediationRepository_SaveStepStoresJSONHoldingANUL(t *testing.T) {
 
 // savedTry stores try n of r, with one cluster at node, and makes it r's
 // current try. Its journal holds, in this order, a done pre-flight row of the
-// cluster, a done prompt row of it, a failed pre-flight row of its next round,
+// cluster, a done prompt row of it, a failed pre-flight row of its next draft,
 // a done cross-cluster check row and a done output row.
 func savedTry(t *testing.T, env contractEnv, r *remediation.Remediation, n int, node string) {
 	t.Helper()
@@ -1087,11 +1087,11 @@ func savedTry(t *testing.T, env contractEnv, r *remediation.Remediation, n int, 
 	require.NoError(t, env.remediations.SaveTry(ctx, newTry(r.ID, n, remediation.TryFailed, contractBase.Add(time.Hour))))
 	require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 		RemediationID: r.ID, Try: n, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: node,
-		Members: []string{node}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 1,
+		Members: []string{node}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Draft: 1,
 	}))
-	row := func(cluster int, step, kind string, round int, status remediation.StepStatus, output string) remediation.StepRun {
+	row := func(cluster int, step, kind string, draft int, status remediation.StepStatus, output string) remediation.StepRun {
 		return remediation.StepRun{
-			RemediationID: r.ID, Try: n, Cluster: cluster, Step: step, Kind: kind, Round: round,
+			RemediationID: r.ID, Try: n, Cluster: cluster, Step: step, Kind: kind, Draft: draft,
 			Status: status, Output: []byte(output), StartedAt: contractBase,
 		}
 	}
@@ -1131,7 +1131,7 @@ func requireTriesOfRelease(t *testing.T, env contractEnv) {
 		for _, st := range s.Steps {
 			require.Equal(t, s.Try.Try, st.Try, "each try has its own steps only")
 			require.Equal(t, s.Remediation.ID, st.RemediationID)
-			steps = append(steps, fmt.Sprintf("%d/%s/%d", st.Cluster, st.Step, st.Round))
+			steps = append(steps, fmt.Sprintf("%d/%s/%d", st.Cluster, st.Step, st.Draft))
 		}
 		got = append(got, seen{s.Remediation.Round, s.Try.Try, s.Clusters[0].TargetNodeID, steps})
 	}
@@ -1223,10 +1223,10 @@ func TestRemediationRepository_LockByReleaseReadsAndLocksTheRemediationOfTheKey(
 		startTry(t, env, r, remediation.TryChecking, contractBase.Add(time.Hour))
 		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 			RemediationID: r.ID, Try: 1, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a",
-			Members: []string{"model.a"}, Status: remediation.ClusterChecked, Round: 1,
+			Members: []string{"model.a"}, Status: remediation.ClusterChecked, Draft: 1,
 		}))
 		require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-			RemediationID: r.ID, Try: 1, Cluster: 0, Step: "release_check", Kind: "check", Round: 1,
+			RemediationID: r.ID, Try: 1, Cluster: 0, Step: "release_check", Kind: "check", Draft: 1,
 			Status: remediation.StepFailed, Failures: 5, LastError: "down", StartedAt: contractBase,
 		}))
 
@@ -1330,12 +1330,12 @@ func TestRemediationRepository_ListContextOfEarlierTriesReadsTheContextRowsOfThe
 		cluster := func(rem remediation.Remediation, try, n int, members ...string) {
 			require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 				RemediationID: rem.ID, Try: try, Cluster: n, Kind: workflow.ClusterSingle, TargetNodeID: members[0],
-				Members: members, TypeName: "python-validation", Status: remediation.ClusterHandedOver, Round: 1,
+				Members: members, TypeName: "python-validation", Status: remediation.ClusterHandedOver, Draft: 1,
 			}))
 		}
 		row := func(rem remediation.Remediation, try, cluster int, step, kind string, status remediation.StepStatus) {
 			require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-				RemediationID: rem.ID, Try: try, Cluster: cluster, Step: step, Kind: kind, Round: 1,
+				RemediationID: rem.ID, Try: try, Cluster: cluster, Step: step, Kind: kind, Draft: 1,
 				Status: status, Output: []byte(`{"evidence":{}}`), StartedAt: contractBase,
 			}))
 		}

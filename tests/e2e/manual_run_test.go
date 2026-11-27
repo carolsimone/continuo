@@ -14,12 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTriggerSchedule_SeedRunAndRerun verifies the full trigger flow from the
+// TestManualRun_SeedRunAndRerun verifies the full manual-run flow from the
 // ui HTTP endpoint (the exact path the UI "Run" button uses) through
-// to schedule completion. It triggers the 3-node seed schedule via
-// POST /api/schedules/seed/trigger, waits for all tasks to succeed, then
-// re-triggers and verifies the second run also completes.
-func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
+// to schedule completion. It starts a manual run of the 3-node seed schedule via
+// POST /api/schedules/seed/manual-run, waits for all tasks to succeed, then
+// starts it again and verifies the second run also completes.
+func TestManualRun_SeedRunAndRerun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -46,8 +46,8 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// === Run 1 ===
-	t.Log("=== Run 1: Triggering seed schedule via ui HTTP ===")
-	scheduleID1 := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
+	t.Log("=== Run 1: Starting a manual run of the seed schedule via ui HTTP ===")
+	scheduleID1 := startManualRunHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 1 created: run_id=%s", scheduleID1)
 
 	id1, err := uuid.Parse(scheduleID1)
@@ -57,9 +57,9 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, id1)
 	t.Log("✅ Run 1 completed successfully")
 
-	// === Run 2: Re-trigger ===
-	t.Log("=== Run 2: Re-triggering seed schedule ===")
-	scheduleID2 := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
+	// === Run 2: Start again ===
+	t.Log("=== Run 2: Starting the seed schedule again ===")
+	scheduleID2 := startManualRunHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 2 created: run_id=%s", scheduleID2)
 
 	require.NotEqual(t, scheduleID1, scheduleID2, "Run 2 must have a different run_id")
@@ -74,33 +74,33 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	t.Log("🎉 StartRun run-and-rerun test passed")
 }
 
-// triggerScheduleHTTP triggers a schedule via the ui HTTP endpoint
-// (POST /api/schedules/:name/trigger {"request_id": id}) and returns the
+// startManualRunHTTP starts a manual run of a schedule via the ui HTTP endpoint
+// (POST /api/schedules/:name/manual-run {"request_id": id}) and returns the
 // run_id.
-func triggerScheduleHTTP(t *testing.T, base, scheduleName string) string {
+func startManualRunHTTP(t *testing.T, base, scheduleName string) string {
 	t.Helper()
 
 	body, err := json.Marshal(map[string]string{"request_id": uuid.NewString()})
 	require.NoError(t, err)
 
 	resp, err := http.Post(
-		fmt.Sprintf("%s/api/schedules/%s/trigger", base, scheduleName),
+		fmt.Sprintf("%s/api/schedules/%s/manual-run", base, scheduleName),
 		"application/json", bytes.NewReader(body),
 	)
-	require.NoError(t, err, "POST /api/schedules/%s/trigger: request failed", scheduleName)
+	require.NoError(t, err, "POST /api/schedules/%s/manual-run: request failed", scheduleName)
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
 	require.Equal(t, http.StatusOK, resp.StatusCode,
-		"POST /api/schedules/%s/trigger: expected 200, got %d: %s", scheduleName, resp.StatusCode, string(raw))
+		"POST /api/schedules/%s/manual-run: expected 200, got %d: %s", scheduleName, resp.StatusCode, string(raw))
 
 	var result map[string]interface{}
 	require.NoError(t, json.Unmarshal(raw, &result))
 
 	runID, ok := result["run_id"].(string)
-	require.True(t, ok && runID != "", "run_id missing from trigger response")
+	require.True(t, ok && runID != "", "run_id missing from manual-run response")
 
 	return runID
 }

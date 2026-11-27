@@ -290,7 +290,7 @@ func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try
 		Members:       []string{nodeID},
 		TypeName:      s.typeName,
 		Status:        remediation.ClusterHandedOver,
-		Round:         1,
+		Draft:         1,
 		Outcome:       &s.outcome,
 		UpdatedAt:     r.clock.Now(),
 	}
@@ -316,7 +316,7 @@ func (r *Runner) giveUp(ctx context.Context, u uow.UnitOfWork, run tryRun, tried
 // classifier marked unfixable keeps the classifier's outcome. Every other node
 // is judged by the outcome the remediation's last try recorded for it
 // (lastTry): one handed over with a settled code (settledCode), or because its
-// pre-flight rounds were spent, keeps that outcome; a drafted member of a try a
+// drafts were spent, keeps that outcome; a drafted member of a try a
 // check refused is escalated with unverifiable_edits; and every other node,
 // one a failed release check judged among them, is escalated with tries_spent.
 // Both escalated codes carry the message triedMessage builds.
@@ -334,7 +334,7 @@ func escalatedOutcomes(ctx context.Context, u uow.UnitOfWork, run tryRun, tried 
 		}
 		o := last[n.NodeID]
 		switch {
-		case settledCode(o.Code) || o.Code == pkg_model.HandoverReasonPreflightRoundsSpent:
+		case settledCode(o.Code) || o.Code == pkg_model.HandoverReasonDraftsSpent:
 			out[n.NodeID] = o
 		case o.Code == pkg_model.HandoverReasonUnverifiableEdits:
 			out[n.NodeID] = fix.NodeOutcome{Status: fix.StatusEscalated, Reason: message, Code: pkg_model.HandoverReasonUnverifiableEdits}
@@ -469,7 +469,7 @@ func (r *Runner) recordTry(ctx context.Context, u uow.UnitOfWork, run tryRun, tr
 	p.Source = t.Source
 	p.ReleaseID = t.ReleaseID
 	p.RemediationID = run.snap.Remediation.ID.String()
-	p.RemediationRound = t.Round
+	p.Round = t.Round
 	p.Try = try
 	p.CreatedAt = r.clock.Now()
 	if len(p.ResolvedNodeIDs) == 0 {
@@ -703,16 +703,16 @@ func generatingFix(id uuid.UUID, t remediation.Trigger, try int, now time.Time, 
 		}
 	}
 	p := fix.Fix{
-		Source:           t.Source,
-		ReleaseID:        t.ReleaseID,
-		RemediationID:    id.String(),
-		RemediationRound: t.Round,
-		ResolvedNodeIDs:  nodeIDs,
-		NodeOutcomes:     fix.CleanedOutcomes(outcomes),
-		Try:              try,
-		Status:           fix.StatusGenerating,
-		Projects:         t.Projects(),
-		CreatedAt:        now,
+		Source:          t.Source,
+		ReleaseID:       t.ReleaseID,
+		RemediationID:   id.String(),
+		Round:           t.Round,
+		ResolvedNodeIDs: nodeIDs,
+		NodeOutcomes:    fix.CleanedOutcomes(outcomes),
+		Try:             try,
+		Status:          fix.StatusGenerating,
+		Projects:        t.Projects(),
+		CreatedAt:       now,
 	}
 	p.NormalizeRepresentativeViews()
 	p.ErrorSignature = signatureFor(t, p.NodeID)
@@ -735,7 +735,7 @@ func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, fl
 		TargetNodeID:  target,
 		Members:       append([]string(nil), members...),
 		Status:        remediation.ClusterGathering,
-		Round:         1,
+		Draft:         1,
 		UpdatedAt:     r.clock.Now(),
 	}
 	var nodeType string

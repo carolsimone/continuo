@@ -460,7 +460,7 @@ func TestList_APausedScheduleHasNoNextFire(t *testing.T) {
 }
 
 // A schedule the live release has and that has no cron is listed with its
-// models and no cron: it runs only when triggered.
+// models and no cron: it runs only when someone starts it.
 func TestList_AManualScheduleHasNoCron(t *testing.T) {
 	fake := &fakeRunControllerList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{{ScheduleName: "e2e-schedule", ModelCount: 5}}}}
 

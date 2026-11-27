@@ -41,13 +41,13 @@ type fakeRunClient struct {
 	cancelRun    *runv1.Run
 	cancelErr    error
 	cancelCalls  []cancelCall
-	rerunResp    *runv1.TriggerRerunResponse
+	rerunResp    *runv1.StartRerunResponse
 	rerunErr     error
 	rerunCalls   []rerunCall
 	preview      *runv1.PreviewRebaseResponse
 	previewErr   error
 	previewCalls []previewCall
-	rebaseResp   *runv1.TriggerRebaseResponse
+	rebaseResp   *runv1.StartRebaseResponse
 	rebaseErr    error
 	rebaseCalls  []rebaseCall
 }
@@ -76,7 +76,7 @@ func (f *fakeRunClient) CancelRun(ctx context.Context, runID, reason, by string)
 	return &runv1.RunResponse{Run: f.cancelRun}, nil
 }
 
-func (f *fakeRunClient) TriggerRerun(ctx context.Context, requestID, runID, actor string) (*runv1.TriggerRerunResponse, error) {
+func (f *fakeRunClient) StartRerun(ctx context.Context, requestID, runID, actor string) (*runv1.StartRerunResponse, error) {
 	_, has := ctx.Deadline()
 	f.deadlineCalls = append(f.deadlineCalls, has)
 	f.rerunCalls = append(f.rerunCalls, rerunCall{requestID, runID, actor})
@@ -90,7 +90,7 @@ func (f *fakeRunClient) PreviewRebase(ctx context.Context, runID string, changed
 	return f.preview, f.previewErr
 }
 
-func (f *fakeRunClient) TriggerRebase(ctx context.Context, requestID, runID, expectedReleaseID string, changedUpstream bool, actor string) (*runv1.TriggerRebaseResponse, error) {
+func (f *fakeRunClient) StartRebase(ctx context.Context, requestID, runID, expectedReleaseID string, changedUpstream bool, actor string) (*runv1.StartRebaseResponse, error) {
 	_, has := ctx.Deadline()
 	f.deadlineCalls = append(f.deadlineCalls, has)
 	f.rebaseCalls = append(f.rebaseCalls, rebaseCall{requestID, runID, expectedReleaseID, actor, changedUpstream})

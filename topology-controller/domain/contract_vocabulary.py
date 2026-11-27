@@ -22,7 +22,7 @@ PARSE_FAILURE_KIND_HEALABLE = frozenset({ParseFailureKind.INVALID_SQL, ParseFail
 
 
 class RejectReason(StrEnum):
-    """Why release-controller ended a release check, a candidate release's or a fix's, short of promotion. Travels as `reason` on release.rejected:v1 and as the check's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a remediation round for nothing."""
+    """Why release-controller ended a release check, a candidate release's or a fix's, short of promotion. Travels as `reason` on release.rejected:v1 and as the check's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a round for nothing."""
     COMPILE_FAILED = "compile_failed"
     PARSE_REHEARSAL_FAILED = "parse_rehearsal_failed"
     ARTIFACT_UPLOAD_FAILED = "artifact_upload_failed"
@@ -55,7 +55,7 @@ class ValidationOp(StrEnum):
 class HandoverReason(StrEnum):
     """Why a failing node of a rejected release is left to a human instead of a fix. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it."""
     TRIES_SPENT = "tries_spent"
-    PREFLIGHT_ROUNDS_SPENT = "preflight_rounds_spent"
+    DRAFTS_SPENT = "drafts_spent"
     DECLINED = "declined"
     NO_TYPE = "no_type"
     CLASSIFIER_INFRA = "classifier_infra"

@@ -39,7 +39,7 @@ type remediationRow struct {
 	ID               uuid.UUID      `db:"id"`
 	TenantID         string         `db:"tenant_id"`
 	ReleaseID        string         `db:"release_id"`
-	Round            int            `db:"remediation_round"`
+	Round            int            `db:"round"`
 	Flow             string         `db:"flow"`
 	Status           string         `db:"status"`
 	TriggerPayload   []byte         `db:"trigger_payload"`
@@ -55,7 +55,7 @@ type remediationRow struct {
 	UpdatedAt        time.Time      `db:"updated_at"`
 }
 
-const remediationColumns = `id, tenant_id, release_id, remediation_round, flow, status, trigger_payload,
+const remediationColumns = `id, tenant_id, release_id, round, flow, status, trigger_payload,
 	trigger_message_id, trigger_fields, current_try, lease_owner, lease_until, failure, failures, last_error,
 	created_at, updated_at`
 
@@ -130,12 +130,12 @@ type clusterRow struct {
 	Members       pq.StringArray `db:"members"`
 	TypeName      string         `db:"type_name"`
 	Status        string         `db:"status"`
-	Round         int            `db:"round"`
+	Draft         int            `db:"draft"`
 	Outcome       []byte         `db:"outcome"`
 	UpdatedAt     time.Time      `db:"updated_at"`
 }
 
-const clusterColumns = `remediation_id, try, cluster, kind, target_node_id, members, type_name, status, round, outcome, updated_at`
+const clusterColumns = `remediation_id, try, cluster, kind, target_node_id, members, type_name, status, draft, outcome, updated_at`
 
 func (row clusterRow) toDomain() (remediation.Cluster, error) {
 	var outcome *fix.NodeOutcome
@@ -159,7 +159,7 @@ func (row clusterRow) toDomain() (remediation.Cluster, error) {
 		Members:       members,
 		TypeName:      row.TypeName,
 		Status:        remediation.ClusterStatus(row.Status),
-		Round:         row.Round,
+		Draft:         row.Draft,
 		Outcome:       outcome,
 		UpdatedAt:     row.UpdatedAt,
 	}, nil
@@ -181,7 +181,7 @@ type stepRow struct {
 	Cluster       int        `db:"cluster"`
 	Step          string     `db:"step"`
 	Kind          string     `db:"kind"`
-	Round         int        `db:"round"`
+	Draft         int        `db:"draft"`
 	Status        string     `db:"status"`
 	InputDigest   string     `db:"input_digest"`
 	Output        []byte     `db:"output"`
@@ -199,7 +199,7 @@ type stepRow struct {
 	FinishedAt    *time.Time `db:"finished_at"`
 }
 
-const stepColumns = `id, remediation_id, try, cluster, step, kind, round, status, input_digest, output, findings,
+const stepColumns = `id, remediation_id, try, cluster, step, kind, draft, status, input_digest, output, findings,
 	waiting_on, model, prompt_version, tokens_in, tokens_out, cache_hit, file_revision, failures, last_error,
 	started_at, finished_at`
 
@@ -228,7 +228,7 @@ func (row stepRow) toDomain() (remediation.StepRun, error) {
 		Cluster:       row.Cluster,
 		Step:          row.Step,
 		Kind:          row.Kind,
-		Round:         row.Round,
+		Draft:         row.Draft,
 		Status:        remediation.StepStatus(row.Status),
 		InputDigest:   row.InputDigest,
 		Output:        row.Output,
@@ -301,12 +301,12 @@ func (r *RemediationRepository) Create(ctx context.Context, rem remediation.Reme
 	}
 	res, err := r.q.ExecContext(ctx, `
 		INSERT INTO remediation
-			(id, tenant_id, release_id, remediation_round, flow, status, trigger_payload,
+			(id, tenant_id, release_id, round, flow, status, trigger_payload,
 			 trigger_message_id, trigger_fields, current_try, lease_owner, lease_until, failure,
 			 failures, last_error, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
 		        COALESCE($16::timestamptz, now()), COALESCE($17::timestamptz, now()))
-		ON CONFLICT (tenant_id, release_id, remediation_round) DO NOTHING`,
+		ON CONFLICT (tenant_id, release_id, round) DO NOTHING`,
 		rem.ID, rem.TenantID, rem.ReleaseID, rem.Round, rem.Flow, rem.Status, jsonOr(rem.TriggerPayload, "{}"),
 		rem.TriggerMessageID, jsonOr(fields, "{}"), rem.CurrentTry, leaseOwner, leaseUntil, rem.Failure,
 		rem.Failures, rem.LastError, timeArg(rem.CreatedAt), timeArg(rem.UpdatedAt))
@@ -324,7 +324,7 @@ func (r *RemediationRepository) Create(ctx context.Context, rem remediation.Reme
 func (r *RemediationRepository) FindByRelease(ctx context.Context, tenantID, releaseID string, round int) (remediation.Remediation, bool, error) {
 	var row remediationRow
 	err := r.q.GetContext(ctx, &row, `SELECT `+remediationColumns+`
-		FROM remediation WHERE tenant_id=$1 AND release_id=$2 AND remediation_round=$3`,
+		FROM remediation WHERE tenant_id=$1 AND release_id=$2 AND round=$3`,
 		tenantID, releaseID, round)
 	if errors.Is(err, sql.ErrNoRows) {
 		return remediation.Remediation{}, false, nil
@@ -346,7 +346,7 @@ func (r *RemediationRepository) FindByRelease(ctx context.Context, tenantID, rel
 func (r *RemediationRepository) LockByRelease(ctx context.Context, tenantID, releaseID string, round int) (remediation.Snapshot, bool, error) {
 	var id uuid.UUID
 	err := r.q.GetContext(ctx, &id, `SELECT id FROM remediation
-		WHERE tenant_id=$1 AND release_id=$2 AND remediation_round=$3 FOR UPDATE`,
+		WHERE tenant_id=$1 AND release_id=$2 AND round=$3 FOR UPDATE`,
 		tenantID, releaseID, round)
 	if errors.Is(err, sql.ErrNoRows) {
 		return remediation.Snapshot{}, false, nil
@@ -366,9 +366,9 @@ func (r *RemediationRepository) LockByRelease(ctx context.Context, tenantID, rel
 func (r *RemediationRepository) HasLaterRound(ctx context.Context, tenantID, releaseID string, round int) (bool, error) {
 	var later bool
 	if err := r.q.GetContext(ctx, &later, `SELECT EXISTS (SELECT 1 FROM remediation
-		WHERE tenant_id=$1 AND release_id=$2 AND remediation_round > $3)`,
+		WHERE tenant_id=$1 AND release_id=$2 AND round > $3)`,
 		tenantID, releaseID, round); err != nil {
-		return false, fmt.Errorf("look for a later remediation round: %w", err)
+		return false, fmt.Errorf("look for a later round: %w", err)
 	}
 	return later, nil
 }
@@ -535,7 +535,7 @@ const triesStepsStatement = `SELECT ` + stepColumns + `
 func (r *RemediationRepository) ListTriesOfRelease(ctx context.Context, tenantID, releaseID string) ([]remediation.Snapshot, error) {
 	var rems []remediationRow
 	if err := r.q.SelectContext(ctx, &rems, `SELECT `+remediationColumns+`
-		FROM remediation WHERE tenant_id=$1 AND release_id=$2 ORDER BY remediation_round`, tenantID, releaseID); err != nil {
+		FROM remediation WHERE tenant_id=$1 AND release_id=$2 ORDER BY round`, tenantID, releaseID); err != nil {
 		return nil, fmt.Errorf("list the remediations of release %s: %w", releaseID, err)
 	}
 	if len(rems) == 0 {
@@ -780,7 +780,7 @@ func (r *RemediationRepository) SaveCluster(ctx context.Context, c remediation.C
 	}
 	if _, err := r.q.ExecContext(ctx, `
 		INSERT INTO remediation_cluster
-			(remediation_id, try, cluster, kind, target_node_id, members, type_name, status, round, outcome, updated_at)
+			(remediation_id, try, cluster, kind, target_node_id, members, type_name, status, draft, outcome, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE($11::timestamptz, now()))
 		ON CONFLICT (remediation_id, try, cluster) DO UPDATE SET
 			kind           = EXCLUDED.kind,
@@ -788,11 +788,11 @@ func (r *RemediationRepository) SaveCluster(ctx context.Context, c remediation.C
 			members        = EXCLUDED.members,
 			type_name      = EXCLUDED.type_name,
 			status         = EXCLUDED.status,
-			round          = EXCLUDED.round,
+			draft          = EXCLUDED.draft,
 			outcome        = EXCLUDED.outcome,
 			updated_at     = EXCLUDED.updated_at`,
 		c.RemediationID, c.Try, c.Cluster, c.Kind, c.TargetNodeID, textArray(c.Members), c.TypeName,
-		c.Status, c.Round, outcome, timeArg(c.UpdatedAt)); err != nil {
+		c.Status, c.Draft, outcome, timeArg(c.UpdatedAt)); err != nil {
 		return fmt.Errorf("save remediation cluster: %w", err)
 	}
 	return nil
@@ -830,12 +830,12 @@ func (r *RemediationRepository) SaveStep(ctx context.Context, s remediation.Step
 	}
 	if _, err := r.q.ExecContext(ctx, `
 		INSERT INTO remediation_step
-			(remediation_id, try, cluster, step, kind, round, status, input_digest, output, findings,
+			(remediation_id, try, cluster, step, kind, draft, status, input_digest, output, findings,
 			 waiting_on, model, prompt_version, tokens_in, tokens_out, cache_hit, file_revision,
 			 failures, last_error, started_at, finished_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
 		        COALESCE($20::timestamptz, now()), $21)
-		ON CONFLICT (remediation_id, try, cluster, step, round) DO UPDATE SET
+		ON CONFLICT (remediation_id, try, cluster, step, draft) DO UPDATE SET
 			kind           = EXCLUDED.kind,
 			status         = EXCLUDED.status,
 			input_digest   = EXCLUDED.input_digest,
@@ -852,7 +852,7 @@ func (r *RemediationRepository) SaveStep(ctx context.Context, s remediation.Step
 			last_error     = EXCLUDED.last_error,
 			started_at     = EXCLUDED.started_at,
 			finished_at    = EXCLUDED.finished_at`,
-		s.RemediationID, s.Try, s.Cluster, s.Step, s.Kind, s.Round, s.Status, s.InputDigest, output, findings,
+		s.RemediationID, s.Try, s.Cluster, s.Step, s.Kind, s.Draft, s.Status, s.InputDigest, output, findings,
 		waitingOn, s.Model, s.PromptVersion, s.TokensIn, s.TokensOut, s.CacheHit, s.FileRevision,
 		s.Failures, s.LastError, timeArg(s.StartedAt), finishedAt); err != nil {
 		return fmt.Errorf("save remediation step: %w", err)

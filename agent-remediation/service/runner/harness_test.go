@@ -466,7 +466,7 @@ func testFiles(tries int) workflow.Set {
 			Name:      name,
 			Match:     m,
 			Context:   refs(context...),
-			Agent:     workflow.Agent{Prompt: workflow.StepRef{Name: workflow.StepName(promptStep)}, Tools: []workflow.StepRef{}, Rounds: 1},
+			Agent:     workflow.Agent{Prompt: workflow.StepRef{Name: workflow.StepName(promptStep)}, Tools: []workflow.StepRef{}, Drafts: 1},
 			Preflight: refs(preflight...),
 			Revision:  "rev-" + name,
 			File:      "types/" + name + ".yaml",
@@ -586,11 +586,11 @@ func withTries(n int) option {
 	return func(h *harness) { h.files = testFiles(n) }
 }
 
-// withRounds gives every type of the harness rounds pre-flight rounds.
-func withRounds(rounds int) option {
+// withDrafts lets every type of the harness take drafts drafts in one try.
+func withDrafts(drafts int) option {
 	return func(h *harness) {
 		for name, typ := range h.files.Types {
-			typ.Agent.Rounds = rounds
+			typ.Agent.Drafts = drafts
 			h.files.Types[name] = typ
 		}
 	}
@@ -800,7 +800,7 @@ func payloadOf(t *testing.T, trig remediation.Trigger) []byte {
 		nodes = append(nodes, node)
 	}
 	raw, err := json.Marshal(map[string]any{
-		"source": trig.Source, "release_id": trig.ReleaseID, "remediation_round": trig.Round,
+		"source": trig.Source, "release_id": trig.ReleaseID, "round": trig.Round,
 		"repo": trig.Repo, "commit_sha": trig.CommitSHA, "code_bundle_uri": trig.CodeBundleURI,
 		"nodes": nodes,
 	})
@@ -853,7 +853,7 @@ func (h *harness) tryWithNoRemediationInRound(round, try int, status fix.Status)
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(h.t, u.Begin(ctx))
 	require.NoError(h.t, u.FixRepo().Upsert(ctx, fix.Fix{
-		Source: "compile", ReleaseID: releaseID, RemediationRound: round, Try: try, Status: status,
+		Source: "compile", ReleaseID: releaseID, Round: round, Try: try, Status: status,
 		ResolvedNodeIDs: []string{"svc-a"}, CreatedAt: t0,
 	}))
 	require.NoError(h.t, u.Commit())
@@ -932,7 +932,7 @@ func (h *harness) fixRow(n int) memory.StoredFix {
 func (h *harness) fixRowIn(round, n int) memory.StoredFix {
 	h.t.Helper()
 	for _, p := range h.fixes() {
-		if p.Fix.RemediationRound == round && p.Fix.Try == n {
+		if p.Fix.Round == round && p.Fix.Try == n {
 			return p
 		}
 	}

@@ -276,7 +276,7 @@ func (l *loader) loadType(file, revision string, root *yaml.Node) {
 		Context: l.refs(file, f.Context),
 		Agent: workflow.Agent{
 			Tools:  l.refs(file, f.Agent.Tools),
-			Rounds: f.Agent.Rounds,
+			Drafts: f.Agent.Drafts,
 			Pos:    at(keyLine(root, "agent", pos.Line)),
 		},
 		Preflight: l.refs(file, f.Preflight),

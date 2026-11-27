@@ -31,7 +31,7 @@ type scriptedRunServer struct {
 	startIDs      []string
 	listCalls     int
 	gotUserID     string
-	gotSingleNode *runv1.TriggerSingleNodeRunRequest
+	gotSingleNode *runv1.StartSingleNodeRunRequest
 	gotCancel     *runv1.CancelActiveRunRequest
 	gotAttempts   *runv1.ListRunAttemptsRequest
 	gotRuns       *runv1.ListRunsRequest
@@ -42,9 +42,9 @@ type scriptedRunServer struct {
 	cancelRunCalls int
 	gotCancelRun   *runv1.CancelRunRequest
 	rerunCalls     int
-	gotRerun       *runv1.TriggerRerunRequest
+	gotRerun       *runv1.StartRerunRequest
 	rebaseCalls    int
-	gotRebase      *runv1.TriggerRebaseRequest
+	gotRebase      *runv1.StartRebaseRequest
 	previewCalls   int
 	gotPreview     *runv1.PreviewRebaseRequest
 	gotRunUserID   string
@@ -78,7 +78,7 @@ func (s *scriptedRunServer) CancelRun(_ context.Context, req *runv1.CancelRunReq
 	return &runv1.RunResponse{Run: &runv1.Run{RunId: req.GetRunId(), Status: "cancelling"}}, nil
 }
 
-func (s *scriptedRunServer) TriggerRerun(ctx context.Context, req *runv1.TriggerRerunRequest) (*runv1.TriggerRerunResponse, error) {
+func (s *scriptedRunServer) StartRerun(ctx context.Context, req *runv1.StartRerunRequest) (*runv1.StartRerunResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rerunCalls++
@@ -87,10 +87,10 @@ func (s *scriptedRunServer) TriggerRerun(ctx context.Context, req *runv1.Trigger
 	if err := s.scriptedErr(s.rerunCalls); err != nil {
 		return nil, err
 	}
-	return &runv1.TriggerRerunResponse{RunId: "r4", ScheduleName: "daily"}, nil
+	return &runv1.StartRerunResponse{RunId: "r4", ScheduleName: "daily"}, nil
 }
 
-func (s *scriptedRunServer) TriggerRebase(ctx context.Context, req *runv1.TriggerRebaseRequest) (*runv1.TriggerRebaseResponse, error) {
+func (s *scriptedRunServer) StartRebase(ctx context.Context, req *runv1.StartRebaseRequest) (*runv1.StartRebaseResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rebaseCalls++
@@ -99,7 +99,7 @@ func (s *scriptedRunServer) TriggerRebase(ctx context.Context, req *runv1.Trigge
 	if err := s.scriptedErr(s.rebaseCalls); err != nil {
 		return nil, err
 	}
-	return &runv1.TriggerRebaseResponse{RunId: "r5", ScheduleName: "daily"}, nil
+	return &runv1.StartRebaseResponse{RunId: "r5", ScheduleName: "daily"}, nil
 }
 
 func (s *scriptedRunServer) PreviewRebase(_ context.Context, req *runv1.PreviewRebaseRequest) (*runv1.PreviewRebaseResponse, error) {
@@ -178,11 +178,11 @@ func (s *scriptedRunServer) ListSchedules(context.Context, *runv1.ListSchedulesR
 	return &runv1.ListSchedulesResponse{}, nil
 }
 
-func (s *scriptedRunServer) TriggerSingleNodeRun(_ context.Context, req *runv1.TriggerSingleNodeRunRequest) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (s *scriptedRunServer) StartSingleNodeRun(_ context.Context, req *runv1.StartSingleNodeRunRequest) (*runv1.StartSingleNodeRunResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gotSingleNode = req
-	return &runv1.TriggerSingleNodeRunResponse{RunId: "r2"}, nil
+	return &runv1.StartSingleNodeRunResponse{RunId: "r2"}, nil
 }
 
 func (s *scriptedRunServer) CancelActiveRun(_ context.Context, req *runv1.CancelActiveRunRequest) (*runv1.CancelActiveRunResponse, error) {
@@ -222,7 +222,7 @@ func TestRunClient_RetriesACommandOnUnavailableWithTheSameRequestID(t *testing.T
 	srv := &scriptedRunServer{errs: []error{unavailable, unavailable}}
 	c := dialScripted(t, srv)
 
-	resp, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	resp, err := c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.NoError(t, err, "the third try succeeds")
 	assert.Equal(t, "r1", resp.GetRunId())
 	assert.Equal(t, 3, srv.startCalls, "a command is tried up to three times")
@@ -235,7 +235,7 @@ func TestRunClient_RetriesACommandOnAbortedWithTheSameRequestID(t *testing.T) {
 	srv := &scriptedRunServer{errs: []error{aborted, aborted}}
 	c := dialScripted(t, srv)
 
-	resp, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	resp, err := c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.NoError(t, err, "the third try succeeds")
 	assert.Equal(t, "r1", resp.GetRunId())
 	assert.Equal(t, 3, srv.startCalls, "a command refused ABORTED is tried up to three times")
@@ -248,7 +248,7 @@ func TestRunClient_GivesUpAfterThreeTriesOnAborted(t *testing.T) {
 	srv := &scriptedRunServer{errs: []error{aborted, aborted, aborted, aborted}}
 	c := dialScripted(t, srv)
 
-	_, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	_, err := c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.Error(t, err)
 	assert.Equal(t, codes.Aborted, status.Code(err))
 	assert.Equal(t, 3, srv.startCalls)
@@ -267,7 +267,7 @@ func TestRunClient_DoesNotRetryAReusedRequestID(t *testing.T) {
 	srv := &scriptedRunServer{errs: []error{status.Error(codes.AlreadyExists, "request_id reused with different parameters")}}
 	c := dialScripted(t, srv)
 
-	_, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	_, err := c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.Error(t, err)
 	assert.Equal(t, 1, srv.startCalls, "the same id with other parameters cannot succeed on a retry")
 }
@@ -277,7 +277,7 @@ func TestRunClient_GivesUpAfterThreeTriesOnUnavailable(t *testing.T) {
 	srv := &scriptedRunServer{errs: []error{unavailable, unavailable, unavailable, unavailable}}
 	c := dialScripted(t, srv)
 
-	_, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	_, err := c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 	assert.Equal(t, 3, srv.startCalls)
@@ -287,7 +287,7 @@ func TestRunClient_DoesNotRetryACommandThatFailedForAnotherReason(t *testing.T) 
 	srv := &scriptedRunServer{errs: []error{status.Error(codes.FailedPrecondition, "a run is already active")}}
 	c := dialScripted(t, srv)
 
-	_, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	_, err := c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.Error(t, err)
 	assert.Equal(t, 1, srv.startCalls)
 }
@@ -315,7 +315,7 @@ func TestRunClient_DoesNotRetryAMaintenanceRefusal(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 	c := &runGRPCClient{conn: conn, api: runv1.NewRunServiceClient(conn)}
 
-	_, err = c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	_, err = c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.Error(t, err)
 	assert.Equal(t, 1, srv.startCalls, "maintenance lasts until an operator ends it; a retry cannot succeed")
 }
@@ -343,51 +343,51 @@ func TestRunClient_StopsRetryingWhenTheContextEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := c.TriggerSchedule(ctx, "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	_, err := c.StartScheduleRun(ctx, "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 5*time.Second, "the wait between tries ends with the context")
 }
 
-func TestTriggerSchedule_SetsUserIDMetadata(t *testing.T) {
+func TestStartScheduleRun_SetsUserIDMetadata(t *testing.T) {
 	srv := &scriptedRunServer{}
 	c := dialScripted(t, srv)
-	_, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "okta.example.com|alice")
+	_, err := c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "okta.example.com|alice")
 	require.NoError(t, err)
 	assert.Equal(t, "okta.example.com|alice", srv.gotUserID)
 }
 
-func TestTriggerSchedule_EmptyActorSetsNoMetadata(t *testing.T) {
+func TestStartScheduleRun_EmptyActorSetsNoMetadata(t *testing.T) {
 	srv := &scriptedRunServer{}
 	c := dialScripted(t, srv)
-	_, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	_, err := c.StartScheduleRun(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
 	require.NoError(t, err)
 	assert.Equal(t, "", srv.gotUserID)
 }
 
-func TestTriggerNodeRun_SendsTheRequestIDAndTheMetadataMode(t *testing.T) {
+func TestStartNodeRun_SendsTheRequestIDAndTheMetadataMode(t *testing.T) {
 	srv := &scriptedRunServer{}
 	c := dialScripted(t, srv)
 	const id = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
 
-	_, err := c.TriggerNodeRun(context.Background(), id, "svc", "sch", "tbl", "", "")
+	_, err := c.StartNodeRun(context.Background(), id, "svc", "sch", "tbl", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, id, srv.gotSingleNode.GetRequestId())
 	assert.Equal(t, "latest", srv.gotSingleNode.GetMetadataSource())
 	assert.Empty(t, srv.gotSingleNode.GetSourceRunId())
 	assert.Empty(t, srv.gotSingleNode.GetOperation())
 
-	_, err = c.TriggerNodeFullRefresh(context.Background(), id, "svc", "sch", "tbl", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "", []string{"bi.a", "bi.b"})
+	_, err = c.StartNodeFullRefresh(context.Background(), id, "svc", "sch", "tbl", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "", []string{"bi.a", "bi.b"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"bi.a", "bi.b"}, srv.gotSingleNode.GetAcknowledgedDependents())
 	assert.Equal(t, "snapshot_of_run", srv.gotSingleNode.GetMetadataSource())
 	assert.Equal(t, "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", srv.gotSingleNode.GetSourceRunId())
 	assert.Equal(t, "full_refresh", srv.gotSingleNode.GetOperation())
 
-	_, err = c.TriggerNodeTest(context.Background(), id, "svc", "sch", "tbl", "", "")
+	_, err = c.StartNodeTest(context.Background(), id, "svc", "sch", "tbl", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "test", srv.gotSingleNode.GetOperation())
 
-	_, err = c.TriggerNodeBuild(context.Background(), id, "svc", "sch", "tbl", "", "")
+	_, err = c.StartNodeBuild(context.Background(), id, "svc", "sch", "tbl", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "build", srv.gotSingleNode.GetOperation())
 }
@@ -494,11 +494,11 @@ func TestRunClient_DoesNotRetryCancelRunOnUnavailable(t *testing.T) {
 	assert.Equal(t, 1, srv.cancelRunCalls, "a cancel by run id is sent once")
 }
 
-func TestTriggerRerun_SendsTheRequestIDTheSourceAndTheActor(t *testing.T) {
+func TestStartRerun_SendsTheRequestIDTheSourceAndTheActor(t *testing.T) {
 	srv := &scriptedRunServer{}
 	c := dialScripted(t, srv)
 
-	resp, err := c.TriggerRerun(context.Background(), testRequestID, "run-1", "alice")
+	resp, err := c.StartRerun(context.Background(), testRequestID, "run-1", "alice")
 	require.NoError(t, err)
 	assert.Equal(t, "r4", resp.GetRunId())
 	assert.Equal(t, testRequestID, srv.gotRerun.GetRequestId())
@@ -511,18 +511,18 @@ func TestRunClient_RetriesARerunOnUnavailableWithTheSameRequestID(t *testing.T) 
 	srv := &scriptedRunServer{errs: []error{unavailable, unavailable}}
 	c := dialScripted(t, srv)
 
-	_, err := c.TriggerRerun(context.Background(), testRequestID, "run-1", "")
+	_, err := c.StartRerun(context.Background(), testRequestID, "run-1", "")
 
 	require.NoError(t, err, "the third try succeeds")
 	assert.Equal(t, 3, srv.rerunCalls)
 	assert.Equal(t, testRequestID, srv.gotRerun.GetRequestId())
 }
 
-func TestTriggerRebase_SendsTheRequestIDTheReleaseTheOptionAndTheActor(t *testing.T) {
+func TestStartRebase_SendsTheRequestIDTheReleaseTheOptionAndTheActor(t *testing.T) {
 	srv := &scriptedRunServer{}
 	c := dialScripted(t, srv)
 
-	resp, err := c.TriggerRebase(context.Background(), testRequestID, "run-1", "rel-9", true, "alice")
+	resp, err := c.StartRebase(context.Background(), testRequestID, "run-1", "rel-9", true, "alice")
 	require.NoError(t, err)
 	assert.Equal(t, "r5", resp.GetRunId())
 	assert.Equal(t, testRequestID, srv.gotRebase.GetRequestId())
@@ -537,7 +537,7 @@ func TestRunClient_RetriesARebaseOnAbortedWithTheSameRequestID(t *testing.T) {
 	srv := &scriptedRunServer{errs: []error{aborted}}
 	c := dialScripted(t, srv)
 
-	_, err := c.TriggerRebase(context.Background(), testRequestID, "run-1", "rel-9", false, "")
+	_, err := c.StartRebase(context.Background(), testRequestID, "run-1", "rel-9", false, "")
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, srv.rebaseCalls)

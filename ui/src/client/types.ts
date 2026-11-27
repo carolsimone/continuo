@@ -5,7 +5,7 @@ import type { ApproverSource, AttemptStatus, HandoverReason, RunStatus, TaskStat
 // models of the live release carry its tag, and its last run.
 export interface ScheduleSummary {
   schedule_name: string;
-  // The cron, "" when the schedule has none: it then runs only when triggered,
+  // The cron, "" when the schedule has none: it then runs only when someone starts it,
   // its version is 0 and its times are null.
   cron: string;
   timezone: string;     // IANA zone the cron is read in
@@ -202,7 +202,7 @@ export interface SeedPreflightProbe {
 export interface NodeRun {
   run_id: string;
   schedule_name: string;
-  kind: string;             // cron | trigger | rerun | rebase | single_node_run
+  kind: string;             // cron | manual | rerun | rebase | single_node_run | promote_seed
   run_status: RunStatus;    // the status of the run the task belongs to
   task_id: string;
   task_status: TaskStatus;
@@ -398,9 +398,9 @@ export interface ReleaseDetail {
   per_node_results: NodeValidationResult[] | null;
   image_tags: Record<string, string>;
   bootstrap: boolean;
-  // How many remediation rounds have run for this release. 1 for every release
+  // How many rounds have run for this release. 1 for every release
   // that has not been retried; "Try again" increments it up to the 3-round cap.
-  remediation_round: number;
+  round: number;
   // The one project this candidate changes; every other entry in image_tags is
   // carried over from its production pointer. Empty when the release row
   // records none.
@@ -539,7 +539,7 @@ export interface FixDTO {
   release_id: string;
   node_id: string;
   error_signature: string;
-  // try is the try's number in its round (remediation_round), from 1; 0 is
+  // try is the try's number in its round, from 1; 0 is
   // the round's hand-over row, written once its tries are spent
   // (HAND_OVER_TRY).
   try: number;
@@ -581,10 +581,10 @@ export interface FixDTO {
   // no real repository source to edit — a candidate-only fix — in which case
   // the single-file diff_uri above still points at a previewable diff.
   edits?: FileEditDTO[];
-  // remediation_round is the release's remediation round this try
+  // round is the release's round this try
   // belongs to. Absent on a fix from before rounds existed, which the
   // reader treats the same as round 1.
-  remediation_round?: number;
+  round?: number;
   // resolved_node_ids lists every failing node this try addresses. Absent
   // or empty on a legacy single-node fix (or one from before batching
   // existed), in which case node_id — the representative (first resolved)
@@ -632,8 +632,8 @@ export interface ReleaseCheckDetail {
   status: string; // received|compiling|parsing|seed_building|validating|passed|failed
   changed_project: string;
   verifies_release_id: string;
-  // remediation_round and try name the try whose fix the check judges.
-  remediation_round: number;
+  // round and try name the try whose fix the check judges.
+  round: number;
   try: number;
   created_at: string;
   activated_at: string;
@@ -659,8 +659,8 @@ export interface ReleaseCheckSummary {
   check_id: string;
   status: string;
   project: string;
-  // remediation_round and try name the try whose fix the check judges.
-  remediation_round: number;
+  // round and try name the try whose fix the check judges.
+  round: number;
   try: number;
   created_at: string;
   activated_at: string;
@@ -669,7 +669,7 @@ export interface ReleaseCheckSummary {
 }
 
 // The one release check — a candidate release's or a fix's — that holds the
-// release queue's single slot. verifies_release_id, remediation_round and try
+// release queue's single slot. verifies_release_id, round and try
 // are present only when check_kind is 'fix'.
 export interface ReleaseQueueActive {
   check_id: string;
@@ -678,7 +678,7 @@ export interface ReleaseQueueActive {
   project: string;
   since: string;
   verifies_release_id?: string;
-  remediation_round?: number;
+  round?: number;
   try?: number;
 }
 

@@ -7,7 +7,7 @@
     "payload": {
       "remediation_id": "3f9d2b8e-6c15-4a07-9e43-1b5a7c0d8f26",
       "release_id": "rel_20261112_0042",
-      "remediation_round": 2,
+      "round": 2,
       "flow": "rejected-release",
       "tries": 3,
       "nodes": [
@@ -40,7 +40,7 @@
     "payload": {
       "remediation_id": "3f9d2b8e-6c15-4a07-9e43-1b5a7c0d8f26",
       "release_id": "rel_20261112_0042",
-      "remediation_round": 2,
+      "round": 2,
       "flow": "rejected-release",
       "tries": 3,
       "nodes": [

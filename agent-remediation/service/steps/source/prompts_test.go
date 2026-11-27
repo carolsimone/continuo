@@ -214,31 +214,31 @@ func TestPrompts_WithoutSourceFilesAreAnErrorAndCallNoModel(t *testing.T) {
 	assert.Empty(t, m.reqs)
 }
 
-// revisesTheLastCall runs the step's first round, then a second round that
+// revisesTheLastCall runs the step's first draft, then a second draft that
 // carries the first one's draft, last call and findings. It asserts the second
-// round makes one model call, the revision of the first round's request with
+// draft makes one model call, the revision of the first draft's request with
 // its answer and the findings, and that the draft it returns is the one the
-// first round builds from the same answer.
+// first draft builds from the same answer.
 func revisesTheLastCall(t *testing.T, p step.Prompt, f remediation.Failure, ev remediation.Evidence, first, second ports.ProposeResult) {
 	t.Helper()
 	m := &fakeModel{results: []ports.ProposeResult{first, second}}
-	round1 := propose(t, p, f, ev, m)
+	draft1 := propose(t, p, f, ev, m)
 	findings := []remediation.Finding{
 		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: sqlPath},
 		{Code: "low_confidence", Message: "the model could not determine a safe fix with confidence"},
 	}
 
 	out, err := p.Propose(context.Background(), step.PromptInput{
-		Failure: f, Evidence: ev, Round: 1,
-		Previous: &round1.Draft, PreviousRequest: &m.reqs[0], PreviousAnswer: &first, Findings: findings,
+		Failure: f, Evidence: ev, Revision: 1,
+		Previous: &draft1.Draft, PreviousRequest: &m.reqs[0], PreviousAnswer: &first, Findings: findings,
 	}, m)
 
 	require.NoError(t, err)
-	require.Len(t, m.reqs, 2, "a later round makes one model call")
+	require.Len(t, m.reqs, 2, "a later draft makes one model call")
 	assert.Equal(t, prompt.Revise(m.reqs[0], step.AnswerJSON(first), step.FindingLines(findings)), m.reqs[1])
 	assert.NotEqual(t, m.reqs[0], m.reqs[1])
 	again := propose(t, p, f, ev, &fakeModel{results: []ports.ProposeResult{second}})
-	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first round's answer is")
+	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first draft's answer is")
 }
 
 func TestDBTCompile_RevisesTheLastCallWithTheFindings(t *testing.T) {
@@ -263,13 +263,13 @@ func TestSeed_RevisesTheLastCallWithTheFindings(t *testing.T) {
 		answer("", "a,b\n1"), answer("", "a,b\n1,2"))
 }
 
-func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
+func TestPrompts_ARevisionWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 	req, res := prompt.ProposeRequest{User: "u"}, answer("models/x.sql", "select 2")
 	cases := map[string]step.PromptInput{
-		"no previous call":    {Round: 1},
-		"no previous request": {Round: 1, PreviousAnswer: &res},
-		"no previous answer":  {Round: 1, PreviousRequest: &req},
+		"no previous call":    {Revision: 1},
+		"no previous request": {Revision: 1, PreviousAnswer: &res},
+		"no previous answer":  {Revision: 1, PreviousRequest: &req},
 	}
 	steps := map[string]step.Prompt{
 		"dbt-compile": source.NewDBTCompile(),
@@ -292,7 +292,7 @@ func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *te
 	}
 }
 
-func TestPrompts_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
+func TestPrompts_TheFirstDraftIsShownTheEarlierTries(t *testing.T) {
 	tries := []remediation.TryRecord{{
 		Round: 1, Try: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"svc"}, Edits: []remediation.EditRecord{{Path: sqlPath, Diff: "<-select 1\n+select 3>"}}}},

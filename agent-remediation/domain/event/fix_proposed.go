@@ -55,9 +55,9 @@ type FixProposed struct {
 	EventID   string
 	Source    string
 	ReleaseID string
-	// RemediationRound is the release's remediation round this try belongs to.
-	RemediationRound int
-	NodeID           string
+	// Round is the release's round this try belongs to.
+	Round  int
+	NodeID string
 	// ResolvedNodeIDs is the failing nodes this try addresses, sorted.
 	ResolvedNodeIDs []string
 	ErrorSignature  string

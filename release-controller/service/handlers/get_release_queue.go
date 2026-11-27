@@ -16,7 +16,7 @@ type ActiveCheck struct {
 	Project           string
 	Since             time.Time
 	VerifiesReleaseID string // fix only
-	RemediationRound  int    // fix only
+	Round             int    // fix only
 	Try               int    // fix only
 }
 
@@ -42,7 +42,7 @@ func GetReleaseQueue(ctx context.Context, d *Deps) (ReleaseQueue, error) {
 	active := &ActiveCheck{CheckID: r.ID(), Kind: r.Kind(), Status: r.Status(), Project: r.ChangedProject(), Since: since}
 	if r.Kind() == releasecheck.KindFix {
 		active.VerifiesReleaseID = r.VerifiesReleaseID()
-		active.RemediationRound = r.RemediationRound()
+		active.Round = r.Round()
 		active.Try = r.Try()
 	}
 	return ReleaseQueue{Active: active}, nil

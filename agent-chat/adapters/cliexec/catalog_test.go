@@ -28,9 +28,9 @@ func TestCatalog_DerivesToolsFromDescribe(t *testing.T) {
 	assert.True(t, status.Params[0].Required)
 	assert.NotEmpty(t, status.Description)
 
-	trigger, ok := c.Lookup("schedule_trigger")
+	run, ok := c.Lookup("schedule_run")
 	require.True(t, ok)
-	assert.True(t, trigger.Mutating)
+	assert.True(t, run.Mutating)
 
 	list, ok := c.Lookup("schedule_list")
 	require.True(t, ok)
@@ -65,23 +65,23 @@ func TestCatalog_UnknownToolDoesNotExist(t *testing.T) {
 }
 
 // A bracketed positional in the CLI's Use string ("[source-run-id]") is
-// offered to the chat as an optional parameter. This pins that node trigger's
+// offered to the chat as an optional parameter. This pins that node run's
 // fourth positional is offered to the model as an optional parameter, ordered
 // after the identity triple.
 func TestCatalog_BracketedPositionalIsOptional(t *testing.T) {
 	c := loadCatalog(t)
 
-	trigger, ok := c.Lookup("node_trigger")
+	nodeRun, ok := c.Lookup("node_run")
 	require.True(t, ok)
-	assert.Equal(t, []string{"node", "trigger"}, trigger.CLIPath)
-	assert.True(t, trigger.Mutating)
-	require.Len(t, trigger.Params, 4)
-	for _, p := range trigger.Params[:3] {
+	assert.Equal(t, []string{"node", "run"}, nodeRun.CLIPath)
+	assert.True(t, nodeRun.Mutating)
+	require.Len(t, nodeRun.Params, 4)
+	for _, p := range nodeRun.Params[:3] {
 		assert.True(t, p.Required, "identity triple param %q must be required", p.Name)
 	}
-	assert.Equal(t, "source-run-id", trigger.Params[3].Name)
-	assert.False(t, trigger.Params[3].Required)
-	assert.Equal(t, []string{"project", "schema", "table", "source-run-id"}, trigger.ParamOrder)
+	assert.Equal(t, "source-run-id", nodeRun.Params[3].Name)
+	assert.False(t, nodeRun.Params[3].Required)
+	assert.Equal(t, []string{"project", "schema", "table", "source-run-id"}, nodeRun.ParamOrder)
 }
 
 // The dlq commands drive dead-letter-controller: redrive mutates and takes the

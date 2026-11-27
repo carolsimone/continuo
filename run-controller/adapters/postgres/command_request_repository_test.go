@@ -34,7 +34,7 @@ func insertCommandRun(t *testing.T, db *sqlx.DB, tenant string) uuid.UUID {
 	id := uuid.New()
 	_, err := db.Exec(`
 		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, kind)
-		VALUES ($1, $2, $3, 'running', now(), 'trigger')`, tenant, id, "cmd-"+id.String()[:8])
+		VALUES ($1, $2, $3, 'running', now(), 'manual')`, tenant, id, "cmd-"+id.String()[:8])
 	require.NoError(t, err)
 	return id
 }
@@ -180,7 +180,7 @@ func TestCommandRequests_TheRunKeyIsCheckedAtCommit(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, claimed)
 		_, err = tx.Exec(`INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, kind)
-			VALUES ($1, $2, 'late-run', 'running', now(), 'trigger')`, tenant, runID)
+			VALUES ($1, $2, 'late-run', 'running', now(), 'manual')`, tenant, runID)
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 

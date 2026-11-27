@@ -56,7 +56,7 @@ interface Props {
   // keeps that reading, its version above all, while the card's poll goes on.
   schedule: ScheduleSummary;
   // edit changes, pauses or removes the cron of a schedule that has one; add
-  // gives a cron to a schedule that runs only when triggered.
+  // gives a cron to a schedule that runs only when someone starts it.
   mode: Mode;
   onClose: () => void;
 }
@@ -247,7 +247,7 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
         <p className="dialog-subtitle">
           {isEdit
             ? <>Sets when {name} runs on its own. Which models it runs comes from their dbt tag <b>{name}</b>.</>
-            : <>{name} runs only when triggered. A cron makes it also run on its own.</>}
+            : <>{name} runs only when someone starts it. A cron makes it also run on its own.</>}
         </p>
 
         {isEdit && opened.updated_by && (
@@ -374,7 +374,7 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
             >
               {removeState === 'loading' ? 'Removing…' : removeState === 'success' ? 'Removed' : 'Remove cron'}
             </button>
-            <span className="dialog-remove-row__note">{name} then runs only when triggered.</span>
+            <span className="dialog-remove-row__note">{name} then runs only when someone starts it.</span>
           </div>
         )}
 

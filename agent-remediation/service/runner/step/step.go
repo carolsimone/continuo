@@ -85,15 +85,15 @@ type Prompt interface {
 	Propose(ctx context.Context, in PromptInput, m Model) (PromptOutput, error)
 }
 
-// PromptInput is what a prompt step reads. Round is the pre-flight round, 0 for
-// the first. The rest is set on a revision, a round after the first: Previous is
-// the draft the last round produced, PreviousRequest and PreviousAnswer are the
-// last model call of that round, and Findings is what the checks found in the
+// PromptInput is what a prompt step reads. Revision is the revision's number,
+// 0 for the first draft. The rest is set on a revision, a draft after the
+// first: Previous is the draft before it, PreviousRequest and PreviousAnswer are the
+// last model call of that draft, and Findings is what the checks found in the
 // draft. A step revises through RevisionRequest.
 type PromptInput struct {
 	Failure         remediation.Failure
 	Evidence        remediation.Evidence
-	Round           int
+	Revision        int
 	Previous        *remediation.Draft
 	PreviousRequest *prompt.ProposeRequest
 	PreviousAnswer  *ports.ProposeResult

@@ -60,13 +60,13 @@ func nodesFromDomain(in []event.FailingNode) []pkgevents.HealTriggeredNode {
 // heal.triggered:v1 entry.
 func HealTriggeredFromDomain(e event.HealTriggered) pkgevents.HealTriggered {
 	return pkgevents.HealTriggered{
-		Source:           string(e.Source),
-		ReleaseID:        e.ReleaseID,
-		RemediationRound: e.RemediationRound,
-		Repo:             e.Repo,
-		CommitSHA:        e.CommitSHA,
-		CodeBundleURI:    e.CodeBundleURI,
-		ClassifiedAt:     e.ClassifiedAt,
-		Nodes:            nodesFromDomain(e.Nodes),
+		Source:        string(e.Source),
+		ReleaseID:     e.ReleaseID,
+		Round:         e.Round,
+		Repo:          e.Repo,
+		CommitSHA:     e.CommitSHA,
+		CodeBundleURI: e.CodeBundleURI,
+		ClassifiedAt:  e.ClassifiedAt,
+		Nodes:         nodesFromDomain(e.Nodes),
 	}
 }

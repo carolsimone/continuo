@@ -328,7 +328,7 @@ function TryRows({
                   }
                 }}
               >
-                <td className="nodes-try">{tryLabel(p.remediation_round, p.try)}</td>
+                <td className="nodes-try">{tryLabel(p.round, p.try)}</td>
                 <td>{p.confidence}</td>
                 <td className="nodes-reason">{sourceLabel(p.source_resolved)}</td>
                 <td><div className="remediation-prs"><StatusPill status={p.status} />{prStateChips(p)}</div></td>

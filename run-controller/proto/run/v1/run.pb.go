@@ -30,7 +30,7 @@ type Run struct {
 	// promote-seed run carries a name made for it, "single-node-run-<8hex>" or
 	// "promote-seed-<8hex>", and a rerun or rebase of a run copies its name.
 	ScheduleName string `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
-	Kind         string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`           // cron | trigger | rerun | rebase | single_node_run | promote_seed
+	Kind         string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`           // cron | manual | rerun | rebase | single_node_run | promote_seed
 	Operation    string `protobuf:"bytes,4,opt,name=operation,proto3" json:"operation,omitempty"` // run | test | build | full_refresh
 	Status       string `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`       // pending | running | cancelling | succeeded | failed | cancelled | skipped
 	// failure_reason says why a failed run failed when no task of it did:
@@ -994,7 +994,7 @@ func (x *StartRunResponse) GetRunId() string {
 	return ""
 }
 
-type TriggerRerunRequest struct {
+type StartRerunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`         // Required: UUID
 	SourceRunId   string                 `protobuf:"bytes,2,opt,name=source_run_id,json=sourceRunId,proto3" json:"source_run_id,omitempty"` // Required: the failed or cancelled run to rerun
@@ -1002,20 +1002,20 @@ type TriggerRerunRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TriggerRerunRequest) Reset() {
-	*x = TriggerRerunRequest{}
+func (x *StartRerunRequest) Reset() {
+	*x = StartRerunRequest{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TriggerRerunRequest) String() string {
+func (x *StartRerunRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TriggerRerunRequest) ProtoMessage() {}
+func (*StartRerunRequest) ProtoMessage() {}
 
-func (x *TriggerRerunRequest) ProtoReflect() protoreflect.Message {
+func (x *StartRerunRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1027,26 +1027,26 @@ func (x *TriggerRerunRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TriggerRerunRequest.ProtoReflect.Descriptor instead.
-func (*TriggerRerunRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use StartRerunRequest.ProtoReflect.Descriptor instead.
+func (*StartRerunRequest) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *TriggerRerunRequest) GetRequestId() string {
+func (x *StartRerunRequest) GetRequestId() string {
 	if x != nil {
 		return x.RequestId
 	}
 	return ""
 }
 
-func (x *TriggerRerunRequest) GetSourceRunId() string {
+func (x *StartRerunRequest) GetSourceRunId() string {
 	if x != nil {
 		return x.SourceRunId
 	}
 	return ""
 }
 
-type TriggerRerunResponse struct {
+type StartRerunResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                      // the new rerun run
 	ScheduleName  string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // copied verbatim from the source schedule_name
@@ -1054,20 +1054,20 @@ type TriggerRerunResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TriggerRerunResponse) Reset() {
-	*x = TriggerRerunResponse{}
+func (x *StartRerunResponse) Reset() {
+	*x = StartRerunResponse{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TriggerRerunResponse) String() string {
+func (x *StartRerunResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TriggerRerunResponse) ProtoMessage() {}
+func (*StartRerunResponse) ProtoMessage() {}
 
-func (x *TriggerRerunResponse) ProtoReflect() protoreflect.Message {
+func (x *StartRerunResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1079,26 +1079,26 @@ func (x *TriggerRerunResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TriggerRerunResponse.ProtoReflect.Descriptor instead.
-func (*TriggerRerunResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use StartRerunResponse.ProtoReflect.Descriptor instead.
+func (*StartRerunResponse) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{10}
 }
 
-func (x *TriggerRerunResponse) GetRunId() string {
+func (x *StartRerunResponse) GetRunId() string {
 	if x != nil {
 		return x.RunId
 	}
 	return ""
 }
 
-func (x *TriggerRerunResponse) GetScheduleName() string {
+func (x *StartRerunResponse) GetScheduleName() string {
 	if x != nil {
 		return x.ScheduleName
 	}
 	return ""
 }
 
-type TriggerSingleNodeRunRequest struct {
+type StartSingleNodeRunRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	RequestId      string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                // Required: UUID
 	ProjectName    string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`          // Required
@@ -1117,20 +1117,20 @@ type TriggerSingleNodeRunRequest struct {
 	sizeCache              protoimpl.SizeCache
 }
 
-func (x *TriggerSingleNodeRunRequest) Reset() {
-	*x = TriggerSingleNodeRunRequest{}
+func (x *StartSingleNodeRunRequest) Reset() {
+	*x = StartSingleNodeRunRequest{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TriggerSingleNodeRunRequest) String() string {
+func (x *StartSingleNodeRunRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TriggerSingleNodeRunRequest) ProtoMessage() {}
+func (*StartSingleNodeRunRequest) ProtoMessage() {}
 
-func (x *TriggerSingleNodeRunRequest) ProtoReflect() protoreflect.Message {
+func (x *StartSingleNodeRunRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1142,68 +1142,68 @@ func (x *TriggerSingleNodeRunRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TriggerSingleNodeRunRequest.ProtoReflect.Descriptor instead.
-func (*TriggerSingleNodeRunRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use StartSingleNodeRunRequest.ProtoReflect.Descriptor instead.
+func (*StartSingleNodeRunRequest) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *TriggerSingleNodeRunRequest) GetRequestId() string {
+func (x *StartSingleNodeRunRequest) GetRequestId() string {
 	if x != nil {
 		return x.RequestId
 	}
 	return ""
 }
 
-func (x *TriggerSingleNodeRunRequest) GetProjectName() string {
+func (x *StartSingleNodeRunRequest) GetProjectName() string {
 	if x != nil {
 		return x.ProjectName
 	}
 	return ""
 }
 
-func (x *TriggerSingleNodeRunRequest) GetSchemaName() string {
+func (x *StartSingleNodeRunRequest) GetSchemaName() string {
 	if x != nil {
 		return x.SchemaName
 	}
 	return ""
 }
 
-func (x *TriggerSingleNodeRunRequest) GetTableName() string {
+func (x *StartSingleNodeRunRequest) GetTableName() string {
 	if x != nil {
 		return x.TableName
 	}
 	return ""
 }
 
-func (x *TriggerSingleNodeRunRequest) GetMetadataSource() string {
+func (x *StartSingleNodeRunRequest) GetMetadataSource() string {
 	if x != nil {
 		return x.MetadataSource
 	}
 	return ""
 }
 
-func (x *TriggerSingleNodeRunRequest) GetSourceRunId() string {
+func (x *StartSingleNodeRunRequest) GetSourceRunId() string {
 	if x != nil {
 		return x.SourceRunId
 	}
 	return ""
 }
 
-func (x *TriggerSingleNodeRunRequest) GetOperation() string {
+func (x *StartSingleNodeRunRequest) GetOperation() string {
 	if x != nil {
 		return x.Operation
 	}
 	return ""
 }
 
-func (x *TriggerSingleNodeRunRequest) GetAcknowledgedDependents() []string {
+func (x *StartSingleNodeRunRequest) GetAcknowledgedDependents() []string {
 	if x != nil {
 		return x.AcknowledgedDependents
 	}
 	return nil
 }
 
-type TriggerSingleNodeRunResponse struct {
+type StartSingleNodeRunResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                      // the synthesised run
 	ScheduleName  string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // "single-node-run-<8hex>"
@@ -1211,20 +1211,20 @@ type TriggerSingleNodeRunResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TriggerSingleNodeRunResponse) Reset() {
-	*x = TriggerSingleNodeRunResponse{}
+func (x *StartSingleNodeRunResponse) Reset() {
+	*x = StartSingleNodeRunResponse{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TriggerSingleNodeRunResponse) String() string {
+func (x *StartSingleNodeRunResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TriggerSingleNodeRunResponse) ProtoMessage() {}
+func (*StartSingleNodeRunResponse) ProtoMessage() {}
 
-func (x *TriggerSingleNodeRunResponse) ProtoReflect() protoreflect.Message {
+func (x *StartSingleNodeRunResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1236,26 +1236,26 @@ func (x *TriggerSingleNodeRunResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TriggerSingleNodeRunResponse.ProtoReflect.Descriptor instead.
-func (*TriggerSingleNodeRunResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use StartSingleNodeRunResponse.ProtoReflect.Descriptor instead.
+func (*StartSingleNodeRunResponse) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{12}
 }
 
-func (x *TriggerSingleNodeRunResponse) GetRunId() string {
+func (x *StartSingleNodeRunResponse) GetRunId() string {
 	if x != nil {
 		return x.RunId
 	}
 	return ""
 }
 
-func (x *TriggerSingleNodeRunResponse) GetScheduleName() string {
+func (x *StartSingleNodeRunResponse) GetScheduleName() string {
 	if x != nil {
 		return x.ScheduleName
 	}
 	return ""
 }
 
-type TriggerRebaseRequest struct {
+type StartRebaseRequest struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	RequestId              string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                                           // Required: UUID
 	SourceRunId            string                 `protobuf:"bytes,2,opt,name=source_run_id,json=sourceRunId,proto3" json:"source_run_id,omitempty"`                                   // Required: the failed or cancelled run to rebase from
@@ -1265,20 +1265,20 @@ type TriggerRebaseRequest struct {
 	sizeCache              protoimpl.SizeCache
 }
 
-func (x *TriggerRebaseRequest) Reset() {
-	*x = TriggerRebaseRequest{}
+func (x *StartRebaseRequest) Reset() {
+	*x = StartRebaseRequest{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TriggerRebaseRequest) String() string {
+func (x *StartRebaseRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TriggerRebaseRequest) ProtoMessage() {}
+func (*StartRebaseRequest) ProtoMessage() {}
 
-func (x *TriggerRebaseRequest) ProtoReflect() protoreflect.Message {
+func (x *StartRebaseRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1290,40 +1290,40 @@ func (x *TriggerRebaseRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TriggerRebaseRequest.ProtoReflect.Descriptor instead.
-func (*TriggerRebaseRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use StartRebaseRequest.ProtoReflect.Descriptor instead.
+func (*StartRebaseRequest) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *TriggerRebaseRequest) GetRequestId() string {
+func (x *StartRebaseRequest) GetRequestId() string {
 	if x != nil {
 		return x.RequestId
 	}
 	return ""
 }
 
-func (x *TriggerRebaseRequest) GetSourceRunId() string {
+func (x *StartRebaseRequest) GetSourceRunId() string {
 	if x != nil {
 		return x.SourceRunId
 	}
 	return ""
 }
 
-func (x *TriggerRebaseRequest) GetIncludeChangedUpstream() bool {
+func (x *StartRebaseRequest) GetIncludeChangedUpstream() bool {
 	if x != nil {
 		return x.IncludeChangedUpstream
 	}
 	return false
 }
 
-func (x *TriggerRebaseRequest) GetExpectedReleaseId() string {
+func (x *StartRebaseRequest) GetExpectedReleaseId() string {
 	if x != nil {
 		return x.ExpectedReleaseId
 	}
 	return ""
 }
 
-type TriggerRebaseResponse struct {
+type StartRebaseResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                      // the new rebase run
 	ScheduleName  string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // copied verbatim from the source schedule_name
@@ -1331,20 +1331,20 @@ type TriggerRebaseResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TriggerRebaseResponse) Reset() {
-	*x = TriggerRebaseResponse{}
+func (x *StartRebaseResponse) Reset() {
+	*x = StartRebaseResponse{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TriggerRebaseResponse) String() string {
+func (x *StartRebaseResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TriggerRebaseResponse) ProtoMessage() {}
+func (*StartRebaseResponse) ProtoMessage() {}
 
-func (x *TriggerRebaseResponse) ProtoReflect() protoreflect.Message {
+func (x *StartRebaseResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1356,19 +1356,19 @@ func (x *TriggerRebaseResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TriggerRebaseResponse.ProtoReflect.Descriptor instead.
-func (*TriggerRebaseResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use StartRebaseResponse.ProtoReflect.Descriptor instead.
+func (*StartRebaseResponse) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{14}
 }
 
-func (x *TriggerRebaseResponse) GetRunId() string {
+func (x *StartRebaseResponse) GetRunId() string {
 	if x != nil {
 		return x.RunId
 	}
 	return ""
 }
 
-func (x *TriggerRebaseResponse) GetScheduleName() string {
+func (x *StartRebaseResponse) GetScheduleName() string {
 	if x != nil {
 		return x.ScheduleName
 	}
@@ -1378,7 +1378,7 @@ func (x *TriggerRebaseResponse) GetScheduleName() string {
 type PreviewRebaseRequest struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	SourceRunId            string                 `protobuf:"bytes,1,opt,name=source_run_id,json=sourceRunId,proto3" json:"source_run_id,omitempty"`                                   // Required: the failed or cancelled run to rebase from
-	IncludeChangedUpstream bool                   `protobuf:"varint,2,opt,name=include_changed_upstream,json=includeChangedUpstream,proto3" json:"include_changed_upstream,omitempty"` // as TriggerRebaseRequest.include_changed_upstream
+	IncludeChangedUpstream bool                   `protobuf:"varint,2,opt,name=include_changed_upstream,json=includeChangedUpstream,proto3" json:"include_changed_upstream,omitempty"` // as StartRebaseRequest.include_changed_upstream
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -1506,7 +1506,7 @@ func (x *ChangedUpstreamNode) GetLastSuccessSeconds() float64 {
 
 type PreviewRebaseResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	ReleaseId       string                 `protobuf:"bytes,1,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`                      // the live release previewed; send it as TriggerRebaseRequest.expected_release_id
+	ReleaseId       string                 `protobuf:"bytes,1,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`                      // the live release previewed; send it as StartRebaseRequest.expected_release_id
 	PromotionSeq    int64                  `protobuf:"varint,2,opt,name=promotion_seq,json=promotionSeq,proto3" json:"promotion_seq,omitempty"`            // the promotion_seq of that release
 	TotalNodes      int32                  `protobuf:"varint,3,opt,name=total_nodes,json=totalNodes,proto3" json:"total_nodes,omitempty"`                  // tasks of the rebase: re-executed plus inherited
 	WillRun         int32                  `protobuf:"varint,4,opt,name=will_run,json=willRun,proto3" json:"will_run,omitempty"`                           // tasks it re-executes: the sum of the four counts below
@@ -1890,7 +1890,7 @@ type ListRunsRequest struct {
 	// release_id lists every run of the release, of any status. Exactly one of
 	// schedule_name and release_id is required.
 	ReleaseId string `protobuf:"bytes,4,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
-	// kind, read with release_id, keeps only the runs of that kind: cron | trigger |
+	// kind, read with release_id, keeps only the runs of that kind: cron | manual |
 	// rerun | rebase | single_node_run | promote_seed. Empty keeps every kind. A
 	// value that is not a run kind is refused whichever list is asked for.
 	Kind          string `protobuf:"bytes,5,opt,name=kind,proto3" json:"kind,omitempty"`
@@ -1971,7 +1971,7 @@ type RunSummary struct {
 	CreatedAt     string                 `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`             // RFC3339, UTC, seconds
 	CompletedAt   string                 `protobuf:"bytes,5,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`       // RFC3339, UTC, seconds; empty while the run is active
 	FailureReason string                 `protobuf:"bytes,6,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"` // stalled | empty_selection | invalid_node_type when the run failed without a failed task; empty otherwise
-	Kind          string                 `protobuf:"bytes,7,opt,name=kind,proto3" json:"kind,omitempty"`                                        // cron | trigger | rerun | rebase | single_node_run | promote_seed
+	Kind          string                 `protobuf:"bytes,7,opt,name=kind,proto3" json:"kind,omitempty"`                                        // cron | manual | rerun | rebase | single_node_run | promote_seed
 	ReleaseId     string                 `protobuf:"bytes,8,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`             // the release the run executes on; empty when it names none
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3004,7 +3004,7 @@ type NodeTask struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	RunId          string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	ScheduleName   string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
-	Kind           string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`                            // the run kind: cron | trigger | rerun | rebase | single_node_run | promote_seed
+	Kind           string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`                            // the run kind: cron | manual | rerun | rebase | single_node_run | promote_seed
 	RunStatus      string                 `protobuf:"bytes,4,opt,name=run_status,json=runStatus,proto3" json:"run_status,omitempty"` // the run status: a run_status value
 	TaskId         string                 `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	TaskStatus     string                 `protobuf:"bytes,6,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"` // a task_status value
@@ -4038,7 +4038,7 @@ func (*ListSchedulesRequest) Descriptor() ([]byte, []int) {
 type ScheduleSummary struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
-	Cron          string                 `protobuf:"bytes,2,opt,name=cron,proto3" json:"cron,omitempty"`                                          // empty when the schedule has no cron: it runs only when triggered
+	Cron          string                 `protobuf:"bytes,2,opt,name=cron,proto3" json:"cron,omitempty"`                                          // empty when the schedule has no cron: it runs only when someone starts it
 	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`                            // empty when the schedule has none
 	Timezone      string                 `protobuf:"bytes,4,opt,name=timezone,proto3" json:"timezone,omitempty"`                                  // IANA timezone the cron is read in
 	HasActiveRun  bool                   `protobuf:"varint,5,opt,name=has_active_run,json=hasActiveRun,proto3" json:"has_active_run,omitempty"`   // a pending, running or cancelling run holds the schedule
@@ -4745,15 +4745,15 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\x12\x1c\n" +
 	"\toperation\x18\x03 \x01(\tR\toperation\")\n" +
 	"\x10StartRunResponse\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\"X\n" +
-	"\x13TriggerRerunRequest\x12\x1d\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"V\n" +
+	"\x11StartRerunRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\"\n" +
-	"\rsource_run_id\x18\x02 \x01(\tR\vsourceRunId\"R\n" +
-	"\x14TriggerRerunResponse\x12\x15\n" +
+	"\rsource_run_id\x18\x02 \x01(\tR\vsourceRunId\"P\n" +
+	"\x12StartRerunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
-	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xc3\x02\n" +
-	"\x1bTriggerSingleNodeRunRequest\x12\x1d\n" +
+	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xc1\x02\n" +
+	"\x19StartSingleNodeRunRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12!\n" +
 	"\fproject_name\x18\x02 \x01(\tR\vprojectName\x12\x1f\n" +
@@ -4764,17 +4764,17 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x0fmetadata_source\x18\x05 \x01(\tR\x0emetadataSource\x12\"\n" +
 	"\rsource_run_id\x18\x06 \x01(\tR\vsourceRunId\x12\x1c\n" +
 	"\toperation\x18\a \x01(\tR\toperation\x127\n" +
-	"\x17acknowledged_dependents\x18\b \x03(\tR\x16acknowledgedDependents\"Z\n" +
-	"\x1cTriggerSingleNodeRunResponse\x12\x15\n" +
+	"\x17acknowledged_dependents\x18\b \x03(\tR\x16acknowledgedDependents\"X\n" +
+	"\x1aStartSingleNodeRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
-	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xc3\x01\n" +
-	"\x14TriggerRebaseRequest\x12\x1d\n" +
+	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xc1\x01\n" +
+	"\x12StartRebaseRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\"\n" +
 	"\rsource_run_id\x18\x02 \x01(\tR\vsourceRunId\x128\n" +
 	"\x18include_changed_upstream\x18\x03 \x01(\bR\x16includeChangedUpstream\x12.\n" +
-	"\x13expected_release_id\x18\x04 \x01(\tR\x11expectedReleaseId\"S\n" +
-	"\x15TriggerRebaseResponse\x12\x15\n" +
+	"\x13expected_release_id\x18\x04 \x01(\tR\x11expectedReleaseId\"Q\n" +
+	"\x13StartRebaseResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"t\n" +
 	"\x14PreviewRebaseRequest\x12\"\n" +
@@ -5067,13 +5067,14 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x0flast_updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\rlastUpdatedAt\"\x8d\x01\n" +
 	"\x1eListScheduleTopologiesResponse\x12=\n" +
 	"\tschedules\x18\x01 \x03(\v2\x1f.run.v1.ScheduleTopologySummaryR\tschedules\x12,\n" +
-	"\x12dormant_node_count\x18\x02 \x01(\x03R\x10dormantNodeCount2\x91\x0e\n" +
+	"\x12dormant_node_count\x18\x02 \x01(\x03R\x10dormantNodeCount2\xff\r\n" +
 	"\n" +
 	"RunService\x12=\n" +
-	"\bStartRun\x12\x17.run.v1.StartRunRequest\x1a\x18.run.v1.StartRunResponse\x12I\n" +
-	"\fTriggerRerun\x12\x1b.run.v1.TriggerRerunRequest\x1a\x1c.run.v1.TriggerRerunResponse\x12a\n" +
-	"\x14TriggerSingleNodeRun\x12#.run.v1.TriggerSingleNodeRunRequest\x1a$.run.v1.TriggerSingleNodeRunResponse\x12L\n" +
-	"\rTriggerRebase\x12\x1c.run.v1.TriggerRebaseRequest\x1a\x1d.run.v1.TriggerRebaseResponse\x12L\n" +
+	"\bStartRun\x12\x17.run.v1.StartRunRequest\x1a\x18.run.v1.StartRunResponse\x12C\n" +
+	"\n" +
+	"StartRerun\x12\x19.run.v1.StartRerunRequest\x1a\x1a.run.v1.StartRerunResponse\x12[\n" +
+	"\x12StartSingleNodeRun\x12!.run.v1.StartSingleNodeRunRequest\x1a\".run.v1.StartSingleNodeRunResponse\x12F\n" +
+	"\vStartRebase\x12\x1a.run.v1.StartRebaseRequest\x1a\x1b.run.v1.StartRebaseResponse\x12L\n" +
 	"\rPreviewRebase\x12\x1c.run.v1.PreviewRebaseRequest\x1a\x1d.run.v1.PreviewRebaseResponse\x12:\n" +
 	"\tCancelRun\x12\x18.run.v1.CancelRunRequest\x1a\x13.run.v1.RunResponse\x12R\n" +
 	"\x0fCancelActiveRun\x12\x1e.run.v1.CancelActiveRunRequest\x1a\x1f.run.v1.CancelActiveRunResponse\x124\n" +
@@ -5117,12 +5118,12 @@ var file_proto_run_v1_run_proto_goTypes = []any{
 	(*Schedule)(nil),                       // 6: run.v1.Schedule
 	(*StartRunRequest)(nil),                // 7: run.v1.StartRunRequest
 	(*StartRunResponse)(nil),               // 8: run.v1.StartRunResponse
-	(*TriggerRerunRequest)(nil),            // 9: run.v1.TriggerRerunRequest
-	(*TriggerRerunResponse)(nil),           // 10: run.v1.TriggerRerunResponse
-	(*TriggerSingleNodeRunRequest)(nil),    // 11: run.v1.TriggerSingleNodeRunRequest
-	(*TriggerSingleNodeRunResponse)(nil),   // 12: run.v1.TriggerSingleNodeRunResponse
-	(*TriggerRebaseRequest)(nil),           // 13: run.v1.TriggerRebaseRequest
-	(*TriggerRebaseResponse)(nil),          // 14: run.v1.TriggerRebaseResponse
+	(*StartRerunRequest)(nil),              // 9: run.v1.StartRerunRequest
+	(*StartRerunResponse)(nil),             // 10: run.v1.StartRerunResponse
+	(*StartSingleNodeRunRequest)(nil),      // 11: run.v1.StartSingleNodeRunRequest
+	(*StartSingleNodeRunResponse)(nil),     // 12: run.v1.StartSingleNodeRunResponse
+	(*StartRebaseRequest)(nil),             // 13: run.v1.StartRebaseRequest
+	(*StartRebaseResponse)(nil),            // 14: run.v1.StartRebaseResponse
 	(*PreviewRebaseRequest)(nil),           // 15: run.v1.PreviewRebaseRequest
 	(*ChangedUpstreamNode)(nil),            // 16: run.v1.ChangedUpstreamNode
 	(*PreviewRebaseResponse)(nil),          // 17: run.v1.PreviewRebaseResponse
@@ -5215,9 +5216,9 @@ var file_proto_run_v1_run_proto_depIdxs = []int32{
 	64, // 37: run.v1.ScheduleTopologySummary.last_updated_at:type_name -> google.protobuf.Timestamp
 	62, // 38: run.v1.ListScheduleTopologiesResponse.schedules:type_name -> run.v1.ScheduleTopologySummary
 	7,  // 39: run.v1.RunService.StartRun:input_type -> run.v1.StartRunRequest
-	9,  // 40: run.v1.RunService.TriggerRerun:input_type -> run.v1.TriggerRerunRequest
-	11, // 41: run.v1.RunService.TriggerSingleNodeRun:input_type -> run.v1.TriggerSingleNodeRunRequest
-	13, // 42: run.v1.RunService.TriggerRebase:input_type -> run.v1.TriggerRebaseRequest
+	9,  // 40: run.v1.RunService.StartRerun:input_type -> run.v1.StartRerunRequest
+	11, // 41: run.v1.RunService.StartSingleNodeRun:input_type -> run.v1.StartSingleNodeRunRequest
+	13, // 42: run.v1.RunService.StartRebase:input_type -> run.v1.StartRebaseRequest
 	15, // 43: run.v1.RunService.PreviewRebase:input_type -> run.v1.PreviewRebaseRequest
 	18, // 44: run.v1.RunService.CancelRun:input_type -> run.v1.CancelRunRequest
 	19, // 45: run.v1.RunService.CancelActiveRun:input_type -> run.v1.CancelActiveRunRequest
@@ -5238,9 +5239,9 @@ var file_proto_run_v1_run_proto_depIdxs = []int32{
 	57, // 60: run.v1.RunService.GetScheduleGraph:input_type -> run.v1.GetScheduleGraphRequest
 	61, // 61: run.v1.RunService.ListScheduleTopologies:input_type -> run.v1.ListScheduleTopologiesRequest
 	8,  // 62: run.v1.RunService.StartRun:output_type -> run.v1.StartRunResponse
-	10, // 63: run.v1.RunService.TriggerRerun:output_type -> run.v1.TriggerRerunResponse
-	12, // 64: run.v1.RunService.TriggerSingleNodeRun:output_type -> run.v1.TriggerSingleNodeRunResponse
-	14, // 65: run.v1.RunService.TriggerRebase:output_type -> run.v1.TriggerRebaseResponse
+	10, // 63: run.v1.RunService.StartRerun:output_type -> run.v1.StartRerunResponse
+	12, // 64: run.v1.RunService.StartSingleNodeRun:output_type -> run.v1.StartSingleNodeRunResponse
+	14, // 65: run.v1.RunService.StartRebase:output_type -> run.v1.StartRebaseResponse
 	17, // 66: run.v1.RunService.PreviewRebase:output_type -> run.v1.PreviewRebaseResponse
 	22, // 67: run.v1.RunService.CancelRun:output_type -> run.v1.RunResponse
 	20, // 68: run.v1.RunService.CancelActiveRun:output_type -> run.v1.CancelActiveRunResponse

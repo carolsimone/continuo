@@ -48,10 +48,10 @@ describe('chat-state reducer', () => {
 describe('confirm flow state', () => {
   it('appends a confirm item and blocks input while pending', () => {
     const s = applyServerMessage(initialChatState, {
-      type: 'confirm_request', actionId: 'a1', summary: 'Run `continuo schedule trigger daily`?',
+      type: 'confirm_request', actionId: 'a1', summary: 'Run `continuo schedule run daily`?',
     });
     const last = s.items[s.items.length - 1];
-    expect(last).toEqual({ kind: 'confirm', actionId: 'a1', summary: 'Run `continuo schedule trigger daily`?', resolved: null });
+    expect(last).toEqual({ kind: 'confirm', actionId: 'a1', summary: 'Run `continuo schedule run daily`?', resolved: null });
     expect(s.pendingConfirm).toBe('a1');
   });
 

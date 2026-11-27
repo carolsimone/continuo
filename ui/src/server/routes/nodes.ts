@@ -183,7 +183,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     }
     const sourceRunID: string = (req.body?.source_run_id ?? '').trim();
     const metadataSource = sourceRunID === '' ? 'latest' : 'snapshot_of_run';
-    runClient.triggerSingleNodeRun(
+    runClient.startSingleNodeRun(
       {
         request_id:      requestId,
         project_name:    req.params.project,

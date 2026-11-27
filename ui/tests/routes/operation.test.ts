@@ -49,7 +49,7 @@ describe('parseNodeRunOperation', () => {
   });
 });
 
-describe('parseOperation keeps full_refresh out of schedule triggers', () => {
+describe('parseOperation keeps full_refresh out of manual runs', () => {
   it('rejects full_refresh', () => {
     expect(parseOperation('full_refresh')).toBeNull();
   });
@@ -71,7 +71,7 @@ describe('operation lists follow the contract vocabulary', () => {
     expect([...NODE_RUN_OPERATIONS]).toEqual([...OPERATIONS]);
     expect([...RUN_OPERATIONS]).toEqual(OPERATIONS.filter((op) => !(SINGLE_NODE_ONLY_OPERATIONS as readonly string[]).includes(op)));
   });
-  it('the schedule trigger accepts every run operation and refuses each single-node-only one', () => {
+  it('a manual run accepts every run operation and refuses each single-node-only one', () => {
     for (const op of OPERATIONS) {
       const parsed = parseOperation(op);
       if ((SINGLE_NODE_ONLY_OPERATIONS as readonly string[]).includes(op)) expect(parsed, op).toBeNull();

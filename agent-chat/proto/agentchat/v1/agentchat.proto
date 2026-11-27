@@ -56,7 +56,7 @@ message Text { string text = 1; }        // token delta
 message Final { string text = 1; }       // complete answer for the turn
 message ConfirmRequest {
   string action_id = 1;
-  string summary = 2;                    // human-readable, e.g. "Trigger schedule \"daily\" now?"
+  string summary = 2;                    // human-readable, e.g. "Start a manual run of schedule \"daily\" now?"
 }
 message Error {
   string code = 1;                       // provider_unavailable | rate_limited | iteration_limit | token_budget | agent_failed

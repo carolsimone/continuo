@@ -25,17 +25,16 @@ const (
 	// FirstDraftPasses: the model's first draft passes pre-flight and the
 	// gate.
 	FirstDraftPasses Scenario = "first_draft_passes"
-	// PreflightRevisionPasses: pre-flight refuses the first round's draft and
-	// the second round's revision passes it and the gate. A type of one round
-	// takes no revision: its refused draft is handed over as its rounds spent,
-	// with the first round's calls and no more.
+	// PreflightRevisionPasses: pre-flight refuses the first draft and the
+	// revision passes it and the gate. A type of one draft
+	// takes no revision: its refused draft is handed over as its drafts spent,
+	// with the first draft's calls and no more.
 	PreflightRevisionPasses Scenario = "preflight_revision_passes"
-	// PreflightRoundsSpent: pre-flight refuses the draft of every round the
-	// type allows. The members of a single or a cross-project cluster are
-	// handed over as preflight_rounds_spent, in one remediation.handed_over
+	// DraftsSpent: pre-flight refuses every draft the type allows. The members of a single or a cross-project cluster are
+	// handed over as drafts_spent, in one remediation.handed_over
 	// event. The members of a shared-upstream cluster each take their own type
 	// and are proposed.
-	PreflightRoundsSpent Scenario = "preflight_rounds_spent"
+	DraftsSpent Scenario = "drafts_spent"
 	// GateFailsNextTryLearns: the first try's release check fails, the next
 	// try's first request shows why, and its release check passes. In a flow
 	// of one try there is no next try: the failed try is handed over.
@@ -51,23 +50,23 @@ const (
 	DeclinesBeforeModel Scenario = "declines_before_model"
 	// ModelDeclines: the model first answers that it cannot fix the node, with
 	// a low confidence or no edit, which pre-flight refuses, and its revision
-	// passes. A type of one round takes no revision: the refused answer is
-	// handed over as its rounds spent, with the first round's calls and no
+	// passes. A type of one draft takes no revision: the refused answer is
+	// handed over as its drafts spent, with the first draft's calls and no
 	// more.
 	ModelDeclines Scenario = "model_declines"
-	// Redelivery: the first round's draft is refused and its revision passes
+	// Redelivery: the first draft is refused and its revision passes
 	// while the trigger is delivered three times and the worker restarts
-	// twice: once after the first round's first model call, and once between
-	// the rounds, after the first round's pre-flight committed. In a type of
-	// one round the first round's draft passes, and the second restart comes
-	// after that round's pre-flight committed, before the next commit of the
+	// twice: once after the first draft's first model call, and once between
+	// the drafts, after the first draft's pre-flight committed. In a type of
+	// one draft the first draft passes, and the second restart comes
+	// after that draft's pre-flight committed, before the next commit of the
 	// try.
 	Redelivery Scenario = "redelivery"
 )
 
 // TypeScenarios is every scenario a listed type runs through, in run order.
 func TypeScenarios() []Scenario {
-	return []Scenario{FirstDraftPasses, PreflightRevisionPasses, PreflightRoundsSpent, GateFailsNextTryLearns,
+	return []Scenario{FirstDraftPasses, PreflightRevisionPasses, DraftsSpent, GateFailsNextTryLearns,
 		TriesSpent, DeclinesBeforeModel, ModelDeclines, Redelivery}
 }
 
@@ -267,8 +266,8 @@ func (s Suite) modelCallsOfOneRun(ctx context.Context, f Fixture, flow string, p
 	return len(sr.w.ModelCalls()), nil
 }
 
-// answerKind names how a round's draft ends, and so which of a fixture's
-// answer lists the round answers from.
+// answerKind names how a draft ends, and so which of a fixture's
+// answer lists the draft answers from.
 type answerKind string
 
 const (
@@ -277,37 +276,37 @@ const (
 	declines answerKind = "decline"
 )
 
-// round is the answers of a round that ends as k: the first round's list of
-// kind k, and in a later round the revision's list of kind k, or the first
-// round's when the revision has none.
-func (a Answers) round(first bool, k answerKind) []ports.ProposeResult {
-	var firstRound, revision []ports.ProposeResult
+// draft is the answers of a draft that ends as k: the first draft's list of
+// kind k, and in a later draft the revision's list of kind k, or the first
+// draft's when the revision has none.
+func (a Answers) draft(first bool, k answerKind) []ports.ProposeResult {
+	var firstDraft, revision []ports.ProposeResult
 	switch k {
 	case passes:
-		firstRound, revision = a.Pass, a.Revision.Pass
+		firstDraft, revision = a.Pass, a.Revision.Pass
 	case fails:
-		firstRound, revision = a.Fail, a.Revision.Fail
+		firstDraft, revision = a.Fail, a.Revision.Fail
 	case declines:
-		firstRound, revision = a.Decline, a.Revision.Decline
+		firstDraft, revision = a.Decline, a.Revision.Decline
 	}
 	if first || len(revision) == 0 {
-		return firstRound
+		return firstDraft
 	}
 	return revision
 }
 
-// try is the answers of one try whose rounds end as rounds says, in call
-// order, or an error naming the first round the fixture holds no answer for.
-func (a Answers) try(file string, rounds ...answerKind) ([]ports.ProposeResult, error) {
+// try is the answers of one try whose drafts end as drafts says, in call
+// order, or an error naming the first draft the fixture holds no answer for.
+func (a Answers) try(file string, drafts ...answerKind) ([]ports.ProposeResult, error) {
 	var out []ports.ProposeResult
-	for i, k := range rounds {
-		answers := a.round(i == 0, k)
+	for i, k := range drafts {
+		answers := a.draft(i == 0, k)
 		if len(answers) == 0 {
 			list := "answers." + string(k)
 			if i > 0 {
 				list = "answers.revision." + string(k) + " or " + list
 			}
-			return nil, fmt.Errorf("%s has no %s for round %d", file, list, i+1)
+			return nil, fmt.Errorf("%s has no %s for draft %d", file, list, i+1)
 		}
 		out = append(out, answers...)
 	}
@@ -316,27 +315,27 @@ func (a Answers) try(file string, rounds ...answerKind) ([]ports.ProposeResult, 
 
 // typePlan is what the fakes answer in one scenario of a type, the trigger
 // the scenario delivers, and what its expectations count: the tries scripted,
-// the round the first cluster's draft passes pre-flight in (0 when no round
-// passes), and the scripted calls of the first round, and of one try, of the
+// the draft the first cluster's draft passes pre-flight in (0 when no draft
+// passes), and the scripted calls of the first draft, and of one try, of the
 // first cluster.
 type typePlan struct {
 	script          Script
 	trigger         remediation.Trigger
 	tries           int
-	passRound       int
-	firstRoundCalls int
+	passDraft       int
+	firstDraftCalls int
 	firstTryCalls   int
 }
 
-// revises reports whether typ allows a round after the first, in which the
+// revises reports whether typ allows a draft after the first, in which the
 // prompt revises a draft pre-flight refused.
 func revises(typ workflow.Type) bool {
-	return typ.Agent.Rounds > 1
+	return typ.Agent.Drafts > 1
 }
 
-// refusedThenPassed is the rounds of a try whose first round ends as first and
-// whose revision passes: both rounds when typ allows a revision, else the
-// first round alone, which spends the type's one round.
+// refusedThenPassed is the drafts of a try whose first draft ends as first and
+// whose revision passes: both drafts when typ allows a revision, else the
+// first draft alone, which spends the type's one draft.
 func refusedThenPassed(typ workflow.Type, first answerKind) []answerKind {
 	if revises(typ) {
 		return []answerKind{first, passes}
@@ -352,29 +351,29 @@ func typeScript(f Fixture, typ workflow.Type, tries int, sc Scenario) (typePlan,
 		return typePlan{}, err
 	}
 	plan := typePlan{script: Script{MemberAnswers: members}, trigger: f.Trigger}
-	var rounds []answerKind
+	var drafts []answerKind
 	repeat := 1
 	switch sc {
 	case FirstDraftPasses:
-		rounds = []answerKind{passes}
+		drafts = []answerKind{passes}
 	case PreflightRevisionPasses:
-		rounds = refusedThenPassed(typ, fails)
+		drafts = refusedThenPassed(typ, fails)
 	case Redelivery:
-		rounds = []answerKind{passes}
+		drafts = []answerKind{passes}
 		if revises(typ) {
-			rounds = []answerKind{fails, passes}
+			drafts = []answerKind{fails, passes}
 		}
-	case PreflightRoundsSpent:
-		for range typ.Agent.Rounds {
-			rounds = append(rounds, fails)
+	case DraftsSpent:
+		for range typ.Agent.Drafts {
+			drafts = append(drafts, fails)
 		}
 	case ModelDeclines:
-		rounds = refusedThenPassed(typ, declines)
+		drafts = refusedThenPassed(typ, declines)
 	case GateFailsNextTryLearns:
-		rounds, repeat = []answerKind{passes}, min(2, tries)
+		drafts, repeat = []answerKind{passes}, min(2, tries)
 		plan.script.FailedTries = 1
 	case TriesSpent:
-		rounds, repeat = []answerKind{passes}, tries
+		drafts, repeat = []answerKind{passes}, tries
 		plan.script.FailedTries = everyTryFails
 	case DeclinesBeforeModel:
 		// The cluster declines before its model is called, so no call of it
@@ -385,7 +384,7 @@ func typeScript(f Fixture, typ workflow.Type, tries int, sc Scenario) (typePlan,
 		plan.trigger = *f.DeclineBeforeModel
 		return plan, nil
 	}
-	oneTry, err := f.Answers.try(f.File, rounds...)
+	oneTry, err := f.Answers.try(f.File, drafts...)
 	if err != nil {
 		return typePlan{}, fmt.Errorf("scenario %s: %w", sc, err)
 	}
@@ -393,10 +392,10 @@ func typeScript(f Fixture, typ workflow.Type, tries int, sc Scenario) (typePlan,
 		plan.script.Answers = append(plan.script.Answers, oneTry...)
 	}
 	plan.tries = repeat
-	if rounds[len(rounds)-1] == passes {
-		plan.passRound = len(rounds)
+	if drafts[len(drafts)-1] == passes {
+		plan.passDraft = len(drafts)
 	}
-	plan.firstRoundCalls = len(f.Answers.round(true, rounds[0]))
+	plan.firstDraftCalls = len(f.Answers.draft(true, drafts[0]))
 	plan.firstTryCalls = len(oneTry)
 	return plan, nil
 }
@@ -419,10 +418,10 @@ func memberPasses(f Fixture) (map[string][]ports.ProposeResult, error) {
 }
 
 // redeliverAndRestart delivers the trigger a second time and loses the commit
-// after the first model call, which loses the first round's prompt step after
+// after the first model call, which loses the first draft's prompt step after
 // the model answered, and restarts the worker. It then loses the commit that
-// follows the first round's pre-flight: in a type that revises, the commit
-// after the first model call of the second round, and in a type of one round
+// follows the first draft's pre-flight: in a type that revises, the commit
+// after the first model call of the second draft, and in a type of one draft
 // the next commit of the try. It delivers the trigger a third time and
 // restarts the worker again.
 func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, plan typePlan, typ workflow.Type) error {
@@ -434,12 +433,12 @@ func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, plan typePlan, t
 		return err
 	}
 	if row, _ := sr.expect(plan.trigger).stepRow(1, 1, 1, prompt); row.Failures == 0 {
-		return fmt.Errorf("the failed commit was not round 1 of the prompt step %s of the first cluster", prompt)
+		return fmt.Errorf("the failed commit was not draft 1 of the prompt step %s of the first cluster", prompt)
 	}
 	sr.restart()
 
 	if revises(typ) {
-		if err := sr.loseCommitAfterCall(ctx, plan.firstRoundCalls+1); err != nil {
+		if err := sr.loseCommitAfterCall(ctx, plan.firstDraftCalls+1); err != nil {
 			return err
 		}
 	} else if err := sr.loseCommitAfterPreflight(ctx, plan.trigger); err != nil {
@@ -447,10 +446,10 @@ func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, plan typePlan, t
 	}
 	e := sr.expect(plan.trigger)
 	if row, _ := e.stepRow(1, 1, 1, remediation.StepPreflight); row.Status != remediation.StepDone {
-		return errors.New("the first cluster's round 1 pre-flight had not committed before the second failed commit")
+		return errors.New("the first cluster's draft 1 pre-flight had not committed before the second failed commit")
 	}
 	if row, _ := e.stepRow(1, 1, 2, prompt); revises(typ) && row.Failures == 0 {
-		return fmt.Errorf("the second failed commit was not round 2 of the prompt step %s of the first cluster", prompt)
+		return fmt.Errorf("the second failed commit was not draft 2 of the prompt step %s of the first cluster", prompt)
 	}
 	if err := sr.accept(ctx, plan.trigger); err != nil {
 		return fmt.Errorf("deliver the trigger a third time: %w", err)
@@ -460,7 +459,7 @@ func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, plan typePlan, t
 }
 
 // loseCommitAfterPreflight drives the remediation with the commit that
-// follows the first cluster's round 1 pre-flight failing, and expects the
+// follows the first cluster's draft 1 pre-flight failing, and expects the
 // drive to fail.
 func (sr *scenarioRun) loseCommitAfterPreflight(ctx context.Context, t remediation.Trigger) error {
 	sr.afterCommit = func() {
@@ -471,7 +470,7 @@ func (sr *scenarioRun) loseCommitAfterPreflight(ctx context.Context, t remediati
 	}
 	defer func() { sr.afterCommit = nil }()
 	if err := sr.finish(ctx); err == nil {
-		return errors.New("the run ended although the commit after the first cluster's round 1 pre-flight failed")
+		return errors.New("the run ended although the commit after the first cluster's draft 1 pre-flight failed")
 	}
 	return nil
 }
@@ -502,25 +501,25 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 	switch sc {
 	case FirstDraftPasses:
 		e.proposed(f)
-		e.passedInRound(first, typ, 1)
+		e.passedInDraft(first, typ, 1)
 		e.clusterCalls(first, plan.firstTryCalls)
 	case PreflightRevisionPasses, ModelDeclines:
-		if plan.passRound == 0 {
-			e.refusedEveryRound(files, first, typ, plan)
+		if plan.passDraft == 0 {
+			e.refusedEveryDraft(files, first, typ, plan)
 			break
 		}
 		e.proposed(f)
-		e.passedInRound(first, typ, plan.passRound)
+		e.passedInDraft(first, typ, plan.passDraft)
 		e.clusterCalls(first, plan.firstTryCalls)
 	case Redelivery:
 		e.proposed(f)
-		e.passedInRound(first, typ, plan.passRound)
+		e.passedInDraft(first, typ, plan.passDraft)
 		e.that(len(sr.w.Remediations()) == 1, "the trigger delivered three times made %d remediations", len(sr.w.Remediations()))
 		e.distinctModelRequests()
 		e.modelCalls(oneRunCalls)
 		e.clusterCalls(first, plan.firstTryCalls)
-	case PreflightRoundsSpent:
-		e.refusedEveryRound(files, first, typ, plan)
+	case DraftsSpent:
+		e.refusedEveryDraft(files, first, typ, plan)
 	case GateFailsNextTryLearns:
 		if plan.tries < 2 {
 			e.triesSpent(f, plan)
@@ -553,21 +552,21 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 	return e.err()
 }
 
-// refusedEveryRound expects pre-flight to have refused the first cluster's
-// draft in every round its type allows, with the plan's calls of one try, and
+// refusedEveryDraft expects pre-flight to have refused the first cluster's
+// draft in every draft its type allows, with the plan's calls of one try, and
 // the cluster to have ended by its shape: a shared-upstream cluster's members
 // each ran their own type, a cross-project cluster's members were skipped with
-// the code preflight_rounds_spent and the last round's first finding in their
-// reason, and a single cluster was handed over with its last round's first
+// the code drafts_spent and the last draft's first finding in their
+// reason, and a single cluster was handed over with its last draft's first
 // finding.
-func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cluster, typ workflow.Type, plan typePlan) {
-	e.roundsSpent(first, typ, plan.firstTryCalls)
+func (e *expectation) refusedEveryDraft(files workflow.Set, first remediation.Cluster, typ workflow.Type, plan typePlan) {
+	e.draftsSpent(first, typ, plan.firstTryCalls)
 	switch typ.Match.Cluster {
 	case workflow.ClusterSharedUpstream:
 		e.membersRanTheirTypes(files, first)
 	case workflow.ClusterCrossProject:
 		if as := e.fixRows(fix.StatusSkipped); len(as) == 1 {
-			e.membersSkipped(first, as[0], model.HandoverReasonPreflightRoundsSpent)
+			e.membersSkipped(first, as[0], model.HandoverReasonDraftsSpent)
 		}
 		finding, ok := e.firstFinding(first, typ)
 		e.that(ok, "pre-flight refused nothing in cluster %d", first.Cluster)

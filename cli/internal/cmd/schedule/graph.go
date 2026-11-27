@@ -71,7 +71,7 @@ Output (stdout, JSON):
   "dormant" is true for a node continuo builds that belongs to no schedule: it
   is in this graph as an upstream of a node that reads it, and a run started by
   hand executes it
-  ("continuo node trigger <project> <schema> <table>"). No cron or schedule run
+  ("continuo node run <project> <schema> <table>"). No cron or schedule run
   includes it, except to rebuild a dormant view or materialized view below a
   seed: a run whose load of that seed drops the seed's table rebuilds it, and a
   rerun or rebase of that run rebuilds it again if the rebuild did not finish.

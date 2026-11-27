@@ -227,7 +227,7 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	// ── 6. a single-node run of the table is refused ─────────────────────────
 	// With no project the request is incomplete: a node run names its project.
 	noProjectID := uuid.NewString()
-	_, err = clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+	_, err = clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 		RequestId: noProjectID, ProjectName: "", SchemaName: unknownExternalSchema, TableName: unknownExternalTable, MetadataSource: "latest",
 	})
 	require.Error(t, err, "a node run of %s with no project must be refused", unknownExternalKey)
@@ -237,7 +237,7 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	// With the reader's project the request is complete, so the refusal is the
 	// planner's: a node run never names an unknown-external node.
 	namedProjectID := uuid.NewString()
-	_, err = clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+	_, err = clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 		RequestId: namedProjectID, ProjectName: ingestProbeReaderProject, SchemaName: unknownExternalSchema, TableName: unknownExternalTable, MetadataSource: "latest",
 	})
 	require.Error(t, err, "a node run of the unknown-external node %s must be refused", unknownExternalKey)

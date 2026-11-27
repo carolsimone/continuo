@@ -30,7 +30,7 @@ func releaseCheckResponse(r *releasecheck.Check) map[string]any {
 		"status":              string(r.Status()),
 		"changed_project":     r.ChangedProject(),
 		"verifies_release_id": r.VerifiesReleaseID(),
-		"remediation_round":   r.RemediationRound(),
+		"round":               r.Round(),
 		"try":                 r.Try(),
 		"created_at":          r.CreatedAt().UTC().Format(time.RFC3339),
 		"activated_at":        rfc3339OrEmpty(activated, aok),

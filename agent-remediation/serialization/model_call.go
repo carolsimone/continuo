@@ -5,7 +5,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
-// A prompt step's row stores the last model call of its run, so a later round
+// A prompt step's row stores the last model call of its run, so a later draft
 // can revise it. The request and the answer are not domain values with tags, so
 // they are stored as the wire values below: each field has its own key, and
 // RequestOf and AnswerOf convert one way, Request and Answer the other, without

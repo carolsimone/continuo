@@ -32,7 +32,7 @@ func NewPythonContract() step.Prompt {
 	return &contractPrompt{
 		name: "python-contract",
 		description: "Shows the model a python node's ODCS contract with the validation error, runner log, the contract entry the release recorded, the node's current contract, " +
-			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, and reads back the complete new content of every contract file it changes.",
+			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-draft request, and reads back the complete new content of every contract file it changes.",
 		assemble: prompt.AssemblePythonContractFix,
 	}
 }
@@ -42,7 +42,7 @@ func NewPythonContract() step.Prompt {
 func NewPythonParse() step.Prompt {
 	return &contractPrompt{
 		name: "python-parse",
-		description: "Shows the model a python node's ODCS contract with the SQL parser's error, the node's current contract, upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, " +
+		description: "Shows the model a python node's ODCS contract with the SQL parser's error, the node's current contract, upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-draft request, " +
 			"and reads back the complete new content of every contract file it changes.",
 		assemble: prompt.AssemblePythonParseFix,
 	}
@@ -54,7 +54,7 @@ func NewCSVContract() step.Prompt {
 	return &contractPrompt{
 		name: "csv-contract",
 		description: "Shows the model a python-csv node's ODCS contract with the validation error, the header check's runner log, the contract entry the release recorded, the node's current contract, " +
-			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, and reads back the complete new content of every contract file it changes.",
+			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-draft request, and reads back the complete new content of every contract file it changes.",
 		assemble: func(ev prompt.PythonEvidence) prompt.ProposeRequest {
 			return prompt.AssembleCsvContractFix(prompt.CsvEvidence(ev))
 		},
@@ -80,14 +80,14 @@ func (p *contractPrompt) Meta() step.Meta {
 }
 
 // Propose makes the model call and reads its answer into a draft. In the first
-// round it assembles what the model is shown, with the earlier tries at the
+// draft it assembles what the model is shown, with the earlier tries at the
 // failure (step.WithPreviousTries). The failure text and the declaring file are
 // required; the runner log, the bundle's contract entry, the node's current
 // contract, upstream changes, precedent and the earlier tries each degrade to
 // their own absence, because a
 // missing evidence section costs the model context while a blocked heal costs
-// the operator the fix entirely. In a round
-// after the first the request is the revision of the last round's request with
+// the operator the fix entirely. In a draft
+// after the first the request is the revision of the last draft's request with
 // its answer and the findings (step.RevisionRequest), and the answer is read the
 // same way.
 //
@@ -132,7 +132,7 @@ func (p *contractPrompt) Propose(ctx context.Context, in step.PromptInput, m ste
 	return step.PromptOutput{Draft: draft}, nil
 }
 
-// request assembles the first round's request from the cluster's evidence.
+// request assembles the first draft's request from the cluster's evidence.
 func (p *contractPrompt) request(in step.PromptInput) (prompt.ProposeRequest, error) {
 	file, ok := remediation.Get[remediation.ContractFile](in.Evidence, remediation.KeyContractFile)
 	if !ok {

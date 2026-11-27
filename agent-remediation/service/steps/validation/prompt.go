@@ -42,7 +42,7 @@ func (*DBTValidation) Meta() step.Meta {
 		Description: "Shows the model a validation-failed dbt node's candidate SQL with the dbt error, what the release changed in the node and its ancestors and " +
 			"past precedent, and stores the SQL fix it proposes. It then asks the model to apply its diagnosis to the node's real source, " +
 			"and the answer, whatever it holds, becomes the draft's one edit for the pre-flight checks to judge. " +
-			"Both requests of the first round carry the earlier tries at the failure, when there are any.",
+			"Both requests of the first draft carry the earlier tries at the failure, when there are any.",
 		Needs: []remediation.EvidenceKey{
 			remediation.KeyFailure,
 			remediation.KeyCandidateSQL,
@@ -56,7 +56,7 @@ func (*DBTValidation) Meta() step.Meta {
 	}
 }
 
-// Propose makes the two chained model calls of the first round, and in a round
+// Propose makes the two chained model calls of the first draft, and in a draft
 // after the first revises the last of them.
 //
 // The first call fixes the candidate SQL. Its answer is written as the
@@ -64,13 +64,13 @@ func (*DBTValidation) Meta() step.Meta {
 // applied to the pre-compiled SQL, not to the real model source. An answer
 // with no SQL gives a draft with no artifacts and no edit.
 //
-// Both calls of the first round carry the earlier tries at the failure
-// (step.WithPreviousTries), so whichever of them a later round revises still
+// Both calls of the first draft carry the earlier tries at the failure
+// (step.WithPreviousTries), so whichever of them a later draft revises still
 // shows them.
 //
 // The second call applies the first one's diagnosis to the node's real source.
 // Its answer is the draft's one edit whatever it holds, an empty, unchanged or
-// low-confidence one included: the pre-flight checks judge it, and a round
+// low-confidence one included: the pre-flight checks judge it, and a draft
 // after the first revises it. A failed call is the step's error, which the
 // runner retries. The draft's rationale and confidence are the second call's,
 // because that note describes the diff the reviewer sees and that confidence
@@ -79,12 +79,12 @@ func (*DBTValidation) Meta() step.Meta {
 // path, project or project's repository path is unknown, and evidence that
 // lacks one is an error that calls no model.
 //
-// A round after the first revises the last call of the round before it, with
+// A draft after the first revises the last call of the draft before it, with
 // its answer and the findings (step.RevisionRequest). When that call is the
-// source fix, the one call of the round is its revision, read as the second
+// source fix, the one call of the draft is its revision, read as the second
 // call is, and the diagnosis is not made again: the draft keeps the previous
 // draft's candidate fix, model and suspected root. When it is the diagnosis,
-// which is all a first round makes when the answer holds no SQL, the diagnosis
+// which is all a first draft makes when the answer holds no SQL, the diagnosis
 // is revised and its answer goes the way a first call's does, including the
 // source fix.
 func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step.Model) (step.PromptOutput, error) {
@@ -181,14 +181,14 @@ func (p *DBTValidation) diagnosisRequest(in step.PromptInput, candidateSQL remed
 	}), in.Evidence)
 }
 
-// reviseSourceFix makes the one call of a round that revises the previous
-// round's source fix, and reads its answer as the second call is read. The
+// reviseSourceFix makes the one call of a draft that revises the previous
+// draft's source fix, and reads its answer as the second call is read. The
 // draft is the previous draft's candidate fix, model and suspected root, which
 // came from the first call, with the revised answer as its edit, note and
 // confidence.
 func (p *DBTValidation) reviseSourceFix(ctx context.Context, in step.PromptInput, bundle remediation.CandidateSource, repoPrefix string, revision prompt.ProposeRequest, m step.Model) (step.PromptOutput, error) {
 	if in.Previous == nil {
-		return step.PromptOutput{}, fmt.Errorf("dbt-validation: a revision of the source fix needs the previous round's draft")
+		return step.PromptOutput{}, fmt.Errorf("dbt-validation: a revision of the source fix needs the previous draft")
 	}
 	prev := *in.Previous
 	draft := remediation.Draft{

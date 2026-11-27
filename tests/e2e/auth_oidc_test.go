@@ -46,18 +46,18 @@ func TestAuthOIDC(t *testing.T) {
 		if st := statusOf(t, client, "GET", base+"/api/schedules"); st != http.StatusOK {
 			t.Fatalf("viewer GET /api/schedules = %d, want 200", st)
 		}
-		if st := statusOf(t, client, "POST", base+"/api/schedules/any/trigger"); st != http.StatusForbidden {
-			t.Fatalf("viewer POST trigger = %d, want 403", st)
+		if st := statusOf(t, client, "POST", base+"/api/schedules/any/manual-run"); st != http.StatusForbidden {
+			t.Fatalf("viewer POST manual-run = %d, want 403", st)
 		}
 	})
 
 	t.Run("operator clears the auth gates on mutations", func(t *testing.T) {
 		client, _ := loginThroughDex(t, base, "operator@example.com", "password")
-		st := statusOf(t, client, "POST", base+"/api/schedules/any/trigger")
+		st := statusOf(t, client, "POST", base+"/api/schedules/any/manual-run")
 		// The schedule does not exist, so the domain layer may answer 4xx/5xx;
 		// the assertion is that BOTH auth gates passed.
 		if st == http.StatusUnauthorized || st == http.StatusForbidden {
-			t.Fatalf("operator POST trigger = %d, auth gate should have passed", st)
+			t.Fatalf("operator POST manual-run = %d, auth gate should have passed", st)
 		}
 	})
 

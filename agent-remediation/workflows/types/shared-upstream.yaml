@@ -6,5 +6,5 @@ version: 1
 name: shared-upstream
 match: { cluster: shared_upstream }
 context: [upstream_target, failure_precedents]
-agent: { prompt: upstream, tools: [], rounds: 3 }
+agent: { prompt: upstream, tools: [], drafts: 3 }
 preflight: [content_changed, confidence_not_low]

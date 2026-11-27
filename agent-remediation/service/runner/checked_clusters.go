@@ -20,9 +20,9 @@ type checkedCluster struct {
 
 // checkedClusters rebuilds every checked cluster of the try from the journal,
 // in cluster order. Its evidence is the failure, what each of its done context
-// rows recorded in the first round (gatheredEvidence), what each of its done
-// pre-flight check rows gathered in the cluster's last round (a packaged
-// contract among them) and the draft as that round's pre-flight pass left it,
+// rows recorded in the first draft (gatheredEvidence), what each of its done
+// pre-flight check rows gathered in the cluster's last draft (a packaged
+// contract among them) and the draft as that draft's pre-flight pass left it,
 // with its originals and stored content. Only rows are read, never the loaded
 // files, so a checked cluster is rebuilt from the steps it ran even when the
 // files now list other steps or no longer define its type. The same rows
@@ -48,7 +48,7 @@ func (r *Runner) checkedCluster(run tryRun, c remediation.Cluster) (checkedClust
 	if err != nil {
 		return checkedCluster{}, err
 	}
-	checks := run.journal.doneRows(c.Cluster, string(step.KindCheck), c.Round)
+	checks := run.journal.doneRows(c.Cluster, string(step.KindCheck), c.Draft)
 	results := make([]remediation.CheckResult, 0, len(checks))
 	for _, row := range checks {
 		rec, err := checkResult(row)
@@ -60,9 +60,9 @@ func (r *Runner) checkedCluster(run tryRun, c remediation.Cluster) (checkedClust
 		}
 		results = append(results, rec.Result)
 	}
-	pass, done := run.journal.done(c.Cluster, stepPreflight, c.Round)
+	pass, done := run.journal.done(c.Cluster, stepPreflight, c.Draft)
 	if !done {
-		return checkedCluster{}, fmt.Errorf("step %s has no done row in round %d", stepPreflight, c.Round)
+		return checkedCluster{}, fmt.Errorf("step %s has no done row in draft %d", stepPreflight, c.Draft)
 	}
 	draft, err := preflightDraft(pass)
 	if err != nil {

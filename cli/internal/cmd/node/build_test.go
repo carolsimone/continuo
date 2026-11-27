@@ -39,7 +39,7 @@ func runBuild(t *testing.T, fake client.RunClient, cfg *config.Config, args []st
 }
 
 func TestBuildNode_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeRunController{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
+	fake := &fakeNodeRunController{buildResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	stdout, stderr, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -56,7 +56,7 @@ func TestBuildNode_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestBuildNode_ForwardsActorFromConfig(t *testing.T) {
-	fake := &fakeNodeRunController{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{buildResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"}
 
 	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -66,7 +66,7 @@ func TestBuildNode_ForwardsActorFromConfig(t *testing.T) {
 }
 
 func TestBuildNode_EmptyActorWhenUnset(t *testing.T) {
-	fake := &fakeNodeRunController{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{buildResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, _ = runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -105,7 +105,7 @@ func TestBuildNode_UnavailableExits5(t *testing.T) {
 }
 
 func TestBuildNode_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeRunController{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{buildResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
 
 	stdout, stderr, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -117,7 +117,7 @@ func TestBuildNode_HumanModeUsesStderr(t *testing.T) {
 }
 
 func TestBuildNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
-	fake := &fakeNodeRunController{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{buildResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -127,7 +127,7 @@ func TestBuildNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
 }
 
 func TestBuildNode_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
-	fake := &fakeNodeRunController{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{buildResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})

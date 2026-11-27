@@ -31,13 +31,13 @@ func TestRetryRemediation_RefusedDuringMaintenance(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	deps.Maintenance = true
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
-	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 1, Status: "failed", RemediationRound: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 1, Status: "failed", Round: 1}}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.True(t, errors.Is(err, maintenance.ErrActive), "%v", err)
 	assert.Empty(t, outboxEntries(store))
 	r, _ := store.GetRelease("rel-1")
-	assert.Equal(t, 1, r.RemediationRound(), "a refused retry starts no round")
+	assert.Equal(t, 1, r.Round(), "a refused retry starts no round")
 }
 
 // A round agent-remediation skipped because maintenance was on is closed, so
@@ -45,11 +45,11 @@ func TestRetryRemediation_RefusedDuringMaintenance(t *testing.T) {
 func TestRetryRemediation_SkippedRoundIsRetryable(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"release_id":"rel-1","reason":"compile_failed"}`))
-	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 1, Status: "skipped", RemediationRound: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 1, Status: "skipped", Round: 1}}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
-	assert.Equal(t, 2, res.RemediationRound)
+	assert.Equal(t, 2, res.Round)
 }
 
 // During maintenance the queue skips an older candidate and activates the

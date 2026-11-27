@@ -22,13 +22,13 @@ import (
 // classifier marked unfixable.
 func healTriggeredFixture() pkgevents.HealTriggered {
 	return pkgevents.HealTriggered{
-		Source:           "validation",
-		ReleaseID:        "rel-456",
-		RemediationRound: 2,
-		Repo:             "acme/dbt-project",
-		CommitSHA:        "deadbeef1234",
-		CodeBundleURI:    "s3://bucket/code-bundles/rel-456/bundle.json",
-		ClassifiedAt:     "2026-08-28T00:00:00Z",
+		Source:        "validation",
+		ReleaseID:     "rel-456",
+		Round:         2,
+		Repo:          "acme/dbt-project",
+		CommitSHA:     "deadbeef1234",
+		CodeBundleURI: "s3://bucket/code-bundles/rel-456/bundle.json",
+		ClassifiedAt:  "2026-08-28T00:00:00Z",
 		Nodes: []pkgevents.HealTriggeredNode{
 			{
 				NodeID:               "orders.model.orders_daily",

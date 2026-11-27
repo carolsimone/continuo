@@ -259,8 +259,8 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 			Clusters: []remediation.ClusterRecord{{
 				Type: "dbt-validation", TargetNodeID: "orders.model.orders_daily", Members: []string{"orders.model.orders_daily"},
 				Edits:   []remediation.EditRecord{{Path: "services/orders/models/orders_daily.sql", Diff: "-a\n+b"}},
-				Rounds:  [][]remediation.Finding{{{Code: "content_unchanged", Message: "the answer repeats the original", File: "models/orders_daily.sql", Line: 1}}},
-				Outcome: "failed (preflight_rounds_spent): the answer repeats the original",
+				Drafts:  [][]remediation.Finding{{{Code: "content_unchanged", Message: "the answer repeats the original", File: "models/orders_daily.sql", Line: 1}}},
+				Outcome: "failed (drafts_spent): the answer repeats the original",
 			}},
 			CrossCluster: []remediation.Finding{{Code: "path_edited_twice", Message: "edited twice", File: "models/orders_daily.sql", Line: 2}},
 			Gate:         []remediation.Finding{{Code: "release_check_failed", Message: "column x does not exist", File: "models/orders_daily.sql", Line: 3}},

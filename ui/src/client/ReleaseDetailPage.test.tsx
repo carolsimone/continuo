@@ -18,11 +18,11 @@ const node = (o: Partial<NodeValidationResult> & { stage: string; node_id: strin
 const makeRelease = (
   perNode: NodeValidationResult[],
   reject_reason = 'compile_failed',
-  remediation_round = 1,
+  round = 1,
 ): ReleaseDetail => ({
   release_id: 'rel-1', status: 'rejected', transitions: [], validation_node_ids: null,
   reject_reason, failing_nodes: null, per_node_results: perNode, image_tags: {},
-  bootstrap: false, remediation_round,
+  bootstrap: false, round,
 });
 
 const fix = (o: Partial<FixDTO> & { source: string; node_id: string }): FixDTO => ({
@@ -273,7 +273,7 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   it('shows each coded node its own text and message in one batched try', async () => {
     mockFetchFixes.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: 'first', code: 'declined' },
-      's.b': { status: 'escalated', reason: 'second', code: 'preflight_rounds_spent' },
+      's.b': { status: 'escalated', reason: 'second', code: 'drafts_spent' },
     })]);
     const { container } = renderPage(releaseOf('s.a', 's.b'));
     expect(await screen.findByText('The agent could not start a fix. Fix it in the repository.')).toBeInTheDocument();
@@ -330,7 +330,7 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
 
   it.each([
     ['tries_spent', 'Every try failed the checks. Fix it in the repository.'],
-    ['preflight_rounds_spent', "The agent's drafts kept failing its own checks. Fix it in the repository."],
+    ['drafts_spent', "The agent's drafts kept failing its own checks. Fix it in the repository."],
     ['declined', 'The agent could not start a fix. Fix it in the repository.'],
     ['no_type', 'continuo has no fix type for this failure yet. Fix it in the repository.'],
     ['classifier_infra', 'An infrastructure error failed this node. Run the release again.'],
@@ -492,7 +492,7 @@ describe('ReleaseDetailPage — live polling while non-terminal', () => {
     try {
       const base = {
         release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
-        failing_nodes: null, image_tags: {}, bootstrap: false, remediation_round: 1,
+        failing_nodes: null, image_tags: {}, bootstrap: false, round: 1,
       };
       const responses: ReleaseDetail[] = [
         { ...base, status: 'validating', per_node_results: [node({ stage: 'validation', node_id: 'a', status: 'ok' })] },
@@ -557,7 +557,7 @@ describe('ReleaseDetailPage — resilient polling on transient errors', () => {
     try {
       const base = {
         release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
-        failing_nodes: null, image_tags: {}, bootstrap: false, remediation_round: 1,
+        failing_nodes: null, image_tags: {}, bootstrap: false, round: 1,
       };
       const good1: ReleaseDetail = {
         ...base, status: 'validating',
@@ -637,7 +637,7 @@ describe('ReleaseDetailPage — reject detail', () => {
       per_node_results: null,
       image_tags: {},
       bootstrap: false,
-      remediation_round: 1,
+      round: 1,
     });
 
     expect(await screen.findByText(/finance \(models\/orders\.sql\)/)).toBeInTheDocument();
@@ -660,7 +660,7 @@ describe('ReleaseDetailPage — reject detail', () => {
       per_node_results: null,
       image_tags: {},
       bootstrap: false,
-      remediation_round: 1,
+      round: 1,
     });
 
     await screen.findByText(/validation/i);
@@ -676,7 +676,7 @@ describe('ReleaseDetailPage — fix polling gated on rejected', () => {
     try {
       const base = {
         release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
-        failing_nodes: null, image_tags: {}, bootstrap: false, remediation_round: 1,
+        failing_nodes: null, image_tags: {}, bootstrap: false, round: 1,
       };
       const validatingWithFailure: ReleaseDetail = {
         ...base, status: 'validating',
@@ -782,7 +782,7 @@ describe('ReleaseDetailPage — fix polling settles per node on a batched try', 
 describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
   it('shows Try again for a rejected release at a dead end and posts the retry', async () => {
     mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', try: 0, rationale: '' })]);
-    mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
+    mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', round: 2 }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     fireEvent.click(btn);
@@ -801,7 +801,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
 
   it('bumps the round shown in the header and restarts fix polling after a successful retry (202)', async () => {
     mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', try: 0 })]);
-    mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
+    mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', round: 2 }) });
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     const callsBeforeRetry = mockFetchFixes.mock.calls.length;
@@ -832,7 +832,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
 
   it('shows Try again when the only round-1 fix is proposed but its PR was rejected', async () => {
     mockFetchFixes.mockResolvedValue([fix({
-      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', remediation_round: 1,
+      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', round: 1,
     })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     expect(await screen.findByRole('button', { name: 'Try again (round 1 of 3)' })).toBeInTheDocument();
@@ -844,7 +844,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     // only looks at the singular field would misjudge this try as a dead
     // end even though project 'b' still has a PR open for review.
     mockFetchFixes.mockResolvedValue([fix({
-      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', remediation_round: 1,
+      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', round: 1,
       pr_projects: ['a', 'b'],
       pull_requests: [
         {
@@ -865,7 +865,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
 
   it('hides Try again when the only round-1 fix is proposed with no PR yet', async () => {
     mockFetchFixes.mockResolvedValue([fix({
-      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: '', remediation_round: 1,
+      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: '', round: 1,
     })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     await screen.findByText('finance');
@@ -927,19 +927,19 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(await screen.findByText('agent-remediation is unreachable — try again in a moment.')).toBeInTheDocument();
   });
 
-  it('treats a fix with remediation_round 0 as round 1 (Try again shows on a round-1 dead end)', async () => {
-    // A missing remediation_round arrives over the wire as 0, not undefined —
+  it('treats a fix with round 0 as round 1 (Try again shows on a round-1 dead end)', async () => {
+    // A missing round arrives over the wire as 0, not undefined —
     // ui/src/server/remediation-client.ts loads the proto with `defaults:
     // true`. The fix must still be read as belonging to round 1.
     mockFetchFixes.mockResolvedValue([fix({
-      source: 'compile', node_id: 'finance', status: 'escalated', try: 0, remediation_round: 0,
+      source: 'compile', node_id: 'finance', status: 'escalated', try: 0, round: 0,
     })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     expect(await screen.findByRole('button', { name: 'Try again (round 1 of 3)' })).toBeInTheDocument();
   });
 
   it('says push a new commit when the release is on round 3 at a dead end', async () => {
-    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', try: 0, remediation_round: 3 })]);
+    mockFetchFixes.mockResolvedValue([fix({ source: 'compile', node_id: 'finance', status: 'escalated', try: 0, round: 3 })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })], 'compile_failed', 3));
     expect(await screen.findByText(/Retried 3 times — push a new commit to start over\./)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
@@ -958,14 +958,14 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(await screen.findByText("The round's tries are spent.")).toBeInTheDocument();
   });
 
-  it('shows the remediation round next to status once retried', async () => {
+  it('shows the round next to status once retried', async () => {
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })], 'compile_failed', 2));
     await screen.findByText('finance');
     const pill = document.querySelector('.pill');
     expect(pill!.textContent).toBe('rejected · round 2');
   });
 
-  it('does not show a round suffix on the first remediation round', async () => {
+  it('does not show a round suffix on the first round', async () => {
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
     await screen.findByText('models/x.sql');
     const pill = document.querySelector('.pill');
@@ -977,9 +977,9 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     try {
       // Round 1's only fix is a terminal, non-actionable escalation — the
       // release-controller would not have accepted a retry otherwise.
-      const round1Escalated = fix({ source: 'compile', node_id: 'finance', status: 'escalated', try: 0, remediation_round: 1 });
+      const round1Escalated = fix({ source: 'compile', node_id: 'finance', status: 'escalated', try: 0, round: 1 });
       mockFetchFixes.mockResolvedValue([round1Escalated]);
-      mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
+      mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', round: 2 }) });
 
       renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -997,7 +997,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
       // Round 2's first try lands on the next poll tick.
       mockFetchFixes.mockResolvedValue([
         round1Escalated,
-        fix({ source: 'compile', node_id: 'finance', status: 'generating', try: 4, remediation_round: 2 }),
+        fix({ source: 'compile', node_id: 'finance', status: 'generating', try: 4, round: 2 }),
       ]);
       await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
       expect(screen.getByText(/Generating fix/)).toBeInTheDocument();
@@ -1012,12 +1012,12 @@ describe('ReleaseDetailPage — release checks section', () => {
   it('lists the release checks that judged fixes for this release', async () => {
     mockReleaseChecks([
       {
-        check_id: 'verify-rel-1-core-r1-t3', status: 'failed', project: 'core', remediation_round: 1, try: 3,
+        check_id: 'verify-rel-1-core-r1-t3', status: 'failed', project: 'core', round: 1, try: 3,
         created_at: '2026-09-02T10:00:00Z', activated_at: '2026-09-02T10:01:00Z',
         finished_at: '2026-09-02T10:05:00Z', fail_reason: 'validation_failed',
       },
       {
-        check_id: 'verify-rel-1-core-r2-t1', status: 'validating', project: 'core', remediation_round: 2, try: 1,
+        check_id: 'verify-rel-1-core-r2-t1', status: 'validating', project: 'core', round: 2, try: 1,
         created_at: '2026-09-02T10:06:00Z', activated_at: '2026-09-02T10:07:00Z', finished_at: '',
       },
     ]);

@@ -15,13 +15,13 @@ import (
 func NewRemoveCronCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove-cron <name>",
-		Short: "Remove the cron of a schedule: it then runs only when triggered",
-		Long: `Remove the cron of a schedule: it then runs only when triggered.
+		Short: "Remove the cron of a schedule: it then runs only when someone starts it",
+		Long: `Remove the cron of a schedule: it then runs only when someone starts it.
 
 Use when the user asks to stop a schedule running on its own for good, to make
 it manual, or to delete its cron. The schedule itself stays (it is the dbt tag
 of its models); only its cron, timezone, description and pause are removed.
-A run of it already in progress goes on, and "schedule trigger" still starts it.
+A run of it already in progress goes on, and "schedule run" still starts it.
 Use "schedule pause" instead to keep the cron for later.
 
 Removing the cron of a schedule that has none succeeds and changes nothing, so
@@ -69,7 +69,7 @@ Errors:
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Removed the cron of schedule '"+name+"'; it now runs only when triggered")
+				return output.HumanSuccess(stderr, "Removed the cron of schedule '"+name+"'; it now runs only when someone starts it")
 			}
 			return output.EmitSuccess(stdout, map[string]any{"schedule_name": name, "has_cron": false})
 		},

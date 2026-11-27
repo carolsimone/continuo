@@ -19,7 +19,7 @@ import { settlesRequest, useActionRequestId } from './request-id';
 
 interface Props {
   schedule: ScheduleSummary;
-  // Reads the schedule list again at once. The card calls it after a trigger
+  // Reads the schedule list again at once. The card calls it after a start
   // or a cancel succeeds, so the card shows the new run or the cancelling run
   // without waiting for the next poll, and when its cron dialog closes, so it
   // shows the cron as saved.
@@ -55,24 +55,24 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   const [taskRead, setTaskRead] = useState<{ runId: string; tasks: Task[] } | null>(null);
   const [tasksReload, setTasksReload] = useState(0);
   const [drift, setDrift] = useState<{ run: number; latest: number } | null>(null);
-  const [triggerLoading, setTriggerLoading] = useState(false);
-  const [triggerStatus, setTriggerStatus] = useState<'idle' | 'success'>('idle');
-  const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [startLoading, setStartLoading] = useState(false);
+  const [startStatus, setStartStatus] = useState<'idle' | 'success'>('idle');
+  const [startError, setStartError] = useState<string | null>(null);
   const [operation, setOperation] = useState<RunOperation>('run');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   // The mode of the open cron dialog, fixed when it opens: a poll that adds
   // or removes the cron meanwhile does not turn an Add into an Edit.
   const [cronDialogMode, setCronDialogMode] = useState<'edit' | 'add' | null>(null);
   const isOperator = useCurrentUser()?.role === 'operator';
-  // The trigger button's request id: a press that gets no answer and is
+  // The Start button's request id: a press that gets no answer and is
   // repeated for the same operation, while the card still shows the last run
   // the first press saw, sends the same id, so the run the first press made is
   // returned rather than made twice. A newer last run on the card (the
   // schedule list's poll) makes the next press a new action, and the id is
   // renewed once the server has given its final answer.
-  const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
+  const { take: takeRequestId, renew: renewStartId } = useActionRequestId();
   const actionsRef = useRef<HTMLDivElement>(null);
-  const triggerGroupRef = useRef<HTMLDivElement>(null);
+  const startGroupRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   // Reads the run's tasks now and every 5 s after. A change of run or a bump
@@ -124,27 +124,27 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   }, [schedule.has_active_run]);
 
   // An error from an earlier press says nothing about a newer run, and while
-  // that run is active there is no Trigger to press and clear it.
+  // that run is active there is no Start button to press and clear it.
   useEffect(() => {
-    setTriggerError(null);
+    setStartError(null);
   }, [schedule.last_run_id]);
 
-  // Trigger is on offer while no run is active. A press stays on screen until
+  // Start is on offer while no run is active. A press stays on screen until
   // its request has answered and its success has shown, even once the run it
   // started reads active; Cancel appears as soon as a run is active, so it is
   // never hidden while there is a run to cancel.
-  const triggerBusy = triggerLoading || triggerStatus === 'success';
-  const showTrigger = !schedule.has_active_run || triggerBusy;
+  const startBusy = startLoading || startStatus === 'success';
+  const showStart = !schedule.has_active_run || startBusy;
 
   // A browser drops the focus to the page when the focused control leaves the
   // document. This render, the last before that control goes, reads whether the
   // focus is on it; only here can that be told from focus the operator moved
   // away, since a removal fires blur too. The focus then goes to the group of
   // controls, which holds the keyboard's place and does nothing on a key press: a
-  // key meant for Cancel must not land on Trigger, which has no confirmation.
+  // key meant for Cancel must not land on Start, which has no confirmation.
   const holdsFocus = (el: HTMLElement | null) => Boolean(el?.contains(document.activeElement));
   const focusIsLeaving =
-    (!showTrigger && holdsFocus(triggerGroupRef.current)) ||
+    (!showStart && holdsFocus(startGroupRef.current)) ||
     (!schedule.has_active_run && holdsFocus(cancelRef.current));
   useLayoutEffect(() => {
     if (focusIsLeaving) actionsRef.current?.focus({ preventScroll: true });
@@ -192,28 +192,28 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
 
   const stopCardClick = (e: React.MouseEvent) => e.stopPropagation();
 
-  const handleTrigger = () => {
-    setTriggerLoading(true);
-    setTriggerError(null);
-    fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, {
+  const handleStart = () => {
+    setStartLoading(true);
+    setStartError(null);
+    fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/manual-run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ request_id: takeRequestId(operation, schedule.last_run_id), operation: operation === 'run' ? '' : operation }),
     })
       .then(async r => {
-        if (settlesRequest(r)) renewTriggerId();
+        if (settlesRequest(r)) renewStartId();
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
           throw new Error(body.error || `HTTP ${r.status}`);
         }
-        setTriggerStatus('success');
-        setTimeout(() => setTriggerStatus('idle'), 3000);
+        setStartStatus('success');
+        setTimeout(() => setStartStatus('idle'), 3000);
         // The new run reaches the card through the schedule list, whose new
         // last_run_id starts the task reads of that run.
         onRunChanged();
       })
-      .catch(err => setTriggerError(err.message))
-      .finally(() => setTriggerLoading(false));
+      .catch(err => setStartError(err.message))
+      .finally(() => setStartLoading(false));
   };
 
   // A cancel keeps the same run, so the card reads both the schedule list (the
@@ -228,9 +228,9 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     onRunChanged();
   };
 
-  const triggerIdleLabel =
-    operation === 'test' ? 'Trigger test' : operation === 'build' ? 'Trigger build' : 'Trigger run';
-  const triggerStateClass = triggerLoading ? 'is-loading' : triggerStatus === 'success' ? 'is-success' : '';
+  const startIdleLabel =
+    operation === 'test' ? 'Start test' : operation === 'build' ? 'Start build' : 'Start run';
+  const startStateClass = startLoading ? 'is-loading' : startStatus === 'success' ? 'is-success' : '';
 
   const scheduleFacts: ReactNode[] = [];
   if (hasCron) {
@@ -246,7 +246,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     );
     if (schedule.timezone) scheduleFacts.push(<span>{schedule.timezone}</span>);
   } else {
-    scheduleFacts.push(<span>No cron: runs only when triggered</span>);
+    scheduleFacts.push(<span>No cron: runs only when someone starts it</span>);
   }
   if (when) scheduleFacts.push(<span>{when}</span>);
   if (!neverRun && schedule.last_run_at) {
@@ -307,22 +307,22 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
             tabIndex={-1}
             onClick={stopCardClick}
           >
-            {showTrigger && (
-              <div ref={triggerGroupRef} className="btn-group">
+            {showStart && (
+              <div ref={startGroupRef} className="btn-group">
                 <button
                   type="button"
-                  className={['btn', 'btn--secondary', triggerStateClass].filter(Boolean).join(' ')}
-                  disabled={triggerBusy}
-                  onClick={handleTrigger}
-                  title="Trigger a full DAG run"
+                  className={['btn', 'btn--secondary', startStateClass].filter(Boolean).join(' ')}
+                  disabled={startBusy}
+                  onClick={handleStart}
+                  title="Start a manual run of the whole schedule"
                 >
-                  {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : triggerIdleLabel}
+                  {startLoading ? 'Starting…' : startStatus === 'success' ? 'Started' : startIdleLabel}
                 </button>
-                <label className={['btn', 'btn--secondary', 'btn--caret', triggerStateClass].filter(Boolean).join(' ')} title="Operation">
+                <label className={['btn', 'btn--secondary', 'btn--caret', startStateClass].filter(Boolean).join(' ')} title="Operation">
                   <span className="sr-only">Operation</span>
                   <select
                     value={operation}
-                    disabled={triggerBusy}
+                    disabled={startBusy}
                     onChange={e => setOperation(e.target.value as RunOperation)}
                   >
                     <option value="run">Run</option>
@@ -370,7 +370,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
             </span>
           </div>
         )}
-        {triggerError && <div className="info-strip info-strip--error" onClick={stopCardClick}>{triggerError}</div>}
+        {startError && <div className="info-strip info-strip--error" onClick={stopCardClick}>{startError}</div>}
         {showBody && (
           <div className="scheduler-card-body">
             <TaskStatusBar summary={summary} />

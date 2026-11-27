@@ -162,7 +162,7 @@ func TestList_DormantFlagAndNeverRunNode(t *testing.T) {
 		"the help says what a dormant node is, and which run includes one only to rebuild it")
 	assert.Contains(t, long, "dormant is true for a node continuo builds that belongs to no schedule", "the help says what dormant means")
 	assert.NotContains(t, long, "schedule tag", "an untagged seed takes the seed schedule and is not dormant, so the help never defines dormant by a missing tag")
-	assert.Contains(t, long, `"continuo node trigger <project> <schema> <table>"`, "the help names the command that runs a dormant node")
+	assert.Contains(t, long, `"continuo node run <project> <schema> <table>"`, "the help names the command that runs a dormant node")
 	assert.Contains(t, long, "node that never ran has task_count 0 and no last_run_at", "the help says how a never-run node reads")
 }
 

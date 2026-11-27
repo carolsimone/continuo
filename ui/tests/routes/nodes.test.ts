@@ -5,7 +5,7 @@ import * as grpc from '@grpc/grpc-js';
 import { createNodesRouter } from '../../src/server/routes/nodes';
 
 const mockListNodeTasks = vi.fn();
-const mockTriggerSingleNodeRun = vi.fn();
+const mockStartSingleNodeRun = vi.fn();
 const mockListNodes = vi.fn();
 const mockListNodeNames = vi.fn();
 const mockListNodeProjects = vi.fn();
@@ -17,7 +17,7 @@ const mockGetNodeContractDiff = vi.fn();
 
 const mockRunClient = {
   listNodeTasks: mockListNodeTasks,
-  triggerSingleNodeRun: mockTriggerSingleNodeRun,
+  startSingleNodeRun: mockStartSingleNodeRun,
   listNodes: mockListNodes,
   listNodeNames: mockListNodeNames,
   listNodeProjects: mockListNodeProjects,
@@ -43,7 +43,7 @@ function makeApp() {
 describe('nodes router', () => {
   beforeEach(() => {
     mockListNodeTasks.mockReset();
-    mockTriggerSingleNodeRun.mockReset();
+    mockStartSingleNodeRun.mockReset();
     mockListNodes.mockReset();
     mockListNodeNames.mockReset();
     mockListNodeProjects.mockReset();
@@ -134,8 +134,8 @@ describe('nodes router', () => {
     expect(res.body.tasks[0].operation).toBe('run');
   });
 
-  it('POST /:svc/:schema/:table/run (latest mode) calls TriggerSingleNodeRun', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+  it('POST /:svc/:schema/:table/run (latest mode) calls StartSingleNodeRun', async () => {
+    mockStartSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'new-r', schedule_name: 'single-node-run-abc12345' }),
     );
 
@@ -145,7 +145,7 @@ describe('nodes router', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.run_id).toBe('new-r');
-    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+    expect(mockStartSingleNodeRun).toHaveBeenCalledWith(
       {
         request_id: REQUEST_ID, project_name: 'svc', schema_name: 'schema', table_name: 'tbl',
         metadata_source: 'latest', source_run_id: '', operation: '',
@@ -156,7 +156,7 @@ describe('nodes router', () => {
   });
 
   it('POST /:svc/:schema/:table/run with source_run_id uses snapshot_of_run', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+    mockStartSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'new-r', schedule_name: 'single-node-run-abc12345' }),
     );
 
@@ -164,7 +164,7 @@ describe('nodes router', () => {
       .post('/api/nodes/svc/schema/tbl/run')
       .send({ request_id: REQUEST_ID, source_run_id: 'src-run-id' });
 
-    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+    expect(mockStartSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         request_id: REQUEST_ID,
         metadata_source: 'snapshot_of_run',
@@ -311,7 +311,7 @@ describe('nodes router', () => {
   });
 
   it('maps gRPC NOT_FOUND to HTTP 404', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+    mockStartSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb({ code: grpc.status.NOT_FOUND, message: 'source run missing' }),
     );
 
@@ -464,7 +464,7 @@ describe('nodes router', () => {
   });
 
   it('GET /meta degrades to an empty source_uri when the version lookup fails', async () => {
-    // The meta endpoint's primary job is gating the test trigger; a broken
+    // The meta endpoint's primary job is gating the test button; a broken
     // version lookup must not take the whole node page down with it.
     mockGetNode.mockImplementation((_req, cb) =>
       cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
@@ -497,11 +497,11 @@ describe('nodes router', () => {
   });
 
   it('POST /run forwards operation=build', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+    mockStartSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
     );
     await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ request_id: REQUEST_ID, operation: 'build' });
-    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+    expect(mockStartSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({ operation: 'build', metadata_source: 'latest' }),
       expect.any(Object),
       expect.any(Function),
@@ -509,11 +509,11 @@ describe('nodes router', () => {
   });
 
   it('POST /run forwards operation=full_refresh', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+    mockStartSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
     );
     await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ request_id: REQUEST_ID, operation: 'full_refresh' });
-    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+    expect(mockStartSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({ operation: 'full_refresh', metadata_source: 'latest' }),
       expect.any(Object),
       expect.any(Function),
@@ -523,7 +523,7 @@ describe('nodes router', () => {
   it('POST /run rejects a bad operation with 400', async () => {
     const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ request_id: REQUEST_ID, operation: 'nope' });
     expect(res.status).toBe(400);
-    expect(mockTriggerSingleNodeRun).not.toHaveBeenCalled();
+    expect(mockStartSingleNodeRun).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -536,11 +536,11 @@ describe('nodes router', () => {
     const res = await (body === undefined ? req : req.send(body));
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'request_id must be a UUID' });
-    expect(mockTriggerSingleNodeRun).not.toHaveBeenCalled();
+    expect(mockStartSingleNodeRun).not.toHaveBeenCalled();
   });
 
   it('POST /run maps ALREADY_EXISTS (request_id reused with different parameters) to 409', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+    mockStartSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb({ code: grpc.status.ALREADY_EXISTS, message: 'request_id reused with different parameters' }),
     );
     const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ request_id: REQUEST_ID });
@@ -549,14 +549,14 @@ describe('nodes router', () => {
   });
 
   it('POST /run forwards the acknowledged objects of a full refresh', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+    mockStartSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
     );
     const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({
       request_id: REQUEST_ID, operation: 'full_refresh', acknowledged_dependents: ['e2e_bi.seed_reader'],
     });
     expect(res.status).toBe(200);
-    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+    expect(mockStartSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({ operation: 'full_refresh', acknowledged_dependents: ['e2e_bi.seed_reader'] }),
       expect.any(Object),
       expect.any(Function),
@@ -572,7 +572,7 @@ describe('nodes router', () => {
       request_id: REQUEST_ID, operation: 'full_refresh', acknowledged_dependents: value,
     });
     expect(res.status).toBe(400);
-    expect(mockTriggerSingleNodeRun).not.toHaveBeenCalled();
+    expect(mockStartSingleNodeRun).not.toHaveBeenCalled();
   });
 
   it('GET /:svc/:schema/:table/runs returns the node outage and each run blocking objects', async () => {

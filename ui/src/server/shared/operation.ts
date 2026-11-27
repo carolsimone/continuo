@@ -5,7 +5,7 @@
 import { OPERATIONS, SINGLE_NODE_ONLY_OPERATIONS, type Operation, type SingleNodeOnlyOperation } from '../generated/vocabulary.gen';
 
 // RUN_OPERATIONS are the operations a run applies to its nodes: a schedule
-// trigger and a single-node run both offer them, and a node's run history is
+// manual run and a single-node run both offer them, and a node's run history is
 // filtered by them. They are every contract operation that is not
 // single-node-only.
 export type RunOperation = Exclude<Operation, SingleNodeOnlyOperation>;

@@ -56,7 +56,7 @@ func newRemediation(t *testing.T, store *memory.Store) remediation.Remediation {
 
 func verifying(rem remediation.Remediation) fix.Fix {
 	return fix.Fix{
-		Source: "validation", ReleaseID: "rel-1", RemediationID: rem.ID.String(), RemediationRound: 1,
+		Source: "validation", ReleaseID: "rel-1", RemediationID: rem.ID.String(), Round: 1,
 		NodeID: "model.a", ResolvedNodeIDs: []string{"model.a", "model.b"}, ErrorSignature: "sig-a",
 		Try: 1, Status: fix.StatusVerifying,
 		NodeOutcomes:  map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusVerifying}, "model.b": {Status: fix.StatusVerifying}},
@@ -158,7 +158,7 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 		"event_id":          eventID.String(),
 		"source":            "validation",
 		"release_id":        "rel-1",
-		"remediation_round": float64(1),
+		"round":             float64(1),
 		"node_id":           "model.a",
 		"resolved_node_ids": []any{"model.a", "model.b"},
 		"error_signature":   "sig-a",
@@ -299,11 +299,11 @@ func TestHandOver_EmitsOneEventWithEveryHandedOverNode(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(body, &got))
 	assert.Equal(t, map[string]any{
-		"remediation_id":    rem.ID.String(),
-		"release_id":        "rel-1",
-		"remediation_round": float64(1),
-		"flow":              "rejected-release",
-		"tries":             float64(3),
+		"remediation_id": rem.ID.String(),
+		"release_id":     "rel-1",
+		"round":          float64(1),
+		"flow":           "rejected-release",
+		"tries":          float64(3),
 		"nodes": []any{
 			map[string]any{"node_id": "model.a", "reason": string(model.HandoverReasonTriesSpent), "message": "tried 3 times; the last try failed: model.a: still broken"},
 			map[string]any{"node_id": "model.b", "reason": string(model.HandoverReasonDeclined), "message": "the compile error names no source file, so there is no file to fix"},

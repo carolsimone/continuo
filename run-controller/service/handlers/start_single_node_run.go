@@ -15,33 +15,33 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrSourceRunNotTerminal is returned by TriggerSingleNodeRunHandler when the
+// ErrSourceRunNotTerminal is returned by StartSingleNodeRunHandler when the
 // stale-mode source run has not yet reached a terminal state.
 var ErrSourceRunNotTerminal = errors.New("source run is not in a terminal state")
 
-// TriggerSingleNodeRunHandler is the use case behind the TriggerSingleNodeRun
+// StartSingleNodeRunHandler is the use case behind the StartSingleNodeRun
 // gRPC method. It creates a single-task Run, stores its task and dispatches it
 // in the caller's transaction: on the live release, or, in stale mode
 // (MetadataSource = snapshot_of_run), on the source run's release, after
 // validating that the source run is terminal and carries a task at the
 // requested node.
-type TriggerSingleNodeRunHandler struct {
+type StartSingleNodeRunHandler struct {
 	planner runstart.Planner
 	logger  *slog.Logger
 }
 
-// NewTriggerSingleNodeRunHandler constructs the handler; planner plans its
+// NewStartSingleNodeRunHandler constructs the handler; planner plans its
 // runs.
-func NewTriggerSingleNodeRunHandler(planner runstart.Planner, logger *slog.Logger) *TriggerSingleNodeRunHandler {
-	return &TriggerSingleNodeRunHandler{planner: planner, logger: logger}
+func NewStartSingleNodeRunHandler(planner runstart.Planner, logger *slog.Logger) *StartSingleNodeRunHandler {
+	return &StartSingleNodeRunHandler{planner: planner, logger: logger}
 }
 
-// TriggerSingleNodeRunInput holds the parameters for HandleInTransaction.
+// StartSingleNodeRunInput holds the parameters for HandleInTransaction.
 // TenantID is the tenant the run is created for; its source run, in stale
 // mode, is one of that tenant's runs. AcknowledgedDependents are the
 // "<schema>.<name>" of the warehouse objects an operator lets a full refresh
 // of a seed drop, normalized by seedreload.NormalizeObjects.
-type TriggerSingleNodeRunInput struct {
+type StartSingleNodeRunInput struct {
 	TenantID               string
 	Target                 run.NodeID
 	MetadataSource         run.MetadataSource
@@ -60,7 +60,7 @@ type TriggerSingleNodeRunInput struct {
 // type that cannot be rebuilt, a seed that sets +full_refresh: false and needs
 // its table rebuilt, acknowledged dependents on any other run, a source that
 // names no release) is returned as is, and the caller rolls back.
-func (h *TriggerSingleNodeRunHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput) (string, error) {
+func (h *StartSingleNodeRunHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in StartSingleNodeRunInput) (string, error) {
 	src, err := h.source(ctx, u, in)
 	if err != nil {
 		return "", err
@@ -71,7 +71,7 @@ func (h *TriggerSingleNodeRunHandler) HandleInTransaction(ctx context.Context, u
 // source returns the source run of a stale-mode request, after checking it
 // is terminal and carries a task at the requested node; a request on the live
 // release has none.
-func (h *TriggerSingleNodeRunHandler) source(ctx context.Context, u uow.UnitOfWork, in TriggerSingleNodeRunInput) (*run.Run, error) {
+func (h *StartSingleNodeRunHandler) source(ctx context.Context, u uow.UnitOfWork, in StartSingleNodeRunInput) (*run.Run, error) {
 	if in.MetadataSource != run.MetadataSourceSnapshotOfRun {
 		return nil, nil
 	}
@@ -98,7 +98,7 @@ func (h *TriggerSingleNodeRunHandler) source(ctx context.Context, u uow.UnitOfWo
 // write creates the single-task Run runID, named single-node-run- and the
 // first eight hex digits of its id, stores its task and dispatches it, inside
 // u's open transaction. It returns the run's schedule name.
-func (h *TriggerSingleNodeRunHandler) write(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput, src *run.Run) (string, error) {
+func (h *StartSingleNodeRunHandler) write(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in StartSingleNodeRunInput, src *run.Run) (string, error) {
 	sel, err := h.planner.SingleNode(ctx, u, in.TenantID, in.Target, in.Operation, src, in.AcknowledgedDependents)
 	if err != nil {
 		return "", err

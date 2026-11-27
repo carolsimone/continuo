@@ -26,7 +26,7 @@ func getReleaseResponse(rel *releasecheck.Check) map[string]any {
 		"rebaseline":          rel.IsRebaseline(),
 		"repo":                rel.Repo(),
 		"commit_sha":          rel.CommitSHA(),
-		"remediation_round":   rel.RemediationRound(),
+		"round":               rel.Round(),
 		"notices":             serialization.NoticesFromDomain(rel.Notices()),
 		// continuo_contracts is the version of the continuo-contracts library that
 		// read the release's contracts, empty until the parse ends. The contract

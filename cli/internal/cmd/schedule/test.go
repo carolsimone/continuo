@@ -32,7 +32,8 @@ Arguments:
   <schedule-name>  The schedule to test.
 
 Output (stdout, JSON):
-  {"run_id":string,"schedule_name":string,"triggered_at":string}
+  {"run_id":string,"schedule_name":string,"created_at":string}
+  created_at is when the command created the run (RFC3339, UTC).
 
 ` + client.RequestIDHelp + `
 
@@ -45,7 +46,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule test daily",
 		Annotations: map[string]string{
-			"output_schema": `{"run_id":"string","schedule_name":"string","triggered_at":"string"}`,
+			"output_schema": `{"run_id":"string","schedule_name":"string","created_at":"string"}`,
 			"exit_codes":    `[0,2,3,4,5,6,7]`,
 			"mutating":      "true",
 		},
@@ -66,18 +67,18 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerScheduleTest(ctx, client.RequestID(), scheduleName, cfg.Actor)
+			resp, err := c.StartScheduleTest(ctx, client.RequestID(), scheduleName, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered test run "+resp.GetRunId()+" for schedule '"+scheduleName+"'")
+				return output.HumanSuccess(stderr, "Started test run "+resp.GetRunId()+" for schedule '"+scheduleName+"'")
 			}
 			payload := map[string]string{
 				"run_id":        resp.GetRunId(),
 				"schedule_name": scheduleName,
-				"triggered_at":  time.Now().UTC().Format(time.RFC3339),
+				"created_at":    time.Now().UTC().Format(time.RFC3339),
 			}
 			return output.EmitSuccess(stdout, payload)
 		},

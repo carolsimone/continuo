@@ -12,7 +12,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
 
-// handleRetryRemediation starts another remediation round on a rejected
+// handleRetryRemediation starts another round on a rejected
 // release. A refusal answers 409 with a machine-readable reason so the UI can
 // say what to do instead — open the fix, wait for the round already in
 // flight, push a new commit — rather than retry. A failed read of remediation
@@ -25,7 +25,7 @@ func (s *Server) handleRetryRemediation(w http.ResponseWriter, r *http.Request) 
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]any{"release_id": res.ReleaseID, "remediation_round": res.RemediationRound})
+		_ = json.NewEncoder(w).Encode(map[string]any{"release_id": res.ReleaseID, "round": res.Round})
 	case errors.Is(err, maintenance.ErrActive):
 		writeMaintenance(w)
 	case errors.Is(err, handlers.ErrReleaseNotFound):

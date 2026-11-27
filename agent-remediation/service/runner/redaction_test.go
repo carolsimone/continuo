@@ -40,12 +40,12 @@ func answerWith(content, rationale string) func(prompt.ProposeRequest) ports.Pro
 	}
 }
 
-// preflightDraft is the draft round's pre-flight pass of cluster 1 of try 1
+// preflightDraft is the draft draft's pre-flight pass of cluster 1 of try 1
 // stored.
-func (h *harness) preflightDraft(id uuid.UUID, round int) remediation.Draft {
+func (h *harness) preflightDraft(id uuid.UUID, draft int) remediation.Draft {
 	h.t.Helper()
-	pass, ok := h.roundRows(id, 1, "preflight")[round]
-	require.True(h.t, ok, "round %d has a pre-flight row", round)
+	pass, ok := h.draftRows(id, 1, "preflight")[draft]
+	require.True(h.t, ok, "draft %d has a pre-flight row", draft)
 	rec, err := serialization.DecodeRecord[serialization.PreflightRecord](pass.Output)
 	require.NoError(h.t, err)
 	return rec.Draft
@@ -69,13 +69,13 @@ func TestRunner_RestoresRedactedValuesInTheDraft(t *testing.T) {
 	assert.Equal(t, "select 'ops@acme.com' as owner, 2", draft.Edits[0].Content, "the checked edit holds the real value")
 	assert.Equal(t, ownedSource, draft.Edits[0].Original)
 	assert.Equal(t, "kept the owner ops@acme.com", draft.Rationale)
-	assert.Empty(t, h.roundRows(id, 1, "preflight")[1].Findings)
+	assert.Empty(t, h.draftRows(id, 1, "preflight")[1].Findings)
 
 	stored, ok := h.artifacts.get(draft.Edits[0].ContentKey)
 	require.True(t, ok)
 	assert.Equal(t, "select 'ops@acme.com' as owner, 2", stored, "the content a pull request carries holds the real value")
 
-	rec, err := serialization.DecodeRecord[serialization.PromptRecord](h.roundRows(id, 1, "dbt-compile")[1].Output)
+	rec, err := serialization.DecodeRecord[serialization.PromptRecord](h.draftRows(id, 1, "dbt-compile")[1].Output)
 	require.NoError(t, err)
 	require.NotNil(t, rec.LastRequest)
 	assert.Contains(t, rec.LastRequest.Request().User, "[redacted:email:1]", "the prompt row keeps the request as sent")
@@ -107,13 +107,13 @@ func TestRunner_AnUnknownPlaceholderIsAFinding(t *testing.T) {
 			require.NoError(t, h.runner.Drive(ctx, id))
 
 			message := tc.message
-			findings := h.roundRows(id, 1, "preflight")[1].Findings
+			findings := h.draftRows(id, 1, "preflight")[1].Findings
 			require.NotEmpty(t, findings)
 			assert.Equal(t, "unknown_placeholder", findings[0].Code)
 			assert.Equal(t, message, findings[0].Message)
 			c := h.cluster(id, 1, 1)
-			assert.Equal(t, remediation.ClusterHandedOver, c.Status, "the round fails like on any other finding")
-			want := fix.NodeOutcome{Status: fix.StatusFailed, Reason: message, Code: model.HandoverReasonPreflightRoundsSpent}
+			assert.Equal(t, remediation.ClusterHandedOver, c.Status, "the draft fails like on any other finding")
+			want := fix.NodeOutcome{Status: fix.StatusFailed, Reason: message, Code: model.HandoverReasonDraftsSpent}
 			assert.Equal(t, &want, c.Outcome)
 			assert.Empty(t, h.checks.requests(), "no draft that holds a placeholder is verified")
 		})
@@ -121,7 +121,7 @@ func TestRunner_AnUnknownPlaceholderIsAFinding(t *testing.T) {
 }
 
 func TestRunner_AnUnknownPlaceholderGoesBackToTheModel(t *testing.T) {
-	h := newHarness(t, withRounds(2))
+	h := newHarness(t, withDrafts(2))
 	withOwnedSource(h)
 	answersInTurn(h, answerWith("select '[redacted:email:9]' as owner", "fixed it"), answerWith("select '[redacted:email:1]' as owner, 2", "fixed it"))
 	id := h.accept(trigger("compile", compileNode("svc-a")))
@@ -155,7 +155,7 @@ func (c quotingCheck) Check(_ context.Context, in step.CheckInput) (step.CheckOu
 }
 
 func TestRunner_ARevisionShowsTheFindingsCleanedAndARestartRebuildsTheSamePlaceholders(t *testing.T) {
-	h := newHarness(t, withRounds(3))
+	h := newHarness(t, withDrafts(3))
 	withOwnedSource(h)
 	orig, _, ok := h.registry().Lookup("confidence_not_low")
 	require.True(t, ok)
@@ -171,22 +171,22 @@ func TestRunner_ARevisionShowsTheFindingsCleanedAndARestartRebuildsTheSamePlaceh
 		if armed {
 			return
 		}
-		if row, ok := h.roundRows(h.store.Remediations()[0].ID, 1, "dbt-compile")[1]; ok && row.Status == remediation.StepDone {
+		if row, ok := h.draftRows(h.store.Remediations()[0].ID, 1, "dbt-compile")[1]; ok && row.Status == remediation.StepDone {
 			armed = true
 			h.store.FailNextCommit()
 		}
 	}
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
-	require.Error(t, h.runner.Drive(ctx, id), "round 1's pre-flight commit fails")
+	require.Error(t, h.runner.Drive(ctx, id), "draft 1's pre-flight commit fails")
 	h.afterCommit = nil
 	h.reclaim(id)
 	require.NoError(t, h.runnerOver(h.files).Drive(ctx, id), "a restarted runner resumes")
 
 	reqs := h.llm.all()
-	require.Len(t, reqs, 2, "round 1's model call is not made again")
+	require.Len(t, reqs, 2, "draft 1's model call is not made again")
 	assert.Equal(t, "the file reads select 'ops@acme.com' as owner, 2 and the warehouse wants password=hunter2",
-		h.roundRows(id, 1, "preflight")[1].Findings[0].Message, "the check reads the restored draft, and the journal keeps its finding raw")
+		h.draftRows(id, 1, "preflight")[1].Findings[0].Message, "the check reads the restored draft, and the journal keeps its finding raw")
 	cleanedFinding := remediation.Finding{
 		Code:    "low_confidence",
 		Message: "the file reads select '[redacted:email:1]' as owner, 2 and the warehouse wants password=[redacted:secret:1]",
@@ -200,15 +200,15 @@ func TestRunner_ARevisionShowsTheFindingsCleanedAndARestartRebuildsTheSamePlaceh
 }
 
 // TestRunner_EveryRoundKeepsThePlaceholdersOfTheRoundsBefore checks that a
-// value a finding of round 1 quotes keeps its placeholder in round 3, so no
+// value a finding of draft 1 quotes keeps its placeholder in draft 3, so no
 // number means two values in one request.
-func TestRunner_EveryRoundKeepsThePlaceholdersOfTheRoundsBefore(t *testing.T) {
-	h := newHarness(t, withRounds(3))
+func TestRunner_EveryDraftKeepsThePlaceholdersOfTheDraftsBefore(t *testing.T) {
+	h := newHarness(t, withDrafts(3))
 	withOwnedSource(h)
-	round := 0
+	draft := 0
 	orig, _, ok := h.registry().Lookup("confidence_not_low")
 	require.True(t, ok)
-	h.replaceStep(roundCheck{orig: orig.(step.Check), round: &round})
+	h.replaceStep(draftCheck{orig: orig.(step.Check), draft: &draft})
 	h.llm.answer = answerWith("select '[redacted:email:1]' as owner, 2", "fixed it")
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
@@ -217,24 +217,24 @@ func TestRunner_EveryRoundKeepsThePlaceholdersOfTheRoundsBefore(t *testing.T) {
 	reqs := h.llm.all()
 	require.Len(t, reqs, 3)
 	assert.Contains(t, reqs[1].User, "password=[redacted:secret:1]")
-	assert.Contains(t, reqs[2].User, "password=[redacted:secret:1]", "round 1's finding keeps its number in round 3's request")
-	assert.Contains(t, reqs[2].User, "token=[redacted:secret:2]", "round 2's finding takes the next number")
+	assert.Contains(t, reqs[2].User, "password=[redacted:secret:1]", "draft 1's finding keeps its number in draft 3's request")
+	assert.Contains(t, reqs[2].User, "token=[redacted:secret:2]", "draft 2's finding takes the next number")
 	assert.Equal(t, 1, strings.Count(reqs[2].User, "[redacted:secret:2]"))
 }
 
-// roundCheck refuses round 1 with a finding that quotes one secret and round 2
-// with a finding that quotes another, and passes round 3.
-type roundCheck struct {
+// draftCheck refuses draft 1 with a finding that quotes one secret and draft 2
+// with a finding that quotes another, and passes draft 3.
+type draftCheck struct {
 	orig  step.Check
-	round *int
+	draft *int
 }
 
-func (c roundCheck) Meta() step.Meta { return c.orig.Meta() }
+func (c draftCheck) Meta() step.Meta { return c.orig.Meta() }
 
-func (c roundCheck) Check(context.Context, step.CheckInput) (step.CheckOutput, error) {
-	*c.round++
+func (c draftCheck) Check(context.Context, step.CheckInput) (step.CheckOutput, error) {
+	*c.draft++
 	res := remediation.CheckResult{Check: "confidence_not_low"}
-	switch *c.round {
+	switch *c.draft {
 	case 1:
 		res.Findings = []remediation.Finding{{Code: "low_confidence", Message: "set password=hunter2"}}
 	case 2:
@@ -261,7 +261,7 @@ func TestRunner_AFileThatHoldsAMarkerCanBeFixed(t *testing.T) {
 
 			require.NoError(t, h.runner.Drive(ctx, id))
 
-			assert.Empty(t, h.roundRows(id, 1, "preflight")[1].Findings)
+			assert.Empty(t, h.draftRows(id, 1, "preflight")[1].Findings)
 			assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 			assert.Equal(t, tc.kept, h.preflightDraft(id, 1).Edits[0].Content)
 		})
@@ -273,7 +273,7 @@ func TestRunner_AFileThatHoldsAMarkerCanBeFixed(t *testing.T) {
 
 			require.NoError(t, h.runner.Drive(ctx, id))
 
-			findings := h.roundRows(id, 1, "preflight")[1].Findings
+			findings := h.draftRows(id, 1, "preflight")[1].Findings
 			require.NotEmpty(t, findings)
 			assert.Equal(t, remediation.Finding{
 				Code:    "unknown_placeholder",
@@ -307,7 +307,7 @@ func TestRunner_AValueSeenOnlyInALogIsNotWrittenIntoAFile(t *testing.T) {
 	draft := h.preflightDraft(id, 1)
 	assert.Equal(t, "select 'ops@acme.com' as owner, '[redacted:secret:1]' as pw", draft.Edits[0].Content,
 		"the email of the shown source is restored and the log's password is not")
-	findings := h.roundRows(id, 1, "preflight")[1].Findings
+	findings := h.draftRows(id, 1, "preflight")[1].Findings
 	require.NotEmpty(t, findings)
 	assert.Equal(t, remediation.Finding{
 		Code:    "unknown_placeholder",
@@ -344,7 +344,7 @@ func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 
 	assert.Equal(t, "kept ops@acme.com; the log said [redacted:secret:1]", h.preflightDraft(id, 1).Rationale,
 		"no finding: a marker in the rationale is harmless")
-	assert.Empty(t, h.roundRows(id, 1, "preflight")[1].Findings)
+	assert.Empty(t, h.draftRows(id, 1, "preflight")[1].Findings)
 	p := h.fixRow(1).Fix
 	require.Equal(t, fix.StatusProposed, p.Status)
 	assert.Contains(t, fmt.Sprint(p), "the log said [redacted:secret:1]", "the pull request shows the marker")
@@ -387,7 +387,7 @@ func TestRunner_AValueSeenOnlyInALogNeverNamesAFile(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	require.Contains(t, h.llm.all()[0].User, "password=[redacted:secret:1]", "the model is shown the log cleaned")
-	findings := h.roundRows(id, 1, "preflight")[1].Findings
+	findings := h.draftRows(id, 1, "preflight")[1].Findings
 	require.NotEmpty(t, findings)
 	assert.Equal(t, remediation.Finding{
 		Code:    "unknown_placeholder",

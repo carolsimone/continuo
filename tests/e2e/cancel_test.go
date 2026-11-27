@@ -16,10 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCancelMidwayAndRetrigger verifies the cancel → retrigger recovery flow
+// TestCancelMidwayAndStartAgain verifies the cancel → start-again recovery flow
 // using the standard happy-path DAG (e2e-schedule, all working nodes).
 //
-// Phase 1: Load graph, trigger schedule via UI HTTP endpoint, let level 0 (seeds) complete.
+// Phase 1: Load graph, start a manual run via the UI HTTP endpoint, let level 0 (seeds) complete.
 // Phase 2: Cancel mid-way — before level 1 can finish.
 //
 //	The run moves to 'cancelling'; execution-controller fences it (its
@@ -28,13 +28,13 @@ import (
 //	the run reaches 'cancelled', its in-flight tasks are 'cancelled', the
 //	fence is armed and no Job of the run, nor any pod of one, is still live.
 //
-// Phase 3: Retrigger once the run is 'cancelled' — no cleanup.
+// Phase 3: Start a manual run again once the run is 'cancelled' — no cleanup.
 //
-//	The fence rejects late dispatches for the old run_id; the trigger
-//	creates a fresh run_id.
+//	The fence rejects late dispatches for the old run_id; the new manual run
+//	has a fresh run_id.
 //
 // Phase 4: Assert the fresh run completes fully to 'succeeded'.
-func TestCancelMidwayAndRetrigger(t *testing.T) {
+func TestCancelMidwayAndStartAgain(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -53,15 +53,15 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// Tap task.dispatch:v1 before anything is triggered: the trim loop removes
+	// Tap task.dispatch:v1 before anything starts: the trim loop removes
 	// consumed entries, so the root-node checks read what the tap recorded.
 	dispatchTap := startStreamTap(t, ctx, clients.redisClient, streams.TaskDispatchV1)
 
-	// ── Phase 1: Seed topology + trigger via UI endpoint ─────────────────────────
-	t.Log("Phase 1: seeding topology and triggering schedule via UI...")
+	// ── Phase 1: Seed topology + manual run via UI endpoint ──────────────────────
+	t.Log("Phase 1: seeding topology and starting a manual run via UI...")
 	seedTopology(t, ctx, clients)
 
-	cancelledIDStr := triggerScheduleHTTP(t, clients.uiBase, testScheduleName)
+	cancelledIDStr := startManualRunHTTP(t, clients.uiBase, testScheduleName)
 	cancelledID, err := uuid.Parse(cancelledIDStr)
 	require.NoError(t, err)
 
@@ -89,16 +89,16 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 	t.Log("Phase 2 complete: run cancelled, fenced, no live Job")
 
-	// ── Phase 3: Retrigger — no cleanup ──────────────────────────────────────
+	// ── Phase 3: Start again — no cleanup ────────────────────────────────────
 	// The run is 'cancelled' and fenced; the system rejects any late dispatch
-	// for cancelledID. The trigger creates a brand-new run_id.
-	t.Log("Phase 3: retriggering via UI endpoint (no cleanup)...")
-	freshIDStr := triggerScheduleHTTP(t, clients.uiBase, testScheduleName)
+	// for cancelledID. The new manual run has a brand-new run_id.
+	t.Log("Phase 3: starting a manual run again via UI endpoint (no cleanup)...")
+	freshIDStr := startManualRunHTTP(t, clients.uiBase, testScheduleName)
 	freshID, err := uuid.Parse(freshIDStr)
 	require.NoError(t, err)
-	require.NotEqual(t, cancelledID, freshID, "retrigger must produce a new run_id")
+	require.NotEqual(t, cancelledID, freshID, "a second manual run must have a new run_id")
 
-	t.Logf("Phase 3 complete: fresh run triggered (run_id=%s)", freshID)
+	t.Logf("Phase 3 complete: fresh run started (run_id=%s)", freshID)
 
 	// ── Phase 4: Verify fresh run completes ───────────────────────────────────
 	// Verify by run_id — two runs share the same schedule_name in the DB,
@@ -116,7 +116,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	waitForAllTasksSucceeded(t, ctx, clients, freshID, allTables)
 	verifySchedulerSucceeded(t, ctx, clients, freshID)
 
-	t.Log("TestCancelMidwayAndRetrigger completed successfully")
+	t.Log("TestCancelMidwayAndStartAgain completed successfully")
 }
 
 // ─── cancel helpers ──────────────────────────────────────────────────────────

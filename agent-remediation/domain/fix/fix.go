@@ -198,16 +198,16 @@ const HandOverTry = model.HandOverTry
 // Fix is the append-only record of one try at a release's failing
 // set: the fix it made, or why it made none. One row per try, plus the
 // round's hand-over row once its tries are spent; unique on (release_id,
-// remediation_round, try).
+// round, try).
 type Fix struct {
 	Source    string
 	ReleaseID string
 	// RemediationID is the id of the runner's remediation this try belongs
 	// to. It is empty for a fix row that belongs to no remediation.
 	RemediationID string
-	// RemediationRound is the release's remediation round this try belongs to; the flow's tries are counted within a round.
-	RemediationRound int
-	NodeID           string
+	// Round is the release's round this try belongs to; the flow's tries are counted within a round.
+	Round  int
+	NodeID string
 	// ResolvedNodeIDs is the failing nodes this try addresses, sorted;
 	// NodeID is their representative.
 	ResolvedNodeIDs []string

@@ -300,7 +300,7 @@ func (e *expectation) crossClusterFailedEveryTry(flow workflow.Flow, as []FixRow
 
 // crossClusterFindings is the findings of the first of the flow's
 // cross-cluster checks to find any in one try, in the order the flow lists
-// them. A flow-level row runs once per try, as round 1 of the flow cluster.
+// them. A flow-level row runs once per try, as draft 1 of the flow cluster.
 func (e *expectation) crossClusterFindings(flow workflow.Flow, try int) []remediation.Finding {
 	rows := e.stepRows(try, remediation.FlowCluster, 1)
 	for _, ref := range flow.AcrossClusters {

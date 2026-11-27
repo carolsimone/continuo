@@ -5,7 +5,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 )
 
-// WholeDAG selects a schedule's run, fired by cron or triggered. g is the
+// WholeDAG selects a schedule's run, fired by cron or started by hand. g is the
 // schedule's graph on the live release: the schedule's nodes, their one-hop
 // dbt-seed upstreams from any schedule, and the edges among them. A run or a
 // build executes every node of g along its edges, and a node with no upstream

@@ -28,10 +28,10 @@ type FixSummary struct {
 	// PRProjects is the owning-project groups the fix splits into; the empty
 	// string names the group of a fix that is not split by project.
 	PRProjects []string
-	// RemediationRound is the release's remediation round this try belongs
+	// Round is the release's round this try belongs
 	// to. 0 on a try that names no round, which the retry decision treats
 	// the same as round 1.
-	RemediationRound int
+	Round int
 }
 
 // FixReader lists the fix rows recorded for a release.

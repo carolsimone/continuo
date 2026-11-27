@@ -30,9 +30,9 @@ CREATE TABLE classification_decision (
     reason text NOT NULL,
     dbt_log_uri text DEFAULT '' NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
-    remediation_round integer DEFAULT 1 NOT NULL,
+    round integer DEFAULT 1 NOT NULL,
     CONSTRAINT classification_decision_pkey PRIMARY KEY (id),
-    CONSTRAINT classification_decision_uniq UNIQUE (source, release_id, remediation_round, node_id),
+    CONSTRAINT classification_decision_uniq UNIQUE (source, release_id, round, node_id),
     CONSTRAINT classification_decision_category_check CHECK ((category IN ('logic', 'test', 'unknown', 'infra_transient'))),
     CONSTRAINT classification_decision_decision_check CHECK ((decision IN ('emit', 'drop')))
 );

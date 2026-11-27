@@ -96,7 +96,7 @@ REQUIRED_EDGES = [
     ("agent-remediation", "release-controller", 8088,
      "fix release checks: submit/poll a fix's release checks, read the failing release's image tags"),
     ("release-controller", "agent-remediation", 50054,
-     "retry-remediation: ListFixes before starting a new remediation round"),
+     "retry-remediation: ListFixes before starting a new round"),
     ("ui", "release-controller", 8088,
      "operator dashboard reads release detail over HTTP"),
     ("ui", "agent-remediation", 50054,

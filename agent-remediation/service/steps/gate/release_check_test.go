@@ -229,7 +229,7 @@ func TestSubmit_DbtProjectSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 		ImageTag:          "tag-rel-1-sales",
 		Kind:              "dbt",
 		VerifiesReleaseID: "rel-1",
-		RemediationRound:  1,
+		Round:             1,
 		Try:               2,
 		SourceOverlayURI:  "s3://artifacts/sales/verify-rel-1-sales-r1-t2/source-overlay.tar.gz",
 	}, r.checks.submitted[0])
@@ -291,7 +291,7 @@ func TestReleaseCheck_UploadsAnODCSBundle(t *testing.T) {
 		ImageTag:          "tag-rel-1-ledger",
 		Kind:              "python",
 		VerifiesReleaseID: "rel-1",
-		RemediationRound:  1,
+		Round:             1,
 		Try:               2,
 	}}, r.checks.submitted)
 	assert.Equal(t, []write{{

@@ -409,17 +409,17 @@ func TestRunner_NoRepository(t *testing.T) {
 	assert.Zero(t, h.llm.calls())
 }
 
-func TestRunner_PreflightRoundsSpent(t *testing.T) {
+func TestRunner_DraftsSpent(t *testing.T) {
 	h := newHarness(t)
 	h.llm.answer = lowConfidence
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	want := fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent}
+	want := fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonDraftsSpent}
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
-	assert.Equal(t, &want, c.Outcome, "the reason is the first finding alone; the code says the rounds are spent")
+	assert.Equal(t, &want, c.Outcome, "the reason is the first finding alone; the code says the drafts are spent")
 	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusFailed, p.Status)
 	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, p.NodeOutcomes)
@@ -527,7 +527,7 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 	}
 }
 
-// A node handed over because its rounds are spent is not settled: the next
+// A node handed over because its drafts are spent is not settled: the next
 // try groups it again and asks the model about it again.
 func TestRunner_ARoundsSpentNodeIsTriedAgain(t *testing.T) {
 	h := newHarness(t)
@@ -542,7 +542,7 @@ func TestRunner_ARoundsSpentNodeIsTriedAgain(t *testing.T) {
 	spent := h.clusterFor(id, 1, "svc-a")
 	require.Equal(t, remediation.ClusterHandedOver, spent.Status)
 	require.Equal(t, &fix.NodeOutcome{
-		Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent,
+		Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonDraftsSpent,
 	}, spent.Outcome)
 
 	h.failGate(id, "svc-b")
@@ -561,7 +561,7 @@ func TestRunner_ARoundsSpentNodeIsTriedAgain(t *testing.T) {
 
 // A cross-project cluster that fell back hands its members over with the code
 // of the cause: declined when a step declined it, which settles them for good,
-// and preflight_rounds_spent when pre-flight refused every round, which leaves
+// and drafts_spent when pre-flight refused every draft, which leaves
 // them to be grouped again in the next try.
 func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 	const bundleURI = "s3://bundles/rel-1.tar.gz"
@@ -603,7 +603,7 @@ func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 			h.fixRow(2).Fix.NodeOutcomes["svc-a"])
 	})
 
-	t.Run("pre-flight refused every round of the upstream fix", func(t *testing.T) {
+	t.Run("pre-flight refused every draft of the upstream fix", func(t *testing.T) {
 		h := newHarness(t)
 		h.bundle.nodes = upstreamSource
 		h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
@@ -621,7 +621,7 @@ func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 		require.Equal(t, workflow.ClusterCrossProject, fellBack.Kind)
 		require.Equal(t, remediation.ClusterFellBack, fellBack.Status)
 		require.NotNil(t, fellBack.Outcome)
-		require.Equal(t, model.HandoverReasonPreflightRoundsSpent, fellBack.Outcome.Code)
+		require.Equal(t, model.HandoverReasonDraftsSpent, fellBack.Outcome.Code)
 		require.Equal(t, fix.StatusSkipped, fellBack.Outcome.Status)
 		require.Contains(t, fellBack.Outcome.Reason, "the change that broke this node lives in project core; "+
 			"a fix in this node's own project cannot ship before it: "+lowConfidenceReason)

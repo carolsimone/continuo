@@ -18,7 +18,7 @@ func TestNodeRunCommands_HelpDescribesTheRefusalsAtTheRPC(t *testing.T) {
 	factory := func(context.Context, string) (client.RunClient, error) { return nil, nil }
 	cfg := &config.Config{}
 	commands := map[string]*cobra.Command{
-		"trigger":      NewTriggerCommand(factory, cfg, io.Discard, io.Discard),
+		"run":          NewRunCommand(factory, cfg, io.Discard, io.Discard),
 		"test":         NewTestCommand(factory, cfg, io.Discard, io.Discard),
 		"build":        NewBuildCommand(factory, cfg, io.Discard, io.Discard),
 		"full-refresh": NewFullRefreshCommand(factory, cfg, io.Discard, io.Discard),

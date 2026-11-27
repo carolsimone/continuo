@@ -367,7 +367,7 @@ func TestRunner_EveryStepWritesOneJournalRow(t *testing.T) {
 		got = append(got, key{s.Step, s.Kind})
 		assert.Equal(t, 1, s.Try, s.Step)
 		assert.Equal(t, 1, s.Cluster, s.Step)
-		assert.Equal(t, 1, s.Round, s.Step)
+		assert.Equal(t, 1, s.Draft, s.Step)
 		assert.Equal(t, remediation.StepDone, s.Status, s.Step)
 		assert.Equal(t, "rev-dbt-compile", s.FileRevision, s.Step)
 		assert.NotNil(t, s.FinishedAt, s.Step)
@@ -508,13 +508,13 @@ func TestRunner_PreflightFindingHandsTheClusterOver(t *testing.T) {
 			answer: func(r *ports.ProposeResult) { r.TargetFile = "models/elsewhere.sql" },
 			outcome: fix.NodeOutcome{Status: fix.StatusFailed,
 				Reason: `the model named "models/elsewhere.sql" as the file to change, which is not one of the files it was shown`,
-				Code:   model.HandoverReasonPreflightRoundsSpent},
+				Code:   model.HandoverReasonDraftsSpent},
 			findings: []string{"target_not_shown", "content_unchanged"},
 		},
 		{
 			name:     "a low-confidence draft is failed",
 			answer:   func(r *ports.ProposeResult) { r.Confidence = "low" },
-			outcome:  fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent},
+			outcome:  fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonDraftsSpent},
 			findings: []string{"low_confidence"},
 		},
 	}
@@ -603,7 +603,7 @@ func TestRunner_ARoundTwoTriggerNumbersItsTriesFromOne(t *testing.T) {
 	tries := h.store.Tries(id)
 	require.Len(t, tries, 1, "round 1's tries do not spend round 2's")
 	assert.Equal(t, 1, tries[0].Try, "the round's first try is try 1")
-	assert.Equal(t, 2, h.fixRowIn(2, 1).Fix.RemediationRound)
+	assert.Equal(t, 2, h.fixRowIn(2, 1).Fix.Round)
 	for _, p := range h.fixes() {
 		assert.NotEqual(t, fix.StatusEscalated, p.Fix.Status)
 	}
@@ -616,7 +616,7 @@ func TestRunner_ThePromptIsCachedUnderTheRemediationTryClusterAndRound(t *testin
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	key, err := llmcache.Key("test-model", "remediation:"+id.String()+":try:1:cluster:1:round:1", h.llm.lastRequest())
+	key, err := llmcache.Key("test-model", "remediation:"+id.String()+":try:1:cluster:1:draft:1", h.llm.lastRequest())
 	require.NoError(t, err)
 	assert.True(t, h.cache.has(key), "the answer is cached under the cluster's idempotency key")
 }
@@ -734,7 +734,7 @@ func TestRunner_AnUndecodableRowIsRecordedOnTheNextStep(t *testing.T) {
 					out = `{"evidence":{"source_files":"not an object"},"draft":"not an object"}`
 				}
 				h.saveStep(remediation.StepRun{
-					RemediationID: id, Try: 1, Cluster: 1, Step: name, Kind: kind, Round: 1,
+					RemediationID: id, Try: 1, Cluster: 1, Step: name, Kind: kind, Draft: 1,
 					Status: remediation.StepDone, Output: []byte(out), StartedAt: t0,
 				})
 			}

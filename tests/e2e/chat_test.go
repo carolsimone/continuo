@@ -151,14 +151,15 @@ func TestChat_StatusQuestionAnswered(t *testing.T) {
 		"final text should contain 'DONE', got: %q", final.Text)
 }
 
-// TestChat_TriggerRequiresConfirmAndRuns verifies that a trigger request goes
-// through the confirm gate and, when approved, executes the trigger tool and
+// TestChat_ScheduleRunRequiresConfirmAndRuns verifies that a request to start a
+// manual run goes through the confirm gate and, when approved, executes the
+// schedule run tool and
 // returns "DONE: ok".
 //
-// Path: user asks to trigger → confirm_request gate → user approves →
-// stub-llm emits schedule_trigger tool_call → CLI executes → stub-llm emits
+// Path: user asks to start a run → confirm_request gate → user approves →
+// stub-llm emits schedule_run tool_call → CLI executes → stub-llm emits
 // DONE: ok → final frame.
-func TestChat_TriggerRequiresConfirmAndRuns(t *testing.T) {
+func TestChat_ScheduleRunRequiresConfirmAndRuns(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -169,17 +170,17 @@ func TestChat_TriggerRequiresConfirmAndRuns(t *testing.T) {
 	thread := expectFrame(t, conn, "thread")
 	require.NotEmpty(t, thread.ThreadID)
 
-	// Request a trigger.
+	// Ask to start a manual run.
 	sendJSON(t, conn, chatMessage{
 		Type: "user_message",
-		Text: fmt.Sprintf("please trigger %s", testScheduleName),
+		Text: fmt.Sprintf("please start %s", testScheduleName),
 	})
 
 	// The agent-chat should gate destructive actions behind a confirm_request.
 	confirm := expectFrame(t, conn, "confirm_request")
 	require.NotEmpty(t, confirm.ActionID, "confirm_request must carry an actionId")
-	require.Contains(t, strings.ToLower(confirm.Summary), "trigger",
-		"confirm_request summary should mention 'trigger', got: %q", confirm.Summary)
+	require.Contains(t, strings.ToLower(confirm.Summary), "schedule run",
+		"confirm_request summary should mention 'schedule run', got: %q", confirm.Summary)
 
 	// Approve the action.
 	sendJSON(t, conn, chatMessage{
@@ -188,10 +189,10 @@ func TestChat_TriggerRequiresConfirmAndRuns(t *testing.T) {
 		Approved: boolPtr(true),
 	})
 
-	// Now expect a tool frame for schedule trigger.
+	// Now expect a tool frame for schedule run.
 	tool := expectFrame(t, conn, "tool")
-	require.Contains(t, tool.Command, "schedule trigger",
-		"tool frame command should reference 'schedule trigger', got: %q", tool.Command)
+	require.Contains(t, tool.Command, "schedule run",
+		"tool frame command should reference 'schedule run', got: %q", tool.Command)
 
 	// Final frame should contain "DONE: ok".
 	final := expectFrame(t, conn, "final")
@@ -199,12 +200,12 @@ func TestChat_TriggerRequiresConfirmAndRuns(t *testing.T) {
 		"final text should contain 'DONE: ok', got: %q", final.Text)
 }
 
-// TestChat_TriggerDenialDoesNotRun verifies that denying a confirm_request feeds
+// TestChat_ScheduleRunDenialDoesNotRun verifies that denying a confirm_request feeds
 // a "denied" result back to the stub-llm which then emits "DONE: error".
 //
-// Path: user asks to trigger → confirm_request → user denies →
+// Path: user asks to start a run → confirm_request → user denies →
 // agent-chat injects denial tool result → stub-llm emits DONE: error → final.
-func TestChat_TriggerDenialDoesNotRun(t *testing.T) {
+func TestChat_ScheduleRunDenialDoesNotRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -215,10 +216,10 @@ func TestChat_TriggerDenialDoesNotRun(t *testing.T) {
 	thread := expectFrame(t, conn, "thread")
 	require.NotEmpty(t, thread.ThreadID)
 
-	// Request a trigger.
+	// Ask to start a manual run.
 	sendJSON(t, conn, chatMessage{
 		Type: "user_message",
-		Text: fmt.Sprintf("please trigger %s", testScheduleName),
+		Text: fmt.Sprintf("please start %s", testScheduleName),
 	})
 
 	// Gate fires.

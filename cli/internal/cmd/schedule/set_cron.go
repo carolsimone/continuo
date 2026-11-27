@@ -49,7 +49,7 @@ func NewSetCronCommand(factory RunClientFactory, cfg *config.Config, stdout, std
 
 Use when the user asks to schedule a schedule, to change the time it runs
 automatically, to add a cron to a schedule that has none (one that runs only
-when triggered), or to change a cron's timezone or description. The cron decides
+when someone starts it), or to change a cron's timezone or description. The cron decides
 only WHEN the schedule runs; which models it runs comes from their dbt tag, so
 the name must be a schedule that "schedule list" shows.
 

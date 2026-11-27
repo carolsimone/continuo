@@ -192,7 +192,7 @@ func TestFixRepository_CountTriesLeavesOutTheHandOverRow(t *testing.T) {
 		ctx := context.Background()
 		for try, status := range map[int]fix.Status{1: fix.StatusFailed, 2: fix.StatusFailed, 3: fix.StatusVerifying, fix.HandOverTry: fix.StatusEscalated} {
 			require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
-				Source: "validation", ReleaseID: "rel-count", RemediationRound: 1, NodeID: "model.a",
+				Source: "validation", ReleaseID: "rel-count", Round: 1, NodeID: "model.a",
 				Try: try, Status: status, CreatedAt: contractBase,
 			}))
 		}

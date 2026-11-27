@@ -13,10 +13,10 @@ import (
 // The fingerprint is the hex SHA-256 of the command and then each part, each
 // followed by a NUL byte.
 func TestFingerprint_IsTheSHA256OfTheCommandAndItsPartsEachEndedByNUL(t *testing.T) {
-	sum := sha256.Sum256([]byte("trigger_single_node_run\x00service-1.e2e_schema.table_a\x00latest\x00run\x00"))
+	sum := sha256.Sum256([]byte("start_single_node_run\x00service-1.e2e_schema.table_a\x00latest\x00run\x00"))
 	want := hex.EncodeToString(sum[:])
 
-	got := commandrequest.Fingerprint("trigger_single_node_run", "service-1.e2e_schema.table_a", "latest", "run")
+	got := commandrequest.Fingerprint("start_single_node_run", "service-1.e2e_schema.table_a", "latest", "run")
 
 	assert.Equal(t, want, got)
 	assert.Len(t, got, 64)

@@ -39,7 +39,7 @@ type Reads struct {
 	Rebases RebasePreviewer
 }
 
-// RebasePreviewer previews a rebase of a tenant's run: what TriggerRebase
+// RebasePreviewer previews a rebase of a tenant's run: what StartRebase
 // would run, without creating a run.
 type RebasePreviewer interface {
 	Preview(ctx context.Context, tenantID string, sourceID uuid.UUID, includeChangedUpstream bool) (runreads.RebasePreview, error)
@@ -50,9 +50,9 @@ type RebasePreviewer interface {
 // tenant.
 type Commands interface {
 	StartRun(ctx context.Context, cmd svchandlers.StartRunCommand) (svchandlers.CommandResult, error)
-	TriggerRerun(ctx context.Context, cmd svchandlers.TriggerRerunCommand) (svchandlers.CommandResult, error)
-	TriggerRebase(ctx context.Context, cmd svchandlers.TriggerRebaseCommand) (svchandlers.CommandResult, error)
-	TriggerSingleNodeRun(ctx context.Context, cmd svchandlers.TriggerSingleNodeRunCommand) (svchandlers.CommandResult, error)
+	StartRerun(ctx context.Context, cmd svchandlers.StartRerunCommand) (svchandlers.CommandResult, error)
+	StartRebase(ctx context.Context, cmd svchandlers.StartRebaseCommand) (svchandlers.CommandResult, error)
+	StartSingleNodeRun(ctx context.Context, cmd svchandlers.StartSingleNodeRunCommand) (svchandlers.CommandResult, error)
 	CancelActiveRun(ctx context.Context, cmd svchandlers.CancelActiveRunCommand) (svchandlers.CommandResult, error)
 	CancelRun(ctx context.Context, cmd svchandlers.CancelRunCommand) (uuid.UUID, error)
 }

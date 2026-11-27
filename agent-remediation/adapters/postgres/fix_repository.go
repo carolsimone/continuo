@@ -47,24 +47,24 @@ func NewFixRepository(q Queryer, projectRepoPaths map[string]string) *FixReposit
 }
 
 // CountTries returns the number of TERMINAL tries recorded for
-// one remediation round of one release, the round's hand-over row left out.
+// one round of one release, the round's hand-over row left out.
 // In-flight rows — 'generating' (the model call has not resolved) and
 // 'verifying' (a release check is still validating a proposed fix) — are
 // excluded so a try that has not yet concluded neither spends the flow's
 // tries nor shifts the try number on a redelivery.
-func (r *FixRepository) CountTries(ctx context.Context, releaseID string, remediationRound int) (int, error) {
+func (r *FixRepository) CountTries(ctx context.Context, releaseID string, round int) (int, error) {
 	const query = `SELECT count(*) FROM fix
-		WHERE release_id=$1 AND remediation_round=$2 AND try <> $3
+		WHERE release_id=$1 AND round=$2 AND try <> $3
 		  AND status NOT IN ('generating','verifying')`
 	var count int
-	if err := r.q.GetContext(ctx, &count, query, releaseID, remediationRound, fix.HandOverTry); err != nil {
+	if err := r.q.GetContext(ctx, &count, query, releaseID, round, fix.HandOverTry); err != nil {
 		return 0, fmt.Errorf("count tries: %w", err)
 	}
 	return count, nil
 }
 
 // roundOrDefault returns n, or 1 when n is not a positive round number. A
-// fix built without an explicit remediation round belongs to round 1.
+// fix built without an explicit round belongs to round 1.
 func roundOrDefault(n int) int {
 	if n < 1 {
 		return 1
@@ -94,7 +94,7 @@ func remediationIDArg(id string) any {
 
 // InsertGenerating persists an in-flight 'generating' row for the try right
 // before the model is called. It is idempotent: ON CONFLICT on the natural key
-// (release_id, remediation_round, try) DO NOTHING, so a redelivery that re-runs the same
+// (release_id, round, try) DO NOTHING, so a redelivery that re-runs the same
 // try leaves the single generating row untouched. Only the identity +
 // status columns, plus the resolved nodes, their initial outcomes and the
 // remediation the try belongs to, are written; the remaining columns take
@@ -102,10 +102,10 @@ func remediationIDArg(id string) any {
 func (r *FixRepository) InsertGenerating(ctx context.Context, p fix.Fix) error {
 	const stmt = `
 		INSERT INTO fix
-			(source, release_id, remediation_round, node_id, error_signature, try, status, created_at,
+			(source, release_id, round, node_id, error_signature, try, status, created_at,
 			 resolved_node_ids, node_outcomes, projects, remediation_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-		ON CONFLICT (release_id, remediation_round, try) DO NOTHING`
+		ON CONFLICT (release_id, round, try) DO NOTHING`
 	resolved, err := marshalResolved(p.ResolvedNodeIDs)
 	if err != nil {
 		return fmt.Errorf("marshal fix resolved node ids: %w", err)
@@ -115,7 +115,7 @@ func (r *FixRepository) InsertGenerating(ctx context.Context, p fix.Fix) error {
 		return fmt.Errorf("marshal fix node outcomes: %w", err)
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
-		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Try,
+		p.Source, p.ReleaseID, roundOrDefault(p.Round), p.NodeID, p.ErrorSignature, p.Try,
 		fix.StatusGenerating, p.CreatedAt,
 		resolved, outcomes, textArray(p.Projects), remediationIDArg(p.RemediationID),
 	); err != nil {
@@ -209,7 +209,7 @@ func (r *FixRepository) FailLegacyInFlight(ctx context.Context, reason string) (
 }
 
 // Upsert records the terminal fix row of a try on the natural key
-// (release_id, remediation_round, try): when an in-flight generating row
+// (release_id, round, try): when an in-flight generating row
 // exists (the common healable path) it is finalized in place via ON CONFLICT
 // … DO UPDATE; otherwise the row is plain-inserted (instant paths that never
 // marked generating: a skipped try, or the round's hand-over row). A fix that names its
@@ -220,7 +220,7 @@ func (r *FixRepository) FailLegacyInFlight(ctx context.Context, reason string) (
 func (r *FixRepository) Upsert(ctx context.Context, p fix.Fix) error {
 	const stmt = `
 		INSERT INTO fix
-			(source, release_id, remediation_round, node_id, error_signature, try,
+			(source, release_id, round, node_id, error_signature, try,
 			 status, release_check_id,
 			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
@@ -228,7 +228,7 @@ func (r *FixRepository) Upsert(ctx context.Context, p fix.Fix) error {
 			 repo, commit_sha, file_path, file_edits,
 			 resolved_node_ids, node_outcomes, release_checks, projects, remediation_id, approvers)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
-		ON CONFLICT (release_id, remediation_round, try) DO UPDATE SET
+		ON CONFLICT (release_id, round, try) DO UPDATE SET
 			status                 = EXCLUDED.status,
 			release_check_id       = EXCLUDED.release_check_id,
 			confidence             = EXCLUDED.confidence,
@@ -272,7 +272,7 @@ func (r *FixRepository) Upsert(ctx context.Context, p fix.Fix) error {
 		return fmt.Errorf("marshal fix approvers: %w", err)
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
-		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Try,
+		p.Source, p.ReleaseID, roundOrDefault(p.Round), p.NodeID, p.ErrorSignature, p.Try,
 		p.Status, p.ReleaseCheckID,
 		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
@@ -292,7 +292,7 @@ type fixRow struct {
 	ID                  string         `db:"id"`
 	Source              string         `db:"source"`
 	ReleaseID           string         `db:"release_id"`
-	RemediationRound    int            `db:"remediation_round"`
+	Round               int            `db:"round"`
 	RemediationID       sql.NullString `db:"remediation_id"`
 	NodeID              string         `db:"node_id"`
 	ErrorSignature      string         `db:"error_signature"`
@@ -536,7 +536,7 @@ func (row fixRow) toView() fix.View {
 		ID:                  row.ID,
 		Source:              row.Source,
 		ReleaseID:           row.ReleaseID,
-		RemediationRound:    row.RemediationRound,
+		Round:               row.Round,
 		RemediationID:       row.RemediationID.String,
 		NodeID:              row.NodeID,
 		ResolvedNodeIDs:     resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID),
@@ -571,7 +571,7 @@ func (row fixRow) toView() fix.View {
 	}
 }
 
-const fixColumns = `id, source, release_id, remediation_round, node_id, error_signature, try,
+const fixColumns = `id, source, release_id, round, node_id, error_signature, try,
 		       status, release_check_id, verify_error,
 		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
@@ -593,7 +593,7 @@ type claimRow struct {
 	ResolvedNodeIDs []byte    `db:"resolved_node_ids"`
 	NodeOutcomes    []byte    `db:"node_outcomes"`
 	Approvers       []byte    `db:"approvers"`
-	Round           int       `db:"remediation_round"`
+	Round           int       `db:"round"`
 	Try             int       `db:"try"`
 	Rationale       string    `db:"rationale"`
 	Confidence      string    `db:"confidence"`
@@ -629,25 +629,25 @@ func (row claimRow) toClaim(project, branch string, projectRepoPaths map[string]
 		resolved = fix.IntersectSorted(fix.MembersOfEdits(edits, nil), fixed)
 	}
 	return fix.PRClaim{
-		ID:               row.ID,
-		Repo:             row.Repo,
-		CommitSHA:        row.CommitSHA,
-		FilePath:         row.FilePath,
-		ProposedSQLURI:   row.ProposedSQLURI,
-		DiffURI:          row.DiffURI,
-		Edits:            edits,
-		ReleaseID:        row.ReleaseID,
-		NodeID:           row.NodeID,
-		ResolvedNodeIDs:  resolved,
-		Approvers:        fix.ApproversForNodes(unmarshalApprovers(row.Approvers), resolved),
-		RemediationRound: row.Round,
-		Try:              row.Try,
-		Rationale:        row.Rationale,
-		Confidence:       fix.Confidence(row.Confidence),
-		Model:            row.Model,
-		ClaimedAt:        row.ClaimedAt,
-		Branch:           branch,
-		Project:          project,
+		ID:              row.ID,
+		Repo:            row.Repo,
+		CommitSHA:       row.CommitSHA,
+		FilePath:        row.FilePath,
+		ProposedSQLURI:  row.ProposedSQLURI,
+		DiffURI:         row.DiffURI,
+		Edits:           edits,
+		ReleaseID:       row.ReleaseID,
+		NodeID:          row.NodeID,
+		ResolvedNodeIDs: resolved,
+		Approvers:       fix.ApproversForNodes(unmarshalApprovers(row.Approvers), resolved),
+		Round:           row.Round,
+		Try:             row.Try,
+		Rationale:       row.Rationale,
+		Confidence:      fix.Confidence(row.Confidence),
+		Model:           row.Model,
+		ClaimedAt:       row.ClaimedAt,
+		Branch:          branch,
+		Project:         project,
 	}
 }
 
@@ -863,7 +863,7 @@ func (r *FixRepository) BeginPR(ctx context.Context, id, project, branch string,
 	}
 	const preRead = `SELECT id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
 		file_edits, release_id, node_id, resolved_node_ids, node_outcomes, approvers,
-		remediation_round, try, rationale, confidence, model, source_resolved, status
+		round, try, rationale, confidence, model, source_resolved, status
 		FROM fix WHERE id=$1`
 	if err := r.q.GetContext(ctx, &pre, preRead, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -959,7 +959,7 @@ type openPRRow struct {
 	PRNumber  int    `db:"pr_number"`
 	ReleaseID string `db:"release_id"`
 	NodeID    string `db:"node_id"`
-	Round     int    `db:"remediation_round"`
+	Round     int    `db:"round"`
 	Try       int    `db:"try"`
 }
 
@@ -968,7 +968,7 @@ type openPRRow struct {
 // longest-waiting PRs before newer ones. A fix split into several
 // per-project PRs yields one entry per open project.
 func (r *FixRepository) ListOpenPullRequests(ctx context.Context, limit int) ([]fix.OpenPR, error) {
-	q := `SELECT p.id, ppr.project, ppr.repo, ppr.pr_number, p.release_id, p.node_id, p.remediation_round, p.try
+	q := `SELECT p.id, ppr.project, ppr.repo, ppr.pr_number, p.release_id, p.node_id, p.round, p.try
 	      FROM fix_pull_request ppr
 	      JOIN fix p ON p.id = ppr.fix_id
 	      WHERE ppr.pr_state = 'open' ORDER BY ppr.pr_opened_at ASC`
@@ -984,14 +984,14 @@ func (r *FixRepository) ListOpenPullRequests(ctx context.Context, limit int) ([]
 	out := make([]fix.OpenPR, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, fix.OpenPR{
-			ID:               row.ID,
-			Repo:             row.Repo,
-			PRNumber:         row.PRNumber,
-			ReleaseID:        row.ReleaseID,
-			NodeID:           row.NodeID,
-			RemediationRound: row.Round,
-			Try:              row.Try,
-			Project:          row.Project,
+			ID:        row.ID,
+			Repo:      row.Repo,
+			PRNumber:  row.PRNumber,
+			ReleaseID: row.ReleaseID,
+			NodeID:    row.NodeID,
+			Round:     row.Round,
+			Try:       row.Try,
+			Project:   row.Project,
 		})
 	}
 	return out, nil
@@ -1006,7 +1006,7 @@ type openingRow struct {
 	Repo      string     `db:"repo"`
 	ReleaseID string     `db:"release_id"`
 	NodeID    string     `db:"node_id"`
-	Round     int        `db:"remediation_round"`
+	Round     int        `db:"round"`
 	Try       int        `db:"try"`
 	ClaimedAt *time.Time `db:"pr_claimed_at"`
 	CreatedAt time.Time  `db:"created_at"`
@@ -1028,7 +1028,7 @@ func (r *FixRepository) ListStuckOpening(ctx context.Context, limit int, cursor 
 	if limit <= 0 {
 		limit = 50
 	}
-	q := `SELECT p.id, ppr.project, ppr.repo, p.release_id, p.node_id, p.remediation_round, p.try,
+	q := `SELECT p.id, ppr.project, ppr.repo, p.release_id, p.node_id, p.round, p.try,
 	             ppr.pr_claimed_at, p.created_at
 	      FROM fix_pull_request ppr
 	      JOIN fix p ON p.id = ppr.fix_id
@@ -1057,15 +1057,15 @@ func (r *FixRepository) ListStuckOpening(ctx context.Context, limit int, cursor 
 	out := make([]fix.OpeningPR, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, fix.OpeningPR{
-			ID:               row.ID,
-			Repo:             row.Repo,
-			ReleaseID:        row.ReleaseID,
-			NodeID:           row.NodeID,
-			RemediationRound: row.Round,
-			Try:              row.Try,
-			ClaimedAt:        row.ClaimedAt,
-			CreatedAt:        row.CreatedAt,
-			Project:          row.Project,
+			ID:        row.ID,
+			Repo:      row.Repo,
+			ReleaseID: row.ReleaseID,
+			NodeID:    row.NodeID,
+			Round:     row.Round,
+			Try:       row.Try,
+			ClaimedAt: row.ClaimedAt,
+			CreatedAt: row.CreatedAt,
+			Project:   row.Project,
 		})
 	}
 	return out, next, nil
@@ -1250,7 +1250,7 @@ func (r *FixRepository) RecordApprovers(ctx context.Context, releaseID string, r
 	round = roundOrDefault(round)
 	var raw []byte
 	if err := r.q.GetContext(ctx, &raw,
-		`SELECT approvers FROM fix WHERE release_id = $1 AND remediation_round = $2 AND try = $3 FOR UPDATE`,
+		`SELECT approvers FROM fix WHERE release_id = $1 AND round = $2 AND try = $3 FOR UPDATE`,
 		releaseID, round, try); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return repository.ErrNotFound
@@ -1262,7 +1262,7 @@ func (r *FixRepository) RecordApprovers(ctx context.Context, releaseID string, r
 		return fmt.Errorf("marshal fix approvers: %w", err)
 	}
 	if _, err := r.q.ExecContext(ctx,
-		`UPDATE fix SET approvers = $4 WHERE release_id = $1 AND remediation_round = $2 AND try = $3`,
+		`UPDATE fix SET approvers = $4 WHERE release_id = $1 AND round = $2 AND try = $3`,
 		releaseID, round, try, merged); err != nil {
 		return fmt.Errorf("record approvers of round %d, try %d of release %s: %w", round, try, releaseID, err)
 	}

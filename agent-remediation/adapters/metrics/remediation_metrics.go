@@ -19,7 +19,7 @@ import (
 // files.
 type RemediationMetrics struct {
 	tries          *prometheus.CounterVec
-	rounds         *prometheus.CounterVec
+	drafts         *prometheus.CounterVec
 	outcomes       *prometheus.CounterVec
 	systemFailures *prometheus.CounterVec
 	stageSeconds   *prometheus.HistogramVec
@@ -29,7 +29,7 @@ type RemediationMetrics struct {
 var _ ports.RemediationMetrics = (*RemediationMetrics)(nil)
 
 // NewRemediationMetrics registers continuo_remediation_tries_total,
-// continuo_remediation_rounds_total, continuo_remediation_outcomes_total,
+// continuo_remediation_drafts_total, continuo_remediation_outcomes_total,
 // continuo_remediation_system_failures_total,
 // continuo_remediation_stage_seconds and
 // continuo_remediation_model_tokens_total on reg.
@@ -37,11 +37,11 @@ func NewRemediationMetrics(reg *pkgmetrics.Registry) *RemediationMetrics {
 	m := &RemediationMetrics{
 		tries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_remediation_tries_total",
-			Help: "Clusters a remediation try worked, counted when the try ends, by flow, type and result: passed (the release checks passed), gate_failed (a release check did not pass the fix or never answered), checks_failed (a cross-cluster check or the gate refused the try's drafts), preflight_spent (every pre-flight round refused the draft) or declined (a step declined, or the draft made no edit). A cluster no type matches and one handed over when the try opened count nothing, and so does a shared-upstream cluster that fell back to its members, which count their own result. A cross-project cluster that fell back counts declined or preflight_spent, the result of its own failure.",
+			Help: "Clusters a remediation try worked, counted when the try ends, by flow, type and result: passed (the release checks passed), gate_failed (a release check did not pass the fix or never answered), checks_failed (a cross-cluster check or the gate refused the try's drafts), drafts_spent (pre-flight refused every draft) or declined (a step declined, or the draft made no edit). A cluster no type matches and one handed over when the try opened count nothing, and so does a shared-upstream cluster that fell back to its members, which count their own result. A cross-project cluster that fell back counts declined or drafts_spent, the result of its own failure.",
 		}, []string{"flow", "type", "result"}),
-		rounds: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "continuo_remediation_rounds_total",
-			Help: "Pre-flight passes of a cluster's draft, by flow, type and result: passed (no check found anything), revised (a check found something and the model revises the draft in the next round) or spent (a check found something in the type's last round).",
+		drafts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "continuo_remediation_drafts_total",
+			Help: "Pre-flight passes of a cluster's draft, by flow, type and result: passed (no check found anything), revised (a check found something and the model revises the draft) or spent (a check found something in the type's last draft).",
 		}, []string{"flow", "type", "result"}),
 		outcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_remediation_outcomes_total",
@@ -61,7 +61,7 @@ func NewRemediationMetrics(reg *pkgmetrics.Registry) *RemediationMetrics {
 			Help: "Tokens the model used for remediation, by flow, type and direction (in for the prompt, out for the answer). An answer replayed from the response cache uses none.",
 		}, []string{"flow", "type", "direction"}),
 	}
-	reg.Register(m.tries, m.rounds, m.outcomes, m.systemFailures, m.stageSeconds, m.tokens)
+	reg.Register(m.tries, m.drafts, m.outcomes, m.systemFailures, m.stageSeconds, m.tokens)
 	return m
 }
 
@@ -70,9 +70,9 @@ func (m *RemediationMetrics) Try(flow, typ, result string) {
 	m.tries.WithLabelValues(flow, typ, result).Inc()
 }
 
-// Round counts one pre-flight pass with result.
-func (m *RemediationMetrics) Round(flow, typ, result string) {
-	m.rounds.WithLabelValues(flow, typ, result).Inc()
+// Draft counts one pre-flight pass with result.
+func (m *RemediationMetrics) Draft(flow, typ, result string) {
+	m.drafts.WithLabelValues(flow, typ, result).Inc()
 }
 
 // Outcome counts one node of a remediation that ended.

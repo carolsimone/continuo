@@ -158,7 +158,7 @@ func TestMaintenanceMode(t *testing.T) {
 	t.Cleanup(func() { setMaintenance(t, context.Background(), false) })
 
 	// 1. A run in flight before maintenance begins.
-	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName: project, SchemaName: schema, TableName: table, MetadataSource: "latest",
 	})
 	require.NoError(t, err)

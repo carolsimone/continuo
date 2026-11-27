@@ -71,8 +71,8 @@ type Fix struct {
 	// contract try reached 'failed', and the evidence the next try is
 	// shown. Empty unless the release check failed.
 	VerifyError string `protobuf:"bytes,28,opt,name=verify_error,json=verifyError,proto3" json:"verify_error,omitempty"`
-	// remediation_round is the release's remediation round this try belongs to.
-	RemediationRound int32 `protobuf:"varint,29,opt,name=remediation_round,json=remediationRound,proto3" json:"remediation_round,omitempty"`
+	// round is the release's round this try belongs to.
+	Round int32 `protobuf:"varint,29,opt,name=round,proto3" json:"round,omitempty"`
 	// resolved_node_ids is the failing nodes this try addresses, sorted;
 	// node_id is their representative.
 	ResolvedNodeIds []string `protobuf:"bytes,30,rep,name=resolved_node_ids,json=resolvedNodeIds,proto3" json:"resolved_node_ids,omitempty"`
@@ -330,9 +330,9 @@ func (x *Fix) GetVerifyError() string {
 	return ""
 }
 
-func (x *Fix) GetRemediationRound() int32 {
+func (x *Fix) GetRound() int32 {
 	if x != nil {
-		return x.RemediationRound
+		return x.Round
 	}
 	return 0
 }
@@ -623,7 +623,7 @@ type BeginPullRequestResponse struct {
 	DiffUri   string `protobuf:"bytes,6,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
 	ReleaseId string `protobuf:"bytes,7,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
 	NodeId    string `protobuf:"bytes,8,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	// try is the claimed fix's try number in its round (remediation_round).
+	// try is the claimed fix's try number in its round.
 	Try        int32  `protobuf:"varint,9,opt,name=try,proto3" json:"try,omitempty"`
 	Rationale  string `protobuf:"bytes,10,opt,name=rationale,proto3" json:"rationale,omitempty"`
 	Confidence string `protobuf:"bytes,11,opt,name=confidence,proto3" json:"confidence,omitempty"`
@@ -646,10 +646,10 @@ type BeginPullRequestResponse struct {
 	// the nodes in resolved_node_ids, sorted by node_id. A node the fix
 	// records no approver for has no entry.
 	Approvers []*Approver `protobuf:"bytes,18,rep,name=approvers,proto3" json:"approvers,omitempty"`
-	// remediation_round is the round of the claimed fix's try.
-	RemediationRound int32 `protobuf:"varint,19,opt,name=remediation_round,json=remediationRound,proto3" json:"remediation_round,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// round is the round of the claimed fix's try.
+	Round         int32 `protobuf:"varint,19,opt,name=round,proto3" json:"round,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BeginPullRequestResponse) Reset() {
@@ -808,9 +808,9 @@ func (x *BeginPullRequestResponse) GetApprovers() []*Approver {
 	return nil
 }
 
-func (x *BeginPullRequestResponse) GetRemediationRound() int32 {
+func (x *BeginPullRequestResponse) GetRound() int32 {
 	if x != nil {
-		return x.RemediationRound
+		return x.Round
 	}
 	return 0
 }
@@ -1467,7 +1467,8 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x82\v\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xeb\n" +
+	"\n" +
 	"\x03Fix\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
@@ -1505,8 +1506,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"prClosedAt\x12.\n" +
 	"\x05edits\x18\x1a \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12(\n" +
 	"\x10release_check_id\x18\x1b \x01(\tR\x0ereleaseCheckId\x12!\n" +
-	"\fverify_error\x18\x1c \x01(\tR\vverifyError\x12+\n" +
-	"\x11remediation_round\x18\x1d \x01(\x05R\x10remediationRound\x12*\n" +
+	"\fverify_error\x18\x1c \x01(\tR\vverifyError\x12\x14\n" +
+	"\x05round\x18\x1d \x01(\x05R\x05round\x12*\n" +
 	"\x11resolved_node_ids\x18\x1e \x03(\tR\x0fresolvedNodeIds\x12J\n" +
 	"\rnode_outcomes\x18\x1f \x03(\v2%.remediation.v1.Fix.NodeOutcomesEntryR\fnodeOutcomes\x12C\n" +
 	"\x0erelease_checks\x18  \x03(\v2\x1c.remediation.v1.ReleaseCheckR\rreleaseChecks\x12@\n" +
@@ -1531,7 +1532,7 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"C\n" +
 	"\x17BeginPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
-	"\aproject\x18\x02 \x01(\tR\aproject\"\xf6\x04\n" +
+	"\aproject\x18\x02 \x01(\tR\aproject\"\xdf\x04\n" +
 	"\x18BeginPullRequestResponse\x12\x15\n" +
 	"\x06fix_id\x18\x01 \x01(\tR\x05fixId\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x1d\n" +
@@ -1556,8 +1557,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x05edits\x18\x0f \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12*\n" +
 	"\x11resolved_node_ids\x18\x10 \x03(\tR\x0fresolvedNodeIds\x12\x18\n" +
 	"\aproject\x18\x11 \x01(\tR\aproject\x126\n" +
-	"\tapprovers\x18\x12 \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\x12+\n" +
-	"\x11remediation_round\x18\x13 \x01(\x05R\x10remediationRound\"\x95\x01\n" +
+	"\tapprovers\x18\x12 \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\x12\x14\n" +
+	"\x05round\x18\x13 \x01(\x05R\x05round\"\x95\x01\n" +
 	"\x18RecordPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +

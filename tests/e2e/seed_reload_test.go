@@ -250,13 +250,13 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	t.Logf("✅ run %s stopped the seed on %s and %s", stoppedRun, seedReloadOutsideView, seedReloadOutsideMatView)
 
 	// ── 4. the acknowledged full refresh ─────────────────────────────────────
-	var triggered struct {
+	var started struct {
 		RunID string `json:"run_id"`
 	}
-	runCLI(t, ctx, bin, env, &triggered, "node", "full-refresh", seedReloadProject, seedSchemaName, "seed_table_1",
+	runCLI(t, ctx, bin, env, &started, "node", "full-refresh", seedReloadProject, seedSchemaName, "seed_table_1",
 		"--acknowledge", seedReloadOutsideView, "--acknowledge", seedReloadOutsideMatView)
-	refreshRun, err := uuid.Parse(triggered.RunID)
-	require.NoError(t, err, "continuo node full-refresh prints the run id: %q", triggered.RunID)
+	refreshRun, err := uuid.Parse(started.RunID)
+	require.NoError(t, err, "continuo node full-refresh prints the run id: %q", started.RunID)
 	waitForTasksToSucceed(t, ctx, clients, refreshRun, []string{"seed_table_1", "seed_table_1_view"}, 5*time.Minute)
 	assert.False(t, relationExists(t, ctx, clients, seedReloadOutsideMatView), "the cascade dropped %s, as named", seedReloadOutsideMatView)
 	assert.False(t, relationExists(t, ctx, clients, seedReloadOutsideView), "the cascade dropped %s, as named", seedReloadOutsideView)

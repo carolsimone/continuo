@@ -214,7 +214,7 @@ func fixRowOf(ctx context.Context, repo repository.FixRepository, run tryRun) (f
 		return fix.View{}, fmt.Errorf("list the fixes of release %s: %w", run.trigger.ReleaseID, err)
 	}
 	for _, v := range views {
-		if v.RemediationRound == run.trigger.Round && v.Try == run.snap.Try.Try {
+		if v.Round == run.trigger.Round && v.Try == run.snap.Try.Try {
 			return v, nil
 		}
 	}

@@ -22,9 +22,9 @@ import (
 // The command names a command record and its metric carry.
 const (
 	commandStartRun             = "start_run"
-	commandTriggerRerun         = "trigger_rerun"
-	commandTriggerRebase        = "trigger_rebase"
-	commandTriggerSingleNodeRun = "trigger_single_node_run"
+	commandStartRerun         = "start_rerun"
+	commandStartRebase        = "start_rebase"
+	commandStartSingleNodeRun = "start_single_node_run"
 	commandCancelActiveRun      = "cancel_active_run"
 )
 
@@ -51,27 +51,27 @@ type StartRunCommand struct {
 	Initiator    identity.Identity
 }
 
-// TriggerRerunCommand reruns TenantID's run SourceRunID, for Initiator, once
+// StartRerunCommand reruns TenantID's run SourceRunID, for Initiator, once
 // per RequestID.
-type TriggerRerunCommand struct {
+type StartRerunCommand struct {
 	TenantID    string
 	RequestID   uuid.UUID
 	SourceRunID uuid.UUID
 	Initiator   identity.Identity
 }
 
-// TriggerRebaseCommand is the rebase TriggerRebaseInput asks for, once per
+// StartRebaseCommand is the rebase StartRebaseInput asks for, once per
 // RequestID.
-type TriggerRebaseCommand struct {
+type StartRebaseCommand struct {
 	RequestID uuid.UUID
-	TriggerRebaseInput
+	StartRebaseInput
 }
 
-// TriggerSingleNodeRunCommand is the single-node run
-// TriggerSingleNodeRunInput asks for, once per RequestID.
-type TriggerSingleNodeRunCommand struct {
+// StartSingleNodeRunCommand is the single-node run
+// StartSingleNodeRunInput asks for, once per RequestID.
+type StartSingleNodeRunCommand struct {
 	RequestID uuid.UUID
-	TriggerSingleNodeRunInput
+	StartSingleNodeRunInput
 }
 
 // CancelActiveRunCommand cancels the active run of TenantID's schedule
@@ -101,9 +101,9 @@ type RunCommands struct {
 	newUoW  func() uow.UnitOfWork
 	metrics ports.RunMetrics
 	start   *StartRunHandler
-	rerun   *TriggerRerunHandler
-	rebase  *TriggerRebaseHandler
-	single  *TriggerSingleNodeRunHandler
+	rerun   *StartRerunHandler
+	rebase  *StartRebaseHandler
+	single  *StartSingleNodeRunHandler
 	cancel  *CancelRunHandler
 }
 
@@ -114,14 +114,14 @@ func NewRunCommands(newUoW func() uow.UnitOfWork, metrics ports.RunMetrics, plan
 		newUoW:  newUoW,
 		metrics: metrics,
 		start:   NewStartRunHandler(planner, logger),
-		rerun:   NewTriggerRerunHandler(planner, logger),
-		rebase:  NewTriggerRebaseHandler(planner, logger),
-		single:  NewTriggerSingleNodeRunHandler(planner, logger),
+		rerun:   NewStartRerunHandler(planner, logger),
+		rebase:  NewStartRebaseHandler(planner, logger),
+		single:  NewStartSingleNodeRunHandler(planner, logger),
 		cancel:  NewCancelRunHandler(logger),
 	}
 }
 
-// StartRun starts a run of the schedule, of kind trigger, once per request id.
+// StartRun starts a run of the schedule, of kind manual, once per request id.
 // The fingerprint is the schedule and the operation, an empty operation read
 // as run. A schedule name longer than a run carries is
 // run.ErrScheduleNameTooLong, a schedule that neither a model of the live
@@ -133,7 +133,7 @@ func (c *RunCommands) StartRun(ctx context.Context, cmd StartRunCommand) (Comman
 	rec := c.record(cmd.TenantID, cmd.RequestID, commandStartRun, runID, cmd.ScheduleName, operationPart(cmd.Operation))
 	id, replayed, err := commands.Once(ctx, c.newUoW, c.metrics, rec, func(u uow.UnitOfWork) (uuid.UUID, error) {
 		err := c.start.StartInTransaction(ctx, u, StartRunInput{
-			RunID: runID, TenantID: cmd.TenantID, ScheduleName: cmd.ScheduleName, Kind: run.KindTrigger,
+			RunID: runID, TenantID: cmd.TenantID, ScheduleName: cmd.ScheduleName, Kind: run.KindManual,
 			Initiator: cmd.Initiator, Operation: cmd.Operation,
 		})
 		return runID, err
@@ -144,36 +144,36 @@ func (c *RunCommands) StartRun(ctx context.Context, cmd StartRunCommand) (Comman
 	return CommandResult{RunID: id, ScheduleName: cmd.ScheduleName, Replayed: replayed}, nil
 }
 
-// TriggerRerun reruns the source run once per request id. The fingerprint is
+// StartRerun reruns the source run once per request id. The fingerprint is
 // the source run.
-func (c *RunCommands) TriggerRerun(ctx context.Context, cmd TriggerRerunCommand) (CommandResult, error) {
+func (c *RunCommands) StartRerun(ctx context.Context, cmd StartRerunCommand) (CommandResult, error) {
 	runID := uuid.New()
-	rec := c.record(cmd.TenantID, cmd.RequestID, commandTriggerRerun, runID, cmd.SourceRunID.String())
+	rec := c.record(cmd.TenantID, cmd.RequestID, commandStartRerun, runID, cmd.SourceRunID.String())
 	return c.create(ctx, cmd.TenantID, rec, func(u uow.UnitOfWork) (string, error) {
 		return c.rerun.HandleInTransaction(ctx, u, runID, cmd.TenantID, cmd.SourceRunID, cmd.Initiator)
 	})
 }
 
-// TriggerRebase rebases the source run once per request id. The fingerprint
+// StartRebase rebases the source run once per request id. The fingerprint
 // is the source run, include_changed_upstream and the expected release.
-func (c *RunCommands) TriggerRebase(ctx context.Context, cmd TriggerRebaseCommand) (CommandResult, error) {
+func (c *RunCommands) StartRebase(ctx context.Context, cmd StartRebaseCommand) (CommandResult, error) {
 	runID := uuid.New()
-	rec := c.record(cmd.TenantID, cmd.RequestID, commandTriggerRebase, runID,
+	rec := c.record(cmd.TenantID, cmd.RequestID, commandStartRebase, runID,
 		cmd.SourceRunID.String(), strconv.FormatBool(cmd.IncludeChangedUpstream), cmd.ExpectedReleaseID)
 	return c.create(ctx, cmd.TenantID, rec, func(u uow.UnitOfWork) (string, error) {
-		return c.rebase.HandleInTransaction(ctx, u, runID, cmd.TriggerRebaseInput)
+		return c.rebase.HandleInTransaction(ctx, u, runID, cmd.StartRebaseInput)
 	})
 }
 
-// TriggerSingleNodeRun runs one node once per request id. The fingerprint is
+// StartSingleNodeRun runs one node once per request id. The fingerprint is
 // the node as project.schema.table, the metadata source, the source run (empty
 // when none), the operation, an empty operation read as run, and, only when
 // the call names any, the acknowledged dependents.
-func (c *RunCommands) TriggerSingleNodeRun(ctx context.Context, cmd TriggerSingleNodeRunCommand) (CommandResult, error) {
+func (c *RunCommands) StartSingleNodeRun(ctx context.Context, cmd StartSingleNodeRunCommand) (CommandResult, error) {
 	runID := uuid.New()
-	rec := c.record(cmd.TenantID, cmd.RequestID, commandTriggerSingleNodeRun, runID, singleNodeFingerprintParts(cmd.TriggerSingleNodeRunInput)...)
+	rec := c.record(cmd.TenantID, cmd.RequestID, commandStartSingleNodeRun, runID, singleNodeFingerprintParts(cmd.StartSingleNodeRunInput)...)
 	return c.create(ctx, cmd.TenantID, rec, func(u uow.UnitOfWork) (string, error) {
-		return c.single.HandleInTransaction(ctx, u, runID, cmd.TriggerSingleNodeRunInput)
+		return c.single.HandleInTransaction(ctx, u, runID, cmd.StartSingleNodeRunInput)
 	})
 }
 
@@ -279,7 +279,7 @@ func (c *RunCommands) record(tenantID string, requestID uuid.UUID, command strin
 // acknowledged dependents are one part, ack=<names joined by ",">, that a call
 // naming none leaves out, so a request id sent before a call could name them
 // keeps its fingerprint.
-func singleNodeFingerprintParts(in TriggerSingleNodeRunInput) []string {
+func singleNodeFingerprintParts(in StartSingleNodeRunInput) []string {
 	source := ""
 	if in.SourceRunID != nil {
 		source = in.SourceRunID.String()

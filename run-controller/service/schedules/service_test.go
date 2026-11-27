@@ -410,7 +410,7 @@ func TestSchedulesUpsert_IsOfTheTenant(t *testing.T) {
 }
 
 // Delete removes the row, whatever its stored cron, and succeeds when there is
-// none: the schedule then runs only when triggered.
+// none: the schedule then runs only when someone starts it.
 func TestSchedulesDelete_RemovesTheRowAndSucceedsWhenThereIsNone(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -531,7 +531,7 @@ func TestSchedulesList_IsTheUnionOfTheLiveReleaseAndTheRows(t *testing.T) {
 	assert.True(t, scheduled.HasActiveRun())
 
 	manual := got[1]
-	assert.Nil(t, manual.Schedule, "a name with no row runs only when triggered")
+	assert.Nil(t, manual.Schedule, "a name with no row runs only when someone starts it")
 	assert.Empty(t, manual.Words)
 	assert.Equal(t, 5, manual.ModelCount)
 	assert.Nil(t, manual.LastRun)

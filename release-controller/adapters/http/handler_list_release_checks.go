@@ -10,15 +10,15 @@ import (
 )
 
 type releaseCheckSummary struct {
-	CheckID          string `json:"check_id"`
-	Status           string `json:"status"`
-	Project          string `json:"project"`
-	RemediationRound int    `json:"remediation_round"`
-	Try              int    `json:"try"`
-	CreatedAt        string `json:"created_at"`
-	ActivatedAt      string `json:"activated_at"`
-	FinishedAt       string `json:"finished_at"`
-	FailReason       string `json:"fail_reason,omitempty"`
+	CheckID     string `json:"check_id"`
+	Status      string `json:"status"`
+	Project     string `json:"project"`
+	Round       int    `json:"round"`
+	Try         int    `json:"try"`
+	CreatedAt   string `json:"created_at"`
+	ActivatedAt string `json:"activated_at"`
+	FinishedAt  string `json:"finished_at"`
+	FailReason  string `json:"fail_reason,omitempty"`
 }
 
 // handleListReleaseChecks lists the release checks of the fixes that verify
@@ -45,7 +45,7 @@ func (s *Server) handleListReleaseChecks(w http.ResponseWriter, r *http.Request)
 		finished, fok := check.FinishedAt()
 		out = append(out, releaseCheckSummary{
 			CheckID: check.ID(), Status: string(check.Status()), Project: check.ChangedProject(),
-			RemediationRound: check.RemediationRound(), Try: check.Try(),
+			Round: check.Round(), Try: check.Try(),
 			CreatedAt: check.CreatedAt().UTC().Format(time.RFC3339), ActivatedAt: rfc3339OrEmpty(activated, aok),
 			FinishedAt: rfc3339OrEmpty(finished, fok), FailReason: check.FailReason(),
 		})

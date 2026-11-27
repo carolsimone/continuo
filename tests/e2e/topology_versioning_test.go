@@ -16,7 +16,7 @@ import (
 // TestTopologyVersioning_MidRunIsolation validates that a topology announced
 // between Run 1's creation and its completion does NOT affect the in-flight run:
 // its promotion_seq must remain pinned to the seq live when it was created.
-// Run 2 (triggered after the announcement) must pick up the new seq.
+// Run 2 (started after the announcement) must pick up the new seq.
 func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -49,9 +49,9 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	t.Logf("G1 = %d", g1)
 	waitForRunControllerLiveSeq(t, ctx, clients, g1)
 
-	// Step 5: Trigger Run 1 via the ui HTTP endpoint.
-	t.Log("=== Step 5: triggerScheduleHTTP — starting Run 1 (S1) ===")
-	scheduleID1Str := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
+	// Step 5: Start Run 1 via the ui HTTP endpoint.
+	t.Log("=== Step 5: startManualRunHTTP — starting Run 1 (S1) ===")
+	scheduleID1Str := startManualRunHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 1 created: run_id=%s", scheduleID1Str)
 	s1, err := uuid.Parse(scheduleID1Str)
 	require.NoError(t, err, "run_id for Run 1 is not a valid UUID")
@@ -85,13 +85,13 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, s1)
 	t.Log("Run 1 completed successfully")
 
-	// Step 12: Clean up Run 1 data before triggering Run 2.
+	// Step 12: Clean up Run 1 data before starting Run 2.
 	t.Log("=== Step 12: cleaning up Run 1 data ===")
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Step 13: Trigger Run 2, which must pick up G2.
-	t.Log("=== Step 13: triggerScheduleHTTP — starting Run 2 (S2) ===")
-	scheduleID2Str := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
+	// Step 13: Start Run 2, which must pick up G2.
+	t.Log("=== Step 13: startManualRunHTTP — starting Run 2 (S2) ===")
+	scheduleID2Str := startManualRunHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 2 created: run_id=%s", scheduleID2Str)
 	s2, err := uuid.Parse(scheduleID2Str)
 	require.NoError(t, err, "run_id for Run 2 is not a valid UUID")
@@ -108,7 +108,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 }
 
 // waitForRunControllerLiveSeq polls until run-controller's live release reaches promotion seq
-// seq. A promoted release carries the seq, so a run triggered after this
+// seq. A promoted release carries the seq, so a run started after this
 // returns is stamped with it.
 func waitForRunControllerLiveSeq(t *testing.T, ctx context.Context, clients *testClients, seq int64) {
 	t.Helper()

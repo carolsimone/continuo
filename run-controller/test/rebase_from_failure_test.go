@@ -101,7 +101,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	})
 
 	t.Run("a rebase with the option rebuilds the changed upstream node first", func(t *testing.T) {
-		resp, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{
+		resp, err := runClient.StartRebase(ctx, &runv1.StartRebaseRequest{
 			RequestId: uuid.NewString(), SourceRunId: srcID, IncludeChangedUpstream: true, ExpectedReleaseId: live.ReleaseID,
 		})
 		require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	t.Run("a rebase previewed on another live release is refused and creates no run", func(t *testing.T) {
 		before := countOf(t, runControllerDB, `SELECT count(*) FROM runs`)
 
-		_, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{
+		_, err := runClient.StartRebase(ctx, &runv1.StartRebaseRequest{
 			RequestId: uuid.NewString(), SourceRunId: srcID, IncludeChangedUpstream: true, ExpectedReleaseId: source.ReleaseID,
 		})
 
@@ -131,7 +131,7 @@ func TestRebaseFromFailure(t *testing.T) {
 
 	var activeID string
 	t.Run("a rebase without the option restarts from the failed node alone", func(t *testing.T) {
-		resp, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(), SourceRunId: srcID, ExpectedReleaseId: live.ReleaseID})
+		resp, err := runClient.StartRebase(ctx, &runv1.StartRebaseRequest{RequestId: uuid.NewString(), SourceRunId: srcID, ExpectedReleaseId: live.ReleaseID})
 		require.NoError(t, err)
 		activeID = resp.RunId
 		assert.Equal(t, []rebaseTask{
@@ -147,7 +147,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	t.Run("an active run refuses a rebase but not a preview", func(t *testing.T) {
 		require.NotEmpty(t, activeID, "the previous subtest left its rebase running")
 
-		_, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(), SourceRunId: srcID, ExpectedReleaseId: live.ReleaseID})
+		_, err := runClient.StartRebase(ctx, &runv1.StartRebaseRequest{RequestId: uuid.NewString(), SourceRunId: srcID, ExpectedReleaseId: live.ReleaseID})
 		require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
 		assert.Contains(t, status.Convert(err).Message(), "active run")
 
@@ -174,7 +174,7 @@ func TestRebaseFromFailure(t *testing.T) {
 		require.Len(t, pv.ChangedNodes, 1)
 		assert.Equal(t, changedY.String(), pv.ChangedNodes[0].String())
 
-		resp, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{
+		resp, err := runClient.StartRebase(ctx, &runv1.StartRebaseRequest{
 			RequestId: uuid.NewString(), SourceRunId: activeID, IncludeChangedUpstream: true, ExpectedReleaseId: live.ReleaseID,
 		})
 		require.NoError(t, err)

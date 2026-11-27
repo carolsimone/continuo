@@ -183,7 +183,7 @@ func pollUntilDescribed(
 // ("hydrated" or "degraded"). task_attempts has no run_id column of its
 // own — it joins through tasks (task_attempts.task_id ->
 // tasks.task_id -> tasks.run_id) to scope the query to a
-// single triggered run.
+// single run.
 // parse_cache_reason (only ever populated alongside "degraded") is polled
 // alongside parse_cache and logged on every change and in the timeout failure
 // message, so a degrade's cause is visible in CI output without a manual DB

@@ -99,14 +99,14 @@ type OpeningLister interface {
 // UnitOfWork, so methods take only ctx + domain types.
 type FixRepository interface {
 	// CountTries returns the number of TERMINAL tries recorded for
-	// one remediation round of one release, the round's hand-over row left
-	// out: the flow's tries are a budget per (release_id, remediation_round),
+	// one round of one release, the round's hand-over row left
+	// out: the flow's tries are a budget per (release_id, round),
 	// counted over the release's whole failing set rather than per node, since
 	// one try addresses every node it covers at once, and the next try is
 	// numbered after them. The release is part of the key because the flow's
 	// tries bound how often one release's failure is retried: a later release is new
 	// code, and its tries are its own, never charged to an earlier release's
-	// budget. The remediation round is part of the key for the same reason
+	// budget. The round is part of the key for the same reason
 	// within one release: a human's "try again" on a rejected release starts a
 	// fresh round, and its tries are never charged to an earlier round's
 	// exhausted budget. In-flight rows — 'generating' (the model call has not
@@ -114,11 +114,11 @@ type FixRepository interface {
 	// proposed fix) — are excluded so a try that has not yet concluded
 	// neither spends the flow's tries nor shifts the try number on a
 	// redelivery.
-	CountTries(ctx context.Context, releaseID string, remediationRound int) (int, error)
+	CountTries(ctx context.Context, releaseID string, round int) (int, error)
 
 	// InsertGenerating persists an in-flight 'generating' row for the try just
 	// before the model is called. It is idempotent: a redelivery that re-runs the
-	// same try collides on (release_id, remediation_round, try) and is a no-op, so at most
+	// same try collides on (release_id, round, try) and is a no-op, so at most
 	// one generating row exists per try.
 	InsertGenerating(ctx context.Context, p fix.Fix) error
 
@@ -164,7 +164,7 @@ type FixRepository interface {
 	FailLegacyInFlight(ctx context.Context, reason string) (int, error)
 
 	// Upsert records the terminal outcome of a try on the natural key
-	// (release_id, remediation_round, try): it finalizes the in-flight
+	// (release_id, round, try): it finalizes the in-flight
 	// generating row when one exists (ON CONFLICT … DO UPDATE), or
 	// plain-inserts for instant paths that never marked generating (a skipped
 	// try, or the round's hand-over row). A fix

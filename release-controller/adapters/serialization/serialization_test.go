@@ -53,7 +53,7 @@ func TestNodeValidationResultOmitemptyStaysOmitted(t *testing.T) {
 // goldenTransitions is the exact JSON a []Transition is stored and returned as.
 // "to" holds a releasecheck.Status value; "at" is an RFC3339 time (json trims
 // trailing fractional-second zeros, so a whole-second time has no fraction).
-const goldenTransitions = `[{"to":"received","at":"2026-01-02T03:04:05Z"},{"to":"remediation_retry","at":"2026-01-02T03:05:06Z"}]`
+const goldenTransitions = `[{"to":"received","at":"2026-01-02T03:04:05Z"},{"to":"round_started","at":"2026-01-02T03:05:06Z"}]`
 
 func TestTransitionDTORoundTrip(t *testing.T) {
 	var dto []TransitionDTO
@@ -63,7 +63,7 @@ func TestTransitionDTORoundTrip(t *testing.T) {
 	got := TransitionsToDomain(dto)
 	want := []releasecheck.Transition{
 		{To: releasecheck.StatusReceived, At: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
-		{To: releasecheck.Status("remediation_retry"), At: time.Date(2026, 1, 2, 3, 5, 6, 0, time.UTC)},
+		{To: releasecheck.Status("round_started"), At: time.Date(2026, 1, 2, 3, 5, 6, 0, time.UTC)},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)

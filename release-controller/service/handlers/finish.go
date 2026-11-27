@@ -15,9 +15,9 @@ import (
 
 // checkFinishedPayload is the wire shape of release_check.finished:v1: enough
 // for a consumer to reclaim what the check left behind and to tell what ended.
-// A fix's release check names the try it proves by remediation_round and try.
+// A fix's release check names the try it proves by round and try.
 // Every field is always present — a candidate carries an empty
-// verifies_release_id and a zero remediation_round and try rather than
+// verifies_release_id and a zero round and try rather than
 // omitting the keys, so a consumer can decode the same shape regardless of
 // which kind of check ended.
 type checkFinishedPayload struct {
@@ -27,7 +27,7 @@ type checkFinishedPayload struct {
 	Project           string    `json:"project"`
 	CandidateSchema   string    `json:"candidate_schema"`
 	VerifiesReleaseID string    `json:"verifies_release_id"`
-	RemediationRound  int       `json:"remediation_round"`
+	Round             int       `json:"round"`
 	Try               int       `json:"try"`
 	FinishedAt        time.Time `json:"finished_at"`
 }
@@ -44,7 +44,7 @@ func enqueueCheckFinished(ctx context.Context, u uow.UnitOfWork, r *releasecheck
 	}
 	round := 0
 	if r.Kind() == releasecheck.KindFix {
-		round = r.RemediationRound()
+		round = r.Round()
 	}
 	payload, err := json.Marshal(checkFinishedPayload{
 		CheckID:           r.ID(),
@@ -53,7 +53,7 @@ func enqueueCheckFinished(ctx context.Context, u uow.UnitOfWork, r *releasecheck
 		Project:           r.ChangedProject(),
 		CandidateSchema:   CandidateSchemaFor(r.ID()),
 		VerifiesReleaseID: r.VerifiesReleaseID(),
-		RemediationRound:  round,
+		Round:             round,
 		Try:               r.Try(),
 		FinishedAt:        now.UTC(),
 	})
@@ -76,7 +76,7 @@ func enqueueCheckFinished(ctx context.Context, u uow.UnitOfWork, r *releasecheck
 
 // emitReleaseRejected writes the release.rejected:v1 outbox row for a
 // candidate that has just been rejected, and records the payload on the
-// candidate so a later remediation round can replay it. A fix's
+// candidate so a later round can replay it. A fix's
 // failure is not a release rejection — nothing downstream of a release
 // listens for it — so for a fix's release check this writes nothing; its failure
 // travels on release_check.finished:v1 alone.

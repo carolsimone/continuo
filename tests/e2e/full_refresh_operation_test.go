@@ -33,7 +33,7 @@ func TestFullRefreshOperationSingleNode(t *testing.T) {
 
 	for _, table := range []string{"table_a", "seed_table_1"} {
 		t.Run(table, func(t *testing.T) {
-			resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
+			resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 				ProjectName: "service-1", SchemaName: "e2e_schema", TableName: table,
 				MetadataSource: "latest", Operation: "full_refresh",
 			})

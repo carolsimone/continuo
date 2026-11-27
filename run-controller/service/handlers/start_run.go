@@ -36,17 +36,17 @@ const (
 )
 
 // StartRunHandler is the use case behind the cron fire (kind cron) and gRPC
-// StartRun (kind trigger).
+// StartRun (kind manual).
 // It creates the run, chooses its tasks from the schedule's graph on the live
 // release and dispatches the ready ones, in the caller's transaction.
 //
-// The kinds differ in three ways. A trigger needs a schedule the tenant knows,
+// The kinds differ in three ways. A manual run needs a schedule the tenant knows,
 // one a model of its live release carries or that has a cron, while a cron
 // fire needs nothing beyond the schedule row that fired it. On an active run a
-// cron fire is OutcomeSkippedActive and a trigger is
+// cron fire is OutcomeSkippedActive and a manual run is
 // run.ErrScheduleHasActiveRun. When the selection is refused, a cron run is
 // still recorded, finished failed with the refusal as its reason, while a
-// trigger creates no run and returns the refusal; a test run whose schedule
+// manual run creates no run and returns the refusal; a test run whose schedule
 // has no node with data tests is recorded skipped for both.
 type StartRunHandler struct {
 	policy  policy.SchedulePolicy
@@ -157,7 +157,7 @@ func (h *StartRunHandler) StartInTransaction(ctx context.Context, u uow.UnitOfWo
 	return nil
 }
 
-// check enforces a trigger's pre-conditions, read in u's transaction before
+// check enforces a manual run's pre-conditions, read in u's transaction before
 // the run is written: a schedule name a run can carry, a schedule the tenant
 // knows, and no active run of it. A schedule with an active run is
 // OutcomeSkippedActive.
@@ -190,7 +190,7 @@ func (h *StartRunHandler) check(ctx context.Context, u uow.UnitOfWork, in StartR
 // create chooses the run's tasks from the schedule's graph on the live
 // release, creates the run in.RunID, stamped with in.ScheduledFor when it has
 // one, and dispatches its ready tasks, inside u's open transaction. A refused
-// selection of a trigger is returned and creates nothing; a refused cron
+// selection of a manual run is returned and creates nothing; a refused cron
 // selection, and a benign refusal of either kind, records the run finished and
 // is OutcomeRunRefused, with the failure reason the run was recorded with
 // (empty for a benign refusal, which records the run skipped). A run that
@@ -222,7 +222,7 @@ func (h *StartRunHandler) create(ctx context.Context, u uow.UnitOfWork, in Start
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
 		// A concurrent start that passed the EnsureNoActiveRun pre-check too
 		// wins the insert on the schedule's one-active-run index, which ends
-		// the transaction. A trigger answers it as it answers the pre-check
+		// the transaction. A manual run answers it as it answers the pre-check
 		// (FailedPrecondition); a cron fire rolls back.
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
 			return OutcomeSkippedActive, "", nil

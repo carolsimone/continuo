@@ -17,7 +17,7 @@ var (
 	outputOneKeys = []string{"action", "emits"}
 	typeKeys      = []string{"kind", "version", "name", "match", "context", "agent", "preflight", "based_on"}
 	matchKeys     = []string{"cluster", "source", "node_types"}
-	agentKeys     = []string{"prompt", "tools", "rounds"}
+	agentKeys     = []string{"prompt", "tools", "drafts"}
 )
 
 // flowFile is the shape of a `kind: flow` document. Fields that keep a
@@ -69,5 +69,5 @@ type matchFile struct {
 type agentFile struct {
 	Prompt string      `yaml:"prompt"`
 	Tools  []yaml.Node `yaml:"tools"`
-	Rounds int         `yaml:"rounds"`
+	Drafts int         `yaml:"drafts"`
 }

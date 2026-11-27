@@ -15,7 +15,7 @@ const testRequestID = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
 
 func TestRunRerun_SendsTheInvocationsRequestID(t *testing.T) {
 	t.Setenv("CONTINUO_REQUEST_ID", testRequestID)
-	fake := &fakeRunClient{rerunResp: &runv1.TriggerRerunResponse{RunId: "new-run", ScheduleName: "daily"}}
+	fake := &fakeRunClient{rerunResp: &runv1.StartRerunResponse{RunId: "new-run", ScheduleName: "daily"}}
 
 	stdout, stderr, exit := executeAs(t, NewRerunCommand, fake, "alice", testRunID)
 
@@ -28,7 +28,7 @@ func TestRunRerun_SendsTheInvocationsRequestID(t *testing.T) {
 
 func TestRunRerun_WithoutTheEnvironmentVariableMintsOneIDPerInvocation(t *testing.T) {
 	t.Setenv("CONTINUO_REQUEST_ID", "")
-	fake := &fakeRunClient{rerunResp: &runv1.TriggerRerunResponse{RunId: "new-run", ScheduleName: "daily"}}
+	fake := &fakeRunClient{rerunResp: &runv1.StartRerunResponse{RunId: "new-run", ScheduleName: "daily"}}
 
 	_, _, exit := execute(t, NewRerunCommand, fake, testRunID)
 
@@ -77,7 +77,7 @@ func TestRunRerun_ErrorsKeepTheirExitCodes(t *testing.T) {
 }
 
 func TestRunRerun_HumanModeWritesToStderrOnly(t *testing.T) {
-	fake := &fakeRunClient{rerunResp: &runv1.TriggerRerunResponse{RunId: "new-run", ScheduleName: "daily"}}
+	fake := &fakeRunClient{rerunResp: &runv1.StartRerunResponse{RunId: "new-run", ScheduleName: "daily"}}
 
 	stdout, stderr, exit := executeHuman(t, NewRerunCommand, fake, testRunID)
 
@@ -87,7 +87,7 @@ func TestRunRerun_HumanModeWritesToStderrOnly(t *testing.T) {
 }
 
 func TestRunRerun_OutputMatchesItsSchema(t *testing.T) {
-	fake := &fakeRunClient{rerunResp: &runv1.TriggerRerunResponse{RunId: "new-run", ScheduleName: "daily"}}
+	fake := &fakeRunClient{rerunResp: &runv1.StartRerunResponse{RunId: "new-run", ScheduleName: "daily"}}
 	cmd := NewRerunCommand(nil, nil, nil, nil)
 
 	stdout, _, exit := execute(t, NewRerunCommand, fake, testRunID)

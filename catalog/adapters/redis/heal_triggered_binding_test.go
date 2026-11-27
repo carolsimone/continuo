@@ -20,13 +20,13 @@ import (
 // unfixable.
 func healTriggeredPayload() events.HealTriggered {
 	return events.HealTriggered{
-		Source:           "validation",
-		ReleaseID:        "rel-1",
-		RemediationRound: 1,
-		Repo:             "acme/analytics-dbt",
-		CommitSHA:        "9f1c2e7a4b6d8031c5e7f9a2b4d6081a3c5e7f90",
-		CodeBundleURI:    "s3://b/code-bundles/rel-1/bundle.json",
-		ClassifiedAt:     "2026-08-12T09:00:00Z",
+		Source:        "validation",
+		ReleaseID:     "rel-1",
+		Round:         1,
+		Repo:          "acme/analytics-dbt",
+		CommitSHA:     "9f1c2e7a4b6d8031c5e7f9a2b4d6081a3c5e7f90",
+		CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json",
+		ClassifiedAt:  "2026-08-12T09:00:00Z",
 		Nodes: []events.HealTriggeredNode{
 			{
 				NodeID:         "analytics.revenue",

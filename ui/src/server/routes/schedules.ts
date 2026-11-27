@@ -179,9 +179,9 @@ export function createSchedulesRouter(client: GrpcClient) {
     });
   });
 
-  // POST /api/schedules/:name/trigger  {request_id, operation?} — starts a run
+  // POST /api/schedules/:name/manual-run  {request_id, operation?} — starts a manual run
   // of the whole schedule. Cancelling is done by run id (POST /api/runs/:id/cancel).
-  router.post('/:name/trigger', (req, res) => {
+  router.post('/:name/manual-run', (req, res) => {
     const requestId = requireRequestId(req, res);
     if (requestId === null) return;
     const operation = parseOperation(req.body?.operation);
@@ -222,7 +222,7 @@ export function createSchedulesRouter(client: GrpcClient) {
   });
 
   // DELETE /api/schedules/:name/cron — removes the schedule's cron, which then
-  // runs only when triggered; removing a cron the schedule does not have
+  // runs only when someone starts it; removing a cron the schedule does not have
   // succeeds.
   router.delete('/:name/cron', (req, res) => {
     client.deleteSchedule({ schedule_name: req.params.name }, userMetadata(req), (err: any) => {

@@ -39,7 +39,7 @@ func TestNewCandidate_HasNoFixFacts(t *testing.T) {
 	require.NotNil(t, r.Candidate())
 	assert.Nil(t, r.Fix())
 	assert.Equal(t, "org/repo", r.Repo())
-	assert.Equal(t, 1, r.RemediationRound())
+	assert.Equal(t, 1, r.Round())
 	assert.Equal(t, "", r.VerifiesReleaseID())
 	assert.Equal(t, 0, r.Try())
 	assert.Equal(t, "", r.SourceOverlayURI())
@@ -51,7 +51,7 @@ func TestNewFix_HasNoCandidateFacts(t *testing.T) {
 	require.NotNil(t, r.Fix())
 	assert.Nil(t, r.Candidate())
 	assert.Equal(t, "rel-1", r.VerifiesReleaseID())
-	assert.Equal(t, 2, r.RemediationRound(), "a fix's round is the round of the try it proves")
+	assert.Equal(t, 2, r.Round(), "a fix's round is the round of the try it proves")
 	assert.Equal(t, 1, r.Try())
 	assert.Equal(t, "", r.Repo())
 	assert.False(t, r.IsBootstrap())
@@ -99,10 +99,10 @@ func TestFail_LandsOnFailedForFix(t *testing.T) {
 	assert.True(t, r.Status().IsTerminal())
 }
 
-func TestStartRemediationRound_RefusesFix(t *testing.T) {
+func TestStartRound_RefusesFix(t *testing.T) {
 	r := fix(t)
 	require.NoError(t, r.Fail("validation_failed", "", nil, t0))
-	_, err := r.StartRemediationRound(t0)
+	_, err := r.StartRound(t0)
 	require.True(t, errors.Is(err, releasecheck.ErrWrongKind), "got %v", err)
 }
 
@@ -145,12 +145,12 @@ func TestRehydrate_BuildsTheRightKind(t *testing.T) {
 		ID: "verify-x", Kind: releasecheck.KindFix, Status: releasecheck.StatusPassed,
 		ImageTags: map[string]string{"core": "img"}, ChangedProject: "core",
 		CreatedAt: t0, ManifestKind: release.ManifestKindDbt,
-		VerifiesReleaseID: "rel-1", RemediationRound: 3, Try: 2, SourceOverlayURI: "s3://o",
+		VerifiesReleaseID: "rel-1", Round: 3, Try: 2, SourceOverlayURI: "s3://o",
 	})
 	require.NotNil(t, v.Fix())
 	assert.Nil(t, v.Candidate())
 	assert.Equal(t, 2, v.Try())
-	assert.Equal(t, 3, v.RemediationRound(), "a fix's round rehydrates from the remediation round column")
+	assert.Equal(t, 3, v.Round(), "a fix's round rehydrates from the round column")
 
 	c := releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID: "rel-1", Kind: releasecheck.KindCandidate, Status: releasecheck.StatusRejected,
@@ -158,7 +158,7 @@ func TestRehydrate_BuildsTheRightKind(t *testing.T) {
 		CreatedAt: t0, ManifestKind: release.ManifestKindDbt, Repo: "org/repo", CommitSHA: "abc",
 	})
 	require.NotNil(t, c.Candidate())
-	assert.Equal(t, 1, c.RemediationRound(), "a stored round below 1 reads as round 1")
+	assert.Equal(t, 1, c.Round(), "a stored round below 1 reads as round 1")
 }
 
 func candidateSubmission() releasecheck.CandidateSubmission {

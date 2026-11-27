@@ -1,7 +1,7 @@
 // Package memory is the in-memory implementation of the unit of work and of
 // every repository the runner uses. It keeps the semantics of the Postgres
 // adapters that the code above them relies on: compare-and-set updates, the
-// (release_id, remediation_round, try) uniqueness of fixes, message-processing dedup on
+// (release_id, round, try) uniqueness of fixes, message-processing dedup on
 // both axes, foreign keys and cascades, and leases. The runner's tests and the
 // repository contract test run against it.
 package memory

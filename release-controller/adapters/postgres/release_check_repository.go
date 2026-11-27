@@ -49,7 +49,7 @@ var _ repository.ReleaseCheckRepository = (*ReleaseCheckRepository)(nil)
 const checkColumns = `check_id, check_kind, status, image_tags, changed_project,
 	validation_node_ids, fail_reason, fail_detail, failing_nodes,
 	per_node_results, created_at, transitions, code_bundle_uri, manifest_kind,
-	bootstrap, repo, commit_sha, remediation_round, rejection_payload,
+	bootstrap, repo, commit_sha, round, rejection_payload,
 	verifies_release_id, try, source_overlay_uri,
 	candidate_topology_uri, candidate_topology_sha256, candidate_node_count,
 	rebaseline, notices,
@@ -79,7 +79,7 @@ type checkRow struct {
 	Bootstrap         bool           `db:"bootstrap"`
 	Repo              string         `db:"repo"`
 	CommitSHA         string         `db:"commit_sha"`
-	RemediationRound  int            `db:"remediation_round"`
+	Round             int            `db:"round"`
 	RejectionPayload  []byte         `db:"rejection_payload"`
 	VerifiesReleaseID string         `db:"verifies_release_id"`
 	Try               int            `db:"try"`
@@ -215,7 +215,7 @@ func (r *ReleaseCheckRepository) Save(ctx context.Context, check *releasecheck.C
 		   per_node_results = EXCLUDED.per_node_results,
 		   transitions = EXCLUDED.transitions,
 		   code_bundle_uri = EXCLUDED.code_bundle_uri,
-		   remediation_round = EXCLUDED.remediation_round,
+		   round = EXCLUDED.round,
 		   rejection_payload = EXCLUDED.rejection_payload,
 		   candidate_topology_uri = EXCLUDED.candidate_topology_uri,
 		   candidate_topology_sha256 = EXCLUDED.candidate_topology_sha256,
@@ -318,7 +318,7 @@ func encodeCheck(check *releasecheck.Check) ([]any, error) {
 		check.ID(), string(check.Kind()), string(check.Status()), imageTagsJSON, check.ChangedProject(),
 		pq.StringArray(check.ValidationNodeIDs()), failReason, check.FailDetail(), pq.StringArray(check.FailingNodes()),
 		perNodeJSON, check.CreatedAt(), transitionsJSON, check.CodeBundleURI(), string(check.ManifestKind()),
-		check.IsBootstrap(), check.Repo(), check.CommitSHA(), max(check.RemediationRound(), 1), rejectionPayload,
+		check.IsBootstrap(), check.Repo(), check.CommitSHA(), max(check.Round(), 1), rejectionPayload,
 		check.VerifiesReleaseID(), check.Try(), check.SourceOverlayURI(),
 		topologyURI, topologySHA256, nodeCount, check.IsRebaseline(), noticesJSON,
 		bundle.URI, bundle.SHA256, check.ContinuoContracts(),
@@ -400,7 +400,7 @@ func rowToCheck(row checkRow) (*releasecheck.Check, error) {
 		Rebaseline:        row.Rebaseline,
 		Repo:              row.Repo,
 		CommitSHA:         row.CommitSHA,
-		RemediationRound:  row.RemediationRound,
+		Round:             row.Round,
 		RejectionPayload:  row.RejectionPayload,
 		VerifiesReleaseID: row.VerifiesReleaseID,
 		Try:               row.Try,

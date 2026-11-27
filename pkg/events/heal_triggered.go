@@ -9,7 +9,7 @@ import (
 const HealTriggeredSchemaVersion = 1
 
 // HealTriggered is the payload of a heal.triggered:v1 entry: one
-// batched heal trigger per rejected release and remediation round, carrying
+// batched heal trigger per rejected release and round, carrying
 // every failing node the classifier recorded. The entry's identity is the
 // envelope's event_id. The same shape is what agent-remediation stores as a
 // trigger's payload.
@@ -19,11 +19,11 @@ type HealTriggered struct {
 	Source string `json:"source"`
 	// ReleaseID is the rejected release.
 	ReleaseID string `json:"release_id"`
-	// RemediationRound is the release's remediation round this trigger belongs
+	// Round is the release's round this trigger belongs
 	// to: 1 for the rejection itself, higher for an operator's retry.
-	RemediationRound int    `json:"remediation_round"`
-	Repo             string `json:"repo"`
-	CommitSHA        string `json:"commit_sha"`
+	Round     int    `json:"round"`
+	Repo      string `json:"repo"`
+	CommitSHA string `json:"commit_sha"`
 	// CodeBundleURI locates the release's code-bundle document. Empty when the
 	// release never parsed (a compile-stage or parse-stage failure).
 	CodeBundleURI string `json:"code_bundle_uri,omitempty"`

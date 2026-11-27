@@ -30,7 +30,7 @@ func TestHandleGetReleaseCheck_ReceivedShapeHasEmptyActivatedAt(t *testing.T) {
 	assert.Equal(t, "received", body["status"])
 	assert.Equal(t, "core", body["changed_project"])
 	assert.Equal(t, "rel-1", body["verifies_release_id"])
-	assert.EqualValues(t, 3, body["remediation_round"])
+	assert.EqualValues(t, 3, body["round"])
 	assert.EqualValues(t, 2, body["try"])
 	assert.Equal(t, "dbt", body["manifest_kind"])
 	assert.NotEmpty(t, body["created_at"])

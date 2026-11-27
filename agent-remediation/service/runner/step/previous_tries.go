@@ -11,8 +11,8 @@ import (
 // WithPreviousTries returns req with the section on the earlier tries at the
 // cluster's failure that ev holds under remediation.KeyPreviousTries, as
 // prompt.WithPreviousTries renders it. A prompt step applies it to every
-// request of its first round; a later round revises the last request of the
-// round before it (RevisionRequest), which therefore already carries the
+// request of its first draft; a revision revises the last request of the
+// draft before it (RevisionRequest), which therefore already carries the
 // section. Evidence with no earlier try leaves req as it is.
 func WithPreviousTries(req prompt.ProposeRequest, ev remediation.Evidence) prompt.ProposeRequest {
 	records, _ := remediation.Get[[]remediation.TryRecord](ev, remediation.KeyPreviousTries)
@@ -20,7 +20,7 @@ func WithPreviousTries(req prompt.ProposeRequest, ev remediation.Evidence) promp
 }
 
 // previousTries is each record as the prompt shows it, labelled by its round
-// and try ("Round 2, try 1"). Its diffs are every cluster's edits; its findings are each pre-flight round's
+// and try ("Round 2, try 1"). Its diffs are every cluster's edits; its findings are each draft's
 // findings, then how a cluster ended when it ended without a checked draft,
 // then the cross-cluster findings; its gate error is the gate's finding
 // messages joined by "; ".
@@ -32,9 +32,9 @@ func previousTries(records []remediation.TryRecord) []prompt.PreviousTry {
 			for _, e := range c.Edits {
 				t.Diffs = append(t.Diffs, prompt.TryDiff{Path: e.Path, Diff: e.Diff})
 			}
-			for i, round := range c.Rounds {
-				for _, line := range FindingLines(round) {
-					t.Findings = append(t.Findings, fmt.Sprintf("round %d: %s", i+1, line))
+			for i, draft := range c.Drafts {
+				for _, line := range FindingLines(draft) {
+					t.Findings = append(t.Findings, fmt.Sprintf("draft %d: %s", i+1, line))
 				}
 			}
 			if c.Outcome != "" {

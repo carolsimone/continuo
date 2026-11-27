@@ -73,7 +73,7 @@ export default function ReleaseCheckDetailPage() {
       <p className="page-sub">
         Release check for release <Link to={`/releases/${check.verifies_release_id}`}>{check.verifies_release_id}</Link>
         <span className="page-sub__sep">·</span>
-        {tryLabel(check.remediation_round, check.try)}
+        {tryLabel(check.round, check.try)}
         <span className="page-sub__sep">·</span>
         project {check.changed_project}
         <span className="page-sub__sep">·</span>

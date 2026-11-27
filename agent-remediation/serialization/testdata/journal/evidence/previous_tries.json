@@ -15,7 +15,7 @@
             "Diff": "-a\n+b"
           }
         ],
-        "Rounds": [
+        "Drafts": [
           [
             {
               "Code": "content_unchanged",
@@ -25,7 +25,7 @@
             }
           ]
         ],
-        "Outcome": "failed (preflight_rounds_spent): the answer repeats the original"
+        "Outcome": "failed (drafts_spent): the answer repeats the original"
       }
     ],
     "CrossCluster": [

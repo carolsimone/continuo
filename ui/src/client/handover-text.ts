@@ -8,7 +8,7 @@ import type { HandoverReason } from '../server/generated/vocabulary.gen';
 // every reason the contract declares.
 export const HANDOVER_TEXT: Record<HandoverReason, string> = {
   tries_spent: 'Every try failed the checks. Fix it in the repository.',
-  preflight_rounds_spent: "The agent's drafts kept failing its own checks. Fix it in the repository.",
+  drafts_spent: "The agent's drafts kept failing its own checks. Fix it in the repository.",
   declined: 'The agent could not start a fix. Fix it in the repository.',
   no_type: 'continuo has no fix type for this failure yet. Fix it in the repository.',
   classifier_infra: 'An infrastructure error failed this node. Run the release again.',

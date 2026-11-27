@@ -69,7 +69,7 @@ func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.Output
 		return fmt.Errorf("read verified fix %s: %w", v.FixID(), err)
 	}
 	if len(in.Approvers) > 0 {
-		if err := repo.RecordApprovers(ctx, row.ReleaseID, row.RemediationRound, row.Try, in.Approvers); err != nil {
+		if err := repo.RecordApprovers(ctx, row.ReleaseID, row.Round, row.Try, in.Approvers); err != nil {
 			return fmt.Errorf("record the approvers of verified fix %s: %w", v.FixID(), err)
 		}
 	}
@@ -80,22 +80,22 @@ func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.Output
 // only whether the try may be shown, not what it says.
 func proposedEvent(v fix.View) fix.Fix {
 	return fix.Fix{
-		Source:           v.Source,
-		ReleaseID:        v.ReleaseID,
-		RemediationRound: v.RemediationRound,
-		NodeID:           v.NodeID,
-		ResolvedNodeIDs:  append([]string(nil), v.ResolvedNodeIDs...),
-		ErrorSignature:   v.ErrorSignature,
-		Try:              v.Try,
-		Status:           fix.StatusProposed,
-		ReleaseChecks:    append([]fix.ReleaseCheck(nil), v.ReleaseChecks...),
-		ReleaseCheckID:   v.ReleaseCheckID,
-		Confidence:       v.Confidence,
-		Rationale:        v.Rationale,
-		ProposedSQLURI:   v.ProposedSQLURI,
-		DiffURI:          v.DiffURI,
-		Edits:            append([]fix.FileEdit(nil), v.Edits...),
-		Model:            v.Model,
+		Source:          v.Source,
+		ReleaseID:       v.ReleaseID,
+		Round:           v.Round,
+		NodeID:          v.NodeID,
+		ResolvedNodeIDs: append([]string(nil), v.ResolvedNodeIDs...),
+		ErrorSignature:  v.ErrorSignature,
+		Try:             v.Try,
+		Status:          fix.StatusProposed,
+		ReleaseChecks:   append([]fix.ReleaseCheck(nil), v.ReleaseChecks...),
+		ReleaseCheckID:  v.ReleaseCheckID,
+		Confidence:      v.Confidence,
+		Rationale:       v.Rationale,
+		ProposedSQLURI:  v.ProposedSQLURI,
+		DiffURI:         v.DiffURI,
+		Edits:           append([]fix.FileEdit(nil), v.Edits...),
+		Model:           v.Model,
 	}
 }
 
@@ -106,7 +106,7 @@ func proposedEvent(v fix.View) fix.Fix {
 // version-controlled source. No inbound message drove the write, so the entry
 // carries no message-processing provenance.
 func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID string, pr fix.Fix, sourceResolved bool) error {
-	eventID := event.RemediationEventID(pr.ReleaseID, pr.RemediationRound, pr.Try)
+	eventID := event.RemediationEventID(pr.ReleaseID, pr.Round, pr.Try)
 	edits := make([]event.ProposedEdit, 0, len(pr.Edits))
 	for _, e := range pr.Edits {
 		edits = append(edits, event.ProposedEdit{
@@ -117,22 +117,22 @@ func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID st
 		})
 	}
 	payload := event.FixProposed{
-		EventID:          eventID.String(),
-		Source:           pr.Source,
-		ReleaseID:        pr.ReleaseID,
-		RemediationRound: pr.RemediationRound,
-		NodeID:           pr.NodeID,
-		ResolvedNodeIDs:  append([]string(nil), pr.ResolvedNodeIDs...),
-		ErrorSignature:   pr.ErrorSignature,
-		ProposedSQLURI:   pr.ProposedSQLURI,
-		DiffURI:          pr.DiffURI,
-		Edits:            edits,
-		Rationale:        pr.Rationale,
-		Confidence:       string(pr.Confidence),
-		Model:            pr.Model,
-		Try:              pr.Try,
-		SourceResolved:   sourceResolved,
-		ProposedAt:       p.clock.Now().Format(time.RFC3339),
+		EventID:         eventID.String(),
+		Source:          pr.Source,
+		ReleaseID:       pr.ReleaseID,
+		Round:           pr.Round,
+		NodeID:          pr.NodeID,
+		ResolvedNodeIDs: append([]string(nil), pr.ResolvedNodeIDs...),
+		ErrorSignature:  pr.ErrorSignature,
+		ProposedSQLURI:  pr.ProposedSQLURI,
+		DiffURI:         pr.DiffURI,
+		Edits:           edits,
+		Rationale:       pr.Rationale,
+		Confidence:      string(pr.Confidence),
+		Model:           pr.Model,
+		Try:             pr.Try,
+		SourceResolved:  sourceResolved,
+		ProposedAt:      p.clock.Now().Format(time.RFC3339),
 	}
 	body, err := json.Marshal(serialization.FixProposedFromDomain(payload))
 	if err != nil {

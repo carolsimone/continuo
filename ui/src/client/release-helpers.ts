@@ -224,13 +224,13 @@ export function tryReleaseCheckPhase(p: FixDTO): 'queued' | 'running' | undefine
   return sawQueued ? 'queued' : undefined;
 }
 
-// effectiveRound is the remediation round a fix belongs to. The gRPC
+// effectiveRound is the round a fix belongs to. The gRPC
 // client (ui/src/server/remediation-client.ts) loads the proto with
-// `defaults: true`, so a fix recorded before remediation_round existed
+// `defaults: true`, so a fix recorded before round existed
 // arrives over the wire as 0, not undefined — a plain `?? 1` fallback would
 // not catch it. Both a missing field and an explicit 0 read as round 1.
 export function effectiveRound(p: FixDTO): number {
-  return p.remediation_round && p.remediation_round > 0 ? p.remediation_round : 1;
+  return p.round && p.round > 0 ? p.round : 1;
 }
 
 // HAND_OVER_TRY is the try number of a round's hand-over row: the escalated
@@ -249,11 +249,11 @@ export function tryLabel(round: number | undefined, tryNumber: number): string {
 // an earlier try of the same round, the round's hand-over row coming after
 // every try of its round.
 export function tryBefore(
-  a: { remediation_round?: number; try: number },
-  b: { remediation_round?: number; try: number },
+  a: { round?: number; try: number },
+  b: { round?: number; try: number },
 ): boolean {
-  const ra = a.remediation_round && a.remediation_round > 0 ? a.remediation_round : 1;
-  const rb = b.remediation_round && b.remediation_round > 0 ? b.remediation_round : 1;
+  const ra = a.round && a.round > 0 ? a.round : 1;
+  const rb = b.round && b.round > 0 ? b.round : 1;
   if (ra !== rb) return ra < rb;
   const rank = (t: number) => (t === HAND_OVER_TRY ? Number.POSITIVE_INFINITY : t);
   return rank(a.try) < rank(b.try);
@@ -289,7 +289,7 @@ export function fixProjects(p: FixDTO): string[] {
   return Array.from(new Set(fixPrProjects(p).filter((s) => s !== ''))).sort();
 }
 
-// groupFixes buckets fixes by (release_id, remediation round), newest
+// groupFixes buckets fixes by (release_id, round), newest
 // group first by its latest try. Within a group the tries are newest
 // first (created_at, then tryBefore). `projects` unions each try's
 // fixProjects; `nodeIds` unions their resolved nodes; `latestPrFix`

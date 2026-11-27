@@ -20,9 +20,9 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	RunService_StartRun_FullMethodName               = "/run.v1.RunService/StartRun"
-	RunService_TriggerRerun_FullMethodName           = "/run.v1.RunService/TriggerRerun"
-	RunService_TriggerSingleNodeRun_FullMethodName   = "/run.v1.RunService/TriggerSingleNodeRun"
-	RunService_TriggerRebase_FullMethodName          = "/run.v1.RunService/TriggerRebase"
+	RunService_StartRerun_FullMethodName             = "/run.v1.RunService/StartRerun"
+	RunService_StartSingleNodeRun_FullMethodName     = "/run.v1.RunService/StartSingleNodeRun"
+	RunService_StartRebase_FullMethodName            = "/run.v1.RunService/StartRebase"
 	RunService_PreviewRebase_FullMethodName          = "/run.v1.RunService/PreviewRebase"
 	RunService_CancelRun_FullMethodName              = "/run.v1.RunService/CancelRun"
 	RunService_CancelActiveRun_FullMethodName        = "/run.v1.RunService/CancelActiveRun"
@@ -63,8 +63,8 @@ const (
 // is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
 // empty result where it returns one.
 //
-// The commands that start a run (StartRun, TriggerRerun, TriggerRebase and
-// TriggerSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
+// The commands that start a run (StartRun, StartRerun, StartRebase and
+// StartSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
 // first call with an id does its work. A retry with the same id and the same
 // parameters writes nothing and answers with the run the first call created or
 // cancelled. The same id with other parameters is ALREADY_EXISTS ("request_id
@@ -81,7 +81,7 @@ const (
 type RunServiceClient interface {
 	// StartRun creates a run of a schedule's nodes in the live release and
 	// dispatches its ready tasks in the transaction that creates it. The run's
-	// kind is trigger. A test of a schedule none of whose nodes has data tests
+	// kind is manual. A test of a schedule none of whose nodes has data tests
 	// is not refused: the run is created, ends skipped with no task, and its id
 	// is returned.
 	// Errors:
@@ -103,7 +103,7 @@ type RunServiceClient interface {
 	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	StartRun(ctx context.Context, in *StartRunRequest, opts ...grpc.CallOption) (*StartRunResponse, error)
-	// TriggerRerun creates a run that re-executes a failed or cancelled run's
+	// StartRerun creates a run that re-executes a failed or cancelled run's
 	// tasks that did not succeed, and their descendants, on the source run's
 	// release, and dispatches the ready ones in the transaction that creates it.
 	// The new run keeps the source's schedule_name.
@@ -120,8 +120,8 @@ type RunServiceClient interface {
 	//	                      rolling back; send it again with the same
 	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
-	TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error)
-	// TriggerSingleNodeRun creates a synthesised single-node run that executes
+	StartRerun(ctx context.Context, in *StartRerunRequest, opts ...grpc.CallOption) (*StartRerunResponse, error)
+	// StartSingleNodeRun creates a synthesised single-node run that executes
 	// exactly one task with no downstream pickup. The required metadata_source
 	// field of the request selects one of two modes:
 	//   - "latest": the node as the live release holds it.
@@ -156,8 +156,8 @@ type RunServiceClient interface {
 	//	                      rolling back; send it again with the same
 	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
-	TriggerSingleNodeRun(ctx context.Context, in *TriggerSingleNodeRunRequest, opts ...grpc.CallOption) (*TriggerSingleNodeRunResponse, error)
-	// TriggerRebase creates a new run on the source's schedule and the live
+	StartSingleNodeRun(ctx context.Context, in *StartSingleNodeRunRequest, opts ...grpc.CallOption) (*StartSingleNodeRunResponse, error)
+	// StartRebase creates a new run on the source's schedule and the live
 	// release that restarts the source from its failure. It re-executes the
 	// source's tasks that did not succeed (failed, cancelled or skipped) whose
 	// node the live schedule still holds, the live schedule's nodes the source
@@ -186,15 +186,15 @@ type RunServiceClient interface {
 	//	                      rolling back; send it again with the same
 	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
-	TriggerRebase(ctx context.Context, in *TriggerRebaseRequest, opts ...grpc.CallOption) (*TriggerRebaseResponse, error)
-	// PreviewRebase reports what TriggerRebase would run for the same
+	StartRebase(ctx context.Context, in *StartRebaseRequest, opts ...grpc.CallOption) (*StartRebaseResponse, error)
+	// PreviewRebase reports what StartRebase would run for the same
 	// source_run_id and include_changed_upstream on the live release, without
 	// creating a run: the live release, how many nodes run and why, and the
 	// changed upstream nodes with what each feeds and its last successful
 	// duration. changed_nodes lists every changed upstream node the option would
 	// add, whether or not include_changed_upstream is set. Maintenance mode does
 	// not refuse it.
-	// Errors: as TriggerRebase, except that an active run on the schedule does
+	// Errors: as StartRebase, except that an active run on the schedule does
 	// not refuse a preview, no release is compared, and it takes no request_id,
 	// so it is never ALREADY_EXISTS or ABORTED.
 	PreviewRebase(ctx context.Context, in *PreviewRebaseRequest, opts ...grpc.CallOption) (*PreviewRebaseResponse, error)
@@ -335,7 +335,7 @@ type RunServiceClient interface {
 	//	UNAVAILABLE      - maintenance mode is on.
 	UpsertSchedule(ctx context.Context, in *UpsertScheduleRequest, opts ...grpc.CallOption) (*UpsertScheduleResponse, error)
 	// DeleteSchedule removes the cron of a schedule, which then runs only when
-	// triggered. A run of it in progress goes on. Deleting the cron of a
+	// someone starts it. A run of it in progress goes on. Deleting the cron of a
 	// schedule that has none succeeds.
 	// Errors:
 	//
@@ -394,30 +394,30 @@ func (c *runServiceClient) StartRun(ctx context.Context, in *StartRunRequest, op
 	return out, nil
 }
 
-func (c *runServiceClient) TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error) {
+func (c *runServiceClient) StartRerun(ctx context.Context, in *StartRerunRequest, opts ...grpc.CallOption) (*StartRerunResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TriggerRerunResponse)
-	err := c.cc.Invoke(ctx, RunService_TriggerRerun_FullMethodName, in, out, cOpts...)
+	out := new(StartRerunResponse)
+	err := c.cc.Invoke(ctx, RunService_StartRerun_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *runServiceClient) TriggerSingleNodeRun(ctx context.Context, in *TriggerSingleNodeRunRequest, opts ...grpc.CallOption) (*TriggerSingleNodeRunResponse, error) {
+func (c *runServiceClient) StartSingleNodeRun(ctx context.Context, in *StartSingleNodeRunRequest, opts ...grpc.CallOption) (*StartSingleNodeRunResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TriggerSingleNodeRunResponse)
-	err := c.cc.Invoke(ctx, RunService_TriggerSingleNodeRun_FullMethodName, in, out, cOpts...)
+	out := new(StartSingleNodeRunResponse)
+	err := c.cc.Invoke(ctx, RunService_StartSingleNodeRun_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *runServiceClient) TriggerRebase(ctx context.Context, in *TriggerRebaseRequest, opts ...grpc.CallOption) (*TriggerRebaseResponse, error) {
+func (c *runServiceClient) StartRebase(ctx context.Context, in *StartRebaseRequest, opts ...grpc.CallOption) (*StartRebaseResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TriggerRebaseResponse)
-	err := c.cc.Invoke(ctx, RunService_TriggerRebase_FullMethodName, in, out, cOpts...)
+	out := new(StartRebaseResponse)
+	err := c.cc.Invoke(ctx, RunService_StartRebase_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -633,8 +633,8 @@ func (c *runServiceClient) ListScheduleTopologies(ctx context.Context, in *ListS
 // is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
 // empty result where it returns one.
 //
-// The commands that start a run (StartRun, TriggerRerun, TriggerRebase and
-// TriggerSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
+// The commands that start a run (StartRun, StartRerun, StartRebase and
+// StartSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
 // first call with an id does its work. A retry with the same id and the same
 // parameters writes nothing and answers with the run the first call created or
 // cancelled. The same id with other parameters is ALREADY_EXISTS ("request_id
@@ -651,7 +651,7 @@ func (c *runServiceClient) ListScheduleTopologies(ctx context.Context, in *ListS
 type RunServiceServer interface {
 	// StartRun creates a run of a schedule's nodes in the live release and
 	// dispatches its ready tasks in the transaction that creates it. The run's
-	// kind is trigger. A test of a schedule none of whose nodes has data tests
+	// kind is manual. A test of a schedule none of whose nodes has data tests
 	// is not refused: the run is created, ends skipped with no task, and its id
 	// is returned.
 	// Errors:
@@ -673,7 +673,7 @@ type RunServiceServer interface {
 	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	StartRun(context.Context, *StartRunRequest) (*StartRunResponse, error)
-	// TriggerRerun creates a run that re-executes a failed or cancelled run's
+	// StartRerun creates a run that re-executes a failed or cancelled run's
 	// tasks that did not succeed, and their descendants, on the source run's
 	// release, and dispatches the ready ones in the transaction that creates it.
 	// The new run keeps the source's schedule_name.
@@ -690,8 +690,8 @@ type RunServiceServer interface {
 	//	                      rolling back; send it again with the same
 	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
-	TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error)
-	// TriggerSingleNodeRun creates a synthesised single-node run that executes
+	StartRerun(context.Context, *StartRerunRequest) (*StartRerunResponse, error)
+	// StartSingleNodeRun creates a synthesised single-node run that executes
 	// exactly one task with no downstream pickup. The required metadata_source
 	// field of the request selects one of two modes:
 	//   - "latest": the node as the live release holds it.
@@ -726,8 +726,8 @@ type RunServiceServer interface {
 	//	                      rolling back; send it again with the same
 	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
-	TriggerSingleNodeRun(context.Context, *TriggerSingleNodeRunRequest) (*TriggerSingleNodeRunResponse, error)
-	// TriggerRebase creates a new run on the source's schedule and the live
+	StartSingleNodeRun(context.Context, *StartSingleNodeRunRequest) (*StartSingleNodeRunResponse, error)
+	// StartRebase creates a new run on the source's schedule and the live
 	// release that restarts the source from its failure. It re-executes the
 	// source's tasks that did not succeed (failed, cancelled or skipped) whose
 	// node the live schedule still holds, the live schedule's nodes the source
@@ -756,15 +756,15 @@ type RunServiceServer interface {
 	//	                      rolling back; send it again with the same
 	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
-	TriggerRebase(context.Context, *TriggerRebaseRequest) (*TriggerRebaseResponse, error)
-	// PreviewRebase reports what TriggerRebase would run for the same
+	StartRebase(context.Context, *StartRebaseRequest) (*StartRebaseResponse, error)
+	// PreviewRebase reports what StartRebase would run for the same
 	// source_run_id and include_changed_upstream on the live release, without
 	// creating a run: the live release, how many nodes run and why, and the
 	// changed upstream nodes with what each feeds and its last successful
 	// duration. changed_nodes lists every changed upstream node the option would
 	// add, whether or not include_changed_upstream is set. Maintenance mode does
 	// not refuse it.
-	// Errors: as TriggerRebase, except that an active run on the schedule does
+	// Errors: as StartRebase, except that an active run on the schedule does
 	// not refuse a preview, no release is compared, and it takes no request_id,
 	// so it is never ALREADY_EXISTS or ABORTED.
 	PreviewRebase(context.Context, *PreviewRebaseRequest) (*PreviewRebaseResponse, error)
@@ -905,7 +905,7 @@ type RunServiceServer interface {
 	//	UNAVAILABLE      - maintenance mode is on.
 	UpsertSchedule(context.Context, *UpsertScheduleRequest) (*UpsertScheduleResponse, error)
 	// DeleteSchedule removes the cron of a schedule, which then runs only when
-	// triggered. A run of it in progress goes on. Deleting the cron of a
+	// someone starts it. A run of it in progress goes on. Deleting the cron of a
 	// schedule that has none succeeds.
 	// Errors:
 	//
@@ -957,14 +957,14 @@ type UnimplementedRunServiceServer struct{}
 func (UnimplementedRunServiceServer) StartRun(context.Context, *StartRunRequest) (*StartRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartRun not implemented")
 }
-func (UnimplementedRunServiceServer) TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method TriggerRerun not implemented")
+func (UnimplementedRunServiceServer) StartRerun(context.Context, *StartRerunRequest) (*StartRerunResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartRerun not implemented")
 }
-func (UnimplementedRunServiceServer) TriggerSingleNodeRun(context.Context, *TriggerSingleNodeRunRequest) (*TriggerSingleNodeRunResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method TriggerSingleNodeRun not implemented")
+func (UnimplementedRunServiceServer) StartSingleNodeRun(context.Context, *StartSingleNodeRunRequest) (*StartSingleNodeRunResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartSingleNodeRun not implemented")
 }
-func (UnimplementedRunServiceServer) TriggerRebase(context.Context, *TriggerRebaseRequest) (*TriggerRebaseResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method TriggerRebase not implemented")
+func (UnimplementedRunServiceServer) StartRebase(context.Context, *StartRebaseRequest) (*StartRebaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartRebase not implemented")
 }
 func (UnimplementedRunServiceServer) PreviewRebase(context.Context, *PreviewRebaseRequest) (*PreviewRebaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreviewRebase not implemented")
@@ -1062,56 +1062,56 @@ func _RunService_StartRun_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RunService_TriggerRerun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TriggerRerunRequest)
+func _RunService_StartRerun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartRerunRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RunServiceServer).TriggerRerun(ctx, in)
+		return srv.(RunServiceServer).StartRerun(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RunService_TriggerRerun_FullMethodName,
+		FullMethod: RunService_StartRerun_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RunServiceServer).TriggerRerun(ctx, req.(*TriggerRerunRequest))
+		return srv.(RunServiceServer).StartRerun(ctx, req.(*StartRerunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RunService_TriggerSingleNodeRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TriggerSingleNodeRunRequest)
+func _RunService_StartSingleNodeRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartSingleNodeRunRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RunServiceServer).TriggerSingleNodeRun(ctx, in)
+		return srv.(RunServiceServer).StartSingleNodeRun(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RunService_TriggerSingleNodeRun_FullMethodName,
+		FullMethod: RunService_StartSingleNodeRun_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RunServiceServer).TriggerSingleNodeRun(ctx, req.(*TriggerSingleNodeRunRequest))
+		return srv.(RunServiceServer).StartSingleNodeRun(ctx, req.(*StartSingleNodeRunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RunService_TriggerRebase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TriggerRebaseRequest)
+func _RunService_StartRebase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartRebaseRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RunServiceServer).TriggerRebase(ctx, in)
+		return srv.(RunServiceServer).StartRebase(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RunService_TriggerRebase_FullMethodName,
+		FullMethod: RunService_StartRebase_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RunServiceServer).TriggerRebase(ctx, req.(*TriggerRebaseRequest))
+		return srv.(RunServiceServer).StartRebase(ctx, req.(*StartRebaseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1470,16 +1470,16 @@ var RunService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _RunService_StartRun_Handler,
 		},
 		{
-			MethodName: "TriggerRerun",
-			Handler:    _RunService_TriggerRerun_Handler,
+			MethodName: "StartRerun",
+			Handler:    _RunService_StartRerun_Handler,
 		},
 		{
-			MethodName: "TriggerSingleNodeRun",
-			Handler:    _RunService_TriggerSingleNodeRun_Handler,
+			MethodName: "StartSingleNodeRun",
+			Handler:    _RunService_StartSingleNodeRun_Handler,
 		},
 		{
-			MethodName: "TriggerRebase",
-			Handler:    _RunService_TriggerRebase_Handler,
+			MethodName: "StartRebase",
+			Handler:    _RunService_StartRebase_Handler,
 		},
 		{
 			MethodName: "PreviewRebase",

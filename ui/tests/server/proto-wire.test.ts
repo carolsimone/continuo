@@ -58,7 +58,7 @@ describe('proto wire: run.proto', () => {
     const svc = (packageDefinition as Record<string, any>)['run.v1.RunService'];
     expect(svc).toBeTruthy();
     for (const rpc of [
-      'StartRun', 'TriggerRerun', 'TriggerSingleNodeRun', 'TriggerRebase', 'PreviewRebase',
+      'StartRun', 'StartRerun', 'StartSingleNodeRun', 'StartRebase', 'PreviewRebase',
       'CancelRun', 'GetRun', 'ListRuns', 'ListTasks', 'ListRunAttempts', 'GetRunGraph',
       'ListNodeTasks', 'ListNodes', 'ListNodeNames', 'ListNodeProjects',
       'ListSchedules', 'GetScheduleGraph', 'ListScheduleTopologies',
@@ -68,8 +68,8 @@ describe('proto wire: run.proto', () => {
     }
   });
 
-  it('TriggerRerun request round-trips request_id and source_run_id', () => {
-    const result = requestRoundTrip('TriggerRerun', {
+  it('StartRerun request round-trips request_id and source_run_id', () => {
+    const result = requestRoundTrip('StartRerun', {
       request_id: '5d21c0de-0000-4000-8000-000000000001',
       source_run_id: 'run-abc-123',
     });
@@ -95,21 +95,21 @@ describe('proto wire: run.proto', () => {
     expect(Object.keys(result)).not.toContain('request_id');
   });
 
-  it('TriggerSingleNodeRun request round-trips request_id and the node identity', () => {
+  it('StartSingleNodeRun request round-trips request_id and the node identity', () => {
     const sent = {
       request_id: '5d21c0de-0000-4000-8000-000000000001', project_name: 'svc', schema_name: 'sch',
       table_name: 'tbl', metadata_source: 'snapshot_of_run', source_run_id: 'run-1', operation: 'full_refresh',
       acknowledged_dependents: ['bi.fx_rates_report', 'bi.daily_totals'],
     };
-    expect(requestRoundTrip('TriggerSingleNodeRun', sent)).toEqual(sent);
+    expect(requestRoundTrip('StartSingleNodeRun', sent)).toEqual(sent);
   });
 
-  it('TriggerSingleNodeRun request decodes no acknowledged_dependents as an empty list', () => {
+  it('StartSingleNodeRun request decodes no acknowledged_dependents as an empty list', () => {
     const sent = {
       request_id: '5d21c0de-0000-4000-8000-000000000001', project_name: 'svc', schema_name: 'sch',
       table_name: 'tbl', metadata_source: 'latest', source_run_id: '', operation: '',
     };
-    expect(requestRoundTrip('TriggerSingleNodeRun', sent)).toEqual({ ...sent, acknowledged_dependents: [] });
+    expect(requestRoundTrip('StartSingleNodeRun', sent)).toEqual({ ...sent, acknowledged_dependents: [] });
   });
 
   it('GetRunGraph decodes fields 3 and 4 as run_promotion_seq and latest_promotion_seq', () => {
@@ -173,8 +173,8 @@ describe('proto wire: run.proto', () => {
     expect(resp.active_runs[0].run_promotion_seq).toBe('4');
   });
 
-  it('TriggerRebase request carries request_id as field 1, source_run_id as 2, include_changed_upstream as 3 and expected_release_id as 4', () => {
-    const method = runMethod('TriggerRebase');
+  it('StartRebase request carries request_id as field 1, source_run_id as 2, include_changed_upstream as 3 and expected_release_id as 4', () => {
+    const method = runMethod('StartRebase');
     const bytes = [...method.requestSerialize({
       request_id: 'q', source_run_id: 'r', include_changed_upstream: true, expected_release_id: 'x',
     })];
@@ -183,7 +183,7 @@ describe('proto wire: run.proto', () => {
       request_id: '5d21c0de-0000-4000-8000-000000000001', source_run_id: 'run-abc-123',
       include_changed_upstream: true, expected_release_id: 'rel-7',
     };
-    expect(requestRoundTrip('TriggerRebase', sent)).toEqual(sent);
+    expect(requestRoundTrip('StartRebase', sent)).toEqual(sent);
   });
 
   it('PreviewRebase request carries source_run_id as field 1 and include_changed_upstream as field 2', () => {
@@ -230,9 +230,9 @@ describe('proto wire: run.proto', () => {
     const sentRebase: Record<string, unknown>[] = [];
     const sentPreview: Record<string, unknown>[] = [];
     const preview = runMethod('PreviewRebase');
-    const rebase = runMethod('TriggerRebase');
+    const rebase = runMethod('StartRebase');
     const client = {
-      triggerRebase: (req: any, _md: unknown, cb: (err: unknown, res: unknown) => void) => {
+      startRebase: (req: any, _md: unknown, cb: (err: unknown, res: unknown) => void) => {
         sentRebase.push(rebase.requestDeserialize(rebase.requestSerialize(req)));
         cb(null, rebase.responseDeserialize(rebase.responseSerialize({ run_id: 'run-2', schedule_name: 'daily' })));
       },
@@ -280,7 +280,7 @@ describe('proto wire: run.proto', () => {
       getRun: (req: any, cb: any) => cb(null, through('GetRun', req, {
         run: { run_id: 'run-1', schedule_name: 'daily', status: 'running', promotion_seq: 7, created_at: { seconds: 1792836300, nanos: 0 } },
       })),
-      triggerRerun: (req: any, _md: unknown, cb: any) => cb(null, through('TriggerRerun', req, { run_id: 'run-2', schedule_name: 'daily' })),
+      startRerun: (req: any, _md: unknown, cb: any) => cb(null, through('StartRerun', req, { run_id: 'run-2', schedule_name: 'daily' })),
       cancelRun: (req: any, _md: unknown, cb: any) => cb(null, through('CancelRun', req, { run: { run_id: 'run-1', status: 'cancelling' } })),
       listTasks: (req: any, cb: any) => cb(null, through('ListTasks', req, {
         tasks: [{ task_id: 't1', run_id: 'run-1', status: 'pending', wait_reason: 'node_lease', waiting_on_run_id: 'run-9' }], total_count: 1,
@@ -305,13 +305,13 @@ describe('proto wire: run.proto', () => {
     const cancel = await request(app).post('/api/runs/run-1/cancel').send({ cancellation_reason: 'manual' });
     const tasks = await request(app).get('/api/runs/run-1/tasks');
     const attempts = await request(app).get('/api/runs/run-1/attempts?task_id=t1');
-    const trigger = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID, operation: 'test' });
+    const start = await request(app).post('/api/schedules/daily/manual-run').send({ request_id: REQUEST_ID, operation: 'test' });
     const schedules = await request(app).get('/api/schedules');
     const graph = await request(app).get('/api/schedules/daily/graph');
 
     expect(sent.GetRun).toEqual({ run_id: 'run-1' });
     expect(run.body).toMatchObject({ run_id: 'run-1', schedule_name: 'daily', status: 'running', promotion_seq: 7 });
-    expect(sent.TriggerRerun).toEqual({ request_id: REQUEST_ID, source_run_id: 'run-1' });
+    expect(sent.StartRerun).toEqual({ request_id: REQUEST_ID, source_run_id: 'run-1' });
     expect(rerun.body).toEqual({ run_id: 'run-2', schedule_name: 'daily' });
     expect(sent.CancelRun).toEqual({ run_id: 'run-1', cancelled_by: '', cancellation_reason: 'manual' });
     expect(cancel.body).toMatchObject({ run_id: 'run-1', status: 'cancelling' });
@@ -320,7 +320,7 @@ describe('proto wire: run.proto', () => {
     expect(sent.ListRunAttempts).toMatchObject({ run_id: 'run-1', task_id: 't1' });
     expect(attempts.body.attempts[0]).toMatchObject({ task_id: 't1', attempt: 1, status: 'failed' });
     expect(sent.StartRun).toEqual({ request_id: REQUEST_ID, schedule_name: 'daily', operation: 'test' });
-    expect(trigger.body).toEqual({ run_id: 'run-3' });
+    expect(start.body).toEqual({ run_id: 'run-3' });
     expect(schedules.body.schedules[0]).toMatchObject({ schedule_name: 'daily', has_active_run: true, last_run_id: 'run-1' });
     expect(sent.GetScheduleGraph).toEqual({ schedule_name: 'daily' });
     expect(graph.body.nodes[0]).toMatchObject({ node_id: 's.a.b', node_type: 'dbt-model', schedule_name: 'daily' });

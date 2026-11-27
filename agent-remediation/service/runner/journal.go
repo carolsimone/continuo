@@ -16,7 +16,7 @@ import (
 )
 
 // The journal holds one row per run of a step: per try, cluster, step and
-// round. A row records the step's input digest, its output, its findings, how
+// draft. A row records the step's input digest, its output, its findings, how
 // long it took and, for a model call, the model, the prompt version and the
 // tokens. The output is one of the journal records of package serialization,
 // which also computes the input digest. A cluster's evidence is rebuilt from
@@ -36,7 +36,7 @@ const (
 	// stepPlan finds the steps a cluster runs from its type. It has a row only
 	// when it failed: its type is not among the loaded files.
 	stepPlan = "plan"
-	// stepPreflight runs a cluster's pre-flight checks in one pass per round.
+	// stepPreflight runs a cluster's pre-flight checks in one pass per draft.
 	// Its row's output holds the draft as the pass left it: with every edit's
 	// original filled and, once every check passed, the URIs of its stored
 	// content and diff. Its findings are every finding of the pass.
@@ -50,30 +50,30 @@ const (
 type stepKey struct {
 	cluster int
 	step    string
-	round   int
+	draft   int
 }
 
-// journal is the step rows of one try, by cluster, step and round.
+// journal is the step rows of one try, by cluster, step and draft.
 type journal map[stepKey]remediation.StepRun
 
 func newJournal(steps []remediation.StepRun) journal {
 	j := make(journal, len(steps))
 	for _, s := range steps {
-		j[stepKey{cluster: s.Cluster, step: s.Step, round: s.Round}] = s
+		j[stepKey{cluster: s.Cluster, step: s.Step, draft: s.Draft}] = s
 	}
 	return j
 }
 
-// row returns the row of one step of one cluster in one round.
-func (j journal) row(cluster int, step string, round int) (remediation.StepRun, bool) {
-	s, ok := j[stepKey{cluster: cluster, step: step, round: round}]
+// row returns the row of one step of one cluster in one draft.
+func (j journal) row(cluster int, step string, draft int) (remediation.StepRun, bool) {
+	s, ok := j[stepKey{cluster: cluster, step: step, draft: draft}]
 	return s, ok
 }
 
 // done returns the row of a step that finished, and false when the step has no
 // row or its last run did not finish.
-func (j journal) done(cluster int, step string, round int) (remediation.StepRun, bool) {
-	s, ok := j.row(cluster, step, round)
+func (j journal) done(cluster int, step string, draft int) (remediation.StepRun, bool) {
+	s, ok := j.row(cluster, step, draft)
 	return s, ok && s.Status == remediation.StepDone
 }
 
@@ -89,10 +89,10 @@ func (j journal) worked(cluster int) bool {
 }
 
 // promptRow returns the done row of the prompt step of one cluster in one
-// round, whatever the step's name: a round has one prompt row, written by the
-// type's prompt as the runner had it loaded when the round ran.
-func (j journal) promptRow(cluster, round int) (remediation.StepRun, bool) {
-	rows := j.doneRows(cluster, string(step.KindPrompt), round)
+// draft, whatever the step's name: a draft has one prompt row, written by the
+// type's prompt as the runner had it loaded when the draft ran.
+func (j journal) promptRow(cluster, draft int) (remediation.StepRun, bool) {
+	rows := j.doneRows(cluster, string(step.KindPrompt), draft)
 	if len(rows) == 0 {
 		return remediation.StepRun{}, false
 	}
@@ -100,12 +100,12 @@ func (j journal) promptRow(cluster, round int) (remediation.StepRun, bool) {
 }
 
 // doneRows returns the done rows of one kind of step of one cluster in one
-// round, in the order they were first written (by row id, then by step name).
+// draft, in the order they were first written (by row id, then by step name).
 // They are the steps that ran, whatever the loaded files list now.
-func (j journal) doneRows(cluster int, kind string, round int) []remediation.StepRun {
+func (j journal) doneRows(cluster int, kind string, draft int) []remediation.StepRun {
 	var out []remediation.StepRun
 	for k, s := range j {
-		if k.cluster == cluster && k.round == round && s.Kind == kind && s.Status == remediation.StepDone {
+		if k.cluster == cluster && k.draft == draft && s.Kind == kind && s.Status == remediation.StepDone {
 			out = append(out, s)
 		}
 	}
@@ -117,18 +117,18 @@ func (j journal) doneRows(cluster int, kind string, round int) []remediation.Ste
 
 // newRow starts the row of one run of a step of the current try. It keeps the
 // failures earlier runs of the same step recorded.
-func (r *Runner) newRow(run tryRun, cluster int, step, kind string, round int, revision string) remediation.StepRun {
+func (r *Runner) newRow(run tryRun, cluster int, step, kind string, draft int, revision string) remediation.StepRun {
 	row := remediation.StepRun{
 		RemediationID: run.snap.Remediation.ID,
 		Try:           run.snap.Try.Try,
 		Cluster:       cluster,
 		Step:          step,
 		Kind:          kind,
-		Round:         round,
+		Draft:         draft,
 		FileRevision:  revision,
 		StartedAt:     r.clock.Now(),
 	}
-	if prev, ok := run.journal.row(cluster, step, round); ok {
+	if prev, ok := run.journal.row(cluster, step, draft); ok {
 		row.Failures = prev.Failures
 	}
 	return row
@@ -251,14 +251,14 @@ func (r *Runner) withEvidence(ev remediation.Evidence, row remediation.StepRun, 
 	if len(unknown) > 0 {
 		slices.Sort(unknown)
 		r.logger.Warn("a journal row holds evidence no registered step provides; it is left out",
-			"remediation", row.RemediationID, "try", row.Try, "cluster", row.Cluster, "step", row.Step, "round", row.Round, "keys", unknown)
+			"remediation", row.RemediationID, "try", row.Try, "cluster", row.Cluster, "step", row.Step, "draft", row.Draft, "keys", unknown)
 	}
 	return known.AddTo(ev, r.d.Registry.EvidenceType)
 }
 
 // gatheredEvidence is the evidence a cluster's steps read before its prompt
 // answers: the failure, then what each done context row of the cluster's
-// first round recorded, in the order the rows were written. The rows are the
+// first draft recorded, in the order the rows were written. The rows are the
 // context steps that ran, whatever the loaded files list now.
 func (r *Runner) gatheredEvidence(run tryRun, c remediation.Cluster, f remediation.Failure) (remediation.Evidence, error) {
 	return r.gatheredIn(run.journal, c, f)
@@ -268,7 +268,7 @@ func (r *Runner) gatheredEvidence(run tryRun, c remediation.Cluster, f remediati
 // from j, the journal of c's try.
 func (r *Runner) gatheredIn(j journal, c remediation.Cluster, f remediation.Failure) (remediation.Evidence, error) {
 	ev := remediation.NewEvidence().With(remediation.KeyFailure, f)
-	for _, row := range j.doneRows(c.Cluster, string(step.KindContext), contextRound) {
+	for _, row := range j.doneRows(c.Cluster, string(step.KindContext), contextDraft) {
 		rec, err := serialization.DecodeRecord[serialization.ContextRecord](row.Output)
 		if err != nil {
 			return ev, fmt.Errorf("decode the output of step %s: %w", row.Step, err)

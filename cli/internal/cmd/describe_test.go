@@ -50,7 +50,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "release notices", "node contract", "node contract-history", "node contract-diff", "describe", "precedents"} {
+	for _, want := range []string{"schedule list", "schedule run", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "release notices", "node contract", "node contract-history", "node contract-diff", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -177,8 +177,8 @@ func TestDescribe_CancelUsesPositionalReasonAndNoCommandFlags(t *testing.T) {
 func TestDescribe_MutatingFlagMarksMutatingCommands(t *testing.T) {
 	p := runDescribe(t)
 
-	trigger := findCmd(t, p, "schedule trigger")
-	assert.True(t, trigger.Mutating, "schedule trigger must be marked mutating")
+	run := findCmd(t, p, "schedule run")
+	assert.True(t, run.Mutating, "schedule run must be marked mutating")
 
 	cancel := findCmd(t, p, "schedule cancel")
 	assert.True(t, cancel.Mutating, "schedule cancel must be marked mutating")

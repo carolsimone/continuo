@@ -11,12 +11,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// TriggerRebaseInput is a request to rebase a failed or cancelled run of
+// StartRebaseInput is a request to rebase a failed or cancelled run of
 // TenantID onto the tenant's live release. IncludeChangedUpstream also
 // re-executes the changed nodes upstream of what the rebase re-executes; a
 // non-empty ExpectedReleaseID is the live release the caller previewed, and
 // the rebase is refused when another release is live.
-type TriggerRebaseInput struct {
+type StartRebaseInput struct {
 	TenantID               string
 	SourceRunID            uuid.UUID
 	IncludeChangedUpstream bool
@@ -24,17 +24,17 @@ type TriggerRebaseInput struct {
 	Initiator              identity.Identity
 }
 
-// TriggerRebaseHandler is the use case behind the TriggerRebase gRPC method: a
+// StartRebaseHandler is the use case behind the StartRebase gRPC method: a
 // new run on the source's schedule and the live release that restarts the
 // source from its failure.
-type TriggerRebaseHandler struct {
+type StartRebaseHandler struct {
 	creation derivedRunCreation
 }
 
-// NewTriggerRebaseHandler constructs the rebase use case; planner plans its
+// NewStartRebaseHandler constructs the rebase use case; planner plans its
 // runs.
-func NewTriggerRebaseHandler(planner runstart.Planner, logger *slog.Logger) *TriggerRebaseHandler {
-	return &TriggerRebaseHandler{creation: derivedRunCreation{
+func NewStartRebaseHandler(planner runstart.Planner, logger *slog.Logger) *StartRebaseHandler {
+	return &StartRebaseHandler{creation: derivedRunCreation{
 		planner: planner,
 		logger:  logger,
 		kind:    run.KindRebase,
@@ -51,12 +51,12 @@ func NewTriggerRebaseHandler(planner runstart.Planner, logger *slog.Logger) *Tri
 // release, or the rebase is runstart.ErrLiveReleaseMoved; an empty one skips
 // the check. That refusal and every selection the planner refuses are
 // returned as is, and the caller rolls back.
-func (h *TriggerRebaseHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerRebaseInput) (string, error) {
+func (h *StartRebaseHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in StartRebaseInput) (string, error) {
 	return h.creation.createInTransaction(ctx, u, runID, in.TenantID, in.SourceRunID, in.Initiator, h.selectRebase(in))
 }
 
 // selectRebase chooses the tasks of the rebase in asks for.
-func (h *TriggerRebaseHandler) selectRebase(in TriggerRebaseInput) selectDerived {
+func (h *StartRebaseHandler) selectRebase(in StartRebaseInput) selectDerived {
 	opts := runstart.RebaseOptions{IncludeChangedUpstream: in.IncludeChangedUpstream, ExpectedReleaseID: in.ExpectedReleaseID}
 	return func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
 		sel, _, err := h.creation.planner.Rebase(ctx, u, src, opts)

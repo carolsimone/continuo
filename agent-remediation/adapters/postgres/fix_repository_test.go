@@ -389,7 +389,7 @@ func TestMessageProcessingAlreadyProcessedScopedByStream(t *testing.T) {
 // 1 (across different nodes, since one try now addresses the release's
 // whole failing set rather than a single node), 1 for the same failure
 // signature under a later release, and 1 for a second round of release-1,
-// verifying that CountTries counts per (release_id, remediation_round): a
+// verifying that CountTries counts per (release_id, round): a
 // later release's tries are its own, never charged to an earlier
 // release's budget, and a fresh round never inherits an earlier round's
 // exhausted count.
@@ -445,7 +445,7 @@ func TestFixRepositoryCountTries(t *testing.T) {
 
 	// Round 2 of release-1: a "try again" starts a fresh budget.
 	require.NoError(t, repo.Upsert(ctx, fix.Fix{
-		Source: source, ReleaseID: "release-1", RemediationRound: 2, NodeID: "schema.model_a", ErrorSignature: sig,
+		Source: source, ReleaseID: "release-1", Round: 2, NodeID: "schema.model_a", ErrorSignature: sig,
 		Try: 4, Status: fix.StatusProposed, CreatedAt: now,
 	}))
 	count, err = repo.CountTries(ctx, "release-1", 1)
@@ -1669,7 +1669,7 @@ func TestFixRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 		NodeOutcomes: map[string]fix.NodeOutcome{
 			"model.p.a": {Status: fix.StatusVerifying},
 			"model.p.b": {Status: fix.StatusSkipped, Reason: "no source to fix"},
-			"model.p.c": {Status: fix.StatusFailed, Reason: "the model could not determine a safe fix", Code: model.HandoverReasonPreflightRoundsSpent},
+			"model.p.c": {Status: fix.StatusFailed, Reason: "the model could not determine a safe fix", Code: model.HandoverReasonDraftsSpent},
 		},
 		ReleaseCheckID: "verify-rel-verify-outcomes-3",
 		CreatedAt:      time.Now().UTC(),
@@ -1686,7 +1686,7 @@ func TestFixRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 	require.Equal(t, map[string]fix.NodeOutcome{
 		"model.p.a": {Status: fix.StatusFailed},
 		"model.p.b": {Status: fix.StatusSkipped, Reason: "no source to fix"},
-		"model.p.c": {Status: fix.StatusFailed, Reason: "the model could not determine a safe fix", Code: model.HandoverReasonPreflightRoundsSpent},
+		"model.p.c": {Status: fix.StatusFailed, Reason: "the model could not determine a safe fix", Code: model.HandoverReasonDraftsSpent},
 	}, got.NodeOutcomes, "every verifying node becomes failed; a settled node is untouched, its code included")
 }
 
@@ -2508,7 +2508,7 @@ func seedVerifying(t *testing.T, db *sqlx.DB, releaseID string, vs []fix.Release
 	repo := NewFixRepository(db, nil)
 	ctx := context.Background()
 	p := fix.Fix{
-		Source: "validation", ReleaseID: releaseID, RemediationRound: 1, NodeID: "model.core.orders",
+		Source: "validation", ReleaseID: releaseID, Round: 1, NodeID: "model.core.orders",
 		ResolvedNodeIDs: []string{"model.core.orders"}, ErrorSignature: "sig", Try: 1,
 		Status: fix.StatusVerifying, ReleaseChecks: vs, Projects: fix.UnionProjects(releaseCheckProjectNames(vs)),
 		CreatedAt: time.Now().UTC(),
@@ -2527,7 +2527,7 @@ func seedTerminal(t *testing.T, db *sqlx.DB, releaseID string, projects []string
 	t.Helper()
 	repo := NewFixRepository(db, nil)
 	p := fix.Fix{
-		Source: "validation", ReleaseID: releaseID, RemediationRound: 1, NodeID: "model.core.orders",
+		Source: "validation", ReleaseID: releaseID, Round: 1, NodeID: "model.core.orders",
 		ResolvedNodeIDs: []string{"model.core.orders"}, ErrorSignature: "sig", Try: 1,
 		Status: fix.StatusProposed, Projects: projects, CreatedAt: time.Now().UTC(),
 	}

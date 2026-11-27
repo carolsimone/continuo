@@ -35,7 +35,7 @@ async function main() {
   // Fail fast: MAINTENANCE_ENABLED must be exactly "true" or "false".
   const maintenanceEnabled = loadMaintenance(process.env);
   if (maintenanceEnabled) {
-    console.warn('maintenance mode is on: new runs, triggers, releases and remediation retries are refused');
+    console.warn('maintenance mode is on: new runs, releases and remediation retries are refused');
   }
 
   // Fail fast: missing/invalid auth configuration must never boot an open UI.

@@ -185,21 +185,21 @@ func newRebaseFixtureOf(t *testing.T, tenantID string) *rebaseFixture {
 	return f
 }
 
-// rebase runs the rebase in asks for as the TriggerRebase RPC does, through
+// rebase runs the rebase in asks for as the StartRebase RPC does, through
 // RunCommands over f's unit of work, under a fresh request id.
-func (f *rebaseFixture) rebase(in svchandlers.TriggerRebaseInput) (svchandlers.CommandResult, error) {
+func (f *rebaseFixture) rebase(in svchandlers.StartRebaseInput) (svchandlers.CommandResult, error) {
 	cmds := svchandlers.NewRunCommands(func() uow.UnitOfWork { return f.u }, &fakeRunMetrics{}, f.planner, discard())
-	return cmds.TriggerRebase(context.Background(), svchandlers.TriggerRebaseCommand{RequestID: uuid.New(), TriggerRebaseInput: in})
+	return cmds.StartRebase(context.Background(), svchandlers.StartRebaseCommand{RequestID: uuid.New(), StartRebaseInput: in})
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // A rebase with the option runs the changed raw.a and everything below it on
 // the live release, in one committed transaction.
-func TestTriggerRebase_CreatesTheRunOnTheLiveRelease(t *testing.T) {
+func TestStartRebase_CreatesTheRunOnTheLiveRelease(t *testing.T) {
 	f := newRebaseFixture(t)
 
-	res, err := f.rebase(svchandlers.TriggerRebaseInput{
+	res, err := f.rebase(svchandlers.StartRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-7",
 		Initiator: identity.FromUserID("okta|alice"),
 	})
@@ -221,10 +221,10 @@ func TestTriggerRebase_CreatesTheRunOnTheLiveRelease(t *testing.T) {
 }
 
 // Without the option raw.a is inherited and the failed mart.b is dispatched.
-func TestTriggerRebase_WithoutTheOptionInheritsTheChangedUpstream(t *testing.T) {
+func TestStartRebase_WithoutTheOptionInheritsTheChangedUpstream(t *testing.T) {
 	f := newRebaseFixture(t)
 
-	res, err := f.rebase(svchandlers.TriggerRebaseInput{
+	res, err := f.rebase(svchandlers.StartRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), Initiator: identity.FromUserID("okta|alice"),
 	})
 
@@ -237,10 +237,10 @@ func TestTriggerRebase_WithoutTheOptionInheritsTheChangedUpstream(t *testing.T) 
 }
 
 // A rebase previewed on another live release writes nothing.
-func TestTriggerRebase_RefusesAMovedLiveReleaseAndWritesNothing(t *testing.T) {
+func TestStartRebase_RefusesAMovedLiveReleaseAndWritesNothing(t *testing.T) {
 	f := newRebaseFixture(t)
 
-	_, err := f.rebase(svchandlers.TriggerRebaseInput{
+	_, err := f.rebase(svchandlers.StartRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-6",
 	})
 
@@ -253,11 +253,11 @@ func TestTriggerRebase_RefusesAMovedLiveReleaseAndWritesNothing(t *testing.T) {
 
 // A schedule with an active run is refused before the rebase is planned, and
 // the command's transaction is rolled back with nothing written.
-func TestTriggerRebase_RefusesAScheduleWithAnActiveRun(t *testing.T) {
+func TestStartRebase_RefusesAScheduleWithAnActiveRun(t *testing.T) {
 	f := newRebaseFixture(t)
 	f.runs.active = true
 
-	_, err := f.rebase(svchandlers.TriggerRebaseInput{
+	_, err := f.rebase(svchandlers.StartRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(),
 	})
 
@@ -272,17 +272,17 @@ func TestTriggerRebase_RefusesAScheduleWithAnActiveRun(t *testing.T) {
 // A rebase is derived under its source's tenant: the request's tenant finds
 // the source, and the new run, its tasks and their ids are that tenant's.
 // Another tenant's source is not found, and nothing is written.
-func TestTriggerRebase_DerivesTheRunUnderTheSourcesTenant(t *testing.T) {
+func TestStartRebase_DerivesTheRunUnderTheSourcesTenant(t *testing.T) {
 	f := newRebaseFixtureOf(t, "acme")
 
-	_, err := f.rebase(svchandlers.TriggerRebaseInput{
+	_, err := f.rebase(svchandlers.StartRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(),
 	})
 	require.ErrorIs(t, err, errNoRun)
 	assert.Empty(t, f.runs.saved)
 	assert.Equal(t, 0, f.u.CommitCalled)
 
-	res, err := f.rebase(svchandlers.TriggerRebaseInput{
+	res, err := f.rebase(svchandlers.StartRebaseInput{
 		TenantID: "acme", SourceRunID: f.runs.source.RunID(),
 	})
 	require.NoError(t, err)

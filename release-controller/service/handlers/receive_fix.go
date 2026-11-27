@@ -34,7 +34,7 @@ type ReceiveFixInput struct {
 	// for; that release's own candidate is assembled for its changed project.
 	VerifiesReleaseID string
 	// Round and Try name the try of the release's remediation this check
-	// proves: its remediation round, and its number within that round.
+	// proves: its round, and its number within that round.
 	Round int
 	Try   int
 	// SourceOverlayURI is the tarball of proposed source a dbt project's
@@ -56,7 +56,7 @@ func (i ReceiveFixInput) validate() (release.ManifestKind, error) {
 	case i.VerifiesReleaseID == "":
 		return "", fmt.Errorf("%w: verifies_release_id is required", ErrInvalidInput)
 	case i.Round < 1:
-		return "", fmt.Errorf("%w: remediation_round must be at least 1", ErrInvalidInput)
+		return "", fmt.Errorf("%w: round must be at least 1", ErrInvalidInput)
 	case i.Try < 1:
 		return "", fmt.Errorf("%w: try must be at least 1", ErrInvalidInput)
 	}

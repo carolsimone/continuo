@@ -63,12 +63,12 @@ func (*HandOver) GiveUp(ctx context.Context, u uow.UnitOfWork, in step.OutputInp
 		nodes = append(nodes, events.HandedOverNode{NodeID: h.NodeID, Reason: string(h.Code), Message: h.Message, Owner: owners[h.NodeID]})
 	}
 	body, err := json.Marshal(events.RemediationHandedOver{
-		RemediationID:    rem.ID.String(),
-		ReleaseID:        rem.ReleaseID,
-		RemediationRound: rem.Round,
-		Flow:             rem.Flow,
-		Tries:            rem.CurrentTry,
-		Nodes:            nodes,
+		RemediationID: rem.ID.String(),
+		ReleaseID:     rem.ReleaseID,
+		Round:         rem.Round,
+		Flow:          rem.Flow,
+		Tries:         rem.CurrentTry,
+		Nodes:         nodes,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal handed-over event: %w", err)

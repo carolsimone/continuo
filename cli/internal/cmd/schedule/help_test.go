@@ -38,7 +38,7 @@ func TestScheduleHelpNamesNoCatalog(t *testing.T) {
 // cron.
 func TestRunStartingScheduleCommandsSayWhenAScheduleIsNotFound(t *testing.T) {
 	const want = `not_found  (exit 3)  no model of the live release has the schedule's tag and the schedule has no cron (see "schedule list")`
-	for _, name := range []string{"trigger", "test", "build"} {
+	for _, name := range []string{"run", "test", "build"} {
 		assert.Contains(t, scheduleCommand(t, name).Long, want, "schedule %s", name)
 	}
 }

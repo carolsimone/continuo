@@ -12,24 +12,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewTriggerCommand builds `continuo schedule trigger <schedule-name>`.
+// NewRunCommand builds `continuo schedule run <schedule-name>`.
 // cfg is a pointer because root.go populates it in PersistentPreRunE after
 // flags have been parsed — the subcommand reads the up-to-date value at RunE.
 // stdout and stderr are injected so tests can capture them; in production
 // the root command wires os.Stdout / os.Stderr.
-func NewTriggerCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewRunCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "trigger <schedule-name>",
-		Short: "Trigger a new run of the named schedule",
-		Long: `Trigger a new run of the named schedule.
+		Use:   "run <schedule-name>",
+		Short: "Start a manual run of the named schedule",
+		Long: `Start a manual run of the named schedule: a run of all its nodes, started by hand.
 
 Use when the user asks to start, run, or kick off a schedule now.
 
 Arguments:
-  <schedule-name>  The schedule to trigger.
+  <schedule-name>  The schedule to run.
 
 Output (stdout, JSON):
-  {"run_id":string,"schedule_name":string,"triggered_at":string}
+  {"run_id":string,"schedule_name":string,"created_at":string}
+  created_at is when the command created the run (RFC3339, UTC).
 
 ` + client.RequestIDHelp + `
 
@@ -40,15 +41,15 @@ Errors:
   unavailable(exit 5)  run-controller is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo schedule trigger daily-revenue",
+		Example: "  continuo schedule run daily-revenue",
 		Annotations: map[string]string{
-			"output_schema": `{"run_id":"string","schedule_name":"string","triggered_at":"string"}`,
+			"output_schema": `{"run_id":"string","schedule_name":"string","created_at":"string"}`,
 			"exit_codes":    `[0,2,3,4,5,6,7]`,
 			"mutating":      "true",
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("trigger requires exactly one argument: <schedule-name>"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("run requires exactly one argument: <schedule-name>"))
 			}
 			return nil
 		},
@@ -63,18 +64,18 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerSchedule(ctx, client.RequestID(), scheduleName, cfg.Actor)
+			resp, err := c.StartScheduleRun(ctx, client.RequestID(), scheduleName, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered run "+resp.GetRunId()+" for schedule '"+scheduleName+"'")
+				return output.HumanSuccess(stderr, "Started manual run "+resp.GetRunId()+" of schedule '"+scheduleName+"'")
 			}
 			payload := map[string]string{
 				"run_id":        resp.GetRunId(),
 				"schedule_name": scheduleName,
-				"triggered_at":  time.Now().UTC().Format(time.RFC3339),
+				"created_at":    time.Now().UTC().Format(time.RFC3339),
 			}
 			return output.EmitSuccess(stdout, payload)
 		},

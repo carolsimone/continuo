@@ -26,7 +26,7 @@ func TestPreviousTriesSection_RendersEachTry(t *testing.T) {
 		{
 			Label:     "Round 1, try 1",
 			Diffs:     []TryDiff{{Path: "models/e.sql", Diff: "-select a\n+select b\n"}},
-			Findings:  []string{"round 1: content_unchanged: the answer repeats the original"},
+			Findings:  []string{"draft 1: content_unchanged: the answer repeats the original"},
 			GateError: "analytics.table_e: column b does not exist",
 		},
 		{Label: "Round 1, try 2"},
@@ -36,7 +36,7 @@ func TestPreviousTriesSection_RendersEachTry(t *testing.T) {
 		"These tries at the same failure did not pass. Do not repeat a change that did not pass; correct what each try was refused for.\n" +
 		"\n### Round 1, try 1\n" +
 		"Changed models/e.sql:\n```diff\n-select a\n+select b\n```\n" +
-		"What pre-flight found:\n- round 1: content_unchanged: the answer repeats the original\n" +
+		"What pre-flight found:\n- draft 1: content_unchanged: the answer repeats the original\n" +
 		"Why the gate failed: analytics.table_e: column b does not exist\n" +
 		"\n### Round 1, try 2\n" +
 		"Nothing was recorded for this try."
