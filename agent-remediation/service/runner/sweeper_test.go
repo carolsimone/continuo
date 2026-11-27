@@ -24,7 +24,7 @@ func (h *harness) sweeperAs(owner string) *runner.Sweeper {
 }
 
 // drafting accepts the trigger and opens its first try, leaving the
-// remediation unclaimed with its attempt's in-flight row.
+// remediation unclaimed with its try's in-flight row.
 func (h *harness) drafting() uuid.UUID {
 	h.t.Helper()
 	h.acceptUnclaimed(trigger("compile", compileNode("svc-a")))
@@ -180,20 +180,20 @@ func TestSweeper_EndsAVerifyingTryWhoseGateKeepsFailing(t *testing.T) {
 	assert.Contains(t, h.remediation(id).Failure, "release_check")
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status, "the try is left for a redrive to resume")
 
-	// The attempt row does not stay verifying: it is failed with the runs it
-	// had recorded, and until a redrive reopens it a later attempt of the
+	// The fix row does not stay verifying: it is failed with the runs it
+	// had recorded, and until a redrive reopens it a later try of the
 	// release counts it.
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusFailed, p.Status)
 	assert.Equal(t, []fix.ReleaseCheck{{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: fix.PhaseQueued}}, p.ReleaseChecks)
 	assert.Equal(t, fix.StatusFailed, p.NodeOutcomes["svc-a"].Status)
-	assert.Equal(t, deadLetteredReason(h.remediation(id)), h.attempt(1).VerifyError, "the row carries the reason")
+	assert.Equal(t, deadLetteredReason(h.remediation(id)), h.fixRow(1).VerifyError, "the row carries the reason")
 }
 
-// The remediation ends, the attempt row fails and the trigger is dead-lettered
+// The remediation ends, the fix row fails and the trigger is dead-lettered
 // together: a commit that does not happen leaves all three as they were, for
 // the next sweep.
-func TestSweeper_TheFailureAndTheAttemptRowCommitTogether(t *testing.T) {
+func TestSweeper_TheFailureAndTheFixRowCommitTogether(t *testing.T) {
 	h := newHarness(t)
 	id := h.drafting()
 	h.stepFailing(id, "dbt_log", remediation.StepFailed, 5)

@@ -15,9 +15,11 @@ import (
 
 // checkFinishedPayload is the wire shape of release_check.finished:v1: enough
 // for a consumer to reclaim what the check left behind and to tell what ended.
+// A fix's release check names the try it proves by remediation_round and try.
 // Every field is always present — a candidate carries an empty
-// verifies_release_id and a zero attempt rather than omitting the keys, so a
-// consumer can decode the same shape regardless of which kind of check ended.
+// verifies_release_id and a zero remediation_round and try rather than
+// omitting the keys, so a consumer can decode the same shape regardless of
+// which kind of check ended.
 type checkFinishedPayload struct {
 	CheckID           string    `json:"check_id"`
 	CheckKind         string    `json:"check_kind"`
@@ -25,7 +27,8 @@ type checkFinishedPayload struct {
 	Project           string    `json:"project"`
 	CandidateSchema   string    `json:"candidate_schema"`
 	VerifiesReleaseID string    `json:"verifies_release_id"`
-	Attempt           int       `json:"attempt"`
+	RemediationRound  int       `json:"remediation_round"`
+	Try               int       `json:"try"`
 	FinishedAt        time.Time `json:"finished_at"`
 }
 
@@ -39,6 +42,10 @@ func enqueueCheckFinished(ctx context.Context, u uow.UnitOfWork, r *releasecheck
 	if !r.Status().IsTerminal() {
 		return fmt.Errorf("check %s is not terminal (%s)", r.ID(), r.Status())
 	}
+	round := 0
+	if r.Kind() == releasecheck.KindFix {
+		round = r.RemediationRound()
+	}
 	payload, err := json.Marshal(checkFinishedPayload{
 		CheckID:           r.ID(),
 		CheckKind:         string(r.Kind()),
@@ -46,7 +53,8 @@ func enqueueCheckFinished(ctx context.Context, u uow.UnitOfWork, r *releasecheck
 		Project:           r.ChangedProject(),
 		CandidateSchema:   CandidateSchemaFor(r.ID()),
 		VerifiesReleaseID: r.VerifiesReleaseID(),
-		Attempt:           r.Attempt(),
+		RemediationRound:  round,
+		Try:               r.Try(),
 		FinishedAt:        now.UTC(),
 	})
 	if err != nil {

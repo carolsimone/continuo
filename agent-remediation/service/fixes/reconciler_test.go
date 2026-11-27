@@ -202,7 +202,7 @@ func amendView() fix.View {
 	return fix.View{
 		ID:              "fix-1",
 		ReleaseID:       "rel-1",
-		Attempt:         1,
+		Try:             1,
 		ResolvedNodeIDs: []string{"model.core.a", "model.finance.b"},
 		NodeOutcomes: map[string]fix.NodeOutcome{
 			"model.core.a":    {Status: fix.StatusProposed},
@@ -226,7 +226,7 @@ func amendView() fix.View {
 func TestReconcileOnce_MergedRunsAmendCompareOverProjectSubset(t *testing.T) {
 	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
 	lister := &fakeLister{prs: []fix.OpenPR{
-		{ID: "fix-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Project: "core"},
+		{ID: "fix-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Try: 1, Project: "core"},
 	}}
 	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
 		7: {Closed: true, Merged: true, ClosedAt: closedAt, MergeCommitSHA: "mergesha"},
@@ -278,7 +278,7 @@ func TestReconcileOnce_MergedRunsAmendCompareOverProjectSubset(t *testing.T) {
 // flip the reconciler to degraded (only a PRStatus permission error does that).
 func TestReconcileOnce_MergedAmendCompareErrorRecordsNothing(t *testing.T) {
 	lister := &fakeLister{prs: []fix.OpenPR{
-		{ID: "fix-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Project: "core"},
+		{ID: "fix-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Try: 1, Project: "core"},
 	}}
 	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
 		7: {Closed: true, Merged: true, MergeCommitSHA: "mergesha"},
@@ -314,7 +314,7 @@ func TestReconcileOnce_MergedAmendCompareErrorRecordsNothing(t *testing.T) {
 func TestReconcileOnce_RejectedSkipsAmendCompare(t *testing.T) {
 	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
 	lister := &fakeLister{prs: []fix.OpenPR{
-		{ID: "fix-1", Repo: "acme/r", PRNumber: 8, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Project: "core"},
+		{ID: "fix-1", Repo: "acme/r", PRNumber: 8, ReleaseID: "rel-1", NodeID: "model.core.a", Try: 1, Project: "core"},
 	}}
 	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
 		8: {Closed: true, Merged: false, ClosedAt: closedAt},
@@ -541,9 +541,9 @@ func (f *fakeFailer) FailStuckClaim(_ context.Context, id, project string, obser
 // very first pass — finding an existing PR is unambiguous and safe
 // regardless of how fresh the claim is.
 func TestReconcileOnce_OpeningSweep_PRFoundRecords(t *testing.T) {
-	branch := fixes.BuildBranch("rel-1", 1, "")
+	branch := fixes.BuildBranch("rel-1", 1, 1, "")
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: timePtr(fixedClock{}.Now())},
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1, ClaimedAt: timePtr(fixedClock{}.Now())},
 	}}
 	finder := &fakeBranchFinder{refs: map[string]ports.PullRequestRef{
 		branch: {Number: 9, URL: "https://github.com/acme/r/pull/9"},
@@ -579,7 +579,7 @@ func TestReconcileOnce_OpeningSweep_PRFoundRecords(t *testing.T) {
 func TestReconcileOnce_OpeningSweep_PRAbsentAgedFails(t *testing.T) {
 	now := fixedClock{}.Now()
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(now.Add(-4 * time.Minute))},
 	}}
 	finder := &fakeBranchFinder{} // no PR for any branch
@@ -612,9 +612,9 @@ func TestReconcileOnce_OpeningSweep_InvalidRepoFailsAtOnce(t *testing.T) {
 	now := fixedClock{}.Now()
 	claimedAt := now.Add(-10 * time.Second) // well inside the grace period
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "", Project: "", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: timePtr(claimedAt)},
+		{ID: "p1", Repo: "", Project: "", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1, ClaimedAt: timePtr(claimedAt)},
 	}}
-	branch := fixes.BuildBranch("rel-1", 1, "")
+	branch := fixes.BuildBranch("rel-1", 1, 1, "")
 	finder := &fakeBranchFinder{errs: map[string]error{branch: fmt.Errorf("find pr by branch: %w: %q", ports.ErrInvalidRepo, "")}}
 	recorder := &fakeOpeningRecorder{}
 	failer := &fakeFailer{}
@@ -643,9 +643,9 @@ func TestReconcileOnce_OpeningSweep_InvalidRepoFailsAtOnce(t *testing.T) {
 // alone: the CAS needs the observed pr_claimed_at.
 func TestReconcileOnce_OpeningSweep_InvalidRepoWithoutClaimTimeIsLeftAlone(t *testing.T) {
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: nil},
+		{ID: "p1", Repo: "", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1, ClaimedAt: nil},
 	}}
-	branch := fixes.BuildBranch("rel-1", 1, "")
+	branch := fixes.BuildBranch("rel-1", 1, 1, "")
 	finder := &fakeBranchFinder{errs: map[string]error{branch: ports.ErrInvalidRepo}}
 	failer := &fakeFailer{}
 
@@ -666,7 +666,7 @@ func TestReconcileOnce_OpeningSweep_InvalidRepoWithoutClaimTimeIsLeftAlone(t *te
 func TestReconcileOnce_OpeningSweep_PRAbsentFreshLeftAlone(t *testing.T) {
 	now := fixedClock{}.Now()
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(now.Add(-5 * time.Second))},
 	}}
 	finder := &fakeBranchFinder{}
@@ -700,7 +700,7 @@ func TestReconcileOnce_OpeningSweep_AgesOutByWallClockNotPassCount(t *testing.T)
 	clock := &settableClock{now: fixedClock{}.Now()}
 	claimedAt := clock.now
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: &claimedAt},
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1, ClaimedAt: &claimedAt},
 	}}
 	finder := &fakeBranchFinder{}
 	recorder := &fakeOpeningRecorder{}
@@ -738,7 +738,7 @@ func TestReconcileOnce_OpeningSweep_AgesOutByWallClockNotPassCount(t *testing.T)
 // period is: an unmeasurable claim can never be mistaken for a stale one.
 func TestReconcileOnce_OpeningSweep_NilClaimedAtLeftAlone(t *testing.T) {
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: nil},
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1, ClaimedAt: nil},
 	}}
 	finder := &fakeBranchFinder{}
 	recorder := &fakeOpeningRecorder{}
@@ -769,13 +769,13 @@ func TestReconcileOnce_OpeningSweep_NilClaimedAtLeftAlone(t *testing.T) {
 // never fails the errored row even when its claim has aged past the grace
 // period — an inconclusive read must not be treated as a confirmed miss.
 func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
-	branchOK := fixes.BuildBranch("rel-2", 1, "")
-	branchErr := fixes.BuildBranch("rel-1", 1, "")
+	branchOK := fixes.BuildBranch("rel-2", 1, 1, "")
+	branchErr := fixes.BuildBranch("rel-1", 1, 1, "")
 	now := fixedClock{}.Now()
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p-err", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+		{ID: "p-err", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(now.Add(-time.Hour))}, // aged well past the grace period below
-		{ID: "p-ok", Repo: "acme/r", ReleaseID: "rel-2", NodeID: "model.p.customers", Attempt: 1,
+		{ID: "p-ok", Repo: "acme/r", ReleaseID: "rel-2", NodeID: "model.p.customers", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(now.Add(-time.Second))},
 	}}
 	finder := &fakeBranchFinder{
@@ -812,9 +812,9 @@ func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
 // same GitHub token, so a permission gap discovered by either loop must be
 // visible via Degraded(), not silently swallowed into a generic warn.
 func TestReconcileOnce_OpeningSweepPermissionErrorMarksDegraded(t *testing.T) {
-	branch := fixes.BuildBranch("rel-1", 1, "")
+	branch := fixes.BuildBranch("rel-1", 1, 1, "")
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(fixedClock{}.Now())},
 	}}
 	finder := &fakeBranchFinder{errs: map[string]error{branch: ports.ErrPermissionDenied}}
@@ -844,7 +844,7 @@ func TestReconcileOnce_OpeningSweepPermissionErrorMarksDegraded(t *testing.T) {
 // batch slot forever.
 func TestReconcileOnce_OpeningSweepNilClaimedAtLogsWarnEveryPass(t *testing.T) {
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: nil},
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1, ClaimedAt: nil},
 	}}
 	counter := &levelCounter{}
 	rec := fixes.NewReconciler(fixes.ReconcilerDeps{
@@ -877,7 +877,7 @@ func TestReconcileOnce_OpeningSweep_ReClaimedRowLeftUntouched(t *testing.T) {
 	now := fixedClock{}.Now()
 	observedClaim := now.Add(-time.Hour) // aged well past the grace period below
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(observedClaim)},
 	}}
 	finder := &fakeBranchFinder{} // no PR for any branch
@@ -914,22 +914,22 @@ func TestReconcileOnce_OpeningSweep_ReClaimedRowLeftUntouched(t *testing.T) {
 // forever.
 func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testing.T) {
 	now := fixedClock{}.Now()
-	// One release, five attempts of it: the branch is keyed on
-	// (releaseID, attempt) alone, so varying Attempt on a single ReleaseID is
+	// One release, five tries of it: the branch is keyed on
+	// (releaseID, round, try) alone, so varying Try on a single ReleaseID is
 	// what keeps the five branches distinct here — proving the sweep's
-	// per-row branch lookup discriminates attempts of the SAME release, not
+	// per-row branch lookup discriminates tries of the SAME release, not
 	// just different releases.
 	const releaseID = "rel-p"
-	branch := func(attempt int) string { return fixes.BuildBranch(releaseID, attempt, "") }
+	branch := func(try int) string { return fixes.BuildBranch(releaseID, 1, try, "") }
 
 	// Five rows, strictly increasing CreatedAt (and thus stable sweep order).
-	// attempt 1 and 2 error on every pass and never resolve; 3-5 succeed.
+	// try 1 and 2 error on every pass and never resolve; 3-5 succeed.
 	ids := []string{"p1", "p2", "p3", "p4", "p5"}
 	var opening []fix.OpeningPR
 	for i, id := range ids {
-		attempt := i + 1
+		try := i + 1
 		opening = append(opening, fix.OpeningPR{
-			ID: id, Repo: "acme/r", ReleaseID: releaseID, NodeID: id, Attempt: attempt,
+			ID: id, Repo: "acme/r", ReleaseID: releaseID, NodeID: id, RemediationRound: 1, Try: try,
 			ClaimedAt: timePtr(now),
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
 		})
@@ -984,10 +984,10 @@ func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testi
 // happened to run — a claim can be recovered minutes or hours after GitHub
 // actually created the PR, and pr_opened_at should reflect the true value.
 func TestReconcileOnce_OpeningSweepRecordsGitHubCreatedAt(t *testing.T) {
-	branch := fixes.BuildBranch("rel-1", 1, "")
+	branch := fixes.BuildBranch("rel-1", 1, 1, "")
 	githubCreatedAt := fixedClock{}.Now().Add(-45 * time.Minute)
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(githubCreatedAt)},
 	}}
 	finder := &fakeBranchFinder{refs: map[string]ports.PullRequestRef{
@@ -1038,14 +1038,14 @@ func TestReconcileOnce_OpeningSweepSkippedWithoutDeps(t *testing.T) {
 // key.
 func TestReconcileOnce_OpeningSweep_MultipleProjectsSameFixNotStarved(t *testing.T) {
 	now := fixedClock{}.Now()
-	coreBranch := fixes.BuildBranch("rel-1", 1, "core")
-	financeBranch := fixes.BuildBranch("rel-1", 1, "finance")
+	coreBranch := fixes.BuildBranch("rel-1", 1, 1, "core")
+	financeBranch := fixes.BuildBranch("rel-1", 1, 1, "finance")
 	// Two children of the SAME fix (same ID and CreatedAt), sorted by the
 	// (CreatedAt, ID, Project) keyset the real repository orders by: core < finance.
 	opening := &fakeOpeningLister{opening: []fix.OpeningPR{
-		{ID: "p1", Project: "core", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1,
+		{ID: "p1", Project: "core", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.core.a", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(now), CreatedAt: now},
-		{ID: "p1", Project: "finance", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.finance.b", Attempt: 1,
+		{ID: "p1", Project: "finance", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.finance.b", RemediationRound: 1, Try: 1,
 			ClaimedAt: timePtr(now), CreatedAt: now},
 	}}
 	finder := &fakeBranchFinder{refs: map[string]ports.PullRequestRef{

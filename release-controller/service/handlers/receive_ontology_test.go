@@ -204,7 +204,7 @@ func TestReceiveFix_RefusesOntology(t *testing.T) {
 
 			err := handlers.ReceiveFix(context.Background(), deps, handlers.ReceiveFixInput{
 				CheckID: "v1", Project: "company-ontology", ImageTag: "img:1", Kind: "ontology",
-				VerifiesReleaseID: "rel-0", Attempt: 1,
+				VerifiesReleaseID: "rel-0", Round: 1, Try: 1,
 			})
 
 			require.ErrorIs(t, err, handlers.ErrInvalidInput, "the refusal is answered as a client error")

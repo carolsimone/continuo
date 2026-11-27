@@ -57,8 +57,8 @@ func (r *Runner) acceptExisting(ctx context.Context, u uow.UnitOfWork, t remedia
 // message id and stream fields as its trigger's. Its current try, when it has
 // one still open, goes on where it stopped: every step row that has not
 // finished has its failures reset, a drafting or checking try gets its
-// status's full time again from now, and the try's attempt row goes back in
-// flight (reopenAttempt). The try keeps every row it committed, so the next
+// status's full time again from now, and the try's fix row goes back in
+// flight (reopenFixRow). The try keeps every row it committed, so the next
 // drive or poll continues from its first step with no done row, and no step
 // that committed runs again. A remediation with no try, or whose try failed,
 // has nothing else to change: the next drive opens its next try.
@@ -105,7 +105,7 @@ func (r *Runner) resume(ctx context.Context, u uow.UnitOfWork, snap remediation.
 	case remediation.TryVerifying:
 		reopenTo = fix.StatusVerifying
 	}
-	return r.reopenAttempt(ctx, u, snap, reopenTo)
+	return r.reopenFixRow(ctx, u, snap, reopenTo)
 }
 
 // tryOpenTime is how long a try may stay drafting or checking.
@@ -116,29 +116,29 @@ func tryOpenTime(status remediation.TryStatus) time.Duration {
 	return tryDraftingTime
 }
 
-// reopenAttempt moves the attempt row of snap's try, which the system failure
+// reopenFixRow moves the fix row of snap's try, which the system failure
 // failed, back to status to, in u's transaction: a row reopened generating
 // takes back the per-node outcomes the failure rewrote, which the fix
 // repository undoes, and a row reopened verifying the outcomes the try's
 // clusters give (nodeOutcomes), which the clusters still give, since nothing
 // changes them once the try is verifying, the message of each coded outcome
 // cleaned as every row the runner writes has it. A row that is not failed already
-// says how its attempt ended and is left as it is: the drive or the poll that
+// says how its try ended and is left as it is: the drive or the poll that
 // follows acts on it as it finds it.
-func (r *Runner) reopenAttempt(ctx context.Context, u uow.UnitOfWork, snap remediation.Snapshot, to fix.Status) error {
+func (r *Runner) reopenFixRow(ctx context.Context, u uow.UnitOfWork, snap remediation.Snapshot, to fix.Status) error {
 	rem := snap.Remediation
-	attempt := snap.Try.Attempt
+	try := snap.Try.Try
 	var outcomes map[string]fix.NodeOutcome
 	if to == fix.StatusVerifying {
 		outcomes = fix.CleanedOutcomes(nodeOutcomes(snap.Clusters))
 	}
-	reopened, err := u.FixRepo().ReopenTryAttempt(ctx, rem.ID, attempt, to, outcomes)
+	reopened, err := u.FixRepo().ReopenFixRow(ctx, rem.ID, try, to, outcomes)
 	if err != nil {
-		return fmt.Errorf("reopen the row of attempt %d: %w", attempt, err)
+		return fmt.Errorf("reopen the row of try %d: %w", try, err)
 	}
 	if !reopened {
-		r.logger.Warn("the resumed try's attempt row is not failed; it is left as it is",
-			"remediation", rem.ID, "release", rem.ReleaseID, "try", snap.Try.Try, "attempt", attempt)
+		r.logger.Warn("the resumed try's fix row is not failed; it is left as it is",
+			"remediation", rem.ID, "release", rem.ReleaseID, "round", rem.Round, "try", try)
 	}
 	return nil
 }

@@ -23,7 +23,7 @@ func TestCandidateSchemaForAddsAFixedElevenBytes(t *testing.T) {
 	for _, releaseID := range []string{
 		"",
 		"rel-abc1234-1",
-		"verify-rel-abc1234-1-analytics.py_daily_kpis-a2",
+		"verify-rel-abc1234-1-analytics.py_daily_kpis-r1-t2",
 	} {
 		schema := handlers.CandidateSchemaFor(releaseID)
 		require.Equal(t, len(releaseID)+11, len(schema),

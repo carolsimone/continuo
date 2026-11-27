@@ -101,7 +101,7 @@ func (s *FixesServer) GetFix(ctx context.Context, req *remediationv1.GetFixReque
 // req.Project is not one of the fix's PRProjects. Returns
 // FAILED_PRECONDITION when the fix is already claimed (carrying the
 // existing pr_url in the message), when source resolution has not completed,
-// when the attempt has not reached 'proposed' — a fix still being generated
+// when the try has not reached 'proposed' — a fix still being generated
 // or verified, or one a release check rejected, is not one a pull request
 // may be opened for — or when the fix records no repository. Returns
 // NOT_FOUND when the fix does not exist.
@@ -109,7 +109,7 @@ func (s *FixesServer) BeginPullRequest(ctx context.Context, req *remediationv1.B
 	claim, err := s.svc.Begin(ctx, req.Id, req.Project)
 	if err != nil {
 		if errors.Is(err, repository.ErrPRConflict) {
-			// Attempt a best-effort fetch of the current pr_url so the caller
+			// Try a best-effort fetch of the current pr_url so the caller
 			// can surface it in the UI without an extra round-trip. It must be
 			// req.Project's own PR: a split fix's other projects can be at
 			// any state, so the conflicting project is not necessarily the one
@@ -345,7 +345,7 @@ func viewToProto(v fix.View, prProjects []string) *remediationv1.Fix {
 		ReleaseId:           v.ReleaseID,
 		NodeId:              v.NodeID,
 		ErrorSignature:      v.ErrorSignature,
-		Attempt:             num.ClampInt32(v.Attempt),
+		Try:                 num.ClampInt32(v.Try),
 		Status:              string(v.Status),
 		Confidence:          string(v.Confidence),
 		Rationale:           v.Rationale,
@@ -382,23 +382,24 @@ func viewToProto(v fix.View, prProjects []string) *remediationv1.Fix {
 // claimToProto converts a domain fix.PRClaim to the BeginPullRequestResponse.
 func claimToProto(c fix.PRClaim) *remediationv1.BeginPullRequestResponse {
 	return &remediationv1.BeginPullRequestResponse{
-		FixId:           c.ID,
-		Repo:            c.Repo,
-		CommitSha:       c.CommitSHA,
-		FilePath:        c.FilePath,
-		ProposedSqlUri:  c.ProposedSQLURI,
-		DiffUri:         c.DiffURI,
-		ReleaseId:       c.ReleaseID,
-		NodeId:          c.NodeID,
-		Attempt:         num.ClampInt32(c.Attempt),
-		Rationale:       c.Rationale,
-		Confidence:      string(c.Confidence),
-		Model:           c.Model,
-		Branch:          c.Branch,
-		ClaimedAt:       c.ClaimedAt.Format(time.RFC3339Nano),
-		Edits:           editsToProto(c.Edits),
-		ResolvedNodeIds: c.ResolvedNodeIDs,
-		Project:         c.Project,
-		Approvers:       approversToProto(c.Approvers),
+		FixId:            c.ID,
+		Repo:             c.Repo,
+		CommitSha:        c.CommitSHA,
+		FilePath:         c.FilePath,
+		ProposedSqlUri:   c.ProposedSQLURI,
+		DiffUri:          c.DiffURI,
+		ReleaseId:        c.ReleaseID,
+		NodeId:           c.NodeID,
+		RemediationRound: num.ClampInt32(c.RemediationRound),
+		Try:              num.ClampInt32(c.Try),
+		Rationale:        c.Rationale,
+		Confidence:       string(c.Confidence),
+		Model:            c.Model,
+		Branch:           c.Branch,
+		ClaimedAt:        c.ClaimedAt.Format(time.RFC3339Nano),
+		Edits:            editsToProto(c.Edits),
+		ResolvedNodeIds:  c.ResolvedNodeIDs,
+		Project:          c.Project,
+		Approvers:        approversToProto(c.Approvers),
 	}
 }

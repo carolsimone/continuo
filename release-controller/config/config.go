@@ -26,7 +26,7 @@ type Config struct {
 	RetentionDays         string
 	RecoverStuckInterval  string
 	// AgentRemediationGRPCAddr is agent-remediation's in-cluster gRPC address,
-	// dialed to read a release's remediation attempts before starting a retry round.
+	// dialed to read a release's remediation tries before starting a retry round.
 	AgentRemediationGRPCAddr string
 
 	// Maintenance is MAINTENANCE_ENABLED (see handlers.Deps.Maintenance).

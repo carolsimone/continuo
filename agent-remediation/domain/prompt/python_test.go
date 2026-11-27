@@ -31,8 +31,8 @@ func pythonEvidence() PythonEvidence {
 
 // TestAssemblePythonContractFix_RendersEverySection pins that every evidence
 // section reaches the model, each in the fence its content type calls for. The
-// per-attempt evidence (the prior attempt's diff and the release check's
-// error) is what makes a second attempt better-informed than the first, so a
+// per-try evidence (the prior try's diff and the release check's
+// error) is what makes a second try better-informed than the first, so a
 // renderer that silently drops a section would degrade retries without any
 // visible failure.
 func TestAssemblePythonContractFix_RendersEverySection(t *testing.T) {
@@ -59,7 +59,7 @@ func TestAssemblePythonContractFix_RendersEverySection(t *testing.T) {
 
 // TestAssemblePythonContractFix_SectionsOmittedWhenAbsent verifies that an
 // evidence value with nothing to say renders no heading at all, so a first
-// attempt's prompt is not padded with empty scaffolding the model has to read
+// try's prompt is not padded with empty scaffolding the model has to read
 // past.
 func TestAssemblePythonContractFix_SectionsOmittedWhenAbsent(t *testing.T) {
 	req := AssemblePythonContractFix(PythonEvidence{

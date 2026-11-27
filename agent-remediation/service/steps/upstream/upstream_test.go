@@ -115,6 +115,7 @@ func failure(mod func(*remediation.Failure)) remediation.Failure {
 		Trigger: remediation.Trigger{
 			Source:        "validation",
 			ReleaseID:     "rel-1",
+			Round:         1,
 			Repo:          "org/repo",
 			CommitSHA:     "abc123",
 			CodeBundleURI: "s3://bundle/rel-1",
@@ -124,7 +125,7 @@ func failure(mod func(*remediation.Failure)) remediation.Failure {
 		TargetNodeID: targetID,
 		Target:       remediation.TriggerNode{NodeID: targetID},
 		Members:      members,
-		Attempt:      2,
+		Try:          2,
 	}
 	if mod != nil {
 		mod(&f)

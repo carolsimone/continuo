@@ -52,7 +52,8 @@ type releaseCheckBody struct {
 	ImageTag          string `json:"image_tag"`
 	Kind              string `json:"kind"`
 	VerifiesReleaseID string `json:"verifies_release_id"`
-	Attempt           int    `json:"attempt"`
+	RemediationRound  int    `json:"remediation_round"`
+	Try               int    `json:"try"`
 	SourceOverlayURI  string `json:"source_overlay_uri,omitempty"`
 }
 
@@ -65,7 +66,7 @@ func (g *Gateway) Submit(ctx context.Context, r ports.ReleaseCheckRequest) error
 	}
 	raw, err := json.Marshal(releaseCheckBody{
 		CheckID: r.CheckID, Project: r.Project, ImageTag: r.ImageTag, Kind: r.Kind,
-		VerifiesReleaseID: r.VerifiesReleaseID, Attempt: r.Attempt, SourceOverlayURI: r.SourceOverlayURI,
+		VerifiesReleaseID: r.VerifiesReleaseID, RemediationRound: r.RemediationRound, Try: r.Try, SourceOverlayURI: r.SourceOverlayURI,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal release check %s: %w", r.CheckID, err)
@@ -162,8 +163,8 @@ func failFallback(check checkResponse) string {
 }
 
 // nodeErrors builds the failing-node -> error-text map for a failed check, so a
-// rejected attempt records why each node it addressed failed and the next
-// attempt is shown it. Every node release-controller names in failing_nodes
+// rejected try records why each node it addressed failed and the next
+// try is shown it. Every node release-controller names in failing_nodes
 // starts out with the check-level fail reason and detail: a rejection that
 // release-controller decides itself (duplicate_table) names its nodes there
 // and records no failing per-node result at all. Each per-node result that did

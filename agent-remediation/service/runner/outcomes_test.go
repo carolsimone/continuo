@@ -78,7 +78,7 @@ func TestRunner_ClassifierInfra(t *testing.T) {
 	assert.Equal(t, map[string]fix.NodeOutcome{
 		"svc-a": want,
 		"svc-b": {Status: fix.StatusGenerating},
-	}, h.attempt(1).Fix.NodeOutcomes, "the in-flight row names the node handed over from the start")
+	}, h.fixRow(1).Fix.NodeOutcomes, "the in-flight row names the node handed over from the start")
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
@@ -86,7 +86,7 @@ func TestRunner_ClassifierInfra(t *testing.T) {
 	require.Equal(t, 1, h.llm.calls(), "the model is asked about svc-b alone")
 	assert.Contains(t, h.llm.lastRequest().User, "services/svc-b/")
 	assert.NotContains(t, h.llm.lastRequest().User, "services/svc-a/")
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusVerifying, p.Status)
 	assert.Equal(t, map[string]fix.NodeOutcome{
 		"svc-a": want,
@@ -97,7 +97,7 @@ func TestRunner_ClassifierInfra(t *testing.T) {
 	assert.Equal(t, svcBCheck1, runs[0].CheckID)
 }
 
-// An unhealable parse failure keeps the classifier's outcome in an attempt
+// An unhealable parse failure keeps the classifier's outcome in a try
 // that comes due in maintenance mode, where every other node is skipped with
 // no code: maintenance is not a hand-over.
 func TestRunner_ClassifierUnhealableParse(t *testing.T) {
@@ -109,7 +109,7 @@ func TestRunner_ClassifierUnhealableParse(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusSkipped, p.Status)
 	assert.Equal(t, map[string]fix.NodeOutcome{
 		broken.NodeID: {Status: fix.StatusSkipped, Reason: detail, Code: model.HandoverReasonClassifierUnhealableParse},
@@ -136,7 +136,7 @@ func TestRunner_NoType(t *testing.T) {
 		assert.Equal(t, remediation.ClusterHandedOver, c.Status, node)
 		assert.Equal(t, &o, c.Outcome, node)
 	}
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusSkipped, p.Status)
 	assert.Equal(t, want, p.NodeOutcomes)
 	assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
@@ -167,7 +167,7 @@ func TestRunner_APythonParseFailureNoTypeMatchesIsHandedOverWithoutAModelCall(t 
 			assert.Equal(t, &want, c.Outcome)
 			assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 			assert.Zero(t, h.llm.calls())
-			p := h.attempt(1).Fix
+			p := h.fixRow(1).Fix
 			assert.Equal(t, fix.StatusSkipped, p.Status)
 			assert.Equal(t, map[string]fix.NodeOutcome{node.NodeID: want}, p.NodeOutcomes)
 		})
@@ -187,7 +187,7 @@ func TestRunner_Declined(t *testing.T) {
 		c := h.cluster(id, 1, 1)
 		assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 		assert.Equal(t, &want, c.Outcome)
-		p := h.attempt(1).Fix
+		p := h.fixRow(1).Fix
 		assert.Equal(t, fix.StatusSkipped, p.Status)
 		assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, p.NodeOutcomes)
 		assert.Zero(t, h.llm.calls())
@@ -207,7 +207,7 @@ func TestRunner_Declined(t *testing.T) {
 		c := h.cluster(id, 1, 1)
 		assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 		assert.Equal(t, &want, c.Outcome)
-		assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, h.attempt(1).Fix.NodeOutcomes)
+		assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, h.fixRow(1).Fix.NodeOutcomes)
 	})
 
 	t.Run("a cross-project cluster falls back", func(t *testing.T) {
@@ -220,7 +220,7 @@ func TestRunner_Declined(t *testing.T) {
 		c := h.cluster(id, 1, 1)
 		assert.Equal(t, remediation.ClusterFellBack, c.Status)
 		assert.Equal(t, &want, c.Outcome)
-		assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, h.attempt(1).Fix.NodeOutcomes)
+		assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, h.fixRow(1).Fix.NodeOutcomes)
 		assert.Zero(t, h.llm.calls())
 	})
 
@@ -234,15 +234,15 @@ func TestRunner_Declined(t *testing.T) {
 		c := h.cluster(id, 1, 1)
 		assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 		assert.Equal(t, &noEditDeclined, c.Outcome)
-		p := h.attempt(1).Fix
-		assert.Equal(t, fix.StatusFailed, p.Status, "a node the model was asked about fails the attempt")
+		p := h.fixRow(1).Fix
+		assert.Equal(t, fix.StatusFailed, p.Status, "a node the model was asked about fails the try")
 		assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": noEditDeclined}, p.NodeOutcomes)
 		assert.Empty(t, h.checks.requests())
 	})
 }
 
 // A step that declines with no reason is recorded as having declined the fix,
-// so the attempt row, the hand-over event and every reader of them carry a
+// so the fix row, the hand-over event and every reader of them carry a
 // message. A reason of only white space is no reason. A step's own reason is
 // kept as it is.
 func TestRunner_AStepThatDeclinesWithNoReasonIsNamed(t *testing.T) {
@@ -266,7 +266,7 @@ func TestRunner_AStepThatDeclinesWithNoReasonIsNamed(t *testing.T) {
 
 			want := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: tc.want, Code: model.HandoverReasonDeclined}
 			assert.Equal(t, &want, h.cluster(id, 1, 1).Outcome)
-			assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, h.attempt(1).Fix.NodeOutcomes)
+			assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, h.fixRow(1).Fix.NodeOutcomes)
 			assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode("svc-a", want)), h.handedOverEvent())
 		})
 	}
@@ -340,12 +340,12 @@ func TestRunner_ADraftWithNoEditIsDeclinedAndNotTriedAgain(t *testing.T) {
 	assert.Equal(t, map[string]fix.NodeOutcome{
 		"svc-a": noEditDeclined,
 		"svc-b": {Status: fix.StatusVerifying},
-	}, h.attempt(1).Fix.NodeOutcomes)
+	}, h.fixRow(1).Fix.NodeOutcomes)
 	require.Equal(t, 2, h.llm.calls())
 
 	h.failGate(id, "svc-b")
 
-	assert.Equal(t, noEditDeclined, h.attempt(1).Fix.NodeOutcomes["svc-a"], "the failed gate leaves the declined node as it was")
+	assert.Equal(t, noEditDeclined, h.fixRow(1).Fix.NodeOutcomes["svc-a"], "the failed gate leaves the declined node as it was")
 	carried := h.clusterFor(id, 2, "svc-a")
 	assert.Equal(t, "dbt-compile", carried.TypeName, "the carried cluster keeps the type of the cluster that settled the node")
 	assert.Equal(t, remediation.ClusterHandedOver, carried.Status)
@@ -363,7 +363,7 @@ func TestRunner_ADraftWithNoEditIsDeclinedAndNotTriedAgain(t *testing.T) {
 	assert.Equal(t, map[string]fix.NodeOutcome{
 		"svc-a": noEditDeclined,
 		"svc-b": {Status: fix.StatusVerifying},
-	}, h.attempt(2).Fix.NodeOutcomes)
+	}, h.fixRow(2).Fix.NodeOutcomes)
 }
 
 // crossProjectNode is svc-a, broken by a change to model.core.base in core,
@@ -398,7 +398,7 @@ func TestRunner_NoRepository(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	const reason = "the trigger carried no repository for rel-1"
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)
 	assert.Equal(t, map[string]fix.NodeOutcome{
@@ -420,7 +420,7 @@ func TestRunner_PreflightRoundsSpent(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 	assert.Equal(t, &want, c.Outcome, "the reason is the first finding alone; the code says the rounds are spent")
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusFailed, p.Status)
 	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": want}, p.NodeOutcomes)
 	assert.Equal(t, 1, h.llm.calls())
@@ -446,7 +446,7 @@ func TestRunner_RefusedTryMarksUnverifiableEdits(t *testing.T) {
 			require.NoError(t, h.runner.Drive(ctx, id))
 
 			refused := fix.NodeOutcome{Status: fix.StatusFailed, Reason: twoEditsReason, Code: model.HandoverReasonUnverifiableEdits}
-			p := h.attempt(1).Fix
+			p := h.fixRow(1).Fix
 			assert.Equal(t, fix.StatusFailed, p.Status)
 			assert.Equal(t, map[string]fix.NodeOutcome{
 				"svc-a": refused,
@@ -496,7 +496,7 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 			assert.Equal(t, map[string]fix.NodeOutcome{
 				"svc-a": tc.outcome,
 				"svc-b": {Status: fix.StatusFailed},
-			}, h.attempt(1).Fix.NodeOutcomes, "the failed gate fails the verifying node; the declined one keeps its outcome")
+			}, h.fixRow(1).Fix.NodeOutcomes, "the failed gate fails the verifying node; the declined one keeps its outcome")
 			require.Equal(t, remediation.TryDrafting, h.try(id, 2).Status)
 			carried := h.clusterFor(id, 2, "svc-a")
 			assert.Equal(t, workflow.ClusterSingle, carried.Kind)
@@ -512,7 +512,7 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 			assert.Equal(t, map[string]fix.NodeOutcome{
 				"svc-a": tc.outcome,
 				"svc-b": {Status: fix.StatusGenerating},
-			}, h.attempt(2).Fix.NodeOutcomes)
+			}, h.fixRow(2).Fix.NodeOutcomes)
 
 			require.NoError(t, h.drive(id))
 
@@ -522,7 +522,7 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 			assert.Equal(t, map[string]fix.NodeOutcome{
 				"svc-a": tc.outcome,
 				"svc-b": {Status: fix.StatusVerifying},
-			}, h.attempt(2).Fix.NodeOutcomes)
+			}, h.fixRow(2).Fix.NodeOutcomes)
 		})
 	}
 }
@@ -551,7 +551,7 @@ func TestRunner_ARoundsSpentNodeIsTriedAgain(t *testing.T) {
 	assert.Equal(t, "dbt-compile", again.TypeName)
 	assert.Equal(t, remediation.ClusterGathering, again.Status)
 	assert.Nil(t, again.Outcome)
-	assert.Equal(t, fix.NodeOutcome{Status: fix.StatusGenerating}, h.attempt(2).Fix.NodeOutcomes["svc-a"])
+	assert.Equal(t, fix.NodeOutcome{Status: fix.StatusGenerating}, h.fixRow(2).Fix.NodeOutcomes["svc-a"])
 
 	require.NoError(t, h.drive(id))
 
@@ -600,7 +600,7 @@ func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 		assert.Equal(t, "cross-project-upstream", carried.TypeName, "the carried cluster keeps the type of the cluster that settled the node")
 		assert.Equal(t, fellBack.Outcome, carried.Outcome)
 		assert.Equal(t, fix.NodeOutcome{Status: fix.StatusSkipped, Reason: fellBack.Outcome.Reason, Code: model.HandoverReasonDeclined},
-			h.attempt(2).Fix.NodeOutcomes["svc-a"])
+			h.fixRow(2).Fix.NodeOutcomes["svc-a"])
 	})
 
 	t.Run("pre-flight refused every round of the upstream fix", func(t *testing.T) {
@@ -626,7 +626,7 @@ func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 		require.Contains(t, fellBack.Outcome.Reason, "the change that broke this node lives in project core; "+
 			"a fix in this node's own project cannot ship before it: "+lowConfidenceReason)
 		assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": *fellBack.Outcome, "svc-b": {Status: fix.StatusVerifying}},
-			h.attempt(1).Fix.NodeOutcomes)
+			h.fixRow(1).Fix.NodeOutcomes)
 		calls := h.llm.calls()
 
 		h.failGate(id, "svc-b")
@@ -636,7 +636,7 @@ func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 		assert.Equal(t, "cross-project-upstream", again.TypeName)
 		assert.Equal(t, remediation.ClusterGathering, again.Status)
 		assert.Nil(t, again.Outcome)
-		assert.Equal(t, fix.NodeOutcome{Status: fix.StatusGenerating}, h.attempt(2).Fix.NodeOutcomes["svc-a"])
+		assert.Equal(t, fix.NodeOutcome{Status: fix.StatusGenerating}, h.fixRow(2).Fix.NodeOutcomes["svc-a"])
 
 		require.NoError(t, h.drive(id))
 
@@ -646,9 +646,9 @@ func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 }
 
 // A trigger whose every node the classifier marked unfixable writes one
-// attempt row, skipped, with each node skipped with its classifier code, and
+// fix row, skipped, with each node skipped with its classifier code, and
 // the remediation is done without a step or a model call.
-func TestRunner_AllUnfixableWritesOneSkippedAttempt(t *testing.T) {
+func TestRunner_AllUnfixableWritesOneSkippedTry(t *testing.T) {
 	const (
 		infraDetail = "the warehouse connection dropped; release again once it is back"
 		parseDetail = "the parser refuses a construct no edit of the source avoids"
@@ -667,9 +667,9 @@ func TestRunner_AllUnfixableWritesOneSkippedAttempt(t *testing.T) {
 		items.NodeID:  {Status: fix.StatusSkipped, Reason: parseDetail, Code: model.HandoverReasonClassifierUnhealableParse},
 	}
 	ps := h.fixes()
-	require.Len(t, ps, 1, "one attempt row")
+	require.Len(t, ps, 1, "one fix row")
 	p := ps[0].Fix
-	assert.Equal(t, 1, p.Attempt)
+	assert.Equal(t, 1, p.Try)
 	assert.Equal(t, fix.StatusSkipped, p.Status)
 	assert.Equal(t, want, p.NodeOutcomes)
 	assert.Equal(t, []string{items.NodeID, orders.NodeID}, p.ResolvedNodeIDs)

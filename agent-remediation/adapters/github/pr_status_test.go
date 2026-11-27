@@ -133,7 +133,7 @@ func TestPRStatus_TooManyRequestsIsTransient(t *testing.T) {
 func TestFindByBranch_Found(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/repos/acme/dbt-repo/pulls", r.URL.Path)
-		require.Equal(t, "acme:remediation/rel-1/orders-attempt1", r.URL.Query().Get("head"))
+		require.Equal(t, "acme:remediation/rel-1/orders-try1", r.URL.Query().Get("head"))
 		require.Equal(t, "all", r.URL.Query().Get("state"))
 		require.Equal(t, "Bearer tkn", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
@@ -141,7 +141,7 @@ func TestFindByBranch_Found(t *testing.T) {
 	}))
 	defer srv.Close()
 	g := NewSourceReader(srv.URL, "tkn", srv.Client())
-	ref, found, err := g.FindByBranch(context.Background(), "acme/dbt-repo", "remediation/rel-1/orders-attempt1")
+	ref, found, err := g.FindByBranch(context.Background(), "acme/dbt-repo", "remediation/rel-1/orders-try1")
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, 9, ref.Number)
@@ -156,7 +156,7 @@ func TestFindByBranch_NotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 	g := NewSourceReader(srv.URL, "tkn", srv.Client())
-	ref, found, err := g.FindByBranch(context.Background(), "acme/dbt-repo", "remediation/rel-1/orders-attempt1")
+	ref, found, err := g.FindByBranch(context.Background(), "acme/dbt-repo", "remediation/rel-1/orders-try1")
 	require.NoError(t, err)
 	require.False(t, found, "an empty result set means no PR exists for the branch, not an error")
 	require.Zero(t, ref)
@@ -166,7 +166,7 @@ func TestFindByBranch_NotFound(t *testing.T) {
 // the reconciler can treat it as permanent rather than as a GitHub hiccup.
 func TestFindByBranch_InvalidRepoIsError(t *testing.T) {
 	g := NewSourceReader("http://unused", "tok", http.DefaultClient)
-	_, found, err := g.FindByBranch(context.Background(), "", "remediation/rel/attempt1")
+	_, found, err := g.FindByBranch(context.Background(), "", "remediation/rel/try1")
 	require.Error(t, err)
 	assert.False(t, found)
 	assert.ErrorIs(t, err, ports.ErrInvalidRepo)

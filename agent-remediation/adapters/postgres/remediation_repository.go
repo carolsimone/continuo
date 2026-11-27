@@ -92,7 +92,6 @@ func (row remediationRow) toDomain() (remediation.Remediation, error) {
 type tryRow struct {
 	RemediationID uuid.UUID `db:"remediation_id"`
 	Try           int       `db:"try"`
-	Attempt       int       `db:"attempt"`
 	Status        string    `db:"status"`
 	FileRevisions []byte    `db:"file_revisions"`
 	DeadlineAt    time.Time `db:"deadline_at"`
@@ -100,7 +99,7 @@ type tryRow struct {
 	UpdatedAt     time.Time `db:"updated_at"`
 }
 
-const tryColumns = `remediation_id, try, attempt, status, file_revisions, deadline_at, created_at, updated_at`
+const tryColumns = `remediation_id, try, status, file_revisions, deadline_at, created_at, updated_at`
 
 func (row tryRow) toDomain() (remediation.Try, error) {
 	var revisions map[string]string
@@ -113,7 +112,6 @@ func (row tryRow) toDomain() (remediation.Try, error) {
 	return remediation.Try{
 		RemediationID: row.RemediationID,
 		Try:           row.Try,
-		Attempt:       row.Attempt,
 		Status:        remediation.TryStatus(row.Status),
 		FileRevisions: revisions,
 		DeadlineAt:    row.DeadlineAt,
@@ -756,15 +754,14 @@ func (r *RemediationRepository) SaveTry(ctx context.Context, t remediation.Try) 
 		return fmt.Errorf("encode file revisions: %w", err)
 	}
 	if _, err := r.q.ExecContext(ctx, `
-		INSERT INTO remediation_try (remediation_id, try, attempt, status, file_revisions, deadline_at, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7::timestamptz, now()), COALESCE($8::timestamptz, now()))
+		INSERT INTO remediation_try (remediation_id, try, status, file_revisions, deadline_at, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5, COALESCE($6::timestamptz, now()), COALESCE($7::timestamptz, now()))
 		ON CONFLICT (remediation_id, try) DO UPDATE SET
-			attempt        = EXCLUDED.attempt,
 			status         = EXCLUDED.status,
 			file_revisions = EXCLUDED.file_revisions,
 			deadline_at    = EXCLUDED.deadline_at,
 			updated_at     = EXCLUDED.updated_at`,
-		t.RemediationID, t.Try, t.Attempt, t.Status, jsonOr(revisions, "{}"), t.DeadlineAt,
+		t.RemediationID, t.Try, t.Status, jsonOr(revisions, "{}"), t.DeadlineAt,
 		timeArg(t.CreatedAt), timeArg(t.UpdatedAt)); err != nil {
 		return fmt.Errorf("save remediation try: %w", err)
 	}

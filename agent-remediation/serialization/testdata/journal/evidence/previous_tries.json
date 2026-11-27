@@ -2,7 +2,6 @@
   {
     "Round": 1,
     "Try": 2,
-    "Attempt": 2,
     "Clusters": [
       {
         "Type": "dbt-validation",

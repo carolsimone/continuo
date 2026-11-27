@@ -24,7 +24,7 @@ var (
 	// ErrNotSourceResolved is returned by BeginPR when the fix has not
 	// completed source resolution (source_resolved=false), so a PR cannot be opened.
 	ErrNotSourceResolved = errors.New("fix source not resolved")
-	// ErrNotProposed is returned by BeginPR when the attempt has not reached
+	// ErrNotProposed is returned by BeginPR when the try has not reached
 	// 'proposed'. A fix still being generated, still being verified by a
 	// release check, or already failed by one is not a fix anyone may open
 	// a pull request for, and status is the only thing that says so: a python
@@ -40,7 +40,7 @@ type FixFilter struct {
 	Status  string
 	PRState string
 	// ReleaseID restricts the listing to one release. Source, when set with
-	// it, restricts the listing to the attempts made for one source of failure
+	// it, restricts the listing to the tries made for one source of failure
 	// in that release.
 	ReleaseID string
 	Source    string
@@ -49,12 +49,12 @@ type FixFilter struct {
 	Limit   int
 }
 
-// AttemptLister is the repository slice the previous-tries step reads: the
-// attempts already recorded for a release, which show the model what earlier
-// attempts tried and why they were rejected. It is a narrower view of the List
+// FixLister is the repository slice the previous-tries step reads: the
+// tries already recorded for a release, which show the model what earlier
+// tries changed and why they were rejected. It is a narrower view of the List
 // method FixRepository already declares, so a consumer that only needs
 // this one slice does not have to depend on the full repository.
-type AttemptLister interface {
+type FixLister interface {
 	List(ctx context.Context, filter FixFilter) ([]fix.View, error)
 }
 
@@ -94,31 +94,32 @@ type OpeningLister interface {
 	ListStuckOpening(ctx context.Context, limit int, cursor *OpeningCursor) (items []fix.OpeningPR, next *OpeningCursor, err error)
 }
 
-// FixRepository persists the fix row of each attempt and answers the attempt-cap
-// query. The repository is bound to its transaction at construction by the
+// FixRepository persists the fix row of each try and counts the tries of a
+// round. The repository is bound to its transaction at construction by the
 // UnitOfWork, so methods take only ctx + domain types.
 type FixRepository interface {
-	// CountAttempts returns the number of TERMINAL attempts recorded for
-	// one remediation round of one release: the attempt cap is a budget per
-	// (release_id, remediation_round), counted over the release's whole failing
-	// set rather than per node, since one attempt addresses every node it
-	// covers at once. The release is part of the key because the attempt cap
-	// bounds how often one release's failure is retried: a later release is new
-	// code, and its attempts are its own, never charged to an earlier release's
+	// CountTries returns the number of TERMINAL tries recorded for
+	// one remediation round of one release, the round's hand-over row left
+	// out: the flow's tries are a budget per (release_id, remediation_round),
+	// counted over the release's whole failing set rather than per node, since
+	// one try addresses every node it covers at once, and the next try is
+	// numbered after them. The release is part of the key because the flow's
+	// tries bound how often one release's failure is retried: a later release is new
+	// code, and its tries are its own, never charged to an earlier release's
 	// budget. The remediation round is part of the key for the same reason
 	// within one release: a human's "try again" on a rejected release starts a
-	// fresh round, and its attempts are never charged to an earlier round's
+	// fresh round, and its tries are never charged to an earlier round's
 	// exhausted budget. In-flight rows — 'generating' (the model call has not
 	// resolved) and 'verifying' (a release check is still validating a
-	// proposed fix) — are excluded so an attempt that has not yet concluded
-	// neither inflates the attempt cap nor shifts the attempt number on a
+	// proposed fix) — are excluded so a try that has not yet concluded
+	// neither spends the flow's tries nor shifts the try number on a
 	// redelivery.
-	CountAttempts(ctx context.Context, releaseID string, remediationRound int) (int, error)
+	CountTries(ctx context.Context, releaseID string, remediationRound int) (int, error)
 
-	// InsertGenerating persists an in-flight 'generating' row for the attempt just
+	// InsertGenerating persists an in-flight 'generating' row for the try just
 	// before the model is called. It is idempotent: a redelivery that re-runs the
-	// same attempt collides on (release_id, attempt) and is a no-op, so at most
-	// one generating row exists per attempt.
+	// same try collides on (release_id, remediation_round, try) and is a no-op, so at most
+	// one generating row exists per try.
 	InsertGenerating(ctx context.Context, p fix.Fix) error
 
 	// FailGenerating finalizes releaseID's in-flight 'generating' row,
@@ -132,20 +133,20 @@ type FixRepository interface {
 	// row failed.
 	//
 	// The runner calls it when a remediation ends as a system failure while its
-	// attempt row is still generating: the row would stay in flight with nothing
+	// fix row is still generating: the row would stay in flight with nothing
 	// that will ever finish it, and every reader, the release page included,
 	// would keep reporting a fix as still being generated.
 	//
-	// The match is releaseID alone: one attempt addresses the release's whole
+	// The match is releaseID alone: one try addresses the release's whole
 	// failing set, so at most one row can be generating for a release at a
 	// time, and the row it must finalize is unambiguous without a node or
 	// error-signature match.
 	FailGenerating(ctx context.Context, releaseID, reason string) (int, error)
 
-	// FailLegacyInFlight fails every attempt row in flight that belongs to no
+	// FailLegacyInFlight fails every fix row in flight that belongs to no
 	// remediation, and returns how many rows it moved. Such a row is
 	// 'generating' or 'verifying' with no remediation: the runner stamps the
-	// remediation on every attempt row it writes, and a remediation is deleted
+	// remediation on every fix row it writes, and a remediation is deleted
 	// only once it has finished, when its rows are terminal. So nothing drives
 	// a row in flight that has no remediation, and left alone it would stay in
 	// flight for good and keep the release page from offering "Try again".
@@ -162,10 +163,11 @@ type FixRepository interface {
 	// never touched.
 	FailLegacyInFlight(ctx context.Context, reason string) (int, error)
 
-	// Upsert records the terminal outcome of an attempt on the natural key
-	// (release_id, attempt): it finalizes the in-flight generating row when one
-	// exists (ON CONFLICT … DO UPDATE), or plain-inserts for instant paths that
-	// never marked generating (e.g. the attempt-cap escalation). A fix
+	// Upsert records the terminal outcome of a try on the natural key
+	// (release_id, remediation_round, try): it finalizes the in-flight
+	// generating row when one exists (ON CONFLICT … DO UPDATE), or
+	// plain-inserts for instant paths that never marked generating (a skipped
+	// try, or the round's hand-over row). A fix
 	// that carries approvers replaces the row's, and one that carries none
 	// keeps the approvers an existing row holds.
 	Upsert(ctx context.Context, p fix.Fix) error
@@ -191,7 +193,7 @@ type FixRepository interface {
 	// source_resolved, so a fix still being generated or verified — or one a
 	// release check already failed — can never be turned into a pull request.
 	// Returns ErrNotSourceResolved if source_resolved=false, ErrNotProposed if
-	// the attempt has not reached 'proposed', ErrPRConflict if that project is
+	// the try has not reached 'proposed', ErrPRConflict if that project is
 	// already claimed, ErrNotFound if the id is unknown.
 	BeginPR(ctx context.Context, id, project, branch string, claimedAt time.Time) (fix.PRClaim, error)
 
@@ -265,13 +267,13 @@ type FixRepository interface {
 
 	// MarkVerifyFailed finalizes a fix a release check rejected,
 	// transitioning status 'verifying' -> 'failed' and recording verifyErr so
-	// the next attempt can use it as evidence. It also rewrites every
+	// the next try can use it as evidence. It also rewrites every
 	// node_outcomes entry still at 'verifying' to 'failed'. releaseChecks is
 	// the final summary of each release check, written in the same statement. hit reports
 	// whether the CAS fired, with the same semantics as MarkFixVerified.
 	MarkVerifyFailed(ctx context.Context, id, verifyErr string, releaseChecks []fix.ReleaseCheck) (hit bool, err error)
 
-	// ReopenTryAttempt moves the failed row of one attempt of the remediation
+	// ReopenFixRow moves the failed row of one try of the remediation
 	// remediationID back in flight, to status, which is generating or
 	// verifying, with no failure on it. A row reopened generating undoes
 	// FailGenerating: it loses its rationale, and each per-node outcome
@@ -279,19 +281,20 @@ type FixRepository interface {
 	// code) is generating again, every other outcome kept as it is; outcomes
 	// must be nil. A row reopened verifying loses its verify error, keeps its
 	// rationale, edits and release checks, and takes outcomes as its per-node
-	// outcomes. It changes only the row of that attempt whose status is
+	// outcomes. It changes only the row of that try whose status is
 	// failed, and reports whether it changed one. Any other status, or
 	// outcomes given for a row reopened generating, is an error, with nothing
 	// written.
-	ReopenTryAttempt(ctx context.Context, remediationID uuid.UUID, attempt int, status fix.Status, outcomes map[string]fix.NodeOutcome) (reopened bool, err error)
+	ReopenFixRow(ctx context.Context, remediationID uuid.UUID, try int, status fix.Status, outcomes map[string]fix.NodeOutcome) (reopened bool, err error)
 
-	// RecordApprovers records approvers on the row of one attempt of a release:
+	// RecordApprovers records approvers on the row of one try of a release's
+	// round:
 	// the row keeps one entry per node, an approver given for a node taking the
 	// place of the entry the row holds for it, and its approvers stay sorted by
 	// node id. Approvers the row holds for other nodes are kept, so the fixed
-	// nodes and the handed-over nodes of one attempt add up. It returns
-	// ErrNotFound, writing nothing, when the release has no row for the attempt.
-	RecordApprovers(ctx context.Context, releaseID string, attempt int, approvers []fix.Approver) error
+	// nodes and the handed-over nodes of one try add up. It returns
+	// ErrNotFound, writing nothing, when the release has no row for the try.
+	RecordApprovers(ctx context.Context, releaseID string, round, try int, approvers []fix.Approver) error
 
 	// UpdateReleaseCheckPhase records the phase (and, once known, the
 	// activation time) of one of the fix's release checks, leaving

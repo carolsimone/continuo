@@ -82,7 +82,7 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 // is not a release and is read through GET /release-checks instead.
 func TestHandleGetRelease_FixIDAnswers404(t *testing.T) {
 	now := time.Unix(1, 0).UTC()
-	v := releasecheck.NewFix("verify-1", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, now)
+	v := releasecheck.NewFix("verify-1", "finance", "tag", "rel-orig", 1, 1, "", release.ManifestKindDbt, now)
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["verify-1"] = v
 

@@ -14,12 +14,12 @@ import (
 // trigger-keyed idempotency cache, so the same refused contract is reassembled
 // every time. Treating the refusal as transient therefore repeats the refusal
 // on every redelivery until the trigger is dead-lettered once the consumer's
-// delivery limit is reached, leaving the attempt in flight with nothing that
+// delivery limit is reached, leaving the try in flight with nothing that
 // will ever finish it. A caller records a terminal failure instead, keeping the
 // tool's own complaint as the evidence.
 //
 // Everything else a packaging call can fail on — a missing binary, a context
-// deadline, a permission error — is left unwrapped, because a later attempt at
+// deadline, a permission error — is left unwrapped, because a later try at
 // the same contract genuinely can succeed.
 var ErrContractRejected = errors.New("the packaging tool refused the contract")
 

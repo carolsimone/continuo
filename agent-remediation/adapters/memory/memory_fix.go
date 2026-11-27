@@ -31,9 +31,9 @@ func roundOrDefault(n int) int {
 	return n
 }
 
-func (d *data) findFix(releaseID string, attempt int) *fixRow {
+func (d *data) findFix(releaseID string, round, try int) *fixRow {
 	for _, row := range d.fixes {
-		if row.p.ReleaseID == releaseID && row.p.Attempt == attempt {
+		if row.p.ReleaseID == releaseID && row.p.RemediationRound == roundOrDefault(round) && row.p.Try == try {
 			return row
 		}
 	}
@@ -64,8 +64,8 @@ func (d *data) checkRemediation(id string) error {
 	return nil
 }
 
-// CountAttempts counts the terminal attempts of one round of a release.
-func (r *fixRepository) CountAttempts(_ context.Context, releaseID string, remediationRound int) (int, error) {
+// CountTries counts the terminal tries of one round of a release.
+func (r *fixRepository) CountTries(_ context.Context, releaseID string, remediationRound int) (int, error) {
 	var n int
 	err := r.gate(func(d *data) error {
 		for _, row := range d.fixes {
@@ -80,11 +80,11 @@ func (r *fixRepository) CountAttempts(_ context.Context, releaseID string, remed
 	return n, err
 }
 
-// InsertGenerating inserts the in-flight row of an attempt, and does nothing
-// when the (release, attempt) row exists.
+// InsertGenerating inserts the in-flight row of a try, and does nothing
+// when the (release, round, try) row exists.
 func (r *fixRepository) InsertGenerating(_ context.Context, p fix.Fix) error {
 	return r.gate(func(d *data) error {
-		if d.findFix(p.ReleaseID, p.Attempt) != nil {
+		if d.findFix(p.ReleaseID, p.RemediationRound, p.Try) != nil {
 			return nil
 		}
 		if err := d.checkRemediation(p.RemediationID); err != nil {
@@ -98,7 +98,7 @@ func (r *fixRepository) InsertGenerating(_ context.Context, p fix.Fix) error {
 			NodeID:           p.NodeID,
 			ResolvedNodeIDs:  p.ResolvedNodeIDs,
 			ErrorSignature:   p.ErrorSignature,
-			Attempt:          p.Attempt,
+			Try:              p.Try,
 			Status:           fix.StatusGenerating,
 			NodeOutcomes:     p.NodeOutcomes,
 			Projects:         p.Projects,
@@ -162,8 +162,8 @@ func (r *fixRepository) FailLegacyInFlight(_ context.Context, reason string) (in
 	return n, err
 }
 
-// Upsert inserts the attempt's row or finalizes the row it conflicts with on
-// (release, attempt). The conflict update leaves the identity columns (source,
+// Upsert inserts the try's row or finalizes the row it conflicts with on
+// (release, round, try). The conflict update leaves the identity columns (source,
 // round, node, signature) as the first write set them, and leaves the
 // remediation as it was when p names none.
 func (r *fixRepository) Upsert(_ context.Context, p fix.Fix) error {
@@ -171,7 +171,7 @@ func (r *fixRepository) Upsert(_ context.Context, p fix.Fix) error {
 		if err := d.checkRemediation(p.RemediationID); err != nil {
 			return err
 		}
-		row := d.findFix(p.ReleaseID, p.Attempt)
+		row := d.findFix(p.ReleaseID, p.RemediationRound, p.Try)
 		if row == nil {
 			p.RemediationRound = roundOrDefault(p.RemediationRound)
 			d.fixes = append(d.fixes, &fixRow{id: uuid.NewString(), p: cloneFix(p)})
@@ -231,7 +231,7 @@ func (row *fixRow) view() fix.View {
 		NodeID:              p.NodeID,
 		ResolvedNodeIDs:     resolved,
 		ErrorSignature:      p.ErrorSignature,
-		Attempt:             p.Attempt,
+		Try:                 p.Try,
 		Status:              p.Status,
 		NodeOutcomes:        outcomes,
 		ReleaseChecks:       releaseChecks,
@@ -357,24 +357,24 @@ func (r *fixRepository) MarkVerifyFailed(_ context.Context, id, verifyErr string
 	return hit, err
 }
 
-// ReopenTryAttempt moves the failed row of the remediation's attempt back to
+// ReopenFixRow moves the failed row of the remediation's try back to
 // status, clearing the failure the row records. Reopened generating, the
 // rationale is cleared and each outcome FailGenerating failed is generating
 // again (reopenedGenerating); reopened verifying, the outcomes are outcomes.
-func (r *fixRepository) ReopenTryAttempt(_ context.Context, remediationID uuid.UUID, attempt int, status fix.Status, outcomes map[string]fix.NodeOutcome) (bool, error) {
+func (r *fixRepository) ReopenFixRow(_ context.Context, remediationID uuid.UUID, try int, status fix.Status, outcomes map[string]fix.NodeOutcome) (bool, error) {
 	switch status {
 	case fix.StatusGenerating:
 		if outcomes != nil {
-			return false, fmt.Errorf("reopen attempt %d: a row reopened generating takes back the outcomes it had, not outcomes given", attempt)
+			return false, fmt.Errorf("reopen try %d: a row reopened generating takes back the outcomes it had, not outcomes given", try)
 		}
 	case fix.StatusVerifying:
 	default:
-		return false, fmt.Errorf("reopen attempt %d: status %q is not generating or verifying", attempt, status)
+		return false, fmt.Errorf("reopen try %d: status %q is not generating or verifying", try, status)
 	}
 	var reopened bool
 	err := r.gate(func(d *data) error {
 		for _, row := range d.fixes {
-			if row.p.RemediationID != remediationID.String() || row.p.Attempt != attempt || row.p.Status != fix.StatusFailed {
+			if row.p.RemediationID != remediationID.String() || row.p.Try != try || row.p.Status != fix.StatusFailed {
 				continue
 			}
 			if status == fix.StatusGenerating {
@@ -428,12 +428,12 @@ func (r *fixRepository) UpdateReleaseCheckPhase(_ context.Context, id, checkID s
 	})
 }
 
-// RecordApprovers adds approvers to the row of the attempt, as
+// RecordApprovers adds approvers to the row of the round's try, as
 // fix.MergeApprovers does. It is ErrNotFound when the release has no row
-// for the attempt.
-func (r *fixRepository) RecordApprovers(_ context.Context, releaseID string, attempt int, approvers []fix.Approver) error {
+// for the try.
+func (r *fixRepository) RecordApprovers(_ context.Context, releaseID string, round, try int, approvers []fix.Approver) error {
 	return r.gate(func(d *data) error {
-		row := d.findFix(releaseID, attempt)
+		row := d.findFix(releaseID, round, try)
 		if row == nil {
 			return repository.ErrNotFound
 		}

@@ -33,8 +33,10 @@ type ReceiveFixInput struct {
 	// VerifiesReleaseID names the rejected candidate this check verifies a fix
 	// for; that release's own candidate is assembled for its changed project.
 	VerifiesReleaseID string
-	// Attempt is which attempt of the release's remediation this check belongs to.
-	Attempt int
+	// Round and Try name the try of the release's remediation this check
+	// proves: its remediation round, and its number within that round.
+	Round int
+	Try   int
 	// SourceOverlayURI is the tarball of proposed source a dbt project's
 	// compile and seed-build Jobs lay over the project. A python
 	// project is verified by its packaged bundle instead and carries none.
@@ -53,8 +55,10 @@ func (i ReceiveFixInput) validate() (release.ManifestKind, error) {
 		return "", fmt.Errorf("%w: kind is required (dbt or python)", ErrInvalidInput)
 	case i.VerifiesReleaseID == "":
 		return "", fmt.Errorf("%w: verifies_release_id is required", ErrInvalidInput)
-	case i.Attempt < 1:
-		return "", fmt.Errorf("%w: attempt must be at least 1", ErrInvalidInput)
+	case i.Round < 1:
+		return "", fmt.Errorf("%w: remediation_round must be at least 1", ErrInvalidInput)
+	case i.Try < 1:
+		return "", fmt.Errorf("%w: try must be at least 1", ErrInvalidInput)
 	}
 	kind, err := release.ParseManifestKind(i.Kind)
 	if err != nil {
@@ -94,7 +98,7 @@ func ReceiveFix(ctx context.Context, d *Deps, in ReceiveFixInput) error {
 		return fmt.Errorf("load check: %w", err)
 	}
 	if existing == nil {
-		r := releasecheck.NewFix(in.CheckID, in.Project, in.ImageTag, in.VerifiesReleaseID, in.Attempt, in.SourceOverlayURI, kind, d.Clock.Now())
+		r := releasecheck.NewFix(in.CheckID, in.Project, in.ImageTag, in.VerifiesReleaseID, in.Round, in.Try, in.SourceOverlayURI, kind, d.Clock.Now())
 		inserted, err := u.ReleaseCheckRepo().Create(ctx, r)
 		if err != nil {
 			return fmt.Errorf("create fix's release check: %w", err)

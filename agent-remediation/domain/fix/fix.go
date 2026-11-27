@@ -1,6 +1,6 @@
 // Package fix holds the domain model for a remediation fix: the
 // suggested replacement SQL for a failed dbt node, its rationale, and the
-// audit status of the attempt.
+// audit status of the try.
 package fix
 
 import (
@@ -12,12 +12,12 @@ import (
 	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
-// Status is the lifecycle state of one attempt's fix row.
+// Status is the lifecycle state of one try's fix row.
 type Status string
 
 const (
 	// StatusGenerating is the in-flight state: the agent has committed to calling
-	// the model for a healable failure but the attempt has not yet resolved. It is
+	// the model for a healable failure but the try has not yet resolved. It is
 	// finalized to one of the terminal states below once the outcome is known.
 	StatusGenerating Status = "generating"
 	// StatusVerifying is the in-flight state that follows StatusGenerating for a
@@ -25,7 +25,7 @@ const (
 	// proposed a fix and posted its release check to carry it through the
 	// full parse -> candidate-schema -> validation stages. The row carries the
 	// check's id (ReleaseCheckID).
-	// The gate poller polls the check and finalizes the attempt to 'proposed' (the
+	// The gate poller polls the check and finalizes the try to 'proposed' (the
 	// fix verified) or 'failed' (with the check's error recorded as evidence for
 	// the next try).
 	StatusVerifying Status = "verifying"
@@ -35,13 +35,13 @@ const (
 	StatusEscalated Status = "escalated"
 )
 
-// NoRemediationInFlightReason is the reason the startup sweep fails an attempt
+// NoRemediationInFlightReason is the reason the startup sweep fails a try
 // row with it: a row in flight that belongs to no remediation, which nothing
 // drives. A generating row stores it as its rationale, a verifying row as its
 // verify error, and each of its node outcomes still in flight as the outcome's
 // reason, so the release page shows it and offers "Try again". No gate judged
 // such a row, so the earlier-tries evidence leaves it out.
-const NoRemediationInFlightReason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
+const NoRemediationInFlightReason = "continuo changed its remediation engine while this try was in flight; use Try again"
 
 // Phase is where a fix's release check stands, as this component last read it
 // from release-controller. queued: waiting its turn in the release queue.
@@ -77,7 +77,7 @@ type FileEdit struct {
 	MemberNodeIDs []string
 }
 
-// NodeOutcome is how one failing node's attempt ended: verifying, proposed,
+// NodeOutcome is how one failing node's try ended: verifying, proposed,
 // failed, skipped, or escalated, with the reason for that outcome.
 type NodeOutcome struct {
 	Status Status
@@ -113,7 +113,7 @@ func CleanedOutcomes(outcomes map[string]NodeOutcome) map[string]NodeOutcome {
 	return out
 }
 
-// CleanedReason is text an attempt's row records as why the attempt failed, such as
+// CleanedReason is text a try's row records as why the try failed, such as
 // the errors of a release check or the reason a remediation stopped, with every
 // credential, private key and email address replaced by its fixed marker. Such a
 // text can echo what a warehouse, a build or a log printed, and the release page
@@ -125,7 +125,7 @@ func CleanedReason(reason string) string {
 // ReleaseCheck is the release check of a fix, posted to judge the edits made to
 // a single project, and the durable summary of how it went. The summary
 // outlives the check itself: release-controller prunes finished checks on its
-// retention window, and this is what still explains an old attempt after
+// retention window, and this is what still explains an old try after
 // that.
 type ReleaseCheck struct {
 	Project string
@@ -189,42 +189,51 @@ const (
 	ConfidenceHigh   Confidence = "high"
 )
 
-// Fix is the append-only record of one attempt at a release's failing
-// set: the fix it made, or why it made none. One row per attempt; unique
-// on (release_id, attempt).
+// HandOverTry is the try number of a round's hand-over row: the escalated row
+// written once the round's tries are spent, which is no try of its own. A
+// round has at most one, and it comes after every try of its round
+// (TryBefore).
+const HandOverTry = 0
+
+// Fix is the append-only record of one try at a release's failing
+// set: the fix it made, or why it made none. One row per try, plus the
+// round's hand-over row once its tries are spent; unique on (release_id,
+// remediation_round, try).
 type Fix struct {
 	Source    string
 	ReleaseID string
-	// RemediationID is the id of the runner's remediation this attempt belongs
-	// to. It is empty for an attempt row that belongs to no remediation.
+	// RemediationID is the id of the runner's remediation this try belongs
+	// to. It is empty for a fix row that belongs to no remediation.
 	RemediationID string
-	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
+	// RemediationRound is the release's remediation round this try belongs to; the flow's tries are counted within a round.
 	RemediationRound int
 	NodeID           string
-	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted;
+	// ResolvedNodeIDs is the failing nodes this try addresses, sorted;
 	// NodeID is their representative.
 	ResolvedNodeIDs []string
 	ErrorSignature  string
-	Attempt         int
-	Status          Status
-	// NodeOutcomes is, per failing node, how this attempt ended for it — a
+	// Try is the try's number in its round, from 1, or HandOverTry for the
+	// round's hand-over row.
+	Try    int
+	Status Status
+	// NodeOutcomes is, per failing node, how this try ended for it — a
 	// cluster the runner skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
-	// Approvers is who must approve what the attempt did with each node a
+	// Approvers is who must approve what the try did with each node a
 	// remediation settled at its end, fixed or handed over, one entry per node
-	// sorted by node id. It is empty for an attempt row that belongs to no remediation.
+	// sorted by node id. It is empty for a fix row that belongs to no remediation.
 	Approvers []Approver
 	// ReleaseChecks holds the fix's release checks, one per edited project;
 	// ReleaseCheckID is the view of the first.
 	ReleaseChecks []ReleaseCheck
 	// ReleaseCheckID is the id of the first release check — the
 	// single-check view of ReleaseChecks. Written when Status is (or was)
-	// StatusVerifying. It is kept when the attempt is finalized, so a
-	// resolved row still names the check that judged it. Empty for an attempt
+	// StatusVerifying. It is kept when the try is finalized, so a
+	// resolved row still names the check that judged it. Empty for a try
 	// that never entered its release check.
 	ReleaseCheckID string
-	// Projects is every project this attempt touched: the failing nodes'
+	// Projects is every project this try touched: the failing nodes'
 	// projects plus the edited ones.
 	Projects       []string
 	Confidence     Confidence
@@ -249,7 +258,7 @@ type Fix struct {
 	// FilePath is the repository-relative path of the dbt model source file
 	// (e.g. "services/service-3/models/orders_d.sql"). Empty when not resolved.
 	FilePath string
-	// Edits is the list of proposed file changes for this attempt. An empty
+	// Edits is the list of proposed file changes for this try. An empty
 	// list means the fix is described only by the single-file scalar
 	// fields above (FilePath, ProposedSQLURI, DiffURI); a non-empty list is
 	// the fix's full multi-file description, of which those scalar
@@ -287,7 +296,7 @@ func (p *Fix) NormalizeSingleFileView() {
 // ReleaseCheckID defaults to the first release check's id, and the
 // single-file scalars follow edits[0]. Every writer calls it before the
 // aggregate is persisted or turned into an event, so the row and the event
-// cannot disagree about which node or release check represents the attempt.
+// cannot disagree about which node or release check represents the try.
 func (p *Fix) NormalizeRepresentativeViews() {
 	sort.Strings(p.ResolvedNodeIDs)
 	if p.NodeID == "" && len(p.ResolvedNodeIDs) > 0 {

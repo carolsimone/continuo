@@ -43,8 +43,8 @@ func GroupEditsByProject(projectRepoPaths map[string]string, edits []FileEdit) m
 }
 
 // IntersectSorted returns the sorted intersection of members and fixed: the
-// members an attempt actually repaired. A per-project PR claims only the nodes
-// that project's edits address AND the attempt fixed, so a member the attempt
+// members a try actually repaired. A per-project PR claims only the nodes
+// that project's edits address AND the try fixed, so a member the try
 // skipped or failed is never claimed by a PR. Both inputs are treated as sets;
 // the result is sorted and free of duplicates.
 func IntersectSorted(members, fixed []string) []string {

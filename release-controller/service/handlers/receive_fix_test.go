@@ -14,8 +14,8 @@ import (
 
 func validFix() handlers.ReceiveFixInput {
 	return handlers.ReceiveFixInput{
-		CheckID: "verify-rel-1-core-a1", Project: "core", ImageTag: "img:1", Kind: "dbt",
-		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
+		CheckID: "verify-rel-1-core-r2-t1", Project: "core", ImageTag: "img:1", Kind: "dbt",
+		VerifiesReleaseID: "rel-1", Round: 2, Try: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-r2-t1/source-overlay.tar.gz",
 	}
 }
 
@@ -23,12 +23,13 @@ func TestReceiveFix_PersistsAReceivedFix(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, store := newDeps(now)
 	require.NoError(t, handlers.ReceiveFix(context.Background(), deps, validFix()))
-	got, err := store.GetRelease("verify-rel-1-core-a1")
+	got, err := store.GetRelease("verify-rel-1-core-r2-t1")
 	require.NoError(t, err)
 	assert.Equal(t, releasecheck.KindFix, got.Kind())
 	assert.Equal(t, releasecheck.StatusReceived, got.Status())
 	assert.Equal(t, "rel-1", got.VerifiesReleaseID())
-	assert.Equal(t, 1, got.Attempt())
+	assert.Equal(t, 2, got.RemediationRound())
+	assert.Equal(t, 1, got.Try())
 	assert.Equal(t, release.ManifestKindDbt, got.ManifestKind())
 }
 
@@ -42,7 +43,8 @@ func TestReceiveFix_Validation(t *testing.T) {
 		"missing kind":      func(in *handlers.ReceiveFixInput) { in.Kind = "" },
 		"bad kind":          func(in *handlers.ReceiveFixInput) { in.Kind = "yaml" },
 		"missing verifies":  func(in *handlers.ReceiveFixInput) { in.VerifiesReleaseID = "" },
-		"attempt below one": func(in *handlers.ReceiveFixInput) { in.Attempt = 0 },
+		"try below one":     func(in *handlers.ReceiveFixInput) { in.Try = 0 },
+		"round below one":   func(in *handlers.ReceiveFixInput) { in.Round = 0 },
 		"overlay on python": func(in *handlers.ReceiveFixInput) { in.Kind = "python" },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -51,6 +53,22 @@ func TestReceiveFix_Validation(t *testing.T) {
 			err := handlers.ReceiveFix(context.Background(), deps, in)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, handlers.ErrInvalidInput)
+		})
+	}
+}
+
+func TestReceiveFix_NamesTheTryAndRoundItRefuses(t *testing.T) {
+	deps, _ := newDeps(time.Unix(1_700_000_000, 0).UTC())
+	for want, mutate := range map[string]func(*handlers.ReceiveFixInput){
+		"try must be at least 1":               func(in *handlers.ReceiveFixInput) { in.Try = 0 },
+		"remediation_round must be at least 1": func(in *handlers.ReceiveFixInput) { in.Round = 0 },
+	} {
+		t.Run(want, func(t *testing.T) {
+			in := validFix()
+			mutate(&in)
+			err := handlers.ReceiveFix(context.Background(), deps, in)
+			require.ErrorIs(t, err, handlers.ErrInvalidInput)
+			assert.Contains(t, err.Error(), want)
 		})
 	}
 }
@@ -119,7 +137,7 @@ func TestReceiveFix_LosingARaceToAFixIsANoOp(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
 	in := validFix()
-	winner := releasecheck.NewFix(in.CheckID, in.Project, "img:winner", in.VerifiesReleaseID, in.Attempt, in.SourceOverlayURI, release.ManifestKindDbt, now)
+	winner := releasecheck.NewFix(in.CheckID, in.Project, "img:winner", in.VerifiesReleaseID, in.Round, in.Try, in.SourceOverlayURI, release.ManifestKindDbt, now)
 	store.RaceRelease(winner)
 
 	require.NoError(t, handlers.ReceiveFix(context.Background(), deps, in))

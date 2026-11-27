@@ -14,12 +14,12 @@ func TestWithPreviousTries_ShowsEachRecordedTry(t *testing.T) {
 	req := prompt.ProposeRequest{System: "s", User: "Failed node: model.a"}
 	ev := remediation.NewEvidence().With(remediation.KeyPreviousTries, []remediation.TryRecord{
 		{
-			Round: 1, Try: 0, Attempt: 1,
+			Round: 1, Try: 1,
 			Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}, Edits: []remediation.EditRecord{{Path: "models/a.sql", Diff: "-a\n+b"}}}},
 			Gate:     []remediation.Finding{{Message: "model.a: column b does not exist"}},
 		},
 		{
-			Round: 2, Try: 1, Attempt: 2,
+			Round: 2, Try: 1,
 			Clusters: []remediation.ClusterRecord{{
 				Members: []string{"model.a"},
 				Edits:   []remediation.EditRecord{{Path: "models/a.sql", Diff: "-a\n+c"}},
@@ -41,13 +41,13 @@ func TestWithPreviousTries_ShowsEachRecordedTry(t *testing.T) {
 
 	assert.Equal(t, prompt.WithPreviousTries(req, []prompt.PreviousTry{
 		{
-			Label:     "Attempt 1 (round 1)",
-			Diffs:     []prompt.AttemptDiff{{Path: "models/a.sql", Diff: "-a\n+b"}},
+			Label:     "Round 1, try 1",
+			Diffs:     []prompt.TryDiff{{Path: "models/a.sql", Diff: "-a\n+b"}},
 			GateError: "model.a: column b does not exist",
 		},
 		{
-			Label: "Try 1 (round 2)",
-			Diffs: []prompt.AttemptDiff{{Path: "models/a.sql", Diff: "-a\n+c"}},
+			Label: "Round 2, try 1",
+			Diffs: []prompt.TryDiff{{Path: "models/a.sql", Diff: "-a\n+c"}},
 			Findings: []string{
 				"round 1: content_unchanged: the answer repeats the original",
 				"outcome: failed (preflight_rounds_spent): the answer repeats the original",

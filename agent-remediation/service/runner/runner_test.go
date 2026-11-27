@@ -104,18 +104,20 @@ func TestRunner_DriveWithoutTheLeaseWritesNothing(t *testing.T) {
 	assert.Zero(t, h.llm.calls())
 }
 
-func TestRunner_AttemptNumberContinuesTheReleaseSequence(t *testing.T) {
+// A try is numbered after the round's terminal tries, a try recorded with no
+// remediation included, and its runner try row and its fix row carry the same
+// number.
+func TestRunner_ATryIsNumberedAfterTheRoundsTerminalTries(t *testing.T) {
 	h := newHarness(t)
-	h.attemptWithNoRemediation(1, fix.StatusFailed)
-	h.attemptWithNoRemediation(2, fix.StatusFailed)
+	h.tryWithNoRemediation(1, fix.StatusFailed)
+	h.tryWithNoRemediation(2, fix.StatusFailed)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.runner.NextTry(ctx, id))
 
 	tries := h.store.Tries(id)
 	require.Len(t, tries, 1)
-	assert.Equal(t, 1, tries[0].Try)
-	assert.Equal(t, 3, tries[0].Attempt)
+	assert.Equal(t, 3, tries[0].Try)
 	assert.Equal(t, remediation.TryDrafting, tries[0].Status)
 	assert.Equal(t, map[string]string{
 		flowFile:                            flowRevision,
@@ -124,12 +126,12 @@ func TestRunner_AttemptNumberContinuesTheReleaseSequence(t *testing.T) {
 		"types/shared-upstream.yaml":        "rev-shared-upstream",
 		"types/cross-project-upstream.yaml": "rev-cross-project-upstream",
 	}, tries[0].FileRevisions)
-	assert.Equal(t, 1, h.remediation(id).CurrentTry)
+	assert.Equal(t, 3, h.remediation(id).CurrentTry)
 
 	ps := h.fixes()
 	require.Len(t, ps, 3)
 	generating := ps[2].Fix
-	assert.Equal(t, 3, generating.Attempt)
+	assert.Equal(t, 3, generating.Try)
 	assert.Equal(t, fix.StatusGenerating, generating.Status)
 	assert.Equal(t, id.String(), generating.RemediationID)
 	assert.Equal(t, []string{"svc-a"}, generating.ResolvedNodeIDs)
@@ -225,7 +227,7 @@ func TestRunner_MaintenanceRecordsSkippedWithoutAModelCall(t *testing.T) {
 	ps := h.fixes()
 	require.Len(t, ps, 1)
 	p := ps[0].Fix
-	assert.Equal(t, 1, p.Attempt)
+	assert.Equal(t, 1, p.Try)
 	assert.Equal(t, fix.StatusSkipped, p.Status)
 	assert.Equal(t, reason, p.Rationale)
 	assert.Equal(t, id.String(), p.RemediationID)
@@ -323,7 +325,7 @@ func TestRunner_ADeclineWithNoTextHandsTheClusterOver(t *testing.T) {
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 	want := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: "step candidate_sql declined the fix", Code: model.HandoverReasonDeclined}
 	assert.Equal(t, &want, c.Outcome, "a step that gives no reason is recorded as having declined the fix")
-	assert.Equal(t, map[string]fix.NodeOutcome{"model.sales.orders": want}, h.attempt(1).Fix.NodeOutcomes)
+	assert.Equal(t, map[string]fix.NodeOutcome{"model.sales.orders": want}, h.fixRow(1).Fix.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode("model.sales.orders", want)), h.handedOverEvent(), "and so is the event")
 	rows := h.stepRows(id, 1, 1)
 	require.Len(t, rows, 1, "the cluster stops at the declining step")
@@ -453,10 +455,10 @@ func TestRunner_PassedPreflightWritesTheArtifacts(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
-	content, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/attempt-1.source.sql")
+	content, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/round-1/try-1.source.sql")
 	require.True(t, ok)
 	assert.Equal(t, "select 2", content)
-	diff, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/attempt-1.source.diff")
+	diff, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/round-1/try-1.source.diff")
 	require.True(t, ok)
 	assert.Equal(t, fix.ComputeUnifiedDiff("select 1", "select 2", "services/svc-a/models/orders.sql"), diff)
 
@@ -466,8 +468,8 @@ func TestRunner_PassedPreflightWritesTheArtifacts(t *testing.T) {
 	e := out.Draft.Edits[0]
 	assert.Equal(t, "services/svc-a/models/orders.sql", e.Path)
 	assert.Equal(t, "select 1", e.Original)
-	assert.Equal(t, "s3://artifacts/proposed-fix/rel-1/svc-a/attempt-1.source.sql", e.ContentURI)
-	assert.Equal(t, "s3://artifacts/proposed-fix/rel-1/svc-a/attempt-1.source.diff", e.DiffURI)
+	assert.Equal(t, "s3://artifacts/proposed-fix/rel-1/svc-a/round-1/try-1.source.sql", e.ContentURI)
+	assert.Equal(t, "s3://artifacts/proposed-fix/rel-1/svc-a/round-1/try-1.source.diff", e.DiffURI)
 }
 
 // TestRunner_AnEditIsStoredWithItsFilesLineEndings pins that the stored fix,
@@ -486,10 +488,10 @@ func TestRunner_AnEditIsStoredWithItsFilesLineEndings(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
-	content, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/attempt-1.source.sql")
+	content, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/round-1/try-1.source.sql")
 	require.True(t, ok)
 	assert.Equal(t, "select 2\r\nfrom a\r\n", content)
-	diff, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/attempt-1.source.diff")
+	diff, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/round-1/try-1.source.diff")
 	require.True(t, ok)
 	assert.Equal(t, fix.ComputeUnifiedDiff("select 1\r\nfrom a\r\n", "select 2\r\nfrom a\r\n", "services/svc-a/models/orders.sql"), diff)
 }
@@ -542,8 +544,8 @@ func TestRunner_PreflightFindingHandsTheClusterOver(t *testing.T) {
 
 func TestRunner_TriesSpentHandsOverOnce(t *testing.T) {
 	h := newHarness(t)
-	for attempt := 1; attempt <= 3; attempt++ {
-		h.attemptWithNoRemediation(attempt, fix.StatusFailed)
+	for try := 1; try <= 3; try++ {
+		h.tryWithNoRemediation(try, fix.StatusFailed)
 	}
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	h.store.FailNextCommit()
@@ -559,7 +561,7 @@ func TestRunner_TriesSpentHandsOverOnce(t *testing.T) {
 		}
 	}
 	require.Len(t, escalated, 1)
-	assert.Equal(t, 4, escalated[0].Attempt)
+	assert.Equal(t, fix.HandOverTry, escalated[0].Try)
 	assert.Equal(t, id.String(), escalated[0].RemediationID)
 	spent := fix.NodeOutcome{Status: fix.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
 	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, escalated[0].NodeOutcomes,
@@ -585,10 +587,12 @@ func TestRunner_NextTryOpensATryOnlyWhenNoneIsOpen(t *testing.T) {
 	assert.Zero(t, h.llm.calls())
 }
 
-func TestRunner_ARoundTwoTriggerContinuesTheAttemptsWithItsOwnTries(t *testing.T) {
+// A round numbers its tries from 1: round 1's tries neither spend round 2's
+// nor shift its numbers.
+func TestRunner_ARoundTwoTriggerNumbersItsTriesFromOne(t *testing.T) {
 	h := newHarness(t)
-	for attempt := 1; attempt <= 3; attempt++ {
-		h.attemptWithNoRemediationInRound(1, attempt, fix.StatusFailed)
+	for try := 1; try <= 3; try++ {
+		h.tryWithNoRemediationInRound(1, try, fix.StatusFailed)
 	}
 	trig := trigger("compile", compileNode("svc-a"))
 	trig.Round = 2
@@ -597,8 +601,9 @@ func TestRunner_ARoundTwoTriggerContinuesTheAttemptsWithItsOwnTries(t *testing.T
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	tries := h.store.Tries(id)
-	require.Len(t, tries, 1, "round 1's attempts do not spend round 2's tries")
-	assert.Equal(t, 4, tries[0].Attempt, "the attempt continues the release's sequence")
+	require.Len(t, tries, 1, "round 1's tries do not spend round 2's")
+	assert.Equal(t, 1, tries[0].Try, "the round's first try is try 1")
+	assert.Equal(t, 2, h.fixRowIn(2, 1).Fix.RemediationRound)
 	for _, p := range h.fixes() {
 		assert.NotEqual(t, fix.StatusEscalated, p.Fix.Status)
 	}

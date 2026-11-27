@@ -15,9 +15,9 @@ const (
 	maxPreviousTryDiffBytes = 8192
 )
 
-// AttemptDiff is one file's unified diff from an earlier fix attempt, named by
-// the repository path that attempt changed.
-type AttemptDiff struct {
+// TryDiff is one file's unified diff from an earlier fix try, named by
+// the repository path that try changed.
+type TryDiff struct {
 	Path string
 	Diff string
 }
@@ -28,7 +28,7 @@ type AttemptDiff struct {
 // is already sanitized.
 type PreviousTry struct {
 	Label     string
-	Diffs     []AttemptDiff
+	Diffs     []TryDiff
 	Findings  []string
 	GateError string
 }

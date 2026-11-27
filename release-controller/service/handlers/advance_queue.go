@@ -257,7 +257,7 @@ func uncoveredLiveProjects(liveTopology release.Topology, pointers []*release.Pr
 // nextToActivate is the check the queue activates next: the oldest received check
 // of either kind or, while maintenance mode is on, the oldest received
 // fix's release check. Maintenance holds candidate releases in the queue, in
-// creation order, but lets the release checks of remediation attempts
+// creation order, but lets the release checks of remediation tries
 // already in progress finish.
 func nextToActivate(ctx context.Context, u uow.UnitOfWork, maintenance bool) (*releasecheck.Check, error) {
 	if maintenance {

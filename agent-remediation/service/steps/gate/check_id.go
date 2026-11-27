@@ -12,8 +12,8 @@ import (
 // creates for the check, built as "_candidate_" followed by the check id with every
 // character outside [A-Za-z0-9_] replaced one-for-one, so the schema is exactly
 // 11 bytes longer than the id. PostgreSQL truncates an identifier past 63 bytes
-// rather than rejecting it, and what it cuts is the tail: the attempt suffix,
-// then the project name. Two attempts at one project would then share a schema
+// rather than rejecting it, and what it cuts is the tail: the try suffix,
+// then the project name. Two tries at one project would then share a schema
 // and each would validate against the other's leftovers, so the id is bounded
 // here instead.
 const maxCheckIDLen = 63 - len("_candidate_")
@@ -22,20 +22,21 @@ const maxCheckIDLen = 63 - len("_candidate_")
 // the release check page.
 const checkIDPrefix = "verify-"
 
-// CheckID mints the id of the release check that verifies one attempt's edits
-// to one project. It embeds the failing release, the edited project, and the attempt,
-// so it is unique per (project, attempt) and legible in log lines and the
-// release check page, and so a redelivery of the same attempt reuses the same id
+// CheckID mints the id of the release check that verifies one try's edits
+// to one project. It embeds the failing release, the edited project, and the
+// try's round and number (-r<round>-t<try>), so it is unique per (project,
+// round, try) and legible in log lines and the
+// release check page, and so a redelivery of the same try reuses the same id
 // (release-controller's submission is idempotent on it).
 //
 // Past maxCheckIDLen the middle, the failing release and project, is shortened
-// and given a digest of what it held. The prefix and the attempt number are
+// and given a digest of what it held. The prefix and the round and try are
 // kept whole because they are what a reader identifies the check by, and the
 // digest is what keeps two projects whose names diverge only past the cut on
 // separate candidate schemas.
-func CheckID(releaseID, project string, attempt int) string {
+func CheckID(releaseID, project string, round, try int) string {
 	middle := sanitizeIDSegment(releaseID) + "-" + sanitizeIDSegment(project)
-	suffix := fmt.Sprintf("-a%d", attempt)
+	suffix := fmt.Sprintf("-r%d-t%d", round, try)
 	if len(checkIDPrefix)+len(middle)+len(suffix) <= maxCheckIDLen {
 		return checkIDPrefix + middle + suffix
 	}

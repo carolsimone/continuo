@@ -52,13 +52,13 @@ func TestSubmit_PostsTheReleaseCheckBody(t *testing.T) {
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 	require.NoError(t, g.Submit(context.Background(), ports.ReleaseCheckRequest{
-		CheckID: "verify-rel-1-core-a1", Project: "core", ImageTag: "img:1", Kind: ports.ManifestKindDbt,
-		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
+		CheckID: "verify-rel-1-core-r2-t1", Project: "core", ImageTag: "img:1", Kind: ports.ManifestKindDbt,
+		VerifiesReleaseID: "rel-1", RemediationRound: 2, Try: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-r2-t1/source-overlay.tar.gz",
 	}))
 	assert.Equal(t, map[string]any{
-		"check_id": "verify-rel-1-core-a1", "project": "core", "image_tag": "img:1", "kind": "dbt",
-		"verifies_release_id": "rel-1", "attempt": float64(1),
-		"source_overlay_uri": "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
+		"check_id": "verify-rel-1-core-r2-t1", "project": "core", "image_tag": "img:1", "kind": "dbt",
+		"verifies_release_id": "rel-1", "remediation_round": float64(2), "try": float64(1),
+		"source_overlay_uri": "s3://b/core/verify-rel-1-core-r2-t1/source-overlay.tar.gz",
 	}, got)
 }
 
@@ -70,7 +70,7 @@ func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
 	}))
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	require.NoError(t, g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "py", ImageTag: "i", Kind: ports.ManifestKindPython, VerifiesReleaseID: "rel-1", Attempt: 2}))
+	require.NoError(t, g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "py", ImageTag: "i", Kind: ports.ManifestKindPython, VerifiesReleaseID: "rel-1", Try: 2}))
 	_, has := got["source_overlay_uri"]
 	assert.False(t, has)
 }
@@ -80,7 +80,7 @@ func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
 // before any HTTP call is made.
 func TestSubmit_RequiresKind(t *testing.T) {
 	g := NewGateway("http://unused", &fakeEvidence{}, nil)
-	err := g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "s", ImageTag: "i", VerifiesReleaseID: "rel-1", Attempt: 1})
+	err := g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "s", ImageTag: "i", VerifiesReleaseID: "rel-1", Try: 1})
 	require.ErrorContains(t, err, "kind is required")
 }
 
@@ -88,7 +88,7 @@ func TestSubmit_NonAcceptedStatusIsAnError(t *testing.T) {
 	srv := releaseServer(t, "/release-checks", http.StatusConflict, `run id already names a candidate`)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	err := g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "s", ImageTag: "i", Kind: "dbt", VerifiesReleaseID: "rel-1", Attempt: 1})
+	err := g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "s", ImageTag: "i", Kind: "dbt", VerifiesReleaseID: "rel-1", Try: 1})
 	require.ErrorContains(t, err, "status 409")
 }
 
@@ -152,7 +152,7 @@ func TestStatus_FailedFallsBackToFailReasonAndDetail(t *testing.T) {
 // preamble before it — possibly with braces of its own — and further output
 // after it. A strict decode of the whole body fails on all of that and drops
 // the node to the check-level fallback, which for a validation failure is the
-// bare word "validation_failed" with no detail, leaving the next fix attempt
+// bare word "validation_failed" with no detail, leaving the next fix try
 // with no real error to learn from.
 func TestStatus_FailedReadsSentinelJSONSurroundedByOutput(t *testing.T) {
 	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
@@ -162,7 +162,7 @@ func TestStatus_FailedReadsSentinelJSONSurroundedByOutput(t *testing.T) {
 
 	// A brace-bearing log line first, then the structured record, then more
 	// output. Only the middle object carries a status.
-	noisy := "WARNING: unable to reach the metrics sink {\"attempt\": 1}\n" +
+	noisy := "WARNING: unable to reach the metrics sink {\"try\": 1}\n" +
 		`{"status":"error","message":"column \"revenue_total\" does not exist"}` + "\n" +
 		"INFO: uploading artifacts\n"
 
@@ -187,7 +187,7 @@ func TestStatus_FailedFallsBackWhenNoSentinelJSON(t *testing.T) {
 	defer srv.Close()
 
 	ev := &fakeEvidence{byURI: map[string]string{
-		"s3://bucket/run-results/orders.json": "traceback: the runner died before writing a result {\"attempt\": 1}\n",
+		"s3://bucket/run-results/orders.json": "traceback: the runner died before writing a result {\"try\": 1}\n",
 	}}
 	g := NewGateway(srv.URL, ev, nil)
 	st, err := g.Status(context.Background(), "verify-x")
@@ -339,7 +339,7 @@ func TestStatus_APassedRunHasNoRunError(t *testing.T) {
 // still does not parse fails its release check before any Job, so the
 // failing per-node result carries the parser's text inline in `detail` with no
 // run_results_uri. nodeErrors must surface that detail as the node's error, so
-// the next attempt is told why its repair still failed rather than "failed
+// the next try is told why its repair still failed rather than "failed
 // without a per-node error".
 func TestStatus_FailedParseStageCarriesInlineDetail(t *testing.T) {
 	const detail = "unqualified table reference `orders`. Line 1, Col: 16."

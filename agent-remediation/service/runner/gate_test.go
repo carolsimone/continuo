@@ -19,15 +19,15 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// The checks that verify the edits of attempt 1 and attempt 2 to svc-a and svc-b.
+// The checks that verify the edits of try 1 and try 2 to svc-a and svc-b.
 const (
-	svcACheck1 = "verify-rel-1-svc-a-a1"
-	svcACheck2 = "verify-rel-1-svc-a-a2"
-	svcBCheck1 = "verify-rel-1-svc-b-a1"
+	svcACheck1 = "verify-rel-1-svc-a-r1-t1"
+	svcACheck2 = "verify-rel-1-svc-a-r1-t2"
+	svcBCheck1 = "verify-rel-1-svc-b-r1-t1"
 )
 
-func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
-	t.Run("every node skipped is a skipped attempt", func(t *testing.T) {
+func TestRunner_NoEditSettlesTheTry(t *testing.T) {
+	t.Run("every node skipped is a skipped try", func(t *testing.T) {
 		h := newHarness(t)
 		test := remediation.TriggerNode{NodeID: "test.sales.not_null", ErrorSignature: "sig-t", NodeType: "dbt-test", Project: "svc-a"}
 		python := remediation.TriggerNode{NodeID: "python.sales.loader", ErrorSignature: "sig-p", NodeType: "python-node", Project: "svc-a"}
@@ -35,7 +35,7 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		p := h.attempt(1).Fix
+		p := h.fixRow(1).Fix
 		assert.Equal(t, fix.StatusSkipped, p.Status)
 		assert.Equal(t, map[string]fix.NodeOutcome{
 			test.NodeID:   {Status: fix.StatusSkipped, Reason: dbtTestReason, Code: model.HandoverReasonNoType},
@@ -50,7 +50,7 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 		assert.Empty(t, h.checks.requests())
 	})
 
-	t.Run("a node that was attempted fails the attempt", func(t *testing.T) {
+	t.Run("a node that was attempted fails the try", func(t *testing.T) {
 		h := newHarness(t)
 		h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
 			r := fixAnswer(req)
@@ -63,7 +63,7 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		p := h.attempt(1).Fix
+		p := h.fixRow(1).Fix
 		assert.Equal(t, fix.StatusFailed, p.Status)
 		assert.Equal(t, map[string]fix.NodeOutcome{
 			"svc-a": {Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent},
@@ -101,9 +101,9 @@ func (h *harness) twoEditsOfOneFile() {
 	}
 }
 
-// With a single try, a cross-cluster finding fails the attempt and the try, and
+// With a single try, a cross-cluster finding fails the try and the try, and
 // the tries being spent, the remediation hands over.
-func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
+func TestRunner_CrossClusterFindingFailsTheTry(t *testing.T) {
 	h := newHarness(t, withTries(1))
 	h.twoEditsOfOneFile()
 	id := h.accept(crossClusterTrigger())
@@ -114,7 +114,7 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 		require.Equal(t, remediation.ClusterChecked, c.Status, "cluster %d", c.Cluster)
 	}
 	const reason = "two edits change the same file: services/core/models/base.sql"
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)
 	assert.Equal(t, map[string]fix.NodeOutcome{
@@ -124,7 +124,7 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 	assert.Equal(t, id.String(), p.RemediationID)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Len(t, h.store.Tries(id), 1, "the only try is spent")
-	assert.Equal(t, fix.StatusEscalated, h.attempt(2).Fix.Status, "the tries being spent, the failing set is handed over")
+	assert.Equal(t, fix.StatusEscalated, h.fixRow(fix.HandOverTry).Fix.Status, "the tries being spent, the failing set is handed over")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.checks.requests())
 
@@ -143,7 +143,7 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 	assert.Empty(t, rows["release_check"])
 }
 
-// A cross-cluster finding fails the try like a failed gate does: the attempt
+// A cross-cluster finding fails the try like a failed gate does: the try
 // is failed with the finding, the try fails and the remediation, still running,
 // opens its next try, whose requests show the finding among the earlier tries.
 // The second try's upstream fix is not confident, so the producer's edit is its
@@ -164,7 +164,7 @@ func TestRunner_ACrossClusterFindingStartsTheNextTry(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	const reason = "two edits change the same file: services/core/models/base.sql"
-	first := h.attempt(1).Fix
+	first := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusFailed, first.Status)
 	assert.Equal(t, reason, first.Rationale)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
@@ -172,8 +172,8 @@ func TestRunner_ACrossClusterFindingStartsTheNextTry(t *testing.T) {
 	assert.Equal(t, 2, h.remediation(id).CurrentTry)
 	second := h.try(id, 2)
 	assert.Equal(t, remediation.TryVerifying, second.Status)
-	assert.Equal(t, 2, second.Attempt)
-	assert.Equal(t, fix.StatusVerifying, h.attempt(2).Fix.Status)
+	assert.Equal(t, 2, second.Try)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(2).Fix.Status)
 	assert.Len(t, h.checks.requests(), 1, "the second try's one edited project is verified")
 
 	require.Equal(t, 4, h.llm.calls(), "each try asks the model once per cluster")
@@ -181,7 +181,7 @@ func TestRunner_ACrossClusterFindingStartsTheNextTry(t *testing.T) {
 		assert.NotContains(t, req.User, "## Earlier tries at this failure", "the first try has no earlier try")
 	}
 	for _, req := range h.llm.requests[2:] {
-		assert.Contains(t, req.User, "### Try 1 (round 1)", "the second try sees the first")
+		assert.Contains(t, req.User, "### Round 1, try 1", "the second try sees the first")
 		assert.Contains(t, req.User, "What pre-flight found:\n- across clusters: path_edited_twice: "+reason+" (services/core/models/base.sql)",
 			"and the cross-cluster finding that failed it")
 	}
@@ -202,7 +202,7 @@ func TestRunner_TheVerifyingRowCarriesTheTry(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusVerifying, p.Status)
 	assert.Equal(t, id.String(), p.RemediationID)
 	assert.Equal(t, []string{"svc-a", "svc-b"}, p.ResolvedNodeIDs)
@@ -218,15 +218,15 @@ func TestRunner_TheVerifyingRowCarriesTheTry(t *testing.T) {
 	assert.Equal(t, []fix.FileEdit{
 		{
 			Path:          "services/svc-a/models/orders.sql",
-			ContentURI:    "s3://artifacts/proposed-fix/rel-1/svc-a/attempt-1.source.sql",
-			DiffURI:       "s3://artifacts/proposed-fix/rel-1/svc-a/attempt-1.source.diff",
+			ContentURI:    "s3://artifacts/proposed-fix/rel-1/svc-a/round-1/try-1.source.sql",
+			DiffURI:       "s3://artifacts/proposed-fix/rel-1/svc-a/round-1/try-1.source.diff",
 			TargetNodeID:  "svc-a",
 			MemberNodeIDs: []string{"svc-a"},
 		},
 		{
 			Path:          "services/svc-b/models/orders.sql",
-			ContentURI:    "s3://artifacts/proposed-fix/rel-1/svc-b/attempt-1.source.sql",
-			DiffURI:       "s3://artifacts/proposed-fix/rel-1/svc-b/attempt-1.source.diff",
+			ContentURI:    "s3://artifacts/proposed-fix/rel-1/svc-b/round-1/try-1.source.sql",
+			DiffURI:       "s3://artifacts/proposed-fix/rel-1/svc-b/round-1/try-1.source.diff",
 			TargetNodeID:  "svc-b",
 			MemberNodeIDs: []string{"svc-b"},
 		},
@@ -266,7 +266,7 @@ func TestRunner_TheVerifyingRowCarriesTheTry(t *testing.T) {
 	require.Len(t, checks, 2)
 	assert.Equal(t, svcACheck1, checks[0].CheckID)
 	assert.Equal(t, "tag-svc-a", checks[0].ImageTag)
-	assert.Equal(t, 1, checks[0].Attempt)
+	assert.Equal(t, 1, checks[0].Try)
 	assert.NotEmpty(t, checks[0].SourceOverlayURI)
 	assert.Equal(t, svcBCheck1, checks[1].CheckID)
 
@@ -287,15 +287,15 @@ func TestRunner_GatePassEmitsOneProposedEvent(t *testing.T) {
 	require.Len(t, events, 1)
 	var payload struct {
 		ReleaseID string `json:"release_id"`
-		Attempt   int    `json:"attempt"`
+		Try       int    `json:"try"`
 	}
 	tenantID, body := proposedPayload(t, events[0])
 	assert.Equal(t, "default", tenantID)
 	require.NoError(t, json.Unmarshal(body, &payload))
 	assert.Equal(t, releaseID, payload.ReleaseID)
-	assert.Equal(t, 1, payload.Attempt)
+	assert.Equal(t, 1, payload.Try)
 
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusProposed, p.Status)
 	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": {Status: fix.StatusProposed}}, p.NodeOutcomes)
 	act := t0
@@ -324,7 +324,7 @@ func TestRunner_GateFailStartsTheNextTry(t *testing.T) {
 
 	require.NoError(t, h.poll(id))
 
-	first := h.attempt(1)
+	first := h.fixRow(1)
 	assert.Equal(t, fix.StatusFailed, first.Fix.Status)
 	assert.Equal(t, "svc-a: column x does not exist", first.VerifyError)
 	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": {Status: fix.StatusFailed}}, first.Fix.NodeOutcomes)
@@ -341,10 +341,10 @@ func TestRunner_GateFailStartsTheNextTry(t *testing.T) {
 
 	second := h.try(id, 2)
 	assert.Equal(t, remediation.TryDrafting, second.Status)
-	assert.Equal(t, 2, second.Attempt)
+	assert.Equal(t, 2, second.Try)
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
 	assert.Equal(t, 2, h.remediation(id).CurrentTry)
-	generating := h.attempt(2).Fix
+	generating := h.fixRow(2).Fix
 	assert.Equal(t, fix.StatusGenerating, generating.Status)
 	assert.Equal(t, id.String(), generating.RemediationID)
 
@@ -358,14 +358,14 @@ func TestRunner_GateFailStartsTheNextTry(t *testing.T) {
 
 func TestRunner_EachTryIsShownTheEarlierTriesAtItsFailure(t *testing.T) {
 	h := newHarness(t, withPreviousTries())
-	h.attemptWithNoRemediation(1, fix.StatusFailed)
+	h.tryWithNoRemediation(1, fix.StatusFailed)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.drive(id))
 	first := h.llm.lastRequest().User
-	assert.Contains(t, first, "\n\n## Earlier tries at this failure\n", "the first try is shown the attempt with no remediation")
-	assert.Contains(t, first, "### Attempt 1 (round 1)\nNothing was recorded for this try.")
-	assert.NotContains(t, first, "### Try ", "the try being made is not one of its earlier tries")
+	assert.Contains(t, first, "\n\n## Earlier tries at this failure\n", "the first try is shown the try with no remediation")
+	assert.Contains(t, first, "### Round 1, try 1\nNothing was recorded for this try.")
+	assert.NotContains(t, first, "### Round 1, try 2", "the try being made is not one of its earlier tries")
 
 	h.checks.answer(fix.PhaseFailed, map[string]string{"svc-a": "column x does not exist"})
 	require.NoError(t, h.poll(id))
@@ -373,11 +373,11 @@ func TestRunner_EachTryIsShownTheEarlierTriesAtItsFailure(t *testing.T) {
 
 	require.Equal(t, 2, h.llm.calls())
 	second := h.llm.lastRequest().User
-	assert.Contains(t, second, "### Attempt 1 (round 1)")
-	assert.Contains(t, second, "### Try 1 (round 1)\nChanged ")
+	assert.Contains(t, second, "### Round 1, try 1\nNothing was recorded for this try.")
+	assert.Contains(t, second, "### Round 1, try 2\nChanged ")
 	assert.Contains(t, second, "+select 2", "the second try sees the diff the first applied")
 	assert.Contains(t, second, "Why the gate failed: svc-a: column x does not exist", "and why its release check failed")
-	assert.Less(t, strings.Index(second, "### Attempt 1"), strings.Index(second, "### Try 1"), "oldest first")
+	assert.Less(t, strings.Index(second, "### Round 1, try 1"), strings.Index(second, "### Round 1, try 2"), "oldest first")
 }
 
 func TestRunner_TriesSpentHandsOver(t *testing.T) {
@@ -391,12 +391,12 @@ func TestRunner_TriesSpentHandsOver(t *testing.T) {
 		require.NoError(t, h.poll(id))
 	}
 
-	for attempt := 1; attempt <= 3; attempt++ {
-		p := h.attempt(attempt)
-		assert.Equal(t, fix.StatusFailed, p.Fix.Status, "attempt %d", attempt)
-		assert.Equal(t, "svc-a: still broken", p.VerifyError, "attempt %d", attempt)
+	for try := 1; try <= 3; try++ {
+		p := h.fixRow(try)
+		assert.Equal(t, fix.StatusFailed, p.Fix.Status, "try %d", try)
+		assert.Equal(t, "svc-a: still broken", p.VerifyError, "try %d", try)
 	}
-	escalated := h.attempt(4).Fix
+	escalated := h.fixRow(fix.HandOverTry).Fix
 	assert.Equal(t, fix.StatusEscalated, escalated.Status)
 	assert.Equal(t, id.String(), escalated.RemediationID)
 	spent := fix.NodeOutcome{
@@ -421,7 +421,7 @@ func TestRunner_FixRowMovedUnderTheRunnerEndsQuietly(t *testing.T) {
 			h := newHarness(t)
 			id := h.accept(trigger("compile", compileNode("svc-a")))
 			require.NoError(t, h.runner.Drive(ctx, id))
-			moved, err := h.store.FixRepository().MarkVerifyFailed(ctx, h.attempt(1).ID, "failed by hand", nil)
+			moved, err := h.store.FixRepository().MarkVerifyFailed(ctx, h.fixRow(1).ID, "failed by hand", nil)
 			require.NoError(t, err)
 			require.True(t, moved)
 			h.checks.answer(phase, map[string]string{"svc-a": "broken"})
@@ -429,7 +429,7 @@ func TestRunner_FixRowMovedUnderTheRunnerEndsQuietly(t *testing.T) {
 			require.NoError(t, h.poll(id))
 
 			assert.Empty(t, h.proposedEvents())
-			row := h.attempt(1)
+			row := h.fixRow(1)
 			assert.Equal(t, fix.StatusFailed, row.Fix.Status)
 			assert.Equal(t, "failed by hand", row.VerifyError, "the row keeps what it already said")
 			assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
@@ -455,11 +455,11 @@ func TestRunner_TheGateIsPolledFromWhenItsStepStarted(t *testing.T) {
 
 	h.clock.set(submitted.Add(releaseCheckTimeout - time.Second))
 	require.NoError(t, h.poll(id))
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status, "the budget counts from the gate step, not the try")
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status, "the budget counts from the gate step, not the try")
 
 	h.clock.set(submitted.Add(releaseCheckTimeout))
 	require.NoError(t, h.poll(id))
-	first := h.attempt(1)
+	first := h.fixRow(1)
 	assert.Equal(t, fix.StatusFailed, first.Fix.Status)
 	assert.Equal(t, "release check timed out", first.VerifyError)
 	assert.Equal(t, []fix.ReleaseCheck{
@@ -482,11 +482,11 @@ func TestRunner_APollWithNoNewPhaseWritesNothing(t *testing.T) {
 	act := t0
 	assert.Equal(t, []fix.ReleaseCheck{
 		{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: fix.PhaseRunning, ActivatedAt: &act},
-	}, h.attempt(1).Fix.ReleaseChecks)
+	}, h.fixRow(1).Fix.ReleaseChecks)
 
 	require.NoError(t, h.poll(id))
 	assert.EqualValues(t, 1, h.phaseWrites.Load(), "a phase that did not change is not written again")
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
 }
 
@@ -504,7 +504,7 @@ func TestRunner_ACommitFailureAfterThePassEmitsOneProposedEvent(t *testing.T) {
 
 	require.Error(t, h.poll(id), "the pass's commit fails")
 	assert.Empty(t, h.proposedEvents())
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
 	gate := h.flowRows(id, 1)["release_check"][0]
 	assert.Equal(t, remediation.StepWaiting, gate.Status, "the gate still waits on its checks")
 	assert.Equal(t, 1, gate.Failures)
@@ -513,7 +513,7 @@ func TestRunner_ACommitFailureAfterThePassEmitsOneProposedEvent(t *testing.T) {
 	require.NoError(t, h.poll(id))
 
 	assert.Len(t, h.proposedEvents(), 1)
-	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
 
@@ -544,7 +544,7 @@ func TestRunner_ACommitFailureAfterTheHandOverWritesOneEscalatedRow(t *testing.T
 		}
 	}
 	require.Len(t, escalated, 1)
-	assert.Equal(t, 2, escalated[0].Attempt)
+	assert.Equal(t, fix.HandOverTry, escalated[0].Try)
 	assert.Len(t, h.handedOverEvents(), 1, "the hand-over emits once")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
@@ -564,7 +564,7 @@ func TestRunner_ASubmitErrorLeavesTheTryCheckingAndRunsAgain(t *testing.T) {
 	require.Len(t, gate, 1)
 	assert.Equal(t, remediation.StepFailed, gate[0].Status)
 	assert.Equal(t, 1, gate[0].Failures)
-	assert.Equal(t, fix.StatusGenerating, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusGenerating, h.fixRow(1).Fix.Status)
 
 	later := t0.Add(time.Minute)
 	h.clock.set(later)
@@ -580,7 +580,7 @@ func TestRunner_ASubmitErrorLeavesTheTryCheckingAndRunsAgain(t *testing.T) {
 	assert.Equal(t, remediation.StepWaiting, rows["release_check"][0].Status)
 	assert.Equal(t, later, rows["release_check"][0].StartedAt)
 	assert.Equal(t, 1, rows["release_check"][0].Failures)
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
 }
 
 // The commit that leaves the try verifying can fail after the gate submitted
@@ -601,7 +601,7 @@ func TestRunner_AFailedVerifyingCommitResubmitsTheSameRuns(t *testing.T) {
 	submitted := h.checks.requests()
 	require.Len(t, submitted, 2, "the gate submitted a check per project")
 	assert.Equal(t, remediation.TryChecking, h.try(id, 1).Status)
-	assert.Equal(t, fix.StatusGenerating, h.attempt(1).Fix.Status, "the attempt row records no check")
+	assert.Equal(t, fix.StatusGenerating, h.fixRow(1).Fix.Status, "the fix row records no check")
 	gate := h.flowRows(id, 1)["release_check"]
 	require.Len(t, gate, 1)
 	assert.Equal(t, remediation.StepFailed, gate[0].Status)
@@ -621,11 +621,11 @@ func TestRunner_AFailedVerifyingCommitResubmitsTheSameRuns(t *testing.T) {
 	assert.Equal(t, []fix.ReleaseCheck{
 		{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: fix.PhaseQueued},
 		{Project: "svc-b", Kind: "dbt", CheckID: svcBCheck1, Phase: fix.PhaseQueued},
-	}, h.attempt(1).Fix.ReleaseChecks, "one check per project")
+	}, h.fixRow(1).Fix.ReleaseChecks, "one check per project")
 
 	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
-	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
 	assert.Len(t, h.proposedEvents(), 1)
 	assert.Len(t, h.checks.requests(), 4, "the poll submits nothing")
 }
@@ -645,7 +645,7 @@ func (h *harness) lowUpstreamConfidenceOnALaterTry() {
 }
 
 // A gate that refuses the try's drafts without starting a check fails the try
-// like a gate whose check failed: the attempt is failed with the refusal, the try
+// like a gate whose check failed: the try is failed with the refusal, the try
 // fails, and the remediation, still running, opens its next try, whose requests
 // show the refusal as the reason the gate failed. With no cross-cluster check
 // in the flow, the gate is the one to find two edits of one file.
@@ -658,7 +658,7 @@ func TestRunner_AGateThatRefusesTheDraftsStartsTheNextTry(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	const reason = "two edits change the same file: services/core/models/base.sql"
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)
 	assert.Equal(t, map[string]fix.NodeOutcome{
@@ -670,7 +670,7 @@ func TestRunner_AGateThatRefusesTheDraftsStartsTheNextTry(t *testing.T) {
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "the refused try does not end the remediation")
 	assert.Equal(t, 2, h.remediation(id).CurrentTry)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 2).Status)
-	assert.Equal(t, fix.StatusVerifying, h.attempt(2).Fix.Status)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(2).Fix.Status)
 	assert.Len(t, h.checks.requests(), 1, "only the second try started a check")
 	assert.Empty(t, h.proposedEvents())
 
@@ -685,7 +685,7 @@ func TestRunner_AGateThatRefusesTheDraftsStartsTheNextTry(t *testing.T) {
 
 	require.Equal(t, 4, h.llm.calls(), "each try asks the model once per cluster")
 	for _, req := range h.llm.requests[2:] {
-		assert.Contains(t, req.User, "### Try 1 (round 1)", "the second try sees the first")
+		assert.Contains(t, req.User, "### Round 1, try 1", "the second try sees the first")
 		assert.Contains(t, req.User, "Why the gate failed: "+reason, "and the refusal that failed it")
 	}
 }
@@ -698,10 +698,10 @@ func TestRunner_AGateRefusalWithNoTryLeftHandsOver(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	assert.Equal(t, fix.StatusFailed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusFailed, h.fixRow(1).Fix.Status)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Len(t, h.store.Tries(id), 1, "the only try is spent")
-	assert.Equal(t, fix.StatusEscalated, h.attempt(2).Fix.Status, "the tries being spent, the failing set is handed over")
+	assert.Equal(t, fix.StatusEscalated, h.fixRow(fix.HandOverTry).Fix.Status, "the tries being spent, the failing set is handed over")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.checks.requests())
 }
@@ -726,7 +726,7 @@ func TestRunner_ARefusalKeepsTheOutcomesOfClustersAlreadyHandedOver(t *testing.T
 
 			require.NoError(t, h.runner.Drive(ctx, id))
 
-			p := h.attempt(1).Fix
+			p := h.fixRow(1).Fix
 			assert.Equal(t, fix.StatusFailed, p.Status)
 			assert.Equal(t, reason, p.Rationale)
 			assert.Equal(t, map[string]fix.NodeOutcome{

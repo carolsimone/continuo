@@ -69,15 +69,15 @@ func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.Output
 		return fmt.Errorf("read verified fix %s: %w", v.FixID(), err)
 	}
 	if len(in.Approvers) > 0 {
-		if err := repo.RecordApprovers(ctx, row.ReleaseID, row.Attempt, in.Approvers); err != nil {
+		if err := repo.RecordApprovers(ctx, row.ReleaseID, row.RemediationRound, row.Try, in.Approvers); err != nil {
 			return fmt.Errorf("record the approvers of verified fix %s: %w", v.FixID(), err)
 		}
 	}
 	return p.enqueue(ctx, u, in.Remediation.TenantID, proposedEvent(row), row.SourceResolved)
 }
 
-// proposedEvent is the attempt as it was recorded. The release check decided
-// only whether the attempt may be shown, not what it says.
+// proposedEvent is the try as it was recorded. The release check decided
+// only whether the try may be shown, not what it says.
 func proposedEvent(v fix.View) fix.Fix {
 	return fix.Fix{
 		Source:           v.Source,
@@ -86,7 +86,7 @@ func proposedEvent(v fix.View) fix.Fix {
 		NodeID:           v.NodeID,
 		ResolvedNodeIDs:  append([]string(nil), v.ResolvedNodeIDs...),
 		ErrorSignature:   v.ErrorSignature,
-		Attempt:          v.Attempt,
+		Try:              v.Try,
 		Status:           fix.StatusProposed,
 		ReleaseChecks:    append([]fix.ReleaseCheck(nil), v.ReleaseChecks...),
 		ReleaseCheckID:   v.ReleaseCheckID,
@@ -101,12 +101,12 @@ func proposedEvent(v fix.View) fix.Fix {
 
 // enqueue writes the fix.proposed:v1 outbox entry for p in u's
 // transaction, its payload stored under tenantID. The entry id is derived from
-// the event id, which is derived from (release, attempt), so one attempt
+// the event id, which is derived from (release, round, try), so one try
 // announces once. sourceResolved says whether the fix rewrote real
 // version-controlled source. No inbound message drove the write, so the entry
 // carries no message-processing provenance.
 func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID string, pr fix.Fix, sourceResolved bool) error {
-	eventID := event.RemediationEventID(pr.ReleaseID, pr.Attempt)
+	eventID := event.RemediationEventID(pr.ReleaseID, pr.RemediationRound, pr.Try)
 	edits := make([]event.ProposedEdit, 0, len(pr.Edits))
 	for _, e := range pr.Edits {
 		edits = append(edits, event.ProposedEdit{
@@ -130,7 +130,7 @@ func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID st
 		Rationale:        pr.Rationale,
 		Confidence:       string(pr.Confidence),
 		Model:            pr.Model,
-		Attempt:          pr.Attempt,
+		Try:              pr.Try,
 		SourceResolved:   sourceResolved,
 		ProposedAt:       p.clock.Now().Format(time.RFC3339),
 	}

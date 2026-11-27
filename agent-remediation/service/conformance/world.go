@@ -23,10 +23,10 @@ type Script struct {
 	// MemberAnswers are the model's answers, in call order, for the clusters
 	// whose target is the named node.
 	MemberAnswers map[string][]ports.ProposeResult
-	// FailedAttempts is how many of the release's attempts have their
+	// FailedTries is how many of the release's tries have their
 	// release checks fail, with the fixture's gate errors, before they
-	// pass: a check of attempt n fails while n is at most FailedAttempts.
-	FailedAttempts int
+	// pass: a check of try n fails while n is at most FailedTries.
+	FailedTries int
 }
 
 // NewWorld builds the world of one scenario: a fresh store, and fakes that
@@ -66,8 +66,8 @@ type World interface {
 	Clusters(id uuid.UUID) []remediation.Cluster
 	// Steps is every journal row of the remediation.
 	Steps(id uuid.UUID) []remediation.StepRun
-	// Attempts is every fix row the store holds.
-	Attempts() []Attempt
+	// Tries is every fix row the store holds.
+	FixRows() []FixRow
 	// Outbox is every outbox entry the store holds.
 	Outbox() []outbox.Entry
 	// ModelCalls is every call that reached the scripted model, past the
@@ -84,9 +84,9 @@ type ModelCall struct {
 	Request prompt.ProposeRequest
 }
 
-// Attempt is one fix row as the store holds it, with the error its
+// FixRow is one fix row as the store holds it, with the error its
 // release check reported.
-type Attempt struct {
+type FixRow struct {
 	Fix         fix.Fix
 	VerifyError string
 }

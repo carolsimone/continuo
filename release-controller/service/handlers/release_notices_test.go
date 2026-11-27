@@ -50,7 +50,7 @@ func TestReleaseNotices_AReleaseCheckGetsNoNoticeAndNoPreflight(t *testing.T) {
 	var logBuf bytes.Buffer
 	d := &Deps{Logger: slog.New(slog.NewTextHandler(&logBuf, nil)), Family: warehouse.SchemaBound, Engine: "postgres"}
 
-	v := releasecheck.NewFix("verify-1", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, time.Unix(0, 0))
+	v := releasecheck.NewFix("verify-1", "finance", "tag", "rel-orig", 1, 1, "", release.ManifestKindDbt, time.Unix(0, 0))
 	notices, preflights := releaseNotices(d, v, release.Topology{candSeed, view}, release.Topology{prodSeed})
 	require.NotNil(t, notices)
 	require.NotNil(t, preflights)

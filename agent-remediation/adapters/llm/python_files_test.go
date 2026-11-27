@@ -58,7 +58,7 @@ const anthropicPythonFixResponse = `{
 
 // TestAnthropic_ParsesUpdatedFiles verifies that the Anthropic adapter reads a
 // multi-file answer back off the wire. Without it the python contract prompt
-// receives an empty file list and records every attempt as failed, no matter
+// receives an empty file list and records every try as failed, no matter
 // what the model actually proposed.
 func TestAnthropic_ParsesUpdatedFiles(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

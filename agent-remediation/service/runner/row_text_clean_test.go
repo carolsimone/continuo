@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
 
-// A failed release check records what its nodes printed, on the attempt's row as
+// A failed release check records what its nodes printed, on the try's row as
 // verify_error and on the run's own entry, and both are shown: neither holds a
 // credential or an email address a node's error line echoed.
 func TestRunner_GateFailRecordsTheVerifyErrorCleaned(t *testing.T) {
@@ -22,7 +22,7 @@ func TestRunner_GateFailRecordsTheVerifyErrorCleaned(t *testing.T) {
 
 	require.NoError(t, h.poll(id))
 
-	first := h.attempt(1)
+	first := h.fixRow(1)
 	assert.Equal(t, fix.StatusFailed, first.Fix.Status)
 	assert.Equal(t, "svc-a: "+cleanDetail, first.VerifyError)
 	require.Len(t, first.Fix.ReleaseChecks, 1)
@@ -42,8 +42,8 @@ func (h *harness) failStepWithTheDirtyError(id uuid.UUID) {
 	require.Equal(h.t, remediation.StatusSystemFailure, h.remediation(id).Status)
 }
 
-// The reason a remediation stopped holds the last error of its step, and the attempt's
-// row is failed with it, as an attempt still drafting and as one being verified: the
+// The reason a remediation stopped holds the last error of its step, and the try's
+// row is failed with it, as a try still drafting and as one being verified: the
 // row keeps what the error said, with no credential and no email address.
 func TestSweeper_ASystemFailureFailsADraftingRowWithAReasonThatIsCleaned(t *testing.T) {
 	h := newHarness(t)
@@ -51,10 +51,10 @@ func TestSweeper_ASystemFailureFailsADraftingRowWithAReasonThatIsCleaned(t *test
 
 	h.failStepWithTheDirtyError(id)
 
-	row := h.attempt(1)
+	row := h.fixRow(1)
 	assert.Equal(t, fix.StatusFailed, row.Fix.Status)
 	assert.Contains(t, row.Fix.Rationale, cleanDetail)
-	requireClean(t, row.Fix.Rationale, "the reason of the drafting attempt's row")
+	requireClean(t, row.Fix.Rationale, "the reason of the drafting try's row")
 }
 
 func TestRunner_ASystemFailureFailsAVerifyingRowWithAReasonThatIsCleaned(t *testing.T) {
@@ -70,8 +70,8 @@ func TestRunner_ASystemFailureFailsAVerifyingRowWithAReasonThatIsCleaned(t *test
 	require.NoError(t, h.poll(id))
 
 	require.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
-	row := h.attempt(1)
+	row := h.fixRow(1)
 	assert.Equal(t, fix.StatusFailed, row.Fix.Status)
 	assert.Contains(t, row.VerifyError, cleanDetail)
-	requireClean(t, row.VerifyError, "the reason of the verifying attempt's row")
+	requireClean(t, row.VerifyError, "the reason of the verifying try's row")
 }

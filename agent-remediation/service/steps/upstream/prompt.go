@@ -70,7 +70,7 @@ func (p *Prompt) Propose(ctx context.Context, in step.PromptInput, m step.Model)
 	if err != nil {
 		return step.PromptOutput{}, fmt.Errorf("llm propose: %w", err)
 	}
-	base := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source", f.Trigger.ReleaseID, target.NodeID, f.Attempt)
+	base := f.ArtifactPrefix(target.NodeID) + ".source"
 	return step.PromptOutput{Draft: remediation.Draft{
 		Edits: []remediation.Edit{{
 			Path:         fullPath,

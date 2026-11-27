@@ -17,8 +17,8 @@ import (
 
 func validFixInput() ReceiveFixRequest {
 	return ReceiveFixRequest{
-		CheckID: "verify-rel-1-core-a1", Project: "core", ImageTag: "img:1", Kind: "dbt",
-		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
+		CheckID: "verify-rel-1-core-r1-t1", Project: "core", ImageTag: "img:1", Kind: "dbt",
+		VerifiesReleaseID: "rel-1", RemediationRound: 1, Try: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-r1-t1/source-overlay.tar.gz",
 	}
 }
 
@@ -40,9 +40,9 @@ func TestHandleReceiveFix_Accepted(t *testing.T) {
 	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	assert.Equal(t, "verify-rel-1-core-a1", body["check_id"])
+	assert.Equal(t, "verify-rel-1-core-r1-t1", body["check_id"])
 
-	stored := releases.releases["verify-rel-1-core-a1"]
+	stored := releases.releases["verify-rel-1-core-r1-t1"]
 	require.NotNil(t, stored)
 	assert.Equal(t, releasecheck.KindFix, stored.Kind())
 }
@@ -51,9 +51,10 @@ func TestHandleReceiveFix_ValidationIs400(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, _ := newRetryRemediationDeps(now)
 	for name, mutate := range map[string]func(*ReceiveFixRequest){
-		"missing check_id":  func(in *ReceiveFixRequest) { in.CheckID = "" },
-		"bad kind":          func(in *ReceiveFixRequest) { in.Kind = "yaml" },
-		"attempt below one": func(in *ReceiveFixRequest) { in.Attempt = 0 },
+		"missing check_id": func(in *ReceiveFixRequest) { in.CheckID = "" },
+		"bad kind":         func(in *ReceiveFixRequest) { in.Kind = "yaml" },
+		"try below one":    func(in *ReceiveFixRequest) { in.Try = 0 },
+		"round below one":  func(in *ReceiveFixRequest) { in.RemediationRound = 0 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := validFixInput()
@@ -94,7 +95,7 @@ func TestHandleReceiveFix_CandidateIDConflictIs409(t *testing.T) {
 func TestHandleReceiveCandidate_FixIDConflictIs409(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	releases.releases["check-9"] = releasecheck.NewFix("check-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now)
+	releases.releases["check-9"] = releasecheck.NewFix("check-9", "core", "img", "rel-0", 1, 1, "", release.ManifestKindDbt, now)
 
 	body, _ := json.Marshal(ReceiveCandidateRequest{
 		Project: "core", ReleaseID: "check-9", ImageTag: "img", Repo: "org/r", CommitSHA: "sha",
@@ -136,18 +137,19 @@ func TestHandleReceiveCandidate_RefusesFixFieldsWith400(t *testing.T) {
 // against a raw JSON body.
 func TestHandleReceiveFix_StoresEveryWireFieldAsSent(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
-	raw := `{"check_id":"verify-rel-7-core-a3","project":"core","image_tag":"img:7","kind":"dbt",` +
-		`"verifies_release_id":"rel-7","attempt":3,"source_overlay_uri":"s3://b/core/overlay.tar.gz"}`
+	raw := `{"check_id":"verify-rel-7-core-r2-t3","project":"core","image_tag":"img:7","kind":"dbt",` +
+		`"verifies_release_id":"rel-7","remediation_round":2,"try":3,"source_overlay_uri":"s3://b/core/overlay.tar.gz"}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/release-checks", strings.NewReader(raw))
 	newTestServer(deps).Routes().ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusAccepted, rec.Code)
-	stored := releases.releases["verify-rel-7-core-a3"]
+	stored := releases.releases["verify-rel-7-core-r2-t3"]
 	require.NotNil(t, stored)
 	assert.Equal(t, releasecheck.KindFix, stored.Kind())
 	assert.Equal(t, "rel-7", stored.VerifiesReleaseID())
-	assert.Equal(t, 3, stored.Attempt())
+	assert.Equal(t, 2, stored.RemediationRound())
+	assert.Equal(t, 3, stored.Try())
 	assert.Equal(t, "s3://b/core/overlay.tar.gz", stored.SourceOverlayURI())
 	assert.Equal(t, "img:7", stored.ImageTags()["core"])
 	assert.Equal(t, release.ManifestKindDbt, stored.ManifestKind())

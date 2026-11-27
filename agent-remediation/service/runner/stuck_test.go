@@ -49,7 +49,7 @@ func (h *harness) countRemediationFailures(id uuid.UUID, n int) {
 	}
 }
 
-// deadLetteredReason is what the attempt row of a remediation that ended as a
+// deadLetteredReason is what the fix row of a remediation that ended as a
 // system failure is failed with: the remediation's failure, and how to resume
 // it.
 func deadLetteredReason(rem remediation.Remediation) string {
@@ -58,7 +58,7 @@ func deadLetteredReason(rem remediation.Remediation) string {
 
 // requireEndedAsStuck checks that the remediation ended as a system failure
 // whose reason holds want, with its current try left in tryStatus, the status
-// it stopped in, for a redrive to resume, the attempt's row failed with the
+// it stopped in, for a redrive to resume, the try's row failed with the
 // reason and how to resume it, and its trigger dead-lettered once.
 func (h *harness) requireEndedAsStuck(id uuid.UUID, want string, tryStatus remediation.TryStatus) {
 	h.t.Helper()
@@ -66,8 +66,8 @@ func (h *harness) requireEndedAsStuck(id uuid.UUID, want string, tryStatus remed
 	require.Equal(h.t, remediation.StatusSystemFailure, rem.Status, rem.Failure)
 	assert.Contains(h.t, rem.Failure, want)
 	assert.Equal(h.t, tryStatus, h.try(id, rem.CurrentTry).Status, "the try is left where it stopped")
-	p := h.attempt(h.try(id, rem.CurrentTry).Attempt)
-	assert.Equal(h.t, fix.StatusFailed, p.Fix.Status, "the attempt row is failed with the reason")
+	p := h.fixRowIn(rem.Round, rem.CurrentTry)
+	assert.Equal(h.t, fix.StatusFailed, p.Fix.Status, "the fix row is failed with the reason")
 	reason := p.Fix.Rationale
 	if tryStatus == remediation.TryVerifying {
 		reason = p.VerifyError
@@ -187,7 +187,7 @@ func TestRunner_NextTryEndsAStuckRemediationInsteadOfOpeningATry(t *testing.T) {
 
 // A verifying try has no deadline that ends it, but the gate's poll applies
 // the other stuck rules before it reads the gate: a gate row failed five times
-// in a row, or a remediation that did, ends the remediation, with the attempt
+// in a row, or a remediation that did, ends the remediation, with the try
 // row failed and no status read.
 func TestRunner_PollGateEndsAStuckRemediationBeforeItReadsTheGate(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -222,7 +222,7 @@ func TestRunner_PollGateEndsAStuckRemediationBeforeItReadsTheGate(t *testing.T) 
 			assert.Zero(t, h.checks.statusReads(), "the gate is not read")
 			assert.Empty(t, h.proposedEvents())
 			assert.Equal(t, []fix.ReleaseCheck{{Project: "svc-a", Kind: "dbt", CheckID: svcACheck1, Phase: fix.PhaseQueued}},
-				h.attempt(1).Fix.ReleaseChecks, "the attempt row keeps the runs it recorded")
+				h.fixRow(1).Fix.ReleaseChecks, "the fix row keeps the runs it recorded")
 		})
 	}
 }

@@ -39,7 +39,7 @@ type stuckEnder struct {
 // remediation and, when it is running and stuck, records it as a system
 // failure: the remediation moves to system_failure with the reason, its
 // current try is left in the status it is in, for a redrive of the trigger to
-// resume, the attempt row of that try is failed with the reason and how to
+// resume, the fix row of that try is failed with the reason and how to
 // resume it, and the heal trigger the remediation answers to is dead-lettered
 // on consumer.dead_letter:v1 (deadLetterEntry). Nothing claims, polls or
 // sweeps a remediation that is not running, so the try waits for the redrive.
@@ -76,7 +76,7 @@ func (e stuckEnder) endIfStuck(ctx context.Context, id uuid.UUID, owner string) 
 	if err := repo.SaveRemediation(ctx, rem); err != nil {
 		return false, fmt.Errorf("save remediation: %w", err)
 	}
-	if err := failAttemptRow(ctx, u.FixRepo(), snap, deadLetteredReason(why.reason, rem.ID)); err != nil {
+	if err := failFixRow(ctx, u.FixRepo(), snap, deadLetteredReason(why.reason, rem.ID)); err != nil {
 		return false, err
 	}
 	entry, err := deadLetterEntry(snap, why, now)
@@ -101,7 +101,7 @@ func (e stuckEnder) endIfStuck(ctx context.Context, id uuid.UUID, owner string) 
 // one holds at the runner's clock, the remediation is ended through the path
 // the worker and the sweeper use: one transaction that holds the lease, reads
 // the remediation again and, when it is still stuck, records the system
-// failure, fails the attempt's row and dead-letters the trigger. ended reports
+// failure, fails the try's row and dead-letters the trigger. ended reports
 // whether it was ended. A lost lease is repository.ErrLeaseLost, with nothing
 // written.
 func (r *Runner) endIfStuck(ctx context.Context, run tryRun) (ended bool, err error) {
@@ -111,7 +111,7 @@ func (r *Runner) endIfStuck(ctx context.Context, run tryRun) (ended bool, err er
 	return stuckEnder{newUoW: r.d.NewUoW, clock: r.clock, logger: r.logger, metrics: r.metrics}.endIfStuck(ctx, run.snap.Remediation.ID, r.d.Owner)
 }
 
-// deadLetteredReason is what the attempt row of a remediation that ended as a
+// deadLetteredReason is what the fix row of a remediation that ended as a
 // system failure is failed with: why it ended, and how to resume it.
 func deadLetteredReason(reason string, id uuid.UUID) string {
 	return fmt.Sprintf("%s; dead-lettered as remediation %s, redrive it once the cause is fixed", reason, id)
@@ -192,13 +192,13 @@ func deliveryCount(rem remediation.Remediation, why stuck) int64 {
 	return 1
 }
 
-// failAttemptRow fails the fix row of the current try's attempt with
-// reason, cleaned (fix.CleanedReason), by what the row is: an attempt still generating is failed, and an
-// attempt whose release checks are still being judged is failed as a release
+// failFixRow fails the fix row of the current try with
+// reason, cleaned (fix.CleanedReason), by what the row is: a try still generating is failed, and a
+// try whose release checks are still being judged is failed as a release
 // check that did not pass, with the checks it recorded. A try with no row of its own leaves
 // the release's in-flight row failed, if it has one. Any other row already
-// says how its attempt ended.
-func failAttemptRow(ctx context.Context, repo repository.FixRepository, snap remediation.Snapshot, reason string) error {
+// says how its try ended.
+func failFixRow(ctx context.Context, repo repository.FixRepository, snap remediation.Snapshot, reason string) error {
 	// The reason holds the last error of a step, which can echo what a source or a
 	// service printed, and the row shows it.
 	reason = fix.CleanedReason(reason)
@@ -209,18 +209,18 @@ func failAttemptRow(ctx context.Context, repo repository.FixRepository, snap rem
 			return fmt.Errorf("list the fixes of release %s: %w", releaseID, err)
 		}
 		for _, v := range views {
-			if v.Attempt != snap.Try.Attempt {
+			if v.RemediationRound != snap.Remediation.Round || v.Try != snap.Try.Try {
 				continue
 			}
 			switch v.Status {
 			case fix.StatusVerifying:
 				if _, err := repo.MarkVerifyFailed(ctx, v.ID, reason, v.ReleaseChecks); err != nil {
-					return fmt.Errorf("fail the verifying attempt row: %w", err)
+					return fmt.Errorf("fail the verifying fix row: %w", err)
 				}
 				return nil
 			case fix.StatusGenerating:
 				if _, err := repo.FailGenerating(ctx, releaseID, reason); err != nil {
-					return fmt.Errorf("fail the in-flight attempt row: %w", err)
+					return fmt.Errorf("fail the in-flight fix row: %w", err)
 				}
 				return nil
 			}
@@ -228,7 +228,7 @@ func failAttemptRow(ctx context.Context, repo repository.FixRepository, snap rem
 		}
 	}
 	if _, err := repo.FailGenerating(ctx, releaseID, reason); err != nil {
-		return fmt.Errorf("fail the in-flight attempt row: %w", err)
+		return fmt.Errorf("fail the in-flight fix row: %w", err)
 	}
 	return nil
 }

@@ -365,7 +365,7 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 // fix's release check instead of a candidate.
 func putCompilingFix(t *testing.T, store *fakeStore, deps *handlers.Deps, releaseID string) {
 	t.Helper()
-	store.SeedRelease(releasecheck.NewFix(releaseID, "svc-a", "sha-compile", "rel-1", 1, "", release.ManifestKindDbt, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix(releaseID, "svc-a", "sha-compile", "rel-1", 1, 1, "", release.ManifestKindDbt, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(ctx(t), deps))
 
 	r, err := store.GetRelease(releaseID)

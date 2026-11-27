@@ -41,7 +41,7 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 
 	snap := remediation.Snapshot{
 		Remediation: remediation.Remediation{ID: uuid.New(), Round: 2, CurrentTry: 1},
-		Try:         &remediation.Try{Try: 1, Attempt: 4, Status: remediation.TryFailed},
+		Try:         &remediation.Try{Try: 1, Status: remediation.TryFailed},
 		Clusters: []remediation.Cluster{
 			{Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 2},
 			{Cluster: 2, Kind: workflow.ClusterSingle, TargetNodeID: "model.b", Members: []string{"model.b"}, TypeName: "dbt-validation",
@@ -82,7 +82,7 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 	assert.Equal(t, got, again, "the record does not depend on the order the snapshot lists its rows and clusters in")
 
 	assert.Equal(t, remediation.TryRecord{
-		Round: 2, Try: 1, Attempt: 4,
+		Round: 2, Try: 1,
 		Clusters: []remediation.ClusterRecord{
 			{
 				Type: "dbt-validation", TargetNodeID: "model.a", Members: []string{"model.a"},
@@ -109,7 +109,7 @@ func TestTryRecordOf_RefusesASnapshotWithNoTryOrAnUnreadableRow(t *testing.T) {
 
 	snap := remediation.Snapshot{
 		Remediation: remediation.Remediation{ID: uuid.New(), Round: 1, CurrentTry: 1},
-		Try:         &remediation.Try{Try: 1, Attempt: 1},
+		Try:         &remediation.Try{Try: 1},
 		Clusters:    []remediation.Cluster{{Cluster: 1, Members: []string{"model.a"}}},
 		Steps: []remediation.StepRun{{
 			Try: 1, Cluster: 1, Step: remediation.StepPreflight, Kind: remediation.KindRunner, Round: 1,
@@ -129,7 +129,7 @@ func TestTryRecordOf_AMovedFileIsShownAsARename(t *testing.T) {
 	}}}
 	snap := remediation.Snapshot{
 		Remediation: remediation.Remediation{ID: uuid.New(), Round: 1, CurrentTry: 1},
-		Try:         &remediation.Try{Try: 1, Attempt: 1, Status: remediation.TryFailed},
+		Try:         &remediation.Try{Try: 1, Status: remediation.TryFailed},
 		Clusters: []remediation.Cluster{{
 			Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "analytics.table_b", Members: []string{"analytics.table_b"},
 			TypeName: "duplicate-table", Status: remediation.ClusterChecked, Round: 1,

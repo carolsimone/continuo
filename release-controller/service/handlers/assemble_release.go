@@ -56,7 +56,7 @@ func AssembleManifestSet(existing []*release.ProductionPointer, bucket, changedP
 // weaker check, but a running one.
 //
 // Only the rejected release's own delta is restored. Sibling edits the same
-// attempt made in OTHER projects are not co-verified: one release is one
+// try made in OTHER projects are not co-verified: one release is one
 // project delta, so each fix's release check sees its own change plus the rejected
 // candidate. The follow-up release that runs after the fix PR is merged remains
 // the gate that judges the whole change together.

@@ -22,7 +22,7 @@ var ErrUnmappedEdit = errors.New("edit belongs to no configured project")
 // least one edit to something that is not a python node's contract. A
 // release check parses one kind, so whichever were chosen would verify only
 // half the change and silently ignore the rest.
-var ErrMixedManifestKinds = errors.New("mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind")
+var ErrMixedManifestKinds = errors.New("mixes a python contract with dbt edits in one try; a release verifies one manifest kind")
 
 // ErrDuplicateEditPath marks a try carrying two edits to one repository path. A
 // source overlay holds one file per path and a python project is verified by

@@ -89,7 +89,7 @@ func TestSweeper_EndsARemediationWhoseTryCannotOpen(t *testing.T) {
 	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run, the last time with: ")
 	assert.Contains(t, rem.Failure, "commit failed")
 	assert.Empty(t, rem.LeaseOwner, "the sweeper lets go of the lease")
-	assert.Empty(t, h.fixes(), "no attempt row was ever written")
+	assert.Empty(t, h.fixes(), "no fix row was ever written")
 }
 
 // The count is of failures before a try could open: a try that opens clears
@@ -136,7 +136,7 @@ func TestRunner_NextTryClearsTheRemediationsFailuresAsTheTryOpens(t *testing.T) 
 
 // The gate's poller loads the remediation too: a verifying remediation whose
 // flow the files no longer define has each poll counted on its own row, and
-// the sweeper ends it at the fifth, failing the attempt's verifying row with
+// the sweeper ends it at the fifth, failing the try's verifying row with
 // the reason.
 func TestSweeper_EndsAVerifyingRemediationThatCannotBeLoaded(t *testing.T) {
 	h := newHarness(t)
@@ -159,9 +159,9 @@ func TestSweeper_EndsAVerifyingRemediationThatCannotBeLoaded(t *testing.T) {
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
 	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status, "the try is left for a redrive to resume")
-	row := h.attempt(1)
+	row := h.fixRow(1)
 	assert.Equal(t, fix.StatusFailed, row.Fix.Status)
-	assert.Equal(t, deadLetteredReason(rem), row.VerifyError, "the verifying attempt row is failed with the reason")
+	assert.Equal(t, deadLetteredReason(rem), row.VerifyError, "the verifying fix row is failed with the reason")
 	assert.Equal(t, []string{svcACheck1}, []string{row.Fix.ReleaseChecks[0].CheckID}, "it keeps the run it recorded")
 }
 
@@ -203,14 +203,14 @@ func TestSweeper_OnlyFailedPollLoadsInARowEndAVerifyingRemediation(t *testing.T)
 	failPolls(remediationFailureLimit - 1)
 	h.sweepUnclaimed(id)
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "four in a row after a good poll do not end it")
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
 
 	failPolls(1)
 	h.sweepUnclaimed(id)
 	rem = h.remediation(id)
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status, "the fifth in a row ends it")
 	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
-	assert.Equal(t, fix.StatusFailed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusFailed, h.fixRow(1).Fix.Status)
 }
 
 // The same in a drafting try, where every step loads the remediation first: a

@@ -169,7 +169,7 @@ func TestContractPackages_ARefusalGoesBackToTheModel(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterChecked, c.Status)
 	assert.Equal(t, 2, c.Round)
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status, "the revised draft goes on to the gate")
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status, "the revised draft goes on to the gate")
 }
 
 // With no round left, the tool's refusal ends the cluster as any other
@@ -196,7 +196,7 @@ func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T
 // A release that records no package list of the project's image is known
 // before any draft: the image_packages context step declines the cluster with
 // the reason, no model is called and nothing is packed. The node is handed
-// over with the code declined, on the attempt row and on the
+// over with the code declined, on the fix row and on the
 // remediation.handed_over event.
 func TestImagePackages_AReleaseWithNoListDeclinesBeforeTheModel(t *testing.T) {
 	packager := &refusingPackager{}
@@ -216,7 +216,7 @@ func TestImagePackages_AReleaseWithNoListDeclinesBeforeTheModel(t *testing.T) {
 	want := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: noPackages.Error(), Code: model.HandoverReasonDeclined}
 	assert.Equal(t, &want, c.Outcome)
 	assert.Empty(t, h.checks.requests())
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusSkipped, p.Status)
 	assert.Equal(t, map[string]fix.NodeOutcome{contractNodeID: want}, p.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode(contractNodeID, want)), h.handedOverEvent())
@@ -282,14 +282,14 @@ func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) 
 	h.artifacts.mu.Unlock()
 	assert.Empty(t, written, "no artifact is written for bytes that are not a bundle")
 	const reason = "the packaged contract is not an ODCS producer bundle: project svc-a"
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)
 	refused := fix.NodeOutcome{Status: fix.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits}
 	assert.Equal(t, map[string]fix.NodeOutcome{contractNodeID: refused}, p.NodeOutcomes)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status, "the only try being spent, the remediation ends")
-	escalated := h.attempt(2).Fix
+	escalated := h.fixRow(fix.HandOverTry).Fix
 	assert.Equal(t, fix.StatusEscalated, escalated.Status, "the failing set is handed over")
 	unverifiable := fix.NodeOutcome{
 		Status: fix.StatusEscalated,

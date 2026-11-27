@@ -56,7 +56,7 @@ Rules:
 - Do not invent a column the evidence does not show the file carrying, and do not drop a declared column merely to make the check pass unless the evidence shows that column is genuinely absent from the file's header.
 - Each contract file declares exactly one node. Leave the contract of every node other than the failing one unchanged, and never declare the failing node in a second file.
 - Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
-- When earlier attempts are shown, read what each one changed and why its release check failed, and do not repeat a change that has already been rejected.
+- When earlier tries are shown, read what each one changed and why its release check failed, and do not repeat a change that has already been rejected.
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
 - Always respond by calling the propose_csv_fix tool.`
 

@@ -79,8 +79,8 @@ func (m *fakeModel) Propose(_ context.Context, req prompt.ProposeRequest) (ports
 
 func failure() remediation.Failure {
 	return remediation.Failure{
-		Trigger: remediation.Trigger{ReleaseID: "rel-1", Repo: "owner/demo", CommitSHA: "abc"},
-		Attempt: 2,
+		Trigger: remediation.Trigger{ReleaseID: "rel-1", Round: 1, Repo: "owner/demo", CommitSHA: "abc"},
+		Try:     2,
 		Target: remediation.TriggerNode{
 			NodeID: "analytics.table_b", RelationID: "analytics.table_b", Project: "marketing",
 			FilePath: "models/table_b.sql", OtherProject: "service-1", OtherFilePath: "services/service-1/models/table_b.sql",
@@ -220,8 +220,8 @@ func TestPrompt_ShowsThePlanAndReadsTheMoveAndTheReferences(t *testing.T) {
 	assert.Equal(t, remediation.Edit{
 		Path: newPath, RenamedFrom: oldPath, Original: "select 1 as id\n", Content: "select 1 as id\n",
 		TargetNodeID: "analytics.table_b",
-		ContentKey:   "proposed-fix/rel-1/analytics.table_b/attempt-2/edit-0.content",
-		DiffKey:      "proposed-fix/rel-1/analytics.table_b/attempt-2/edit-0.diff",
+		ContentKey:   "proposed-fix/rel-1/analytics.table_b/round-1/try-2/edit-0.content",
+		DiffKey:      "proposed-fix/rel-1/analytics.table_b/round-1/try-2/edit-0.diff",
 	}, d.Edits[0])
 	assert.Empty(t, d.Edits[1].RenamedFrom)
 	assert.Equal(t, references().Files[ymlPath], d.Edits[1].Original)

@@ -3,45 +3,20 @@ package event
 import (
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPROpenedEventIDVariesByAttempt(t *testing.T) {
-	a1 := PROpenedEventID("r1", 1, "")
-	a1b := PROpenedEventID("r1", 1, "")
-	a2 := PROpenedEventID("r1", 2, "")
-	require.Equal(t, a1, a1b, "same (release,attempt,project) must be stable")
-	require.NotEqual(t, a1, a2, "different attempt must differ")
-}
-
-func TestPROpenedEventIDDiffersAcrossInputs(t *testing.T) {
-	id1 := PROpenedEventID("r-1", 1, "")
-	id2 := PROpenedEventID("r-2", 1, "")
-	id3 := PROpenedEventID("r-1", 2, "")
-	require.NotEqual(t, id1, id2, "different releaseID must differ")
-	require.NotEqual(t, id1, id3, "different attempt must differ")
-}
-
-// TestPROpenedEventID_LegacyProjectMatchesPreChangeValue pins the legacy ""
-// project to the exact id the original two-argument PROpenedEventID(releaseID,
-// attempt) signature produced, so a pr_opened fact emitted for a
-// whole-fix (unsplit) PR keeps deduping to the same downstream event id
-// across the signature change that added the per-project split's project
-// argument.
-func TestPROpenedEventID_LegacyProjectMatchesPreChangeValue(t *testing.T) {
-	// The pre-change body: NewSHA1(namespace, releaseID+"|"+itoa(attempt)).
-	legacy := uuid.NewSHA1(prOpenedNamespace, []byte("r"+"|"+itoa(1)))
-	require.Equal(t, legacy, PROpenedEventID("r", 1, ""),
-		"project \"\" must reproduce the pre-change id byte-for-byte")
-}
-
-// TestPROpenedEventID_PerProjectDistinct verifies two owning-project PRs of the
-// same (release, attempt) get distinct ids, so each per-project PR dedups on
-// its own key rather than colliding.
-func TestPROpenedEventID_PerProjectDistinct(t *testing.T) {
-	require.NotEqual(t, PROpenedEventID("r", 1, "core"), PROpenedEventID("r", 1, "finance"),
-		"two projects of the same attempt must produce distinct ids")
-	require.NotEqual(t, PROpenedEventID("r", 1, ""), PROpenedEventID("r", 1, "core"),
-		"the legacy \"\" id must not collide with a per-project id")
+// TestPROpenedEventID_KeyedOnReleaseRoundTryAndProject verifies the id is
+// stable for the same (release, round, try, project) and distinct when any of
+// them changes, so each per-project PR dedups on its own key.
+func TestPROpenedEventID_KeyedOnReleaseRoundTryAndProject(t *testing.T) {
+	first := PROpenedEventID("r1", 1, 1, "")
+	require.Equal(t, first, PROpenedEventID("r1", 1, 1, ""), "the same PR must mint the same id")
+	require.NotEqual(t, first, PROpenedEventID("r2", 1, 1, ""), "another release must differ")
+	require.NotEqual(t, first, PROpenedEventID("r1", 2, 1, ""), "try 1 of another round must differ")
+	require.NotEqual(t, first, PROpenedEventID("r1", 1, 2, ""), "another try must differ")
+	require.NotEqual(t, PROpenedEventID("r1", 1, 1, "core"), PROpenedEventID("r1", 1, 1, "finance"),
+		"two projects of the same try must produce distinct ids")
+	require.NotEqual(t, first, PROpenedEventID("r1", 1, 1, "core"),
+		"the whole-fix \"\" id must not collide with a per-project id")
 }

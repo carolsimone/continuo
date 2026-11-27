@@ -373,7 +373,7 @@ func TestSuite_AnAnswerPreflightRefusesFailsTheScenariosThatExpectAFix(t *testin
 		conformance.PreflightRevisionPasses: "the script holds 2 " + unscripted + "3",
 		conformance.GateFailsNextTryLearns:  "the script holds 2 " + unscripted + "3",
 		// Three refused answers spend the first try's three rounds.
-		conformance.TriesSpent:    "the attempts are [failed], want [failed failed failed escalated]",
+		conformance.TriesSpent:    "the tries are [failed], want [failed failed failed escalated]",
 		conformance.ModelDeclines: "the script holds 2 " + unscripted + "3",
 		conformance.Redelivery:    "the script holds 2 " + unscripted + "3",
 	} {
@@ -446,7 +446,7 @@ func TestSuite_AFailureNamesItsProjectsAndNodesInSortedOrder(t *testing.T) {
 	base := onlyTypes(builtinSuite(t), "dbt-compile")
 	const (
 		runsText = "project alpha had 1 release checks and no edit; project zeta had 1 release checks and no edit"
-		gateText = `does not name alpha.node's error "alpha broke"; attempt 1's verify error`
+		gateText = `does not name alpha.node's error "alpha broke"; try 1's verify error`
 	)
 
 	var texts []string
@@ -503,7 +503,7 @@ func withRounds(s conformance.Suite, rounds, tries int) conformance.Suite {
 // Every scenario runs for every type whatever its rounds and its flow's
 // tries: a type of one round has its refused draft handed over where a type
 // that revises passes its revision, and a flow of one try hands over the
-// attempt whose release check failed.
+// try whose release check failed.
 func TestSuite_EveryScenarioHoldsForTypesOfOneAndOfTwoRounds(t *testing.T) {
 	for _, tc := range []struct{ rounds, tries int }{{1, 3}, {2, 3}, {1, 1}} {
 		t.Run(fmt.Sprintf("rounds %d tries %d", tc.rounds, tc.tries), func(t *testing.T) {

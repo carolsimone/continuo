@@ -60,7 +60,7 @@ func TestIntegration_ConcurrentFirstFixSubmissionsOfOneIDHaveOneWinner(t *testin
 				ctx := context.WithValue(context.Background(), submitterKey{}, tag)
 				errs[i] = handlers.ReceiveFix(ctx, deps, handlers.ReceiveFixInput{
 					CheckID: "verify-race-1", Project: "service-1", ImageTag: tag, Kind: "dbt",
-					VerifiesReleaseID: "rel-0", Attempt: 1,
+					VerifiesReleaseID: "rel-0", Round: 1, Try: 1,
 				})
 			}(i, tag)
 		}

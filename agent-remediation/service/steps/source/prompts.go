@@ -179,8 +179,8 @@ func shownFiles(files remediation.SourceFiles) []prompt.NamedFile {
 }
 
 // sourceArtifactKeys are the keys under which the runner stores the corrected
-// source and its diff for the failure's attempt.
+// source and its diff for the failure's try.
 func sourceArtifactKeys(f remediation.Failure) (contentKey, diffKey string) {
-	base := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source", f.Trigger.ReleaseID, f.Target.NodeID, f.Attempt)
+	base := f.ArtifactPrefix(f.Target.NodeID) + ".source"
 	return base + ".sql", base + ".diff"
 }

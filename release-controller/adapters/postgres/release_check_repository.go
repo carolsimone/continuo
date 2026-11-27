@@ -50,7 +50,7 @@ const checkColumns = `check_id, check_kind, status, image_tags, changed_project,
 	validation_node_ids, fail_reason, fail_detail, failing_nodes,
 	per_node_results, created_at, transitions, code_bundle_uri, manifest_kind,
 	bootstrap, repo, commit_sha, remediation_round, rejection_payload,
-	verifies_release_id, attempt, source_overlay_uri,
+	verifies_release_id, try, source_overlay_uri,
 	candidate_topology_uri, candidate_topology_sha256, candidate_node_count,
 	rebaseline, notices,
 	candidate_contract_bundle_uri, candidate_contract_bundle_sha256, continuo_contracts,
@@ -82,7 +82,7 @@ type checkRow struct {
 	RemediationRound  int            `db:"remediation_round"`
 	RejectionPayload  []byte         `db:"rejection_payload"`
 	VerifiesReleaseID string         `db:"verifies_release_id"`
-	Attempt           int            `db:"attempt"`
+	Try               int            `db:"try"`
 	SourceOverlayURI  string         `db:"source_overlay_uri"`
 
 	CandidateTopologyURI    sql.NullString `db:"candidate_topology_uri"`
@@ -319,7 +319,7 @@ func encodeCheck(check *releasecheck.Check) ([]any, error) {
 		pq.StringArray(check.ValidationNodeIDs()), failReason, check.FailDetail(), pq.StringArray(check.FailingNodes()),
 		perNodeJSON, check.CreatedAt(), transitionsJSON, check.CodeBundleURI(), string(check.ManifestKind()),
 		check.IsBootstrap(), check.Repo(), check.CommitSHA(), max(check.RemediationRound(), 1), rejectionPayload,
-		check.VerifiesReleaseID(), check.Attempt(), check.SourceOverlayURI(),
+		check.VerifiesReleaseID(), check.Try(), check.SourceOverlayURI(),
 		topologyURI, topologySHA256, nodeCount, check.IsRebaseline(), noticesJSON,
 		bundle.URI, bundle.SHA256, check.ContinuoContracts(),
 		parseMs, contractsMs, contractsByFamily,
@@ -403,7 +403,7 @@ func rowToCheck(row checkRow) (*releasecheck.Check, error) {
 		RemediationRound:  row.RemediationRound,
 		RejectionPayload:  row.RejectionPayload,
 		VerifiesReleaseID: row.VerifiesReleaseID,
-		Attempt:           row.Attempt,
+		Try:               row.Try,
 		SourceOverlayURI:  row.SourceOverlayURI,
 	}), nil
 }

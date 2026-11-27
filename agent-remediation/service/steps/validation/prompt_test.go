@@ -137,8 +137,8 @@ func TestDBTValidation_WritesTheCandidateArtifactsAndOffersASourceEdit(t *testin
 		answers(stepOne(fixedSQL), stepTwo(fixedSource, "medium")))
 
 	assert.Equal(t, []artifactWrite{
-		{"proposed-fix/rel-1/model.svc.a/attempt-2.sql", fixedSQL, "text/plain"},
-		{"proposed-fix/rel-1/model.svc.a/attempt-2.diff", fix.ComputeUnifiedDiff(candidateSQL, fixedSQL, "model.svc.a"), "text/plain"},
+		{"proposed-fix/rel-1/model.svc.a/round-1/try-2.sql", fixedSQL, "text/plain"},
+		{"proposed-fix/rel-1/model.svc.a/round-1/try-2.diff", fix.ComputeUnifiedDiff(candidateSQL, fixedSQL, "model.svc.a"), "text/plain"},
 	}, w.writes)
 	assert.Equal(t, remediation.Draft{
 		Edits: []remediation.Edit{{
@@ -146,15 +146,15 @@ func TestDBTValidation_WritesTheCandidateArtifactsAndOffersASourceEdit(t *testin
 			Original:     modelSource,
 			Content:      fixedSource,
 			TargetNodeID: "model.svc.a",
-			ContentKey:   "proposed-fix/rel-1/model.svc.a/attempt-2.source.sql",
-			DiffKey:      "proposed-fix/rel-1/model.svc.a/attempt-2.source.diff",
+			ContentKey:   "proposed-fix/rel-1/model.svc.a/round-1/try-2.source.sql",
+			DiffKey:      "proposed-fix/rel-1/model.svc.a/round-1/try-2.source.diff",
 		}},
 		Rationale:           editNote,
 		Confidence:          "medium",
 		Model:               "model-1",
 		SuspectedRoot:       "model.svc.root",
-		CandidateFixSQLURI:  "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.sql",
-		CandidateFixDiffURI: "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.diff",
+		CandidateFixSQLURI:  "s3://artifacts/proposed-fix/rel-1/model.svc.a/round-1/try-2.sql",
+		CandidateFixDiffURI: "s3://artifacts/proposed-fix/rel-1/model.svc.a/round-1/try-2.diff",
 		SourceResolved:      true,
 	}, out.Draft)
 }
@@ -291,8 +291,8 @@ func TestDBTValidation_AFailedFirstCallIsReturned(t *testing.T) {
 
 func TestDBTValidation_AFailedArtifactWriteIsReturned(t *testing.T) {
 	cases := []struct{ name, failOn, want string }{
-		{"the sql", "proposed-fix/rel-1/model.svc.a/attempt-2.sql", "write candidate sql"},
-		{"the diff", "proposed-fix/rel-1/model.svc.a/attempt-2.diff", "write candidate diff"},
+		{"the sql", "proposed-fix/rel-1/model.svc.a/round-1/try-2.sql", "write candidate sql"},
+		{"the diff", "proposed-fix/rel-1/model.svc.a/round-1/try-2.diff", "write candidate diff"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -382,15 +382,15 @@ func TestDBTValidation_RevisesTheLastCallWithTheFindings(t *testing.T) {
 			Original:     modelSource,
 			Content:      "select  better  from t -- real source",
 			TargetNodeID: "model.svc.a",
-			ContentKey:   "proposed-fix/rel-1/model.svc.a/attempt-2.source.sql",
-			DiffKey:      "proposed-fix/rel-1/model.svc.a/attempt-2.source.diff",
+			ContentKey:   "proposed-fix/rel-1/model.svc.a/round-1/try-2.source.sql",
+			DiffKey:      "proposed-fix/rel-1/model.svc.a/round-1/try-2.source.diff",
 		}},
 		Rationale:           "qualified the column",
 		Confidence:          "high",
 		Model:               "model-1",
 		SuspectedRoot:       "model.svc.root",
-		CandidateFixSQLURI:  "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.sql",
-		CandidateFixDiffURI: "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.diff",
+		CandidateFixSQLURI:  "s3://artifacts/proposed-fix/rel-1/model.svc.a/round-1/try-2.sql",
+		CandidateFixDiffURI: "s3://artifacts/proposed-fix/rel-1/model.svc.a/round-1/try-2.diff",
 		SourceResolved:      true,
 	}, out.Draft, "the candidate fix, model and suspected root come from the previous draft, the edit, note and confidence from the revised answer")
 }
@@ -515,7 +515,7 @@ func TestDBTValidation_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel
 // the call a later round revises, still shows them in every round.
 func TestDBTValidation_BothFirstRoundRequestsAreShownTheEarlierTries(t *testing.T) {
 	tries := []remediation.TryRecord{{
-		Round: 1, Try: 1, Attempt: 1,
+		Round: 1, Try: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"model.svc.a"}, Edits: []remediation.EditRecord{{Path: repoFilePath, Diff: "<-bad\n+worse>"}}}},
 		Gate:     []remediation.Finding{{Code: "release_check_failed", Message: "<model.svc.a: column worse does not exist>"}},
 	}}

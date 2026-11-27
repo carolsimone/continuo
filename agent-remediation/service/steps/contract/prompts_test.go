@@ -18,7 +18,7 @@ var (
 	upstreamChanges = []prompt.UpstreamChange{{NodeID: "model.svc.up", Depth: 1, CodeDiff: "<code>"}}
 	precedentList   = []prompt.Precedent{{ReleaseID: "old", NodeID: "n0", ErrorExcerpt: "same error"}}
 	earlierTries    = []remediation.TryRecord{{
-		Round: 1, Try: 1, Attempt: 1,
+		Round: 1, Try: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{nodeID}, Edits: []remediation.EditRecord{{Path: "svc/contracts/fx.yaml", Diff: "<-a>"}}}},
 		Gate:     []remediation.Finding{{Code: "release_check_failed", Message: "<still bad>"}},
 	}}
@@ -197,15 +197,15 @@ func TestPrompts_TheDraftHoldsOneEditPerAnsweredFile(t *testing.T) {
 						Path:         "svc/contracts/fx.yaml",
 						Content:      "fixed fx",
 						TargetNodeID: nodeID,
-						ContentKey:   "proposed-fix/rel-1/py.fx.rates/attempt-2/edit-0.content",
-						DiffKey:      "proposed-fix/rel-1/py.fx.rates/attempt-2/edit-0.diff",
+						ContentKey:   "proposed-fix/rel-1/py.fx.rates/round-1/try-2/edit-0.content",
+						DiffKey:      "proposed-fix/rel-1/py.fx.rates/round-1/try-2/edit-0.diff",
 					},
 					{
 						Path:         "svc/contracts/shared.yaml",
 						Content:      "fixed shared",
 						TargetNodeID: nodeID,
-						ContentKey:   "proposed-fix/rel-1/py.fx.rates/attempt-2/edit-1.content",
-						DiffKey:      "proposed-fix/rel-1/py.fx.rates/attempt-2/edit-1.diff",
+						ContentKey:   "proposed-fix/rel-1/py.fx.rates/round-1/try-2/edit-1.content",
+						DiffKey:      "proposed-fix/rel-1/py.fx.rates/round-1/try-2/edit-1.diff",
 					},
 				},
 				Rationale:      "the column is named amount_eur",

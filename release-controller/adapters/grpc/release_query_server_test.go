@@ -124,7 +124,7 @@ func TestGetReleaseNotices_ACandidateWithoutNoticesAnswersNone(t *testing.T) {
 }
 
 func TestGetReleaseNotices_Refusals(t *testing.T) {
-	fix := releasecheck.NewFix("verify-1", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, time.Unix(1, 0).UTC())
+	fix := releasecheck.NewFix("verify-1", "finance", "tag", "rel-orig", 1, 1, "", release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	fix.SetNotices([]release.Notice{designNotice()})
 	c := startServer(t, fakeReleaseCheckRepo{checks: map[string]*releasecheck.Check{"verify-1": fix}, errID: "rel-broken"})
 	ctx := context.Background()

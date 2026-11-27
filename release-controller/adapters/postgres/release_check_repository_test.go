@@ -104,7 +104,7 @@ func TestReleaseCheckRepository_SaveRejectsCrossKindIDCollision(t *testing.T) {
 	cand := releasecheck.NewCandidate("rClash", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, cand))
 
-	verify := releasecheck.NewFix("rClash", "svc", "t", "rOrig", 1, "", release.ManifestKindDbt, time.Unix(200, 0).UTC())
+	verify := releasecheck.NewFix("rClash", "svc", "t", "rOrig", 1, 1, "", release.ManifestKindDbt, time.Unix(200, 0).UTC())
 	require.ErrorIs(t, repo.Save(ctx, verify), repository.ErrCheckKindConflict)
 
 	got, err := repo.Get(ctx, "rClash")
@@ -130,7 +130,7 @@ func TestReleaseCheckRepository_CreateInsertsOnlyAFreeID(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, inserted)
 
-	verify := releasecheck.NewFix("rCreate", "svc", "img:3", "rOrig", 1, "", release.ManifestKindDbt, time.Unix(300, 0).UTC())
+	verify := releasecheck.NewFix("rCreate", "svc", "img:3", "rOrig", 1, 1, "", release.ManifestKindDbt, time.Unix(300, 0).UTC())
 	inserted, err = repo.Create(ctx, verify)
 	require.NoError(t, err)
 	require.False(t, inserted)
@@ -225,7 +225,7 @@ func TestReleaseCheckRepository_ActiveCandidateProjectsWithKind(t *testing.T) {
 	ended("r4", "ontology-ended", release.ManifestKindOntology)
 	queued("r5", "svc-dbt", release.ManifestKindDbt)
 	queued("r6", "svc-py", release.ManifestKindPython)
-	save(releasecheck.NewFix("v1", "ontology-verified", "img:1", "r0", 1, "", release.ManifestKindOntology, now))
+	save(releasecheck.NewFix("v1", "ontology-verified", "img:1", "r0", 1, 1, "", release.ManifestKindOntology, now))
 
 	got, err := repo.ActiveCandidateProjectsWithKind(ctx, release.ManifestKindOntology)
 	require.NoError(t, err)
@@ -1047,15 +1047,15 @@ func TestDeleteFinishedBefore_DeletesTheContractBundleOfANeverPromotedCheck(t *t
 }
 
 // TestReleaseCheckRepository_FixKindRoundTrips verifies that a check's kind
-// (candidate or fix) and a fix's source-overlay URI
-// survive a Save/Get round trip through check_kind and source_overlay_uri,
-// both immutable after insert.
+// (candidate or fix), a fix's source-overlay URI and the round and number of
+// the try it proves survive a Save/Get round trip through check_kind,
+// source_overlay_uri, remediation_round and try.
 func TestReleaseCheckRepository_FixKindRoundTrips(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseCheckRepository(db, nil)
 	ctx := context.Background()
 
-	fix := releasecheck.NewFix("r-verify", "svc-a", "img-1", "rel-orig", 1,
+	fix := releasecheck.NewFix("r-verify", "svc-a", "img-1", "rel-orig", 2, 3,
 		"s3://bucket/svc-a/r-verify/source-overlay.tar.gz", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, fix))
 	candidate := releasecheck.NewCandidate("r-plain-candidate", "svc-a", "img-1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
@@ -1067,7 +1067,8 @@ func TestReleaseCheckRepository_FixKindRoundTrips(t *testing.T) {
 	assert.Equal(t, releasecheck.KindFix, gotFix.Kind())
 	assert.Equal(t, "s3://bucket/svc-a/r-verify/source-overlay.tar.gz", gotFix.SourceOverlayURI())
 	assert.Equal(t, "rel-orig", gotFix.VerifiesReleaseID())
-	assert.Equal(t, 1, gotFix.Attempt())
+	assert.Equal(t, 2, gotFix.RemediationRound(), "a fix's round round-trips through remediation_round")
+	assert.Equal(t, 3, gotFix.Try())
 
 	gotCandidate, err := repo.Get(ctx, "r-plain-candidate")
 	require.NoError(t, err)
@@ -1085,7 +1086,7 @@ func TestReleaseCheckRepository_DeleteFinishedBeforePrunesPassedFix(t *testing.T
 	repo := postgres.NewReleaseCheckRepository(db, nil)
 	ctx := context.Background()
 
-	r := releasecheck.NewFix("r-verify-passed", "svc", "t", "rel-orig", 1, "", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := releasecheck.NewFix("r-verify-passed", "svc", "t", "rel-orig", 1, 1, "", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(102, 0).UTC()))
 	require.NoError(t, r.Pass(time.Unix(103, 0).UTC()))
@@ -1106,7 +1107,7 @@ func TestReleaseCheckRepository_QueueInterleavesBothKindsByCreatedAt(t *testing.
 	ctx := context.Background()
 	t0 := time.Now().UTC().Truncate(time.Millisecond)
 	require.NoError(t, repo.Save(ctx, releasecheck.NewCandidate("rel-a", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, t0)))
-	require.NoError(t, repo.Save(ctx, releasecheck.NewFix("verify-rel-a-core-a1", "core", "img", "rel-a", 1, "", release.ManifestKindDbt, t0.Add(time.Second))))
+	require.NoError(t, repo.Save(ctx, releasecheck.NewFix("verify-rel-a-core-r1-t1", "core", "img", "rel-a", 1, 1, "", release.ManifestKindDbt, t0.Add(time.Second))))
 	require.NoError(t, repo.Save(ctx, releasecheck.NewCandidate("rel-b", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, t0.Add(2*time.Second))))
 
 	next, err := repo.NextQueued(ctx)
@@ -1120,7 +1121,7 @@ func TestReleaseCheckRepository_QueueInterleavesBothKindsByCreatedAt(t *testing.
 	require.Equal(t, "rel-a", active.ID(), "the active slice is kind-blind")
 	next, err = repo.NextQueued(ctx)
 	require.NoError(t, err)
-	require.Equal(t, "verify-rel-a-core-a1", next.ID(), "a fix's release check takes its turn in created_at order, ahead of a later candidate")
+	require.Equal(t, "verify-rel-a-core-r1-t1", next.ID(), "a fix's release check takes its turn in created_at order, ahead of a later candidate")
 }
 
 func TestReleaseCheckRepository_ListFiltersByKindAndVerifiedRelease(t *testing.T) {
@@ -1129,8 +1130,8 @@ func TestReleaseCheckRepository_ListFiltersByKindAndVerifiedRelease(t *testing.T
 	ctx := context.Background()
 	t0 := time.Now().UTC().Truncate(time.Millisecond)
 	require.NoError(t, repo.Save(ctx, releasecheck.NewCandidate("rel-a", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, t0)))
-	require.NoError(t, repo.Save(ctx, releasecheck.NewFix("verify-rel-a-core-a1", "core", "img", "rel-a", 1, "", release.ManifestKindDbt, t0.Add(time.Second))))
-	require.NoError(t, repo.Save(ctx, releasecheck.NewFix("verify-rel-z-core-a1", "core", "img", "rel-z", 1, "", release.ManifestKindDbt, t0.Add(2*time.Second))))
+	require.NoError(t, repo.Save(ctx, releasecheck.NewFix("verify-rel-a-core-r1-t1", "core", "img", "rel-a", 1, 1, "", release.ManifestKindDbt, t0.Add(time.Second))))
+	require.NoError(t, repo.Save(ctx, releasecheck.NewFix("verify-rel-z-core-r1-t1", "core", "img", "rel-z", 1, 1, "", release.ManifestKindDbt, t0.Add(2*time.Second))))
 
 	cand := releasecheck.KindCandidate
 	items, _, err := repo.List(ctx, repository.ListFilter{Kind: &cand})
@@ -1142,7 +1143,7 @@ func TestReleaseCheckRepository_ListFiltersByKindAndVerifiedRelease(t *testing.T
 	items, _, err = repo.List(ctx, repository.ListFilter{VerifiesReleaseID: &verifies})
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Equal(t, "verify-rel-a-core-a1", items[0].ID())
+	require.Equal(t, "verify-rel-a-core-r1-t1", items[0].ID())
 }
 
 // While maintenance holds candidate releases, the queue activates only
@@ -1153,7 +1154,7 @@ func TestReleaseCheckRepository_NextQueuedOfKind(t *testing.T) {
 	repo := postgres.NewReleaseCheckRepository(db, nil)
 	ctx := context.Background()
 	cand := releasecheck.NewCandidate("rCAND", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
-	verify := releasecheck.NewFix("rVERIFY", "svc", "t", "rCAND", 1, "", release.ManifestKindPython, time.Unix(200, 0).UTC())
+	verify := releasecheck.NewFix("rVERIFY", "svc", "t", "rCAND", 1, 1, "", release.ManifestKindPython, time.Unix(200, 0).UTC())
 	require.NoError(t, repo.Save(ctx, cand))
 	require.NoError(t, repo.Save(ctx, verify))
 

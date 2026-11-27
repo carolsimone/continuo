@@ -24,21 +24,21 @@ func TestPreviousTriesSection_RendersEachTry(t *testing.T) {
 	base := previousTriesBase()
 	got := WithPreviousTries(base, []PreviousTry{
 		{
-			Label:     "Try 1 (round 1)",
-			Diffs:     []AttemptDiff{{Path: "models/e.sql", Diff: "-select a\n+select b\n"}},
+			Label:     "Round 1, try 1",
+			Diffs:     []TryDiff{{Path: "models/e.sql", Diff: "-select a\n+select b\n"}},
 			Findings:  []string{"round 1: content_unchanged: the answer repeats the original"},
 			GateError: "analytics.table_e: column b does not exist",
 		},
-		{Label: "Attempt 2 (round 1)"},
+		{Label: "Round 1, try 2"},
 	})
 
 	want := base.User + "\n\n## Earlier tries at this failure\n" +
 		"These tries at the same failure did not pass. Do not repeat a change that did not pass; correct what each try was refused for.\n" +
-		"\n### Try 1 (round 1)\n" +
+		"\n### Round 1, try 1\n" +
 		"Changed models/e.sql:\n```diff\n-select a\n+select b\n```\n" +
 		"What pre-flight found:\n- round 1: content_unchanged: the answer repeats the original\n" +
 		"Why the gate failed: analytics.table_e: column b does not exist\n" +
-		"\n### Attempt 2 (round 1)\n" +
+		"\n### Round 1, try 2\n" +
 		"Nothing was recorded for this try."
 	assert.Equal(t, want, got.User)
 	got.User = base.User
@@ -51,13 +51,13 @@ func TestPreviousTriesSection_KeepsTheLastThreeTriesAndCapsEachDiff(t *testing.T
 	for i := 1; i <= 4; i++ {
 		tries = append(tries, PreviousTry{
 			Label: fmt.Sprintf("Try %d (round 1)", i),
-			Diffs: []AttemptDiff{{Path: "models/e.sql", Diff: long}},
+			Diffs: []TryDiff{{Path: "models/e.sql", Diff: long}},
 		})
 	}
 
 	user := WithPreviousTries(previousTriesBase(), tries).User
 
-	assert.NotContains(t, user, "### Try 1 (round 1)", "the oldest try beyond the last three is left out")
+	assert.NotContains(t, user, "### Round 1, try 1", "the oldest try beyond the last three is left out")
 	for i := 2; i <= 4; i++ {
 		assert.Contains(t, user, fmt.Sprintf("### Try %d (round 1)", i))
 	}

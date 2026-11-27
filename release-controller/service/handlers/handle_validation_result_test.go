@@ -273,7 +273,7 @@ func seedToValidatingFix(t *testing.T, releaseID string) (*handlers.Deps, *fakeS
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	store.SeedRelease(releasecheck.NewFix(releaseID, "svc-a", "sha-a", "", 1, "", release.ManifestKindDbt, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix(releaseID, "svc-a", "sha-a", "", 1, 1, "", release.ManifestKindDbt, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
 		ReleaseID: releaseID, Status: "ok",
@@ -391,11 +391,11 @@ func TestHandleValidationResult_Fix_StopsAtPassed_NeverPromotes(t *testing.T) {
 // release_check.finished:v1 payload contract: a fix's pass emits
 // neither release.promoted:v1 nor release.rejected:v1, but does emit exactly
 // one release_check.finished:v1 whose check_kind, outcome, verifies_release_id,
-// and candidate_schema describe this fix's release check.
+// remediation_round, try and candidate_schema describe this fix's release check.
 func TestHandleValidationResult_FixPasses_NoReleaseEvents_FinishedEmitted(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, store := newDeps(now)
-	r := releasecheck.NewFix("verify-rel-1-core-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
+	r := releasecheck.NewFix("verify-rel-1-core-r2-t3", "core", "img", "rel-1", 2, 3, "", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToParsing(now))
 	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ProjectName: "core"}}), []string{"model.core.orders"}, now))
 	r.UpsertStageResult("validation", releasecheck.NodeValidationResult{NodeID: "model.core.orders", Status: "ok"})
@@ -419,6 +419,8 @@ func TestHandleValidationResult_FixPasses_NoReleaseEvents_FinishedEmitted(t *tes
 	assert.Equal(t, "fix", payload["check_kind"])
 	assert.Equal(t, "passed", payload["outcome"])
 	assert.Equal(t, "rel-1", payload["verifies_release_id"])
+	assert.EqualValues(t, 2, payload["remediation_round"])
+	assert.EqualValues(t, 3, payload["try"])
 	assert.Equal(t, handlers.CandidateSchemaFor(r.ID()), payload["candidate_schema"])
 }
 
@@ -430,7 +432,7 @@ func TestHandleValidationResult_FixPasses_NoReleaseEvents_FinishedEmitted(t *tes
 func TestHandleValidationResult_FixFails_NoReleaseRejected_FinishedEmitted(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, store := newDeps(now)
-	r := releasecheck.NewFix("verify-rel-1-core-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
+	r := releasecheck.NewFix("verify-rel-1-core-r1-t1", "core", "img", "rel-1", 1, 1, "", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToParsing(now))
 	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ProjectName: "core"}}), []string{"model.core.orders"}, now))
 	r.UpsertStageResult("validation", releasecheck.NodeValidationResult{NodeID: "model.core.orders", Status: "failed"})
@@ -462,8 +464,15 @@ func TestHandleValidationResult_CandidatePromoted_EmitsFinishedToo(t *testing.T)
 
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{ReleaseID: r.ID(), AggregateStatus: "ok"}))
 
-	assert.Equal(t, "promoted", outcomeOf(t, lastEntryOn(store, streams.ReleaseCheckFinishedV1)))
+	finished := lastEntryOn(store, streams.ReleaseCheckFinishedV1)
+	assert.Equal(t, "promoted", outcomeOf(t, finished))
 	assert.NotNil(t, lastEntryOn(store, streams.ReleasePromotedV1))
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(finished.Payload, &payload))
+	assert.Contains(t, payload, "try", "a candidate carries the try key too")
+	assert.Contains(t, payload, "remediation_round", "a candidate carries the remediation_round key too")
+	assert.EqualValues(t, 0, payload["try"], "a candidate proves no try")
+	assert.EqualValues(t, 0, payload["remediation_round"], "a candidate proves no try, so it names no round")
 }
 
 // seedToValidatingPython mirrors seedToValidating but registers the release as
@@ -569,8 +578,8 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 // never a release rejection — Global Constraint). This is the case
 // agent-remediation's fix's release check loop hinges on: without it, a failed
 // fix's release check would be indistinguishable from a rejected candidate and
-// remediation would trigger a fresh heal attempt on the check meant to verify
-// one, looping forever. The failure travels on release_check.finished:v1
+// remediation would answer the check meant to verify one with a fresh heal
+// trigger, looping forever. The failure travels on release_check.finished:v1
 // alone.
 func TestHandleValidationResult_Fix_Failed_NoReleaseRejected_FinishedEmitted(t *testing.T) {
 	deps, store := seedToValidatingFix(t, "rVerifyReject")

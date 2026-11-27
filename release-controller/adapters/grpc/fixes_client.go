@@ -27,9 +27,9 @@ func NewFixesClient(c remediationv1.RemediationFixesClient) *FixesClient {
 // from the wire type to ports.FixSummary. The request
 // carries Limit: 0 — the repository's List treats that as unbounded — rather
 // than a fixed page size: the list is already scoped to one release_id, and
-// bounded in practice by that release's nodes × rounds × attempts, but the
-// retry decision must see every attempt to decide correctly. A capped page
-// could let an older open PR or proposed attempt fall off the page and be
+// bounded in practice by that release's nodes × rounds × tries, but the
+// retry decision must see every try to decide correctly. A capped page
+// could let an older open PR or proposed try fall off the page and be
 // missed, which would let the retry gate approve a round it should have
 // refused.
 func (c *FixesClient) ListFixesForRelease(ctx context.Context, releaseID string) ([]ports.FixSummary, error) {
@@ -40,7 +40,7 @@ func (c *FixesClient) ListFixesForRelease(ctx context.Context, releaseID string)
 	out := make([]ports.FixSummary, 0, len(resp.Fixes))
 	for _, f := range resp.Fixes {
 		out = append(out, ports.FixSummary{
-			ID: f.Id, NodeID: f.NodeId, Attempt: int(f.Attempt), Status: f.Status,
+			ID: f.Id, NodeID: f.NodeId, Try: int(f.Try), Status: f.Status,
 			PullRequests:     mapPullRequests(f.PullRequests),
 			PRProjects:       f.PrProjects,
 			RemediationRound: int(f.RemediationRound),

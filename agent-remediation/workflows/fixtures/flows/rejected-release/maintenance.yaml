@@ -1,5 +1,5 @@
 # The trigger of a dbt-validation failure arrives while continuo is in
-# maintenance mode: the attempt is recorded skipped and the model is never
+# maintenance mode: the try is recorded skipped and the model is never
 # called.
 kind: fixture
 version: 1

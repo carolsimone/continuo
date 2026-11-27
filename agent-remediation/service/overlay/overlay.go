@@ -10,7 +10,7 @@
 // staging step removes from the project once the files are laid over it.
 //
 // The archive is deterministic: the same set of files always produces the same
-// bytes, whatever order they arrive in. Two attempts that propose identical
+// bytes, whatever order they arrive in. Two tries that propose identical
 // content therefore write an identical object, so a redelivery overwrites the
 // object it wrote before rather than leaving two archives a reader must choose
 // between.

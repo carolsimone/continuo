@@ -18,7 +18,7 @@ class ParseFailureKind(StrEnum):
 
 
 PARSE_FAILURE_KIND_HEALABLE = frozenset({ParseFailureKind.INVALID_SQL, ParseFailureKind.UNQUALIFIED_REFERENCE})
-"""Values of ParseFailureKind a remediation attempt can fix by changing the user's source."""
+"""Values of ParseFailureKind a fix can repair by changing the user's source."""
 
 
 class RejectReason(StrEnum):
@@ -41,7 +41,7 @@ class RejectReason(StrEnum):
 
 
 REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.INVALID_SQL, RejectReason.UNQUALIFIED_REFERENCE, RejectReason.DUPLICATE_TABLE, RejectReason.SEED_BUILD_FAILED, RejectReason.VALIDATION_FAILED})
-"""Values of RejectReason a remediation attempt can fix by changing the user's source."""
+"""Values of RejectReason a fix can repair by changing the user's source."""
 
 
 class ValidationOp(StrEnum):

@@ -124,7 +124,7 @@ func (g *ReleaseCheck) plan(in step.GateInput) ([]plannedCheck, error) {
 	}
 	checks := make([]plannedCheck, len(groups))
 	for i, grp := range groups {
-		check := plannedCheck{edits: grp, kind: ports.ManifestKindDbt, checkID: CheckID(in.Trigger.ReleaseID, grp.Project, in.Try.Attempt)}
+		check := plannedCheck{edits: grp, kind: ports.ManifestKindDbt, checkID: CheckID(in.Trigger.ReleaseID, grp.Project, in.Trigger.Round, in.Try.Try)}
 		if grp.Contract != nil {
 			if !isODCSBundle(grp.Contract) {
 				return nil, fmt.Errorf("%w: project %s", errNotABundle, grp.Project)
@@ -144,14 +144,14 @@ func (g *ReleaseCheck) plan(in step.GateInput) ([]plannedCheck, error) {
 // overlay, keyed by the edit's path within that project's directory.
 //
 // Both the artifact writes and the submission are idempotent on the try's keys,
-// since the check id is a pure function of (release, project, attempt), so a
+// since the check id is a pure function of (release, project, round, try), so a
 // repeat of a submission is safe. The result is waiting, with the check ids; Poll
 // reports the checks' projects, kinds and phases.
 func (g *ReleaseCheck) Submit(ctx context.Context, in step.GateInput) (step.GateVerdict, error) {
 	checks, err := g.plan(in)
 	if f, refused := refusalFinding(err); refused {
-		g.logger.Warn("the attempt's edits cannot be verified by any release; the try fails and the next try is shown why",
-			"release", in.Trigger.ReleaseID, "attempt", in.Try.Attempt, "error", err)
+		g.logger.Warn("the try's edits cannot be verified by any release; the try fails and the next try is shown why",
+			"release", in.Trigger.ReleaseID, "round", in.Trigger.Round, "try", in.Try.Try, "error", err)
 		return step.GateVerdict{
 			Result:      remediation.CheckResult{Check: string(nameReleaseCheck), Findings: []remediation.Finding{f}},
 			VerifyError: f.Message,
@@ -160,7 +160,7 @@ func (g *ReleaseCheck) Submit(ctx context.Context, in step.GateInput) (step.Gate
 	if err != nil {
 		return step.GateVerdict{}, err
 	}
-	t, attempt := in.Trigger, in.Try.Attempt
+	t, try := in.Trigger, in.Try.Try
 	releaseChecks := make([]fix.ReleaseCheck, 0, len(checks))
 	for _, r := range checks {
 		project := r.edits.Project
@@ -215,13 +215,14 @@ func (g *ReleaseCheck) Submit(ctx context.Context, in step.GateInput) (step.Gate
 			ImageTag:          imageTag,
 			Kind:              r.kind,
 			VerifiesReleaseID: t.ReleaseID,
-			Attempt:           attempt,
+			RemediationRound:  t.Round,
+			Try:               try,
 			SourceOverlayURI:  overlayURI,
 		}); err != nil {
 			return step.GateVerdict{}, fmt.Errorf("submit release check %s: %w", r.checkID, err)
 		}
 		g.logger.Info("release check submitted",
-			"release", t.ReleaseID, "attempt", attempt, "project", project,
+			"release", t.ReleaseID, "round", t.Round, "try", try, "project", project,
 			"check", r.checkID, "kind", r.kind, "edits", len(r.edits.Edits))
 		releaseChecks = append(releaseChecks, fix.ReleaseCheck{
 			Project: project, Kind: r.kind, CheckID: r.checkID, Phase: fix.PhaseQueued,

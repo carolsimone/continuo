@@ -187,9 +187,9 @@ func TestObjectStore_ReadsTheFixturesObjectsAndEveryArtifactWritten(t *testing.T
 	got, err := s.Fetch(ctx, "s3://logs/a.log")
 	require.NoError(t, err)
 	assert.Equal(t, "log", got)
-	uri, err := s.Write(ctx, "proposed-fix/rel/n/attempt-1.source.sql", "select 2", "text/plain")
+	uri, err := s.Write(ctx, "proposed-fix/rel/n/try-1.source.sql", "select 2", "text/plain")
 	require.NoError(t, err)
-	assert.Equal(t, "s3://conformance/proposed-fix/rel/n/attempt-1.source.sql", uri)
+	assert.Equal(t, "s3://conformance/proposed-fix/rel/n/try-1.source.sql", uri)
 	got, err = s.Fetch(ctx, uri)
 	require.NoError(t, err)
 	assert.Equal(t, "select 2", got)
@@ -197,10 +197,10 @@ func TestObjectStore_ReadsTheFixturesObjectsAndEveryArtifactWritten(t *testing.T
 	assert.ErrorIs(t, err, ports.ErrNotFound)
 }
 
-func TestReleaseChecks_FailsTheRunsOfTheFirstAttemptsWithTheGateErrors(t *testing.T) {
+func TestReleaseChecks_FailsTheRunsOfTheFirstTriesWithTheGateErrors(t *testing.T) {
 	p := newReleaseChecks(1, map[string]string{"model.a": "still broken"}, fixedClock{now: startTime})
-	require.NoError(t, p.Submit(ctx, ports.ReleaseCheckRequest{CheckID: "run-1", Attempt: 1}))
-	require.NoError(t, p.Submit(ctx, ports.ReleaseCheckRequest{CheckID: "run-2", Attempt: 2}))
+	require.NoError(t, p.Submit(ctx, ports.ReleaseCheckRequest{CheckID: "run-1", Try: 1}))
+	require.NoError(t, p.Submit(ctx, ports.ReleaseCheckRequest{CheckID: "run-2", Try: 2}))
 
 	first, err := p.Status(ctx, "run-1")
 	require.NoError(t, err)
@@ -288,14 +288,14 @@ func TestWorld_ReadsBackWhatTheStoreHolds(t *testing.T) {
 	require.NoError(t, err)
 	u := w.NewUoW()
 	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Attempt: 2, Status: fix.StatusFailed}))
-	require.NoError(t, u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Attempt: 1, Status: fix.StatusSkipped}))
+	require.NoError(t, u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Try: 2, Status: fix.StatusFailed}))
+	require.NoError(t, u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Try: 1, Status: fix.StatusSkipped}))
 	require.NoError(t, u.Commit())
 
-	attempts := w.Attempts()
-	require.Len(t, attempts, 2)
-	assert.Equal(t, 1, attempts[0].Fix.Attempt)
-	assert.Equal(t, 2, attempts[1].Fix.Attempt)
+	tries := w.FixRows()
+	require.Len(t, tries, 2)
+	assert.Equal(t, 1, tries[0].Fix.Try)
+	assert.Equal(t, 2, tries[1].Fix.Try)
 	assert.Empty(t, w.Remediations())
 	assert.Empty(t, w.Tries(uuid.Nil))
 }

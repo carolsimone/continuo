@@ -8,13 +8,13 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
 )
 
-// TestView_FixedNodeIDs_NamesOnlyTheNodesTheAttemptActuallyFixed covers the
-// mixed batch, which is the ordinary shape once one attempt addresses a whole
+// TestView_FixedNodeIDs_NamesOnlyTheNodesTheTryActuallyFixed covers the
+// mixed batch, which is the ordinary shape once one try addresses a whole
 // failing set: some nodes were repaired and are carried by the pull request,
 // others were skipped or failed and are not. Only the repaired ones may be
 // named as fixed, or the PR would be attached to a rejection it does nothing
 // about.
-func TestView_FixedNodeIDs_NamesOnlyTheNodesTheAttemptActuallyFixed(t *testing.T) {
+func TestView_FixedNodeIDs_NamesOnlyTheNodesTheTryActuallyFixed(t *testing.T) {
 	v := fix.View{
 		ResolvedNodeIDs: []string{"s.a", "s.b", "s.c"},
 		NodeOutcomes: map[string]fix.NodeOutcome{

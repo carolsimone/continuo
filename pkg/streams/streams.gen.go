@@ -44,13 +44,13 @@ const (
 	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
 	// HealTriggeredV1 — One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
 	HealTriggeredV1 = "heal.triggered:v1"
-	// FixProposedV1 — One verified fix per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
+	// FixProposedV1 — One verified fix per (release, round, try), carrying every node the try resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	FixProposedV1 = "fix.proposed:v1"
 	// RemediationHandedOverV1 — One event when a remediation ends with nodes a human must fix, each with its reason code and its owner; emitted by the remediation agent, read by people and not consumed by any component.
 	RemediationHandedOverV1 = "remediation.handed_over:v1"
-	// FixPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base fixes group.
+	// FixPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix, one per (release, round, try, project) and carrying every node the PR resolves; consumed by catalog's case-base fixes group.
 	FixPrOpenedV1 = "fix.pr_opened:v1"
-	// FixPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
+	// FixPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, round, try, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
 	FixPrClosedV1 = "fix.pr_closed:v1"
 )
 

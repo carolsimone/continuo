@@ -532,7 +532,7 @@ func TestReleaseRejected_NeverCarriesErrorClass(t *testing.T) {
 // seedToParsingFix mirrors seedToParsing but seeds a fix's release
 // check, so a rejection emitted from the parsing leg can be asserted to carry
 // the wire flag true — the signal remediation uses to avoid re-triggering
-// itself on a failed fix's release check attempt.
+// itself on a failed fix's release check.
 func seedToParsingFix(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	return seedToParsingFixWithOverlay(t, releaseID, imageTags, "")
@@ -553,7 +553,7 @@ func seedToParsingFixWithOverlay(t *testing.T, releaseID string, imageTags map[s
 	}
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedRelease(releasecheck.NewFix(releaseID, project, tag, "", 1, overlayURI, release.ManifestKindDbt, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix(releaseID, project, tag, "", 1, 1, overlayURI, release.ManifestKindDbt, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
 		ReleaseID: releaseID,
@@ -980,7 +980,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 //
 // A candidate that declares no node at all measured nothing and can prove
 // nothing, so it fails instead — the outcome agent-remediation's gate poller
-// already records as a failed attempt.
+// already records as a failed try.
 //
 // The last subtest is the control: the same empty validation set on a
 // candidate release must still promote directly, since emitting an empty
@@ -1015,7 +1015,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Fix(t *testing.T) {
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
 			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a fix's release check never promotes")
-			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
+			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed try")
 		}
 
 		assert.Equal(t, "prev", store.GetLiveRelease().ReleaseID(),
@@ -2329,7 +2329,7 @@ func TestHandleParsedManifest_OK_FixRestoringProductionAfterCompileRejectionPass
 	assert.Empty(t, r.FailReason())
 	assert.Equal(t, 1, r.CandidateTopologyRef().NodeCount, "the parsed topology is persisted on the fix's passed release check")
 	for _, e := range outboxEntries(store) {
-		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
+		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed try")
 		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a fix's release check never promotes")
 	}
 	assert.Equal(t, "prev", store.GetLiveRelease().ReleaseID(),

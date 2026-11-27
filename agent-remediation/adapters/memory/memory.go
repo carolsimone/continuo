@@ -1,7 +1,7 @@
 // Package memory is the in-memory implementation of the unit of work and of
 // every repository the runner uses. It keeps the semantics of the Postgres
 // adapters that the code above them relies on: compare-and-set updates, the
-// (release_id, attempt) uniqueness of fixes, message-processing dedup on
+// (release_id, try) uniqueness of fixes, message-processing dedup on
 // both axes, foreign keys and cascades, and leases. The runner's tests and the
 // repository contract test run against it.
 package memory
@@ -57,7 +57,7 @@ func (s *Store) RemediationRepository() repository.RemediationRepository {
 }
 
 // FixRepository returns the fix repository for use outside a unit of
-// work, as the previous-tries step's attempt lister uses it.
+// work, as the previous-tries step's try lister uses it.
 func (s *Store) FixRepository() repository.FixRepository {
 	return &fixRepository{gate: s.autocommit}
 }

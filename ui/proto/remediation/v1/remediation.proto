@@ -18,7 +18,7 @@ service RemediationFixes {
   rpc BeginPullRequest(BeginPullRequestRequest) returns (BeginPullRequestResponse);
   // RecordPullRequest stores the PR URL, number, and opener after a PR is opened.
   rpc RecordPullRequest(RecordPullRequestRequest) returns (RecordPullRequestResponse);
-  // FailPullRequest marks a fix's PR attempt as failed.
+  // FailPullRequest releases a claim whose pull request could not be opened.
   rpc FailPullRequest(FailPullRequestRequest) returns (FailPullRequestResponse);
 }
 
@@ -30,7 +30,9 @@ message Fix {
   string release_id = 3;
   string node_id = 4;
   string error_signature = 5;
-  int32 attempt = 6;
+  // try is the try's number in its round, from 1; 0 is the round's hand-over
+  // row, written once the round's tries are spent.
+  int32 try = 6;
   string status = 7;
   string confidence = 8;
   string rationale = 9;
@@ -61,20 +63,20 @@ message Fix {
   // reaches a terminal outcome (pr_state 'merged' or 'rejected').
   string pr_closed_at = 25;
   repeated FileEdit edits = 26;
-  // release_check_id names the release check that verified this attempt's
-  // fix — the first of `release_checks`. Set while the attempt is 'verifying'
-  // and kept on the row it became. Empty on an attempt judged without one.
+  // release_check_id names the release check that verified this try's
+  // fix — the first of `release_checks`. Set while the try is 'verifying'
+  // and kept on the row it became. Empty on a try judged without one.
   string release_check_id = 27;
   // verify_error is why that release check rejected the fix — the reason a python
-  // contract attempt reached 'failed', and the evidence the next attempt is
+  // contract try reached 'failed', and the evidence the next try is
   // shown. Empty unless the release check failed.
   string verify_error = 28;
-  // remediation_round is the release's remediation round this attempt belongs to.
+  // remediation_round is the release's remediation round this try belongs to.
   int32 remediation_round = 29;
-  // resolved_node_ids is the failing nodes this attempt addresses, sorted;
+  // resolved_node_ids is the failing nodes this try addresses, sorted;
   // node_id is their representative.
   repeated string resolved_node_ids = 30;
-  // node_outcomes is, per failing node, how this attempt ended for it — a
+  // node_outcomes is, per failing node, how this try ended for it — a
   // cluster that was skipped or failed leaves its members
   // skipped/failed while other members verify.
   map<string, NodeOutcome> node_outcomes = 31;
@@ -89,13 +91,13 @@ message Fix {
   // pr_projects is the sorted owning-project groups this fix's pull
   // requests split into; [""] for a legacy (unsplit) fix.
   repeated string pr_projects = 34;
-  // projects is every project this attempt touched — the failing nodes'
+  // projects is every project this try touched — the failing nodes'
   // projects plus the edited ones, sorted — the same set the
   // ListFixesRequest.project filter matches a fix on.
   repeated string projects = 35;
-  // approvers is who must approve what this attempt did with each node a
+  // approvers is who must approve what this try did with each node a
   // remediation settled at its end, the fixed nodes and the handed-over ones,
-  // one entry per node sorted by node_id. Empty on an attempt row with no
+  // one entry per node sorted by node_id. Empty on a try's row with no
   // remediation id and on one with no approvers recorded.
   repeated Approver approvers = 36;
 }
@@ -141,7 +143,8 @@ message BeginPullRequestResponse {
   string diff_uri = 6;
   string release_id = 7;
   string node_id = 8;
-  int32 attempt = 9;
+  // try is the claimed fix's try number in its round (remediation_round).
+  int32 try = 9;
   string rationale = 10;
   string confidence = 11;
   string model = 12;
@@ -153,7 +156,7 @@ message BeginPullRequestResponse {
   // never a fresher one taken by someone else since.
   string claimed_at = 14;
   repeated FileEdit edits = 15;
-  // resolved_node_ids is the failing nodes this attempt addresses, sorted;
+  // resolved_node_ids is the failing nodes this try addresses, sorted;
   // node_id is their representative.
   repeated string resolved_node_ids = 16;
   // project is the owning-project group this claim covers, echoing the
@@ -163,6 +166,8 @@ message BeginPullRequestResponse {
   // the nodes in resolved_node_ids, sorted by node_id. A node the fix
   // records no approver for has no entry.
   repeated Approver approvers = 18;
+  // remediation_round is the round of the claimed fix's try.
+  int32 remediation_round = 19;
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -178,7 +183,7 @@ message RecordPullRequestRequest {
 
 message RecordPullRequestResponse {}
 
-// FailPullRequestRequest identifies the fix whose PR attempt failed.
+// FailPullRequestRequest identifies the claim whose pull request could not be opened.
 message FailPullRequestRequest {
   string id = 1;
   // claimed_at is an RFC3339-formatted timestamp string: the claimed_at
@@ -214,7 +219,7 @@ message FileEdit {
   string renamed_from = 5;
 }
 
-// NodeOutcome is how one failing node's attempt ended: verifying, proposed,
+// NodeOutcome is how one failing node's try ended: verifying, proposed,
 // failed, skipped, or escalated, with the reason for that outcome. code is the
 // handover_reason vocabulary value that says why the node was handed over when
 // its outcome is not part of a verified fix, and is empty otherwise.
@@ -224,7 +229,7 @@ message NodeOutcome {
   string code = 3;
 }
 
-// Approver is who must approve what an attempt did with one node: the node's
+// Approver is who must approve what a try did with one node: the node's
 // owner, as source says where it was read from. source is "bundle" (the owner
 // the release's code bundle records for the node), "contract_file" (the team of
 // the node's contract file in the repository) or "none" (no owner was found),

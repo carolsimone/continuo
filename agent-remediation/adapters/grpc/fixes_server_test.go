@@ -92,7 +92,7 @@ func TestFixesServer_ListFixes_HappyPath(t *testing.T) {
 			NodeID:           "node-1",
 			ResolvedNodeIDs:  []string{"s.a", "s.b"},
 			ErrorSignature:   "sig",
-			Attempt:          1,
+			Try:              1,
 			Status:           fix.Status("pending"),
 			NodeOutcomes: map[string]fix.NodeOutcome{
 				"s.a": {Status: fix.StatusProposed, Reason: "fixed"},
@@ -134,7 +134,7 @@ func TestFixesServer_ListFixes_HappyPath(t *testing.T) {
 	assert.Equal(t, "rel-1", p.ReleaseId)
 	assert.Equal(t, int32(2), p.RemediationRound, "viewToProto must copy RemediationRound")
 	assert.Equal(t, "node-1", p.NodeId)
-	assert.Equal(t, int32(1), p.Attempt)
+	assert.Equal(t, int32(1), p.Try)
 	assert.Equal(t, "pending", p.Status)
 	assert.Equal(t, "high", p.Confidence)
 	assert.Equal(t, "reason", p.Rationale)
@@ -314,7 +314,7 @@ func TestFixesServer_GetFix_PullRequestsAndPrProjects(t *testing.T) {
 			{
 				Project:    "core",
 				Repo:       "org/core",
-				Branch:     "remediation/rel-1/attempt1/core",
+				Branch:     "remediation/rel-1/try1/core",
 				PrURL:      "https://gh/pr/1",
 				PrNumber:   1,
 				PrState:    "open",
@@ -325,7 +325,7 @@ func TestFixesServer_GetFix_PullRequestsAndPrProjects(t *testing.T) {
 			{
 				Project:  "billing",
 				Repo:     "org/billing",
-				Branch:   "remediation/rel-1/attempt1/billing",
+				Branch:   "remediation/rel-1/try1/billing",
 				PrURL:    "https://gh/pr/2",
 				PrNumber: 2,
 				PrState:  "merged",
@@ -341,7 +341,7 @@ func TestFixesServer_GetFix_PullRequestsAndPrProjects(t *testing.T) {
 	require.Len(t, p.PullRequests, 2, "every (fix, project) pull request must be carried onto the wire")
 	assert.Equal(t, "core", p.PullRequests[0].Project)
 	assert.Equal(t, "org/core", p.PullRequests[0].Repo)
-	assert.Equal(t, "remediation/rel-1/attempt1/core", p.PullRequests[0].Branch)
+	assert.Equal(t, "remediation/rel-1/try1/core", p.PullRequests[0].Branch)
 	assert.Equal(t, "https://gh/pr/1", p.PullRequests[0].PrUrl)
 	assert.Equal(t, int32(1), p.PullRequests[0].PrNumber)
 	assert.Equal(t, "open", p.PullRequests[0].PrState)
@@ -389,12 +389,12 @@ func TestFixesServer_BeginPullRequest_HappyPath(t *testing.T) {
 		ReleaseID:       "rel-3",
 		NodeID:          "node-3",
 		ResolvedNodeIDs: []string{"node-3", "node-4"},
-		Attempt:         2,
+		Try:             2,
 		Rationale:       "fix bar",
 		Confidence:      fix.Confidence("medium"),
 		Model:           "bar_model",
 		ClaimedAt:       claimedAt,
-		Branch:          "remediation/rel-3/node-3-attempt2",
+		Branch:          "remediation/rel-3/node-3-try2",
 		Edits: []fix.FileEdit{
 			{Path: "models/bar.sql", ContentURI: "s3://bucket/bar.sql", DiffURI: "s3://bucket/bar.diff"},
 			{Path: "models/baz_v2.sql", RenamedFrom: "models/baz.sql", ContentURI: "s3://bucket/baz.sql", DiffURI: "s3://bucket/baz.diff"},
@@ -413,11 +413,11 @@ func TestFixesServer_BeginPullRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, "s3://bucket/bar.diff", resp.DiffUri)
 	assert.Equal(t, "rel-3", resp.ReleaseId)
 	assert.Equal(t, "node-3", resp.NodeId)
-	assert.Equal(t, int32(2), resp.Attempt)
+	assert.Equal(t, int32(2), resp.Try)
 	assert.Equal(t, "fix bar", resp.Rationale)
 	assert.Equal(t, "medium", resp.Confidence)
 	assert.Equal(t, "bar_model", resp.Model)
-	assert.Equal(t, "remediation/rel-3/node-3-attempt2", resp.Branch)
+	assert.Equal(t, "remediation/rel-3/node-3-try2", resp.Branch)
 	assert.Equal(t, []string{"node-3", "node-4"}, resp.ResolvedNodeIds, "resolved_node_ids must be carried onto the wire")
 	assert.Equal(t, claimedAt.Format(time.RFC3339), resp.ClaimedAt,
 		"the response must carry the claim's persisted ClaimedAt so FailPullRequest can CAS on it later")
@@ -690,7 +690,7 @@ func TestFixesServer_FailPullRequest_HappyPath(t *testing.T) {
 func TestFixesServer_ClaimedAtRoundTripsExactly(t *testing.T) {
 	claimedAt := time.Date(2026, 11, 23, 22, 35, 24, 277067000, time.UTC)
 	svc := &fakeSvc{
-		beginClaim: fix.PRClaim{ID: "p7", Repo: "owner/repo", ClaimedAt: claimedAt, Branch: "remediation/rel-7/attempt1/core"},
+		beginClaim: fix.PRClaim{ID: "p7", Repo: "owner/repo", ClaimedAt: claimedAt, Branch: "remediation/rel-7/try1/core"},
 		failHit:    true,
 	}
 	s := grpcadapter.NewFixesServer(svc)

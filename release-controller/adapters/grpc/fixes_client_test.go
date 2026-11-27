@@ -30,9 +30,9 @@ func (f *fakeFixesClient) ListFixes(_ context.Context, in *remediationv1.ListFix
 func TestFixesClient_ListFixesForRelease_MapsSummaries(t *testing.T) {
 	fake := &fakeFixesClient{resp: &remediationv1.ListFixesResponse{
 		Fixes: []*remediationv1.Fix{
-			{Id: "p1", NodeId: "finance", Attempt: 1, Status: "failed", PrState: "", PrUrl: "", RemediationRound: 1},
+			{Id: "p1", NodeId: "finance", Try: 1, Status: "failed", PrState: "", PrUrl: "", RemediationRound: 1},
 			{
-				Id: "p2", NodeId: "finance", Attempt: 2, Status: "proposed",
+				Id: "p2", NodeId: "finance", Try: 2, Status: "proposed",
 				PrState: "open", PrUrl: "https://x/pr/7",
 				PullRequests:     []*remediationv1.PullRequest{{Project: "core", PrState: "open", PrUrl: "https://x/pr/7"}},
 				PrProjects:       []string{"core"},
@@ -45,9 +45,9 @@ func TestFixesClient_ListFixesForRelease_MapsSummaries(t *testing.T) {
 	got, err := client.ListFixesForRelease(context.Background(), "rel-1")
 	require.NoError(t, err)
 	require.Equal(t, []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Attempt: 1, Status: "failed", RemediationRound: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "failed", RemediationRound: 1},
 		{
-			ID: "p2", NodeID: "finance", Attempt: 2, Status: "proposed",
+			ID: "p2", NodeID: "finance", Try: 2, Status: "proposed",
 			PullRequests:     []ports.FixPR{{Project: "core", PRState: "open", PRURL: "https://x/pr/7"}},
 			PRProjects:       []string{"core"},
 			RemediationRound: 2,
@@ -56,8 +56,8 @@ func TestFixesClient_ListFixesForRelease_MapsSummaries(t *testing.T) {
 
 	require.NotNil(t, fake.gotReq)
 	require.Equal(t, "rel-1", fake.gotReq.ReleaseId)
-	// The retry decision must see every attempt: a capped page could let an
-	// older open PR or proposed attempt fall off the page and be missed.
+	// The retry decision must see every try: a capped page could let an
+	// older open PR or proposed try fall off the page and be missed.
 	require.EqualValues(t, 0, fake.gotReq.Limit)
 }
 

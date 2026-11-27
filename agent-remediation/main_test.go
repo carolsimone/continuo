@@ -160,11 +160,11 @@ func (r *inFlightRepo) FailLegacyInFlight(_ context.Context, reason string) (int
 }
 
 // TestMain_FailLegacyInFlight: the startup step asks the repository to fail
-// the attempt rows in flight that belong to no remediation with the reason the
+// the fix rows in flight that belong to no remediation with the reason the
 // release page shows, logs how many it moved (at Warn when it moved any, at
 // Info when it moved none), and returns the repository's error.
 func TestMain_FailLegacyInFlight(t *testing.T) {
-	const reason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
+	const reason = "continuo changed its remediation engine while this try was in flight; use Try again"
 	for _, tc := range []struct {
 		name      string
 		repo      *inFlightRepo
@@ -472,7 +472,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 			ports.ReleaseReader
 			ports.ReleaseChecks
 		}{},
-		fixes: struct{ repository.AttemptLister }{},
+		fixes: struct{ repository.FixLister }{},
 		tries: struct{ repository.TryLister }{},
 	}, logger)
 

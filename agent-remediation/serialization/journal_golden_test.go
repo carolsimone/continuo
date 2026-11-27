@@ -126,7 +126,6 @@ func sampleFailure() remediation.Failure {
 		TargetNodeID: target.NodeID,
 		Target:       target,
 		Members:      []remediation.TriggerNode{target},
-		Attempt:      3,
 		Try:          2,
 	}
 }
@@ -139,10 +138,10 @@ func sampleDraft() remediation.Draft {
 			Original:     "select 1",
 			Content:      "select 2",
 			TargetNodeID: "orders.model.orders_daily",
-			ContentKey:   "proposed-fix/rel-1/orders/attempt-3.source.sql",
-			DiffKey:      "proposed-fix/rel-1/orders/attempt-3.source.diff",
-			ContentURI:   "s3://artifacts/proposed-fix/rel-1/orders/attempt-3.source.sql",
-			DiffURI:      "s3://artifacts/proposed-fix/rel-1/orders/attempt-3.source.diff",
+			ContentKey:   "proposed-fix/rel-1/orders/round-1/try-3.source.sql",
+			DiffKey:      "proposed-fix/rel-1/orders/round-1/try-3.source.diff",
+			ContentURI:   "s3://artifacts/proposed-fix/rel-1/orders/round-1/try-3.source.sql",
+			DiffURI:      "s3://artifacts/proposed-fix/rel-1/orders/round-1/try-3.source.diff",
 		}},
 		NamedTarget:         "models/orders_daily.sql",
 		TargetShown:         true,
@@ -256,7 +255,7 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 		remediation.KeyCurrentContract: remediation.Text("id: analytics.fx\nversion: \"3\"\n"),
 		remediation.KeyImagePackages:   remediation.ImagePackages{"duckdb": "1.4.0", "pyarrow": "26.0.0"},
 		remediation.KeyPreviousTries: []remediation.TryRecord{{
-			Round: 1, Try: 2, Attempt: 2,
+			Round: 1, Try: 2,
 			Clusters: []remediation.ClusterRecord{{
 				Type: "dbt-validation", TargetNodeID: "orders.model.orders_daily", Members: []string{"orders.model.orders_daily"},
 				Edits:   []remediation.EditRecord{{Path: "services/orders/models/orders_daily.sql", Diff: "-a\n+b"}},

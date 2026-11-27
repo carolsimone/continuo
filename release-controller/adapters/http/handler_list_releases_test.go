@@ -59,7 +59,7 @@ func TestHandleListReleases_OmitsReleaseChecks(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["rel-1"] = releasecheck.NewCandidate("rel-1", "finance", "tag", false, false, "owner/repo", "abc123", release.ManifestKindDbt, now)
-	releases.releases["verify-1"] = releasecheck.NewFix("verify-1", "finance", "tag", "rel-0", 1, "", release.ManifestKindDbt, now)
+	releases.releases["verify-1"] = releasecheck.NewFix("verify-1", "finance", "tag", "rel-0", 1, 1, "", release.ManifestKindDbt, now)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/releases", nil)

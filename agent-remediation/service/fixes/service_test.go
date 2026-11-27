@@ -65,7 +65,7 @@ type fakeRepo struct {
 	failStuckHit           bool
 }
 
-func (r *fakeRepo) CountAttempts(_ context.Context, _ string, _ int) (int, error) {
+func (r *fakeRepo) CountTries(_ context.Context, _ string, _ int) (int, error) {
 	return 0, nil
 }
 func (r *fakeRepo) InsertGenerating(_ context.Context, _ fix.Fix) error { return nil }
@@ -90,7 +90,7 @@ func (r *fakeRepo) BeginPR(_ context.Context, _, project string, branch string, 
 		ID:        r.view.ID,
 		ReleaseID: r.view.ReleaseID,
 		NodeID:    r.view.NodeID,
-		Attempt:   r.view.Attempt,
+		Try:       r.view.Try,
 		Project:   project,
 	}, nil
 }
@@ -129,10 +129,10 @@ func (r *fakeRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (b
 	return false, nil
 }
 
-func (r *fakeRepo) RecordApprovers(_ context.Context, _ string, _ int, _ []fix.Approver) error {
+func (r *fakeRepo) RecordApprovers(_ context.Context, _ string, _, _ int, _ []fix.Approver) error {
 	return nil
 }
-func (r *fakeRepo) ReopenTryAttempt(_ context.Context, _ uuid.UUID, _ int, _ fix.Status, _ map[string]fix.NodeOutcome) (bool, error) {
+func (r *fakeRepo) ReopenFixRow(_ context.Context, _ uuid.UUID, _ int, _ fix.Status, _ map[string]fix.NodeOutcome) (bool, error) {
 	return false, nil
 }
 
@@ -174,40 +174,44 @@ func (r *fakeRepo) uowFactory() uow.UnitOfWork {
 	return &fakeUoW{repo: r}
 }
 
-// TestBuildBranch_DistinctPerAttemptWithinARelease verifies that, with the
-// node segment gone, attempt is still enough to keep two attempts of the same
-// release on distinct branches, and that a legacy project "" carries no
+// TestBuildBranch_DistinctPerTryWithinARelease verifies that the round and
+// the try keep two tries of the same release on distinct branches, the same
+// try number of two rounds included, and that a legacy project "" carries no
 // project suffix.
-func TestBuildBranch_DistinctPerAttemptWithinARelease(t *testing.T) {
-	b1 := fixes.BuildBranch("r", 1, "")
-	b2 := fixes.BuildBranch("r", 2, "")
-	require.Equal(t, "remediation/r/attempt1", b1)
-	require.Equal(t, "remediation/r/attempt2", b2)
-	require.NotEqual(t, b1, b2, "two attempts of the same release must not collide on branch")
+func TestBuildBranch_DistinctPerTryWithinARelease(t *testing.T) {
+	b1 := fixes.BuildBranch("r", 1, 1, "")
+	b2 := fixes.BuildBranch("r", 1, 2, "")
+	b3 := fixes.BuildBranch("r", 2, 1, "")
+	require.Equal(t, "remediation/r/round1/try1", b1)
+	require.Equal(t, "remediation/r/round1/try2", b2)
+	require.Equal(t, "remediation/r/round2/try1", b3)
+	require.NotEqual(t, b1, b2, "two tries of the same round must not collide on branch")
+	require.NotEqual(t, b1, b3, "try 1 of two rounds must not collide on branch")
 }
 
 // TestBuildBranch_PerProjectSuffix verifies a non-empty project appends a
 // "/<project>" segment, and the empty legacy project does not, so each owning
 // project's PR lands on its own branch.
 func TestBuildBranch_PerProjectSuffix(t *testing.T) {
-	require.Equal(t, "remediation/rel-1/attempt2/core", fixes.BuildBranch("rel-1", 2, "core"))
-	require.Equal(t, "remediation/rel-1/attempt2", fixes.BuildBranch("rel-1", 2, ""))
+	require.Equal(t, "remediation/rel-1/round1/try2/core", fixes.BuildBranch("rel-1", 1, 2, "core"))
+	require.Equal(t, "remediation/rel-1/round1/try2", fixes.BuildBranch("rel-1", 1, 2, ""))
 	require.NotEqual(t,
-		fixes.BuildBranch("rel-1", 2, "core"),
-		fixes.BuildBranch("rel-1", 2, "finance"),
-		"two projects of the same attempt must not collide on branch")
+		fixes.BuildBranch("rel-1", 1, 2, "core"),
+		fixes.BuildBranch("rel-1", 1, 2, "finance"),
+		"two projects of the same try must not collide on branch")
 }
 
 // TestService_Begin_BuildsDeterministicBranch verifies that Begin on a legacy
-// (unsplit) fix derives the branch name remediation/<release_id>/attempt<n>,
-// with no project segment, and stamps the claim with the service clock.
+// (unsplit) fix derives the branch name
+// remediation/<release_id>/round<r>/try<t>, with no project segment, and stamps the claim with the service clock.
 func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	repo := &fakeRepo{view: fix.View{
-		ReleaseID:      "r-1",
-		NodeID:         "model.p.orders_d",
-		Attempt:        1,
-		Repo:           "org/repo",
-		SourceResolved: true,
+		ReleaseID:        "r-1",
+		NodeID:           "model.p.orders_d",
+		RemediationRound: 2,
+		Try:              1,
+		Repo:             "org/repo",
+		SourceResolved:   true,
 	}}
 	svc := fixes.New(fixes.Deps{
 		Repo:   repo,
@@ -216,7 +220,7 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	})
 	_, err := svc.Begin(context.Background(), "p1", "")
 	require.NoError(t, err)
-	require.Equal(t, "remediation/r-1/attempt1", repo.lastBranch)
+	require.Equal(t, "remediation/r-1/round2/try1", repo.lastBranch)
 	require.Equal(t, "", repo.lastBeginProject, "a legacy fix claims the whole-fix \"\" group")
 	require.Equal(t, fixedClock{}.Now(), repo.lastClaimedAt, "Begin must stamp the claim with the service's clock")
 }
@@ -226,11 +230,12 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 // fix's edits attribute an edit to that project.
 func TestService_Begin_ThreadsProject(t *testing.T) {
 	repo := &fakeRepo{view: fix.View{
-		ID:             "p1",
-		ReleaseID:      "r-1",
-		Attempt:        1,
-		Repo:           "org/repo",
-		SourceResolved: true,
+		ID:               "p1",
+		ReleaseID:        "r-1",
+		RemediationRound: 1,
+		Try:              1,
+		Repo:             "org/repo",
+		SourceResolved:   true,
 		Edits: []fix.FileEdit{
 			{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
 		},
@@ -245,8 +250,8 @@ func TestService_Begin_ThreadsProject(t *testing.T) {
 	claim, err := svc.Begin(context.Background(), "p1", "core")
 	require.NoError(t, err)
 	require.Equal(t, "core", repo.lastBeginProject, "Begin must thread the requested project to BeginPR")
-	require.Equal(t, "remediation/r-1/attempt1/core", repo.lastBranch)
-	require.Equal(t, "remediation/r-1/attempt1/core", claim.Branch, "the returned claim carries the per-project branch")
+	require.Equal(t, "remediation/r-1/round1/try1/core", repo.lastBranch)
+	require.Equal(t, "remediation/r-1/round1/try1/core", claim.Branch, "the returned claim carries the per-project branch")
 }
 
 // TestService_Begin_UnknownProjectRejected verifies Begin rejects a project the
@@ -255,10 +260,11 @@ func TestService_Begin_ThreadsProject(t *testing.T) {
 // with no edits.
 func TestService_Begin_UnknownProjectRejected(t *testing.T) {
 	repo := &fakeRepo{view: fix.View{
-		ID:             "p1",
-		ReleaseID:      "r-1",
-		Attempt:        1,
-		SourceResolved: true,
+		ID:               "p1",
+		ReleaseID:        "r-1",
+		RemediationRound: 1,
+		Try:              1,
+		SourceResolved:   true,
 		Edits: []fix.FileEdit{
 			{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
 		},
@@ -286,12 +292,13 @@ func TestService_Begin_UnknownProjectRejected(t *testing.T) {
 // 'opening' by claiming it here.
 func TestService_Begin_NoRepositoryRefused(t *testing.T) {
 	repo := &fakeRepo{view: fix.View{
-		ID:             "p1",
-		ReleaseID:      "r-1",
-		Attempt:        1,
-		Repo:           "",
-		SourceResolved: true,
-		Status:         fix.StatusProposed,
+		ID:               "p1",
+		ReleaseID:        "r-1",
+		RemediationRound: 1,
+		Try:              1,
+		Repo:             "",
+		SourceResolved:   true,
+		Status:           fix.StatusProposed,
 	}}
 	svc := fixes.New(fixes.Deps{
 		Repo:   repo,
@@ -371,7 +378,7 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 			ReleaseID:       "r-1",
 			NodeID:          "model.p.orders_d",
 			ResolvedNodeIDs: []string{"model.p.orders_d", "model.p.orders_e"},
-			Attempt:         1,
+			Try:             1,
 		},
 		recordPRCASHit: true,
 	}
@@ -405,7 +412,7 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 // Record: the pr_opened payload carries the requested project, its
 // resolved_node_ids are narrowed to the members that project's edits address
 // (not the whole fixed set), and the outbox entry id derives from the
-// three-arg (release, attempt, project) event id.
+// (release, round, try, project) event id.
 func TestService_Record_PROpenedPerProjectResolvedSet(t *testing.T) {
 	repo := &fakeRepo{
 		view: fix.View{
@@ -417,7 +424,8 @@ func TestService_Record_PROpenedPerProjectResolvedSet(t *testing.T) {
 				"model.core.a":    {Status: fix.StatusProposed},
 				"model.finance.b": {Status: fix.StatusProposed},
 			},
-			Attempt: 1,
+			RemediationRound: 1,
+			Try:              1,
 			Edits: []fix.FileEdit{
 				{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
 				{Path: "services/finance/models/b.sql", MemberNodeIDs: []string{"model.finance.b"}},
@@ -446,13 +454,13 @@ func TestService_Record_PROpenedPerProjectResolvedSet(t *testing.T) {
 	require.Equal(t, []string{"model.core.a"}, payload.ResolvedNodeIDs,
 		"a per-project pr_opened resolves only the members that project's edits address")
 
-	wantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(event.PROpenedEventID("r-1", 1, "core").String()))
+	wantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(event.PROpenedEventID("r-1", 1, 1, "core").String()))
 	require.Equal(t, wantID, repo.lastOutbox.ID,
-		"the outbox entry id must derive from the three-arg per-project event id")
+		"the outbox entry id must derive from the per-project event id")
 }
 
 // TestService_Record_PROpenedNamesOnlyTheFixedNodes covers the mixed batch: one
-// attempt addressed two failing nodes, repaired one and skipped the other, and
+// try addressed two failing nodes, repaired one and skipped the other, and
 // the pull request therefore carries a fix for one of them only. Naming both
 // would attach the PR to a rejection it does nothing about — catalog
 // records it against every node the event names.
@@ -467,7 +475,7 @@ func TestService_Record_PROpenedNamesOnlyTheFixedNodes(t *testing.T) {
 				"model.p.orders_d": {Status: fix.StatusProposed},
 				"model.p.orders_e": {Status: fix.StatusSkipped, Reason: "no source to fix"},
 			},
-			Attempt: 1,
+			Try: 1,
 		},
 		recordPRCASHit: true,
 	}
@@ -497,7 +505,7 @@ func TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes(t *testing.T) {
 				"model.p.orders_d": {Status: fix.StatusProposed},
 				"model.p.orders_e": {Status: fix.StatusFailed, Reason: "nothing to verify"},
 			},
-			Attempt: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
+			Try: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
 		},
 		outcomeCASHit: true,
 	}
@@ -514,13 +522,13 @@ func TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes(t *testing.T) {
 // TestService_RecordOutcome_PRClosedCarriesProjectAndEdits verifies a
 // per-project close: the pr_closed payload carries the project, the outcome,
 // and — passed by the caller — the amended edits and resolved subset verbatim,
-// with the outbox id derived from the three-arg event id.
+// with the outbox id derived from the per-project event id.
 func TestService_RecordOutcome_PRClosedCarriesProjectAndEdits(t *testing.T) {
 	repo := &fakeRepo{
 		view: fix.View{
 			ID: "p1", ReleaseID: "r-1", NodeID: "model.core.a",
-			ResolvedNodeIDs: []string{"model.core.a", "model.finance.b"},
-			Attempt:         1, PrURL: "http://gh/pull/7", PrNumber: 7,
+			ResolvedNodeIDs:  []string{"model.core.a", "model.finance.b"},
+			RemediationRound: 1, Try: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
 			Edits: []fix.FileEdit{
 				{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
 			},
@@ -552,9 +560,9 @@ func TestService_RecordOutcome_PRClosedCarriesProjectAndEdits(t *testing.T) {
 	require.Len(t, payload.Edits, 1)
 	require.Equal(t, serialization.ClosedEditDTO(edits[0]), payload.Edits[0])
 
-	wantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(event.PRClosedEventID("r-1", 1, "core").String()))
+	wantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(event.PRClosedEventID("r-1", 1, 1, "core").String()))
 	require.Equal(t, wantID, repo.lastOutbox.ID,
-		"the outbox entry id must derive from the three-arg per-project event id")
+		"the outbox entry id must derive from the per-project event id")
 }
 
 // TestService_Record_UsesProvidedOpenedAt verifies that a non-zero
@@ -567,7 +575,7 @@ func TestService_Record_UsesProvidedOpenedAt(t *testing.T) {
 			ID:        "p1",
 			ReleaseID: "r-1",
 			NodeID:    "model.p.orders_d",
-			Attempt:   1,
+			Try:       1,
 		},
 		recordPRCASHit: true,
 	}
@@ -595,7 +603,7 @@ func TestService_Record_UsesProvidedOpenedAt(t *testing.T) {
 // no commit, and no error — Record is idempotent under that race.
 func TestService_Record_NoEventWhenCASMisses(t *testing.T) {
 	repo := &fakeRepo{
-		view:           fix.View{ID: "p1", ReleaseID: "r-1", NodeID: "model.p.orders_d", Attempt: 1},
+		view:           fix.View{ID: "p1", ReleaseID: "r-1", NodeID: "model.p.orders_d", Try: 1},
 		recordPRCASHit: false,
 	}
 	svc := fixes.New(fixes.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
@@ -617,7 +625,7 @@ func TestService_RecordOutcome_EmitsPRClosedAtomically(t *testing.T) {
 	repo := &fakeRepo{
 		view: fix.View{
 			ID: "p1", ReleaseID: "r-1", NodeID: "model.p.orders_d",
-			Attempt: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
+			Try: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
 		},
 		outcomeCASHit: true,
 	}
@@ -638,7 +646,7 @@ func TestService_RecordOutcome_EmitsPRClosedAtomically(t *testing.T) {
 // (row no longer 'open') produces no outbox entry and no error.
 func TestService_RecordOutcome_NoEventWhenAlreadyTerminal(t *testing.T) {
 	repo := &fakeRepo{
-		view:          fix.View{ID: "p1", ReleaseID: "r-1", NodeID: "n", Attempt: 1},
+		view:          fix.View{ID: "p1", ReleaseID: "r-1", NodeID: "n", Try: 1},
 		outcomeCASHit: false,
 	}
 	svc := fixes.New(fixes.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})

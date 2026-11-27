@@ -71,8 +71,8 @@ func TestRunner_ALowConfidenceSourceFixGoesBackToTheModel(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterChecked, c.Status)
 	assert.Equal(t, 2, c.Round)
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
-	revised, ok := h.artifacts.get("proposed-fix/rel-1/" + validationNodeID + "/attempt-1.source.sql")
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
+	revised, ok := h.artifacts.get("proposed-fix/rel-1/" + validationNodeID + "/round-1/try-1.source.sql")
 	require.True(t, ok)
 	assert.Equal(t, revisedSourceText, revised, "the revised answer is the edit that goes to the gate")
 }
