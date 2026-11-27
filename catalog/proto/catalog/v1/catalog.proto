@@ -256,8 +256,8 @@ message PrecedentFix {
   string pr_url = 2;
   int32 pr_number = 3;
   // pr_state is the PR's live state: open until the close-loop mirrors a
-  // terminal outcome, merged/rejected afterwards; rows recorded before the
-  // per-PR split keep the open-time snapshot.
+  // terminal outcome, merged/rejected afterwards. It is read from the fix's
+  // :PullRequest of the rejection's project.
   string pr_state = 4;
 }
 

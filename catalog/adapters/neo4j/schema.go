@@ -90,7 +90,7 @@ var catalogSchema = []schemaObject{
 	identityConstraint("error_signature_unique", graphschema.ErrorSignature),
 	rangeIndex("error_signature_category_reason", graphschema.ErrorSignature, "category", "reason"),
 	identityConstraint("fix_unique", graphschema.Fix),
-	identityConstraint("pull_request_project_unique", graphschema.PullRequest),
+	identityConstraint("pull_request_fix_unique", graphschema.PullRequest),
 	identityConstraint("processed_message_unique", graphschema.ProcessedMessage),
 	uniqueConstraint("processed_message_outbox_unique", graphschema.ProcessedMessage, "group", "outbox_entry_id"),
 	identityConstraint("contract_version_unique", graphschema.ContractVersion),

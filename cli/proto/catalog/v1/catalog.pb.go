@@ -1266,8 +1266,8 @@ type PrecedentFix struct {
 	PrUrl    string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
 	PrNumber int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
 	// pr_state is the PR's live state: open until the close-loop mirrors a
-	// terminal outcome, merged/rejected afterwards; rows recorded before the
-	// per-PR split keep the open-time snapshot.
+	// terminal outcome, merged/rejected afterwards. It is read from the fix's
+	// :PullRequest of the rejection's project.
 	PrState       string `protobuf:"bytes,4,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

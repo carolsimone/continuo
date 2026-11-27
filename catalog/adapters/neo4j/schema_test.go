@@ -31,7 +31,7 @@ var wantConstraints = map[string]schemaEntry{
 	"rejection_unique":                {"Rejection", []string{"tenant_id", "release_id", "node_id"}},
 	"error_signature_unique":          {"ErrorSignature", []string{"tenant_id", "signature"}},
 	"fix_unique":                      {"Fix", []string{"tenant_id", "fix_id"}},
-	"pull_request_project_unique":     {"PullRequest", []string{"tenant_id", "fix_id", "project"}},
+	"pull_request_fix_unique":         {"PullRequest", []string{"tenant_id", "fix_id", "project"}},
 	"processed_message_unique":        {"ProcessedMessage", []string{"tenant_id", "group", "message_id"}},
 	"processed_message_outbox_unique": {"ProcessedMessage", []string{"tenant_id", "group", "outbox_entry_id"}},
 	"contract_version_unique":         {"ContractVersion", []string{"tenant_id", "unique_id", "contract_hash"}},

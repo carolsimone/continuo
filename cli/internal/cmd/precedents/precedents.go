@@ -104,9 +104,8 @@ Output (stdout, JSON):
    "pr_state":string}]}]}
   failing_code and resolving_version.raw_code are only populated when
   --include-code is set. resolving_version is omitted when resolved is false.
-  fixes[].pr_state records the fix's state when the PR was opened
-  (e.g. "open") — it is NOT updated when the PR is later merged or closed, so
-  it must not be read as the PR's current state.
+  fixes[].pr_state is the PR's current state: "open" until catalog records
+  how the PR closed, then "merged" or "rejected".
 
 An unknown signature — or an unseen (category, reason) pair — is NOT an
 error: it returns an empty precedents list with exit 0, because "no

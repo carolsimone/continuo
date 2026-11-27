@@ -108,6 +108,14 @@ func (h *PrOpenedFixesHandler) Handle(
 		return nil
 	}
 
+	if len(resolved) == 0 {
+		// A per-project pull request whose edits name no fixed node resolves
+		// none: the marker commits and no :Fix is recorded.
+		h.logger.Info("fix.pr_opened resolves no node; nothing recorded in case base",
+			"tenant_id", tenantID, "release_id", in.ReleaseID,
+			"fix_id", in.FixID, "project", in.Project, "pr_url", in.PrURL)
+		return nil
+	}
 	h.logger.Info("fix recorded in case base",
 		"tenant_id", tenantID, "release_id", in.ReleaseID, "node_ids", resolved,
 		"fix_id", in.FixID, "project", in.Project, "pr_url", in.PrURL)
