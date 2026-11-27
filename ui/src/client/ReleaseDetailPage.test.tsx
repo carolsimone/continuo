@@ -189,6 +189,15 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
 
+  it('ends a skipped try\'s reason with a full stop before the advice', async () => {
+    mockFetchFixes.mockResolvedValue([fix({
+      source: 'compile', node_id: 'svc', status: 'skipped',
+      resolved_node_ids: ['svc'], node_outcomes: { svc: { status: 'skipped', reason: 'the trigger carried no repository' } },
+    })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
+    expect(await screen.findByText('Skipped try: the trigger carried no repository. Fix it in the repository.')).toBeInTheDocument();
+  });
+
   it('renders nothing in the FIX cell when no fix exists', async () => {
     mockFetchFixes.mockResolvedValue([]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));

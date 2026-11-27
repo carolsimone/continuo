@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
-
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
@@ -28,6 +26,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
 
@@ -156,7 +155,7 @@ func (w *World) FixRows() []conformance.FixRow {
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i].Fix, out[j].Fix
-		return fix.TryBefore(a.RemediationRound, a.Try, b.RemediationRound, b.Try)
+		return pkg_model.TryBefore(a.RemediationRound, a.Try, b.RemediationRound, b.Try)
 	})
 	return out
 }

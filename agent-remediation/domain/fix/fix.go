@@ -192,8 +192,8 @@ const (
 // HandOverTry is the try number of a round's hand-over row: the escalated row
 // written once the round's tries are spent, which is no try of its own. A
 // round has at most one, and it comes after every try of its round
-// (TryBefore).
-const HandOverTry = 0
+// (model.TryBefore).
+const HandOverTry = model.HandOverTry
 
 // Fix is the append-only record of one try at a release's failing
 // set: the fix it made, or why it made none. One row per try, plus the

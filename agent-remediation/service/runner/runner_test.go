@@ -223,7 +223,7 @@ func TestRunner_MaintenanceRecordsSkippedWithoutAModelCall(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	const reason = "not attempted: continuo was in maintenance mode"
+	const reason = "continuo was in maintenance mode."
 	ps := h.fixes()
 	require.Len(t, ps, 1)
 	p := ps[0].Fix

@@ -167,13 +167,7 @@ func effectiveRound(p ports.FixSummary) int {
 // try of the same round. A round's hand-over row (try 0) is written after the
 // round's last try, so it orders after every other try of its round.
 func laterTry(a, b ports.FixSummary) bool {
-	if ra, rb := effectiveRound(a), effectiveRound(b); ra != rb {
-		return ra > rb
-	}
-	if a.Try == 0 || b.Try == 0 {
-		return a.Try == 0 && b.Try != 0
-	}
-	return a.Try > b.Try
+	return pkg_model.TryBefore(effectiveRound(b), b.Try, effectiveRound(a), a.Try)
 }
 
 // currentRoundFixes filters ps to the ones belonging to round.

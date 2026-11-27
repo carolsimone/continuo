@@ -1,7 +1,13 @@
-package fix
+package model
 
-// TryBefore reports whether the row of try aTry of round aRound was written
-// before the row of try bTry of round bRound: an earlier round, or an earlier
+// HandOverTry is the try number of a round's hand-over row in
+// agent-remediation: the escalated row written once the round's tries are
+// spent, which is no try of its own. A round has at most one, and it comes
+// after every try of its round (TryBefore).
+const HandOverTry = 0
+
+// TryBefore reports whether try aTry of a remediation round aRound came before
+// try bTry of round bRound: an earlier round, or an earlier
 // try of the same round. A round's hand-over row (HandOverTry) is written once
 // its tries are spent, so it comes after every try of its round.
 func TryBefore(aRound, aTry, bRound, bTry int) bool {

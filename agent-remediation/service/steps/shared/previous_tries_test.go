@@ -207,13 +207,13 @@ func TestPreviousTries_NoEvidenceReaderShowsTriesWithNoRemediationWithoutDiffs(t
 	}}, got)
 }
 
-// TestPreviousTries_LeavesOutAnTryTheStartupSweepFailed: a try row with
+// TestPreviousTries_LeavesOutATryTheStartupSweepFailed: a try row with
 // no remediation that the startup sweep failed was never judged by a gate, so
 // the model is not told its change failed. A generating row the sweep failed
 // holds the reason as its rationale, a verifying one as its verify error (with
 // its edits and diffs kept); both are left out, and another row with no
 // remediation is still listed.
-func TestPreviousTries_LeavesOutAnTryTheStartupSweepFailed(t *testing.T) {
+func TestPreviousTries_LeavesOutATryTheStartupSweepFailed(t *testing.T) {
 	fixes := &fakeFixes{views: []fix.View{
 		{
 			Try: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,

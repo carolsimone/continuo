@@ -192,6 +192,13 @@ function FixCell({ state, verifyPhase, note, owner }: {
   return null;
 }
 
+// withFullStop ends a sentence with a full stop unless it already ends with
+// one, so a reason joined to the advice after it reads as two sentences.
+function withFullStop(text: string): string {
+  const t = text.trimEnd();
+  return /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
 export default function ReleaseDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -447,7 +454,7 @@ export default function ReleaseDetailPage() {
             const reason = fixReasonForNode(p, nid);
             if (status === 'escalated') noteByKey.set(k, { text: "The round's tries are spent." });
             else if (status === 'failed') noteByKey.set(k, { text: reason || 'The model could not produce a safe fix.' });
-            else if (status === 'skipped') noteByKey.set(k, { text: `Skipped try: ${reason || 'No source to fix at this commit.'} Fix it in the repository.` });
+            else if (status === 'skipped') noteByKey.set(k, { text: `Skipped try: ${withFullStop(reason || 'No source to fix at this commit.')} Fix it in the repository.` });
           }
           setFixNote(noteByKey);
           setFixOwner(ownerByKey);

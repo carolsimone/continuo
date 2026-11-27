@@ -469,11 +469,11 @@ func loadWith(t *testing.T, env map[string]string) (Config, []string) {
 	return cfg, v.Missing()
 }
 
-// TestLoad_IgnoresTheRemovedMaxTriesSetting verifies that a leftover
+// TestLoad_IgnoresTheRemovedMaxAttemptsSetting verifies that a leftover
 // AGENT_REMEDIATION_MAX_ATTEMPTS in an install's environment changes nothing
 // the component loads and does not stop start-up: the tries a remediation
 // makes come from its flow's tries.
-func TestLoad_IgnoresTheRemovedMaxTriesSetting(t *testing.T) {
+func TestLoad_IgnoresTheRemovedMaxAttemptsSetting(t *testing.T) {
 	without, missingWithout := loadWith(t, map[string]string{"AGENT_REMEDIATION_MAX_ATTEMPTS": ""})
 	require.Empty(t, missingWithout)
 	for _, val := range []string{"7", "not-a-number"} {

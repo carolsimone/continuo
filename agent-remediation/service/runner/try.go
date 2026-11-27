@@ -49,7 +49,7 @@ const (
 const (
 	// maintenanceSkipReason closes a try that came due in maintenance mode, so
 	// the release can be retried once maintenance is off.
-	maintenanceSkipReason = "not attempted: continuo was in maintenance mode"
+	maintenanceSkipReason = "continuo was in maintenance mode."
 	// dbtTestSkipReason: a test is validation evidence, never a fix target. A
 	// model fix that makes it bind again resolves it in its release check, and a
 	// test that is itself wrong is a human's edit.
@@ -492,7 +492,7 @@ func (r *Runner) recordTry(ctx context.Context, u uow.UnitOfWork, run tryRun, tr
 // with what its clusters reported, its nodes are handed over, the try fails
 // and the remediation is done. Any other drafting try moves to checking. A
 // checking try runs the flow's cross-cluster checks one at a time, in file
-// order, each committed on its own; a finding fails the try and the try,
+// order, each committed on its own; a finding fails the try's fix row and the try,
 // like a gate that did not pass the fix, and the remediation's next try opens
 // in the drive's next step, or the failing set is handed over once the tries
 // are spent. Once every check passed, the drafts are submitted to the gate. The

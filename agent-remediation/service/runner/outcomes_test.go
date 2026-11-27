@@ -24,7 +24,7 @@ const (
 	dbtTestReason       = "dbt tests are not fix targets; fix the model or edit the test by hand"
 	noTypeReason        = "no remediation type matches this failure"
 	noFileReason        = "the compile error names no source file, so there is no file to fix"
-	maintenanceReason   = "not attempted: continuo was in maintenance mode"
+	maintenanceReason   = "continuo was in maintenance mode."
 	lowConfidenceReason = "the model could not determine a safe fix with confidence"
 	twoEditsReason      = "two edits change the same file: services/core/models/base.sql"
 )

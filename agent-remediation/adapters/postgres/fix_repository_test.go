@@ -1001,7 +1001,7 @@ func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrNotSourceResolved)
 }
 
-// TestBeginPR_RejectsAnTryThatIsNotProposed pins the invariant the PR
+// TestBeginPR_RejectsATryThatIsNotProposed pins the invariant the PR
 // claim itself has to carry: only a try that reached 'proposed' may be
 // turned into a pull request.
 //
@@ -1012,7 +1012,7 @@ func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {
 // verified, or for one a release check had already failed. The UI's own
 // status==='proposed' predicate is not that invariant: it does not run for a
 // direct or stale gRPC client.
-func TestBeginPR_RejectsAnTryThatIsNotProposed(t *testing.T) {
+func TestBeginPR_RejectsATryThatIsNotProposed(t *testing.T) {
 	for name, status := range map[string]fix.Status{
 		"still being verified by a release check": fix.StatusVerifying,
 		"failed by its release check":             fix.StatusFailed,

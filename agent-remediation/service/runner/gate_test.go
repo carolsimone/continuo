@@ -101,7 +101,7 @@ func (h *harness) twoEditsOfOneFile() {
 	}
 }
 
-// With a single try, a cross-cluster finding fails the try and the try, and
+// With a single try, a cross-cluster finding fails the try's fix row and the try, and
 // the tries being spent, the remediation hands over.
 func TestRunner_CrossClusterFindingFailsTheTry(t *testing.T) {
 	h := newHarness(t, withTries(1))
