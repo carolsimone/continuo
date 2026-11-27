@@ -199,7 +199,7 @@ func TestRunner_ARevisionShowsTheFindingsCleanedAndARestartRebuildsTheSamePlaceh
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 }
 
-// TestRunner_EveryRoundKeepsThePlaceholdersOfTheRoundsBefore checks that a
+// TestRunner_EveryDraftKeepsThePlaceholdersOfTheDraftsBefore checks that a
 // value a finding of draft 1 quotes keeps its placeholder in draft 3, so no
 // number means two values in one request.
 func TestRunner_EveryDraftKeepsThePlaceholdersOfTheDraftsBefore(t *testing.T) {
