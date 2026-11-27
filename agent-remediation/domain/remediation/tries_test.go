@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 func TestTryRecords_KeepsOnlyEarlierTriesOfTheseNodes(t *testing.T) {
@@ -43,7 +45,9 @@ func TestTryRecords_NoEarlierTryGivesNone(t *testing.T) {
 
 func TestTryRef_OrdersByRoundThenTry(t *testing.T) {
 	assert.True(t, TryRef{Round: 1, Try: 3}.Before(TryRef{Round: 2, Try: 1}))
-	assert.True(t, TryRef{Round: 2, Try: 0}.Before(TryRef{Round: 2, Try: 1}))
+	assert.True(t, TryRef{Round: 2, Try: 3}.Before(TryRef{Round: 2, Try: model.HandOverTry}),
+		"a round's hand-over row comes after every try of its round")
+	assert.True(t, TryRef{Round: 2, Try: model.HandOverTry}.Before(TryRef{Round: 3, Try: 1}))
 	assert.False(t, TryRef{Round: 2, Try: 1}.Before(TryRef{Round: 2, Try: 1}))
 	assert.False(t, TryRef{Round: 2, Try: 1}.Before(TryRef{Round: 1, Try: 9}))
 }

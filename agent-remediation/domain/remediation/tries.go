@@ -3,6 +3,8 @@ package remediation
 import (
 	"slices"
 	"sort"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // TryRecord is one earlier try at a release's failing set, as a later try is
@@ -47,12 +49,10 @@ type TryRef struct {
 }
 
 // Before reports whether r is a try made before o: an earlier round, or an
-// earlier try of the same round.
+// earlier try of the same round, a round's hand-over row coming after every
+// try of its round (model.TryBefore).
 func (r TryRef) Before(o TryRef) bool {
-	if r.Round != o.Round {
-		return r.Round < o.Round
-	}
-	return r.Try < o.Try
+	return model.TryBefore(r.Round, r.Try, o.Round, o.Try)
 }
 
 // Ref names the try the record is of.

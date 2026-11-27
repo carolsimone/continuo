@@ -23,9 +23,9 @@ type Script struct {
 	// MemberAnswers are the model's answers, in call order, for the clusters
 	// whose target is the named node.
 	MemberAnswers map[string][]ports.ProposeResult
-	// FailedTries is how many of the release's tries have their
-	// release checks fail, with the fixture's gate errors, before they
-	// pass: a check of try n fails while n is at most FailedTries.
+	// FailedTries is how many tries of each round have their release
+	// checks fail, with the fixture's gate errors, before they pass: a
+	// check of try n of any round fails while n is at most FailedTries.
 	FailedTries int
 }
 
