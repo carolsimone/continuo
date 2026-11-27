@@ -1,5 +1,5 @@
 # Two dbt-validation fixes in two projects: sales and finance each get a
-# verification run of their own.
+# release check of their own.
 kind: fixture
 version: 1
 flow: rejected-release

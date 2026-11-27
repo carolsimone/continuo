@@ -22,7 +22,7 @@ PARSE_FAILURE_KIND_HEALABLE = frozenset({ParseFailureKind.INVALID_SQL, ParseFail
 
 
 class RejectReason(StrEnum):
-    """Why release-controller ended a candidate or fix-verification run short of promotion. Travels as `reason` on release.rejected:v1 and as the run's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a remediation round for nothing."""
+    """Why release-controller ended a release check, a candidate release's or a fix's, short of promotion. Travels as `reason` on release.rejected:v1 and as the check's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a remediation round for nothing."""
     COMPILE_FAILED = "compile_failed"
     PARSE_REHEARSAL_FAILED = "parse_rehearsal_failed"
     ARTIFACT_UPLOAD_FAILED = "artifact_upload_failed"
@@ -78,7 +78,7 @@ class ContractFamily(StrEnum):
 
 
 class RemediationSource(StrEnum):
-    """The pipeline stage that produced the failure of a node a remediation works on."""
+    """The stage of the release check that produced the failure of a node a remediation works on."""
     VALIDATION = "validation"
     COMPILE = "compile"
     SEED_BUILD = "seed_build"

@@ -36,7 +36,7 @@ func promoteCandidate(t *testing.T, deps *handlers.Deps, releaseID string, topo 
 }
 
 // Each promotion takes the next seq, records it on current_prod and carries it
-// on release.promoted:v1 with the run's own topology reference.
+// on release.promoted:v1 with the check's own topology reference.
 func TestPromote_EachPromotionTakesTheNextSeq(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
@@ -108,9 +108,9 @@ func TestPromote_BootstrapListsTheExactDiff(t *testing.T) {
 	assert.Equal(t, int64(1), p.PromotionSeq)
 }
 
-// A verification run passes without touching the promotion sequence.
-func TestPromote_VerificationNeverTakesASeq(t *testing.T) {
-	deps, store := seedToValidatingVerification(t, "rVerify")
+// A fix's release check passes without touching the promotion sequence.
+func TestPromote_FixNeverTakesASeq(t *testing.T) {
+	deps, store := seedToValidatingFix(t, "rVerify")
 	seedValidationNodes(t, deps, "rVerify", []handlers.NodeResult{{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"}})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
 		ReleaseID: "rVerify", AggregateStatus: "ok",

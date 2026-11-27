@@ -43,7 +43,7 @@ func TestFailingSiblings_ADeclaredSiblingInTheSameDirectoryDeclinesNamingBothNod
 	require.NoError(t, err)
 	assert.True(t, out.Declined)
 	assert.Equal(t, "py.fx.other also failed validation in release rel-1 and is declared in the same contract directory (svc/contracts) as py.fx.rates. "+
-		"A fix is packaged from that whole directory, so any verification run of it would re-run both nodes "+
+		"A fix is packaged from that whole directory, so any release check of it would re-run both nodes "+
 		"and be failed by py.fx.other. Fix both nodes together.", out.Decline)
 	assert.Empty(t, out.Evidence)
 	assert.Equal(t, []string{"rel-1"}, r.releases)

@@ -285,7 +285,7 @@ test-topology:
 #   reuse path — a runner holding a cluster whose context is gone then fails
 #   minutes later with a connection-refused far from the cause.
 # - check-release-tag-trigger: release.yml's tag glob must not claim another
-#   workflow's tag family, which would run the product release pipeline on a
+#   workflow's tag family, which would run the product release workflow on a
 #   tag that has no release images behind it.
 # - check-closed-pr-ci-cancel: cancel-closed-pr-ci.yml must fire on
 #   pull_request_target `closed` (a conflicted pull request starts no
@@ -303,7 +303,7 @@ test-topology:
 # - check-agent-remediation-runtime-pin: the continuo-python-runtime PyPI pin
 #   in agent-remediation's Dockerfiles (the CLI it packages proposed fixes with)
 #   must equal the X.Y.Z continuo targets, so a lagging pin cannot reject node
-#   kinds the current runtime accepts and kill valid repairs before verification.
+#   kinds the current runtime accepts and kill valid repairs before their release check.
 # - check-validation-image-sideload: the kind-provisioning scripts must not
 #   side-load the pulled validation image with a bare `kind load docker-image`,
 #   which fails on a containerd-backed image store.

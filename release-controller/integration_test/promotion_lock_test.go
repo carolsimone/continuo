@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,7 +104,7 @@ func TestIntegration_ReannounceCurrentProd_SerializesUnderTheReleaseQueueLock(t 
 
 // The validation-passed promotion (promoteToProduction) reads current_prod,
 // takes the next seq and moves current_prod. Held behind the release-queue
-// lock, HandleValidationResult must not promote: no seq is taken and the run
+// lock, HandleValidationResult must not promote: no seq is taken and the check
 // stays Validating until the lock is free, after which it promotes exactly once.
 func TestIntegration_PromoteToProduction_SerializesUnderTheReleaseQueueLock(t *testing.T) {
 	_, deps, db := setup(t)
@@ -130,9 +130,9 @@ func TestIntegration_PromoteToProduction_SerializesUnderTheReleaseQueueLock(t *t
 	} {
 		require.NoError(t, handlers.HandleNodeValidationResult(ctx, deps, n))
 	}
-	r, err := deps.NewUoW().RunRepo().Get(ctx, "rA")
+	r, err := deps.NewUoW().ReleaseCheckRepo().Get(ctx, "rA")
 	require.NoError(t, err)
-	require.Equal(t, pipeline.StatusValidating, r.Status())
+	require.Equal(t, releasecheck.StatusValidating, r.Status())
 	seqBefore := lastSeq(t, db)
 
 	holder := deps.NewUoW()
@@ -151,9 +151,9 @@ func TestIntegration_PromoteToProduction_SerializesUnderTheReleaseQueueLock(t *t
 	case <-time.After(300 * time.Millisecond):
 	}
 	assert.Equal(t, seqBefore, lastSeq(t, db), "no promotion seq is taken while the lock is held elsewhere")
-	r, err = deps.NewUoW().RunRepo().Get(ctx, "rA")
+	r, err = deps.NewUoW().ReleaseCheckRepo().Get(ctx, "rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusValidating, r.Status(), "the run does not promote while the lock is held elsewhere")
+	assert.Equal(t, releasecheck.StatusValidating, r.Status(), "the check does not promote while the lock is held elsewhere")
 
 	require.NoError(t, holder.Rollback())
 	select {
@@ -163,9 +163,9 @@ func TestIntegration_PromoteToProduction_SerializesUnderTheReleaseQueueLock(t *t
 		t.Fatal("HandleValidationResult did not finish after the release-queue lock was released")
 	}
 
-	r, err = deps.NewUoW().RunRepo().Get(ctx, "rA")
+	r, err = deps.NewUoW().ReleaseCheckRepo().Get(ctx, "rA")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 	assert.Equal(t, seqBefore+1, lastSeq(t, db), "the promotion took exactly one seq once the lock was free")
 	var promoted int
 	require.NoError(t, db.Get(&promoted,

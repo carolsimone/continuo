@@ -144,7 +144,7 @@ func TestSeedServiceProd_IdempotentOnRerun(t *testing.T) {
 
 	sp, _ := repo.Get(context.Background(), "service-1")
 	require.NotNil(t, sp)
-	assert.Equal(t, "rel-1", sp.ReleaseID(), "second run must not change the pointer")
+	assert.Equal(t, "rel-1", sp.ReleaseID(), "second check must not change the pointer")
 }
 
 func TestSeedServiceProd_EmptyTopologyReturnsZero(t *testing.T) {

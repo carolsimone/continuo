@@ -190,7 +190,7 @@ func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T
 	assert.Equal(t, proposal.StatusFailed, c.Outcome.Status)
 	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, c.Outcome.Code)
 	assert.Contains(t, c.Outcome.Reason, toolRefusal)
-	assert.Empty(t, h.pipeline.runs())
+	assert.Empty(t, h.checks.requests())
 }
 
 // A release that records no package list of the project's image is known
@@ -215,7 +215,7 @@ func TestImagePackages_AReleaseWithNoListDeclinesBeforeTheModel(t *testing.T) {
 	require.NotNil(t, c.Outcome)
 	want := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: noPackages.Error(), Code: model.HandoverReasonDeclined}
 	assert.Equal(t, &want, c.Outcome)
-	assert.Empty(t, h.pipeline.runs())
+	assert.Empty(t, h.checks.requests())
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusSkipped, p.Status)
 	assert.Equal(t, map[string]proposal.NodeOutcome{contractNodeID: want}, p.NodeOutcomes)
@@ -253,7 +253,7 @@ func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) 
 	const notABundle = "version: 1\nnodes:\n  - id: sales.loader\n    script: scripts/loader.py\n"
 	h := newHarness(t, withTries(1), withContractType(1, &refusingPackager{}))
 	h.llm.answer = contractAnswer
-	h.pipeline.submitErr = errors.New("release-controller unavailable")
+	h.checks.submitErr = errors.New("release-controller unavailable")
 	id := h.accept(trigger("validation", contractNode()))
 	require.Error(t, h.runner.Drive(ctx, id), "the gate's submit fails, so the cluster stays checked")
 	require.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
@@ -276,7 +276,7 @@ func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) 
 	h.clock.set(t0.Add(time.Minute))
 	require.NoError(t, h.drive(id))
 
-	assert.Empty(t, h.pipeline.runs(), "nothing is submitted to the release pipeline")
+	assert.Empty(t, h.checks.requests(), "no release check is submitted")
 	h.artifacts.mu.Lock()
 	written := h.artifacts.objects
 	h.artifacts.mu.Unlock()

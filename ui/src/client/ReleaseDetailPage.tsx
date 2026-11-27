@@ -1,19 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import PageHeader from './PageHeader';
-import { ApproverDTO, ReleaseDetail, NodeValidationResult, ProposalDTO, VerificationRunSummary } from './types';
+import { ApproverDTO, ReleaseDetail, NodeValidationResult, ProposalDTO, ReleaseCheckSummary } from './types';
 import {
   releasePillClass, proposalKey, reasonLabel,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode, proposalApproverForNode,
   proposalPullRequests, proposalPrProjects, proposalPrStateForProject,
-  verificationPhase, verificationRunPhase, effectiveRound, shortSha,
+  attemptReleaseCheckPhase, releaseCheckPhase, effectiveRound, shortSha,
 } from './release-helpers';
 import ErrorCell from './ErrorCell';
 import { HANDOVER_TEXT } from './handover-text';
 import { fetchProposals } from './remediation-api';
 import { NodeResultsTable } from './node-results';
 import ProjectTiles from './ProjectTiles';
-import PipelineTimeline from './PipelineTimeline';
+import ReleaseCheckTimeline from './ReleaseCheckTimeline';
 import SeedReloadNotices from './SeedReloadNotices';
 import ReleaseRunsPanel from './ReleaseRunsPanel';
 
@@ -52,7 +52,7 @@ const MAX_POLLS = Math.floor(MAX_POLL_MS / POLL_INTERVAL_MS);
 const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'rejected', 'superseded']);
 
 // What the FIX cell can say about a failed node, ordered by how far its fix has
-// progressed: still being written, then being run through a verification run to
+// progressed: still being written, then being run through a release check to
 // see whether it holds, then ready for a human to review. A node can carry
 // several attempts at once — a later one can supersede an earlier in-flight
 // one — so the cell shows the furthest-along of them. Every other proposal
@@ -118,14 +118,15 @@ function anyOpenPR(list: ProposalDTO[]): boolean {
   return list.some(p => proposalPullRequests(p).some(pr => OPEN_PR_STATES.includes(pr.pr_state ?? '')));
 }
 
-// verifyLabel picks the wording of the in-flight verification chip. A
-// verification run puts the fix through the whole validation pipeline behind
-// a global one-at-a-time queue, so it can sit waiting its turn before any
-// work starts — which reads as "stuck" under a flat "Verifying fix…".
-// Splitting the chip on the phase agent-remediation recorded for the run
-// (queued vs running) lets a long wait read as "waiting its turn" instead.
+// verifyLabel picks the wording of the chip of a fix in 'verifying'. A fix's
+// release check puts it through every stage a release passes, behind a
+// global one-at-a-time release queue, so it can sit waiting its turn before
+// any work starts — which reads as "stuck" under a flat "Checking the fix…".
+// Splitting the chip on the phase agent-remediation recorded for the release
+// check (queued vs running) lets a long wait read as "waiting its turn"
+// instead.
 function verifyLabel(phase?: 'queued' | 'running'): string {
-  return phase === 'queued' ? 'Queued for verification' : 'Verifying fix…';
+  return phase === 'queued' ? 'Queued for its release check' : 'Checking the fix…';
 }
 
 // FixNote explains why remediation stopped for one node. text is the short
@@ -218,15 +219,16 @@ export default function ReleaseDetailPage() {
   // the dead-end check below can recompute in-flight/PR state per remediation
   // round (fixState itself is a rendering-only summary across every round).
   const [proposals, setProposals] = useState<ProposalDTO[]>([]);
-  // Per (stage, node_id) verification phase for a node currently shown as
-  // 'verifying', read off the proposal's own verification summary
-  // (verificationPhase) — whether the run judging its fix is still queued
-  // behind the global one-at-a-time pipeline or already running. Populated
+  // Per (stage, node_id) release check phase for a node currently shown as
+  // 'verifying', read off the proposal's own release check summary
+  // (attemptReleaseCheckPhase) — whether the release check judging its fix
+  // is still queued behind the global one-at-a-time release queue or already
+  // running. Populated
   // only for verifying nodes; empty for every other node.
   const [verifyPhaseByKey, setVerifyPhaseByKey] = useState<Map<string, 'queued' | 'running'>>(new Map());
-  // The verification runs recorded for this release, newest first, rendered
-  // in the "Verification runs" section below.
-  const [verificationRuns, setVerificationRuns] = useState<VerificationRunSummary[]>([]);
+  // The release checks recorded for this release, newest first, rendered
+  // in the "Release checks" section below.
+  const [releaseChecks, setReleaseChecks] = useState<ReleaseCheckSummary[]>([]);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   // Bumped by retry() to re-arm the proposal-polling effect below after a
@@ -337,13 +339,13 @@ export default function ReleaseDetailPage() {
     // already found every proposal and stopped polling.
     let issued = 0;
     let applied = 0;
-    // Whether the last applied response showed a fix a verification run is
-    // still judging. Such a verdict is coming — the backend runs a whole
-    // release-shaped pipeline to produce it, behind a global queue, and ends
+    // Whether the last applied response showed a fix a release check is
+    // still judging. Such a verdict is coming — the backend runs every stage
+    // a release passes to produce it, behind a global queue, and ends
     // the attempt itself if it never arrives — so the cap below, which exists
     // for failures that will never be healed at all, must not apply while one
     // is outstanding. Otherwise a healthy transition to 'proposed' lands
-    // after polling stopped and the page sits on "Verifying fix…" until
+    // after polling stopped and the page sits on "Checking the fix…" until
     // someone reloads it.
     let verifying = false;
 
@@ -362,13 +364,13 @@ export default function ReleaseDetailPage() {
           applied = seq;
           const releaseProposals = fetched.filter(p => p.release_id === id);
           setProposals(releaseProposals);
-          // Refresh the "Verification runs" section on the same tick as the
-          // proposal poll, so a newly-started run shows up without a manual
-          // reload. Best-effort: a failed fetch leaves the section showing
-          // its last-known rows rather than clearing them.
-          fetch(`/api/releases/${id}/verifications`)
-            .then(r => (r.ok ? r.json() : { runs: [] }))
-            .then(d => { if (!cancelled) setVerificationRuns(d.runs ?? []); })
+          // Refresh the "Release checks" section on the same tick as the
+          // proposal poll, so a newly-started release check shows up without
+          // a manual reload. Best-effort: a failed fetch leaves the section
+          // showing its last-known rows rather than clearing them.
+          fetch(`/api/releases/${id}/release-checks`)
+            .then(r => (r.ok ? r.json() : { checks: [] }))
+            .then(d => { if (!cancelled) setReleaseChecks(d.checks ?? []); })
             .catch(() => {});
           // Bucket each failed node by its proposals, keeping the furthest-along
           // state any of its attempts reached; terminal-but-blank statuses
@@ -402,15 +404,15 @@ export default function ReleaseDetailPage() {
             }
           }
           setFixState(byKey);
-          // Verification phase for each node whose furthest-along state is
-          // 'verifying', read off the proposal's own verification summary
-          // (verificationPhase) rather than a separate poll — so the verify
+          // Release check phase for each node whose furthest-along state is
+          // 'verifying', read off the proposal's own release check summary
+          // (attemptReleaseCheckPhase) rather than a separate poll — so the verify
           // chip can split queued-vs-running. A node settled on any other
           // state carries no entry. When more than one attempt for a node is
           // still verifying, 'running' wins over 'queued'.
           const phaseByKey = new Map<string, 'queued' | 'running'>();
           for (const p of releaseProposals) {
-            const phase = verificationPhase(p);
+            const phase = attemptReleaseCheckPhase(p);
             if (!phase) continue;
             for (const nid of proposalNodeIds(p)) {
               const k = proposalKey(p.source, nid);
@@ -623,9 +625,9 @@ export default function ReleaseDetailPage() {
 
       <main className="page-content page-content--readable">
         <ProjectTiles imageTags={rel.image_tags || {}} changedProject={rel.changed_project} />
-        <PipelineTimeline
+        <ReleaseCheckTimeline
           transitions={rel.transitions}
-          run={{
+          check={{
             manifestKind: rel.manifest_kind,
             bootstrap: rel.bootstrap,
             parse_ms: rel.parse_ms,
@@ -650,26 +652,26 @@ export default function ReleaseDetailPage() {
             );
           }}
         />
-        {verificationRuns.length > 0 && (
+        {releaseChecks.length > 0 && (
           <>
             <div className="section-header">
               <div className="section-header__main">
-                <span className="section-header__title">Verification runs</span>
-                <span className="section-header__count">{verificationRuns.length}</span>
+                <span className="section-header__title">Release checks</span>
+                <span className="section-header__count">{releaseChecks.length}</span>
               </div>
             </div>
             <table className="nodes-table">
-              <thead><tr><th>Run</th><th>Attempt</th><th>Project</th><th>Status</th><th>Started</th></tr></thead>
+              <thead><tr><th>Release check</th><th>Attempt</th><th>Project</th><th>Status</th><th>Started</th></tr></thead>
               <tbody>
-                {verificationRuns.map(v => {
-                  const phase = verificationRunPhase(v.status);
+                {releaseChecks.map(c => {
+                  const phase = releaseCheckPhase(c.status);
                   return (
-                    <tr key={v.run_id}>
-                      <td><Link className="nodes-node-name" to={`/verifications/${v.run_id}`}>{v.run_id}</Link></td>
-                      <td>{v.attempt}</td>
-                      <td>{v.project}</td>
+                    <tr key={c.check_id}>
+                      <td><Link className="nodes-node-name" to={`/release-checks/${c.check_id}`}>{c.check_id}</Link></td>
+                      <td>{c.attempt}</td>
+                      <td>{c.project}</td>
                       <td><span className={`pill-sm ${releasePillClass(phase).replace('pill--', 'pill-sm--')}`}>{phase}</span></td>
-                      <td className="nodes-ts">{v.activated_at ? v.activated_at.slice(0, 19).replace('T', ' ') : '—'}</td>
+                      <td className="nodes-ts">{c.activated_at ? c.activated_at.slice(0, 19).replace('T', ' ') : '—'}</td>
                     </tr>
                   );
                 })}

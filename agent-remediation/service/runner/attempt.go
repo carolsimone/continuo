@@ -134,16 +134,16 @@ func settledStatus(outcomes map[string]proposal.NodeOutcome) proposal.Status {
 }
 
 // verifyingAttempt is the attempt's proposal row once the gate started its
-// runs: every edit of the checked drafts, each naming the members of its
-// cluster, the runs that verify them, the weakest cluster's confidence, one
+// release checks: every edit of the checked drafts, each naming the members of its
+// cluster, the release checks that verify them, the weakest cluster's confidence, one
 // composed rationale per cluster, the first model that answered, and the
 // repository and commit the edits apply to.
-func verifyingAttempt(run tryRun, checked []checkedCluster, verifications []proposal.Verification) proposal.Proposal {
+func verifyingAttempt(run tryRun, checked []checkedCluster, releaseChecks []proposal.ReleaseCheck) proposal.Proposal {
 	t := run.trigger
 	p := proposal.Proposal{
 		Status:         proposal.StatusVerifying,
 		NodeOutcomes:   nodeOutcomes(run.snap.Clusters),
-		Verifications:  verifications,
+		ReleaseChecks:  releaseChecks,
 		SourceResolved: true,
 		Repo:           t.Repo,
 		CommitSHA:      t.CommitSHA,

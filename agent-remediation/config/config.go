@@ -82,25 +82,25 @@ type Config struct {
 	SQLDialect string
 
 	// ReleaseControllerURL is release-controller's HTTP root, used by the
-	// VerificationPipeline adapter to submit fix-verification runs and poll
+	// ReleaseChecks adapter to submit the release checks of fixes and poll
 	// their status.
 	ReleaseControllerURL string
 
-	// VerificationTimeout bounds how long a try awaits its verification
-	// runs' verdict before the gate fails the try as timed out. It is measured
-	// from when a run left the release queue and started running, so a backlog
+	// ReleaseCheckTimeout bounds how long a try awaits the verdict of its
+	// release checks before the gate fails the try as timed out. It is measured
+	// from when a check left the release queue and started running, so a backlog
 	// never spends it; when no status can be read at all, it is measured from
-	// when the gate submitted the runs instead.
+	// when the gate submitted the checks instead.
 	// Non-positive values fall back to the default so a misconfiguration can
 	// never leave a proposal waiting indefinitely; a value that is not a Go
 	// duration at all fails start-up.
-	VerificationTimeout time.Duration
+	ReleaseCheckTimeout time.Duration
 
-	// VerificationPollInterval is how often the gate poller reads the runs of
-	// every remediation awaiting a verdict. Non-positive values fall
+	// ReleaseCheckPollInterval is how often the gate poller reads the release
+	// checks of every remediation awaiting a verdict. Non-positive values fall
 	// back to the default so a misconfigured interval can never produce a hot
 	// loop; a value that is not a Go duration at all fails start-up.
-	VerificationPollInterval time.Duration
+	ReleaseCheckPollInterval time.Duration
 
 	// RetentionDays and RetentionSweepIntervalMin pace the retention sweeper:
 	// processed agent_remediation_outbox rows are deleted after RetentionDays,
@@ -146,16 +146,16 @@ const defaultPROpeningGracePeriod = 10 * time.Minute
 // address, matching the same default ui already uses to reach it.
 const defaultReleaseControllerURL = "http://release-controller:8088"
 
-// defaultVerificationTimeout bounds how long a verification run is polled for
-// a terminal verdict. It comfortably exceeds the compile+parse+validate
-// pipeline a healthy run completes in, while still failing a try whose run
+// defaultReleaseCheckTimeout bounds how long a release check is polled for
+// a terminal verdict. It comfortably exceeds the compile, parse and validate
+// stages a healthy check completes in, while still failing a try whose check
 // wedges rather than polling forever.
-const defaultVerificationTimeout = 20 * time.Minute
+const defaultReleaseCheckTimeout = 20 * time.Minute
 
-// defaultVerificationPollInterval paces the gate poller. Fifteen seconds keeps
-// a verified fix at most one tick behind the run that proved it, at the cost of
+// defaultReleaseCheckPollInterval paces the gate poller. Fifteen seconds keeps
+// a verified fix at most one tick behind the check that proved it, at the cost of
 // one cheap read per waiting remediation.
-const defaultVerificationPollInterval = 15 * time.Second
+const defaultReleaseCheckPollInterval = 15 * time.Second
 
 // engineDialects maps WAREHOUSE_ENGINE (the chart's validation.engine value,
 // published to every component on the shared ConfigMap) to the sqlglot dialect
@@ -224,9 +224,9 @@ func Load(v *pkgconfig.Validator) Config {
 		CatalogAddr:          pkgconfig.EnvOrDefault("CONTINUO_CATALOG_ADDR", "catalog:50052"),
 		ProjectRepoMapPath:   pkgconfig.EnvOrDefault("PROJECT_REPO_MAP_PATH", ""),
 		ReleaseControllerURL: pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_URL", defaultReleaseControllerURL),
-		VerificationTimeout:  v.DurationOrDefault("VERIFICATION_TIMEOUT", defaultVerificationTimeout),
-		VerificationPollInterval: v.DurationOrDefault(
-			"VERIFICATION_POLL_INTERVAL", defaultVerificationPollInterval),
+		ReleaseCheckTimeout:  v.DurationOrDefault("RELEASE_CHECK_TIMEOUT", defaultReleaseCheckTimeout),
+		ReleaseCheckPollInterval: v.DurationOrDefault(
+			"RELEASE_CHECK_POLL_INTERVAL", defaultReleaseCheckPollInterval),
 
 		RetentionDays:             pkgconfig.EnvIntOrDefault("RETENTION_DAYS", 7),
 		RetentionSweepIntervalMin: pkgconfig.EnvIntOrDefault("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
@@ -248,11 +248,11 @@ func Load(v *pkgconfig.Validator) Config {
 	if cfg.PROpeningGracePeriod <= 0 {
 		cfg.PROpeningGracePeriod = defaultPROpeningGracePeriod
 	}
-	if cfg.VerificationTimeout <= 0 {
-		cfg.VerificationTimeout = defaultVerificationTimeout
+	if cfg.ReleaseCheckTimeout <= 0 {
+		cfg.ReleaseCheckTimeout = defaultReleaseCheckTimeout
 	}
-	if cfg.VerificationPollInterval <= 0 {
-		cfg.VerificationPollInterval = defaultVerificationPollInterval
+	if cfg.ReleaseCheckPollInterval <= 0 {
+		cfg.ReleaseCheckPollInterval = defaultReleaseCheckPollInterval
 	}
 	cfg.ProjectRepoPaths = loadProjectRepos(cfg.ProjectRepoMapPath)
 	return cfg

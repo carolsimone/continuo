@@ -36,11 +36,11 @@ const (
 	// event. The members of a shared-upstream cluster each take their own type
 	// and are proposed.
 	PreflightRoundsSpent Scenario = "preflight_rounds_spent"
-	// GateFailsNextTryLearns: the first try's verification fails, the next
-	// try's first request shows why, and its verification passes. In a flow
+	// GateFailsNextTryLearns: the first try's release check fails, the next
+	// try's first request shows why, and its release check passes. In a flow
 	// of one try there is no next try: the failed attempt is handed over.
 	GateFailsNextTryLearns Scenario = "gate_fails_next_try_learns"
-	// TriesSpent: every try's verification fails until the flow's tries are
+	// TriesSpent: every try's release check fails until the flow's tries are
 	// spent. The failing set is handed over as tries_spent, in one
 	// remediation.handed_over event that counts the tries, and the journal
 	// holds every try.
@@ -71,7 +71,7 @@ func TypeScenarios() []Scenario {
 		TriesSpent, DeclinesBeforeModel, ModelDeclines, Redelivery}
 }
 
-// everyAttemptFails is the script's failed attempts when no verification run
+// everyAttemptFails is the script's failed attempts when no release check
 // may pass.
 const everyAttemptFails = 1 << 20
 
@@ -580,7 +580,7 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 }
 
 // triesSpent expects every one of the plan's tries to have failed its
-// verification with the fixture's gate errors, the journal to hold each try,
+// release check with the fixture's gate errors, the journal to hold each try,
 // the failing set handed over as tries_spent by one remediation.handed_over
 // event that counts the tries, and no proposal.
 func (e *expectation) triesSpent(f Fixture, plan typePlan) {

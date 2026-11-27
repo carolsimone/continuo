@@ -296,7 +296,7 @@ func TestPrompts_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
 	tries := []remediation.TryRecord{{
 		Round: 1, Try: 1, Attempt: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"svc"}, Edits: []remediation.EditRecord{{Path: sqlPath, Diff: "<-select 1\n+select 3>"}}}},
-		Gate:     []remediation.Finding{{Code: "verification_failed", Message: "<svc: still broken>"}},
+		Gate:     []remediation.Finding{{Code: "release_check_failed", Message: "<svc: still broken>"}},
 	}}
 	ev := evidenceFor(shownFiles).With(remediation.KeyPreviousTries, tries)
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})

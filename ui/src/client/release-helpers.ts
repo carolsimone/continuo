@@ -2,7 +2,7 @@ import { HANDOVER_REASONS, type HandoverReason } from '../server/generated/vocab
 import { ApproverDTO, NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseTransition } from './types';
 
 // releasePillClass maps a status to a design-system pill variant. It handles
-// release lifecycle statuses (promoted/rejected/validating/…), verification-run
+// release lifecycle statuses (promoted/rejected/validating/…), release-check
 // statuses/phases (passed/queued/…), and per-node validation statuses
 // (`ok`/`failed`), and falls back to run-style keyword matching, defaulting to
 // pending when nothing matches.
@@ -46,8 +46,9 @@ export function proposalPillClass(status: string): string {
   return releasePillClass(status);
 }
 
-// Fixed display order of release failure stages. Matches the pipeline order the
-// release-controller runs them in (parse → compile → seed_build → validation).
+// Fixed display order of release failure stages. Matches the order
+// release-controller runs a release check's stages in (parse → compile →
+// seed_build → validation).
 export const STAGE_ORDER = ['parse', 'compile', 'seed_build', 'validation'] as const;
 
 const STAGE_LABELS: Record<string, string> = {
@@ -197,10 +198,10 @@ export function proposalPrStateForProject(p: ProposalDTO, project: string): stri
   return proposalPullRequests(p).find((pr) => pr.project === project)?.pr_state ?? '';
 }
 
-// verificationRunPhase reads a verification run's status as the phase an
-// operator cares about: still queued behind other runs, running a leg, or
+// releaseCheckPhase reads a release check's status as the phase an
+// operator cares about: still queued behind other release checks, running a leg, or
 // its verdict.
-export function verificationRunPhase(status: string): 'queued' | 'running' | 'passed' | 'failed' {
+export function releaseCheckPhase(status: string): 'queued' | 'running' | 'passed' | 'failed' {
   switch (status) {
     case 'received': return 'queued';
     case 'passed':   return 'passed';
@@ -209,14 +210,14 @@ export function verificationRunPhase(status: string): 'queued' | 'running' | 'pa
   }
 }
 
-// verificationPhase decides whether an attempt in 'verifying' is being run
-// now or is still waiting its turn, from the phases agent-remediation
-// recorded on its verifications. Running wins. Queued needs positive
+// attemptReleaseCheckPhase decides whether the release check of an attempt
+// in 'verifying' is running now or still waiting its turn, from the phases
+// agent-remediation recorded on its release checks. Running wins. Queued needs positive
 // evidence. Anything else (no phase recorded yet, or only verdicts) is
 // undefined so the chip keeps its flat wording rather than claiming a wait.
-export function verificationPhase(p: ProposalDTO): 'queued' | 'running' | undefined {
+export function attemptReleaseCheckPhase(p: ProposalDTO): 'queued' | 'running' | undefined {
   let sawQueued = false;
-  for (const v of p.verifications ?? []) {
+  for (const v of p.release_checks ?? []) {
     if (v.phase === 'running') return 'running';
     if (v.phase === 'queued') sawQueued = true;
   }
@@ -310,23 +311,23 @@ export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
   return groups;
 }
 
-// The stages a run can pass through, in order, before it leaves the pipeline
-// with a terminal status (promoted/rejected/superseded for a candidate,
-// passed/failed for a verification run).
-const PIPELINE_STAGES = ['received', 'compiling', 'parsing', 'seed_building', 'validating'];
+// The stages a release check can pass through, in order, before it ends with
+// a terminal status (promoted/rejected/superseded for a candidate release's,
+// passed/failed for a fix's).
+const RELEASE_CHECK_STAGES = ['received', 'compiling', 'parsing', 'seed_building', 'validating'];
 
-// A stage a run has not reached yet, with the condition on it when it does
-// not run on every path.
+// A stage a release check has not reached yet, with the condition on it when
+// it does not run on every path.
 export interface UpcomingStage {
   stage: string;
   condition?: string;
 }
 
-// What the timeline reads of a run: what decides its path through the
-// pipeline (how its artifact is parsed, 'dbt', 'python' or 'ontology', and
+// What the timeline reads of a release check: what decides its path through
+// the stages (how its artifact is parsed, 'dbt', 'python' or 'ontology', and
 // whether it is a bootstrap release) and what its parse reported (see
 // parseLines). The parse fields are absent until the parse reports them.
-export interface PipelineRun {
+export interface TimelineCheck {
   manifestKind?: string;
   bootstrap?: boolean;
   // Milliseconds the parse took without its contract stages, and milliseconds
@@ -344,40 +345,41 @@ export interface PipelineRun {
 // ManifestKind.HasCompileLeg decides the same.
 const KINDS_WITHOUT_COMPILE = ['python', 'ontology'];
 
-// pipelinePath lists the stages a run of this kind passes through, in order,
-// naming the condition on each stage that does not run on every path:
+// releaseCheckPath lists the stages a release check of this kind passes
+// through, in order, naming the condition on each stage that does not run on
+// every path:
 // - compiling: dbt only — the CI of any other kind builds and uploads its
 //   artifact (a Python project's contract bundle, the ontology file) before
 //   the release is posted, so activation goes straight to parsing;
-// - parsing: every run;
+// - parsing: every release check;
 // - seed_building: dbt only, and only when the validation set holds a new or
 //   changed seed;
-// - validating: unless nothing changed against prod (then the run promotes
-//   or, for a verification, ends at once), and never for a bootstrap
-//   release, which promotes right after parsing.
+// - validating: unless nothing changed against prod (then a candidate
+//   release promotes and a fix's release check ends at once), and never for
+//   a bootstrap release, which promotes right after parsing.
 // An unknown kind takes the dbt path, the common one.
-function pipelinePath(run: PipelineRun): UpcomingStage[] {
-  const compiles = !KINDS_WITHOUT_COMPILE.includes(run.manifestKind ?? '');
+function releaseCheckPath(check: TimelineCheck): UpcomingStage[] {
+  const compiles = !KINDS_WITHOUT_COMPILE.includes(check.manifestKind ?? '');
   const path: UpcomingStage[] = [{ stage: 'received' }];
   if (compiles) path.push({ stage: 'compiling' });
   path.push({ stage: 'parsing' });
-  if (run.bootstrap) return path;
+  if (check.bootstrap) return path;
   if (compiles) path.push({ stage: 'seed_building', condition: 'if seeds changed' });
   path.push({ stage: 'validating', condition: 'unless nothing changed' });
   return path;
 }
 
-// upcomingStages lists the stages a run has not reached yet on the path its
-// kind takes, so the timeline can show where an in-flight run is going
-// without promising a stage it will never enter. Empty once the latest
-// transition is not a pipeline stage — the run has finished — or when
-// nothing has been recorded.
-export function upcomingStages(transitions: ReleaseTransition[], run: PipelineRun = {}): UpcomingStage[] {
+// upcomingStages lists the stages a release check has not reached yet on the
+// path its kind takes, so the timeline can show where an in-flight check is
+// going without promising a stage it will never enter. Empty once the latest
+// transition is not a stage — the check has finished — or when nothing has
+// been recorded.
+export function upcomingStages(transitions: ReleaseTransition[], check: TimelineCheck = {}): UpcomingStage[] {
   const last = transitions[transitions.length - 1];
   if (!last) return [];
-  const reached = PIPELINE_STAGES.indexOf(last.to);
+  const reached = RELEASE_CHECK_STAGES.indexOf(last.to);
   if (reached === -1) return [];
-  return pipelinePath(run).filter(s => PIPELINE_STAGES.indexOf(s.stage) > reached);
+  return releaseCheckPath(check).filter(s => RELEASE_CHECK_STAGES.indexOf(s.stage) > reached);
 }
 
 const PARSING_LABEL = 'parsing';
@@ -408,17 +410,17 @@ function contractCount(byFamily: Record<string, number> | undefined): string {
 
 // parseLines lists the lines the timeline shows under the parsing step: how
 // long the parse took and how long it took to generate the contracts, with how
-// many it wrote by family. A run gets a line for each duration it reported, so
-// a run that reported none has no line.
-export function parseLines(run: PipelineRun): { label: string; text: string }[] {
+// many it wrote by family. A release check gets a line for each duration it
+// reported, so one that reported none has no line.
+export function parseLines(check: TimelineCheck): { label: string; text: string }[] {
   const lines: { label: string; text: string }[] = [];
-  if (typeof run.parse_ms === 'number') {
-    lines.push({ label: PARSING_LABEL, text: `${PARSING_LABEL} ${seconds(run.parse_ms)} s` });
+  if (typeof check.parse_ms === 'number') {
+    lines.push({ label: PARSING_LABEL, text: `${PARSING_LABEL} ${seconds(check.parse_ms)} s` });
   }
-  if (typeof run.contracts_ms === 'number') {
+  if (typeof check.contracts_ms === 'number') {
     lines.push({
       label: CONTRACTS_LABEL,
-      text: `${CONTRACTS_LABEL} ${seconds(run.contracts_ms)} s${contractCount(run.contracts_by_family)}`,
+      text: `${CONTRACTS_LABEL} ${seconds(check.contracts_ms)} s${contractCount(check.contracts_by_family)}`,
     });
   }
   return lines;

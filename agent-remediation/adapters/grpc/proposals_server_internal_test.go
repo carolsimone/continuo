@@ -79,25 +79,25 @@ func TestPullRequestsToProto_EmptyInputYieldsNoElements(t *testing.T) {
 	require.Empty(t, pullRequestsToProto([]proposal.PullRequest{}))
 }
 
-// TestViewToProto_VerificationFields verifies that the run judging a fix, and
+// TestViewToProto_ReleaseCheckFields verifies that the release check judging a fix, and
 // the reason it rejected one, both cross the gRPC boundary.
 //
 // Both live only in Postgres otherwise. An operator then sees a "Verifying
-// fix…" chip on one screen and a release labelled as a verification on
+// fix…" chip on one screen and a release labelled as a release check on
 // another with nothing connecting them, and a python proposal that failed
 // shows the bare word "failed" while the reason sits unread in the row.
-func TestViewToProto_VerificationFields(t *testing.T) {
+func TestViewToProto_ReleaseCheckFields(t *testing.T) {
 	p := viewToProto(proposal.View{
-		ID:                "p1",
-		Status:            proposal.StatusFailed,
-		VerificationRunID: "verify-rel-abc1234-1-analytics.py_kpis-a1",
-		VerifyError:       `column "revenue_total" does not exist`,
+		ID:             "p1",
+		Status:         proposal.StatusFailed,
+		ReleaseCheckID: "verify-rel-abc1234-1-analytics.py_kpis-a1",
+		VerifyError:    `column "revenue_total" does not exist`,
 	}, nil)
-	require.Equal(t, "verify-rel-abc1234-1-analytics.py_kpis-a1", p.VerificationRunId)
+	require.Equal(t, "verify-rel-abc1234-1-analytics.py_kpis-a1", p.ReleaseCheckId)
 	require.Equal(t, `column "revenue_total" does not exist`, p.VerifyError)
 
 	// An attempt judged synchronously carries neither.
 	p = viewToProto(proposal.View{ID: "p2", Status: proposal.StatusProposed}, nil)
-	require.Equal(t, "", p.VerificationRunId)
+	require.Equal(t, "", p.ReleaseCheckId)
 	require.Equal(t, "", p.VerifyError)
 }

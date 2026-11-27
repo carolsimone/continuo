@@ -122,7 +122,7 @@ func TestSeedBuildRequestedHandler_MsgProcIDNilAllowed(t *testing.T) {
 }
 
 // TestSeedBuildRequestedHandler_ThreadsSourceOverlayURI verifies the handler
-// puts the verification run's source overlay on every enqueued seed-build
+// puts a fix's source overlay on every enqueued seed-build
 // task, which is what carries it onto the seed Job's pod spec.
 func TestSeedBuildRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
 	depl := &stubDeploymentsRepo{}

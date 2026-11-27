@@ -233,7 +233,7 @@ func TestNoticeApplyFindings_NoCompletenessOnSchemaBoundStops(t *testing.T) {
 	assert.Equal(t, "stops", n.Prediction)
 	assert.Equal(t, "unowned_dependents", n.StopReason)
 
-	// Findings that list only the views the run rebuilds put the reload back.
+	// Findings that list only the views the promote-seed run rebuilds put the reload back.
 	n.ApplyFindings(seedreload.Findings{Checked: true, Completeness: "exact", Dependents: []seedreload.Dependent{
 		{Schema: "analytics", Name: "fx_rates_current", Kind: "view", Owner: "dbt", Depth: 1, Allowed: true}}})
 	assert.Equal(t, "reloads", n.Prediction)

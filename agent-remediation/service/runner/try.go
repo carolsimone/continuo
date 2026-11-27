@@ -26,8 +26,8 @@ import (
 // enters the status, and a drafting or checking try past it is ended, by the
 // runner before the try's next step or by the sweeper when nobody drives it.
 // A verifying try's deadline is informational: it records when the gate's
-// runs should have answered, an hour past the verification timeout, and
-// nothing acts on it, since the gate's own timeouts end a verification that
+// release checks should have answered, an hour past the release check timeout, and
+// nothing acts on it, since the gate's own timeouts end a release check that
 // never answers.
 const (
 	tryDraftingTime   = time.Hour
@@ -51,7 +51,7 @@ const (
 	// the release can be retried once maintenance is off.
 	maintenanceSkipReason = "not attempted: continuo was in maintenance mode"
 	// dbtTestSkipReason: a test is validation evidence, never a fix target. A
-	// model fix that makes it bind again resolves it in verification, and a
+	// model fix that makes it bind again resolves it in its release check, and a
 	// test that is itself wrong is a human's edit.
 	dbtTestSkipReason = "dbt tests are not fix targets; fix the model or edit the test by hand"
 	// noTypeSkipReason is for a cluster no type of the flow handles.
@@ -318,7 +318,7 @@ func (r *Runner) giveUp(ctx context.Context, u uow.UnitOfWork, run tryRun, attem
 // (lastTry): one handed over with a settled code (settledCode), or because its
 // pre-flight rounds were spent, keeps that outcome; a drafted member of a try a
 // check refused is escalated with unverifiable_edits; and every other node,
-// one a failed verification judged among them, is escalated with tries_spent.
+// one a failed release check judged among them, is escalated with tries_spent.
 // Both escalated codes carry the message triedMessage builds.
 func escalatedOutcomes(ctx context.Context, u uow.UnitOfWork, run tryRun, tried int) (map[string]proposal.NodeOutcome, error) {
 	last, why, err := lastTry(ctx, u, run)
@@ -475,7 +475,7 @@ func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun
 	if len(p.ResolvedNodeIDs) == 0 {
 		p.ResolvedNodeIDs = t.NodeIDs()
 	}
-	p.Projects = proposal.UnionProjects(t.Projects(), verificationProjects(p.Verifications))
+	p.Projects = proposal.UnionProjects(t.Projects(), releaseCheckProjects(p.ReleaseChecks))
 	p.NormalizeRepresentativeViews()
 	p.ErrorSignature = signatureFor(t, p.NodeID)
 	if err := u.ProposalRepo().Upsert(ctx, p); err != nil {
@@ -912,8 +912,8 @@ func signatureFor(t remediation.Trigger, nodeID string) string {
 	return ""
 }
 
-// verificationProjects is the projects an attempt's verification runs cover.
-func verificationProjects(vs []proposal.Verification) []string {
+// releaseCheckProjects is the projects an attempt's release checks cover.
+func releaseCheckProjects(vs []proposal.ReleaseCheck) []string {
 	out := make([]string, 0, len(vs))
 	for _, v := range vs {
 		out = append(out, v.Project)

@@ -113,6 +113,18 @@ flow with any other trigger.
 
 {{- if .Release.IsUpgrade }}
 
+BREAKING: the checks a release passes before production are its release check.
+agent-remediation reads RELEASE_CHECK_TIMEOUT and RELEASE_CHECK_POLL_INTERVAL:
+a components entry whose env sets these two durations under their earlier
+names sets nothing, so rename them. The stream that says a release check ended
+is release_check.finished:v1; with your own Redis, apply the rules from
+deploy/redis-acl-rules.acl with the upgrade. A flow file of yours in
+agentRemediation.workflows.files names the gate step as release_check
+(gate: [release_check]), or agent-remediation refuses to start.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 agent-remediation has one engine. If your values set agentRemediation.engine, remove it: the chart no longer accepts the key. The flow file's tries decides how many times a fix is tried; AGENT_REMEDIATION_MAX_ATTEMPTS is no longer read.
 {{- end }}
 
@@ -262,8 +274,8 @@ the drained consumer group: XGROUP DESTROY release.requested:v1
 manifest-controller-release-requested.
 
   BREAKING — if your values override agentRemediation.env.SHADOW_VERIFY_TIMEOUT or
-  SHADOW_VERIFY_POLL_INTERVAL, rename them to VERIFICATION_TIMEOUT and
-  VERIFICATION_POLL_INTERVAL; the old keys are no longer read.
+  SHADOW_VERIFY_POLL_INTERVAL, rename them to RELEASE_CHECK_TIMEOUT and
+  RELEASE_CHECK_POLL_INTERVAL; the old keys are no longer read.
 
 BREAKING: "executor-controller" and "k8s-controller" are now one component,
 "execution-controller", with its own database continuo_execution (created and

@@ -45,7 +45,7 @@ func TestBuild_RejectsUnsafePaths(t *testing.T) {
 
 // TestBuild_CarriesEachFileContent proves the tarball is the files themselves,
 // not just their names: the member read back out must be byte-identical to what
-// went in, since the verification run's compile leg runs whatever this lays down.
+// went in, since the release check's compile leg runs whatever this lays down.
 func TestBuild_CarriesEachFileContent(t *testing.T) {
 	tarball, err := Build([]File{
 		{Path: "models/a.sql", Content: []byte("select 1")},
@@ -116,8 +116,7 @@ func members(t *testing.T, tarball []byte) map[string]string {
 	}
 }
 
-// TestBuild_ListsTheDeletesInTheReservedMember proves a moved file's old path
-// reaches the run: cleaned, sorted and without repeats, one per line.
+// TestBuild_ListsTheDeletesInTheReservedMember proves a moved file's old path// reaches the release check: cleaned, sorted and without repeats, one per line.
 func TestBuild_ListsTheDeletesInTheReservedMember(t *testing.T) {
 	tarball, err := Build(
 		[]File{{Path: "models/table_b_v2.sql", Content: []byte("select 1")}},

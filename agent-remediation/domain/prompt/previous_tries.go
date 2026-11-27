@@ -24,7 +24,7 @@ type AttemptDiff struct {
 
 // PreviousTry is one earlier try at the same failure as the model is shown it:
 // the heading it is shown under, the diffs it applied, one line per thing its
-// pre-flight checks found, and why the verification gate failed it. Every text
+// pre-flight checks found, and why the gate failed it. Every text
 // is already sanitized.
 type PreviousTry struct {
 	Label     string

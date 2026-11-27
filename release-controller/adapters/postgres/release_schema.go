@@ -18,7 +18,7 @@ func NewReleaseSchema(q Queryer) *ReleaseSchema {
 
 var _ ports.ReleaseSchema = (*ReleaseSchema)(nil)
 
-// Initialized reports whether release_pipeline_runs, current_prod and
+// Initialized reports whether release_checks, current_prod and
 // service_prod all exist in the current schema.
 func (s *ReleaseSchema) Initialized(ctx context.Context) (bool, error) {
 	var n int
@@ -26,7 +26,7 @@ func (s *ReleaseSchema) Initialized(ctx context.Context) (bool, error) {
 		SELECT count(*)
 		  FROM information_schema.tables
 		 WHERE table_schema = current_schema()
-		   AND table_name::text IN ('release_pipeline_runs', 'current_prod', 'service_prod')`)
+		   AND table_name::text IN ('release_checks', 'current_prod', 'service_prod')`)
 	if err := row.Scan(&n); err != nil {
 		return false, fmt.Errorf("read release schema tables: %w", err)
 	}

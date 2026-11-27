@@ -81,7 +81,7 @@ func (c DuplicateClaim) sortKey() string {
 // sorted together by their key. An empty result means every node's identity
 // and physical relation are each held by exactly one node.
 //
-// The two checks are independent and both run unconditionally. They close
+// The two checks are independent and both check unconditionally. They close
 // different holes and neither substitutes for the other: a relation
 // collision is two differently-named models racing to write one warehouse
 // table; an identity collision is two models that downstream code cannot

@@ -39,17 +39,17 @@ describe('ProjectTiles', () => {
   });
 
   it('names what the changed image is new in, when the page is not a release', () => {
-    const { container } = render(<ProjectTiles imageTags={TAGS} changedProject="core" subject="verification run" />);
+    const { container } = render(<ProjectTiles imageTags={TAGS} changedProject="core" subject="release check" />);
     expect(container.querySelector('.section-header__sub')?.textContent)
-      .toBe('core is new in this verification run · 3 carried over from prod');
+      .toBe('core is new in this release check · 3 carried over from prod');
   });
 
   it('names where the other images were carried over from, when it is not prod', () => {
     const { container } = render(
-      <ProjectTiles imageTags={TAGS} changedProject="core" subject="verification run" carriedFrom="rel-9f3e2a1-148" />,
+      <ProjectTiles imageTags={TAGS} changedProject="core" subject="release check" carriedFrom="rel-9f3e2a1-148" />,
     );
     expect(container.querySelector('.section-header__sub')?.textContent)
-      .toBe('core is new in this verification run · 3 carried over from rel-9f3e2a1-148');
+      .toBe('core is new in this release check · 3 carried over from rel-9f3e2a1-148');
   });
 
   it('drops the carried-over count when the changed project is the only one', () => {

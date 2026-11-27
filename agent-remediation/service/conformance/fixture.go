@@ -61,7 +61,7 @@ type Fixture struct {
 	// upstream cluster fell back, or one of a flow fixture's clusters.
 	MemberAnswers map[string]Answers
 
-	// GateErrors is the error a failed verification run reports per node.
+	// GateErrors is the error a failed release check reports per node.
 	GateErrors map[string]string
 }
 

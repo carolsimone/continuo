@@ -613,7 +613,7 @@ func (r *RemediationRepository) ListTriesOfRelease(ctx context.Context, tenantID
 // statement. The inner SELECT locks the row and skips rows another claim holds,
 // so concurrent callers take different rows, and the UPDATE needs no
 // surrounding transaction. A remediation whose current try is verifying is
-// left to the verification poller.
+// left to the gate poller.
 const claimNextStatement = `
 	UPDATE remediation SET lease_owner = $1, lease_until = $2
 	 WHERE id = (SELECT r.id FROM remediation r

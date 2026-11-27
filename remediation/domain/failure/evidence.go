@@ -30,7 +30,7 @@ const (
 // adapters translate a source event (e.g. release.rejected:v1) into this
 // value object; the classifier never sees the originating event.
 type FailureEvidence struct {
-	// Source is the pipeline stage that produced the failure. Validation-time
+	// Source is the release check leg that produced the failure. Validation-time
 	// (blue/green) failures are classified; production-run failures enter
 	// through a separate ingress adapter.
 	Source    model.RemediationSource

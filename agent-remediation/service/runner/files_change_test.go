@@ -105,7 +105,7 @@ func TestRunner_ACheckingTryFinishesUnderFilesThatAddAContextStep(t *testing.T) 
 	require.NoError(t, h.runnerOver(filesWith(h.files, flowContext("previous_tries"))).Drive(ctx, id))
 
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status, "the try's drafts reach the gate")
-	assert.Len(t, h.pipeline.runs(), 1)
+	assert.Len(t, h.checks.requests(), 1)
 	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
 	assert.Empty(t, h.stepRows(id, 1, 1)["previous_tries"], "a checked cluster runs no context step")
 	h.assertNoFailure(id)
@@ -116,7 +116,7 @@ func TestRunner_AVerifyingTryReadsItsVerdictUnderFilesThatAddAContextStep(t *tes
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	require.NoError(t, h.pollWith(h.runnerOver(filesWith(h.files, flowContext("previous_tries"))), id))
 
@@ -134,7 +134,7 @@ func TestRunner_ACheckedClusterIsReadFromTheChecksThatRanUnderFilesThatAddACheck
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	added := filesWith(h.files, compilePreflight("target_file_was_shown", "content_changed", "confidence_not_low"))
 	require.NoError(t, h.pollWith(h.runnerOver(added), id))
@@ -148,7 +148,7 @@ func TestRunner_ACheckedClusterOfATypeTheFilesNoLongerDefineIsStillVerified(t *t
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	removed := filesWith(h.files, func(s workflow.Set) { delete(s.Types, "dbt-compile") })
 	require.NoError(t, h.pollWith(h.runnerOver(removed), id))

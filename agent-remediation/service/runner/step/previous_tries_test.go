@@ -31,8 +31,8 @@ func TestWithPreviousTries_ShowsEachRecordedTry(t *testing.T) {
 			}},
 			CrossCluster: []remediation.Finding{{Code: "path_edited_twice", Message: "models/a.sql is edited by two clusters", File: "models/a.sql"}},
 			Gate: []remediation.Finding{
-				{Code: "verification_failed", Message: "model.a: still broken"},
-				{Code: "verification_failed", Message: "model.b: broken too"},
+				{Code: "release_check_failed", Message: "model.a: still broken"},
+				{Code: "release_check_failed", Message: "model.b: broken too"},
 			},
 		},
 	})

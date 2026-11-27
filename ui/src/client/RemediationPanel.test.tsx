@@ -46,7 +46,7 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   pr_opened_at: '',
   pr_opened_by: '',
   pr_closed_at: '',
-  verification_run_id: '',
+  release_check_id: '',
   verify_error: '',
   ...overrides,
 });
@@ -529,19 +529,19 @@ describe('RemediationPanel — an actionable proposal', () => {
   });
 });
 
-describe('RemediationPanel — verification runs on an attempt', () => {
+describe('RemediationPanel — release checks on an attempt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchNodeProjects.mockResolvedValue([]);
   });
 
-  it('lists each verification run beneath its attempt with a link to the run', async () => {
+  it('lists each release check beneath its attempt with a link to its page', async () => {
     const proposal = makeProposal({
       status: 'verifying',
       resolved_node_ids: ['s.a', 's.b'],
-      verifications: [
-        { project: 'core', kind: 'dbt', run_id: 'verify-rel-1-core-a1', phase: 'running', activated_at: '2026-09-02T10:01:00Z', error: '' },
-        { project: 'ops', kind: 'python', run_id: 'verify-rel-1-ops-a1', phase: 'queued', activated_at: '', error: '' },
+      release_checks: [
+        { project: 'core', kind: 'dbt', check_id: 'verify-rel-1-core-a1', phase: 'running', activated_at: '2026-09-02T10:01:00Z', error: '' },
+        { project: 'ops', kind: 'python', check_id: 'verify-rel-1-ops-a1', phase: 'queued', activated_at: '', error: '' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -550,35 +550,35 @@ describe('RemediationPanel — verification runs on an attempt', () => {
     await waitFor(() => screen.getByText('s.a, s.b'));
     expandGroupByNodes('s.a, s.b');
 
-    expect(screen.getByText(/core · dbt · Verifying fix… · since 2026-09-02T10:01:00Z/)).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: /open run →/ })[0]).toHaveAttribute('href', '/verifications/verify-rel-1-core-a1');
-    // A queued run with no activation time omits the "since" clause.
-    expect(screen.getByText(/ops · python · Queued for verification$/)).toBeInTheDocument();
-    expect(screen.getByText(/ops · python · Queued for verification/).closest('.remediation-verif__run')!
-      .querySelector('a')).toHaveAttribute('href', '/verifications/verify-rel-1-ops-a1');
-    // Both runs sit in the attempt's verification sub-row, inside the group's block.
-    expect(screen.getByText(/core · dbt · Verifying fix/).closest('.remediation-verif')).not.toBeNull();
-    expect(screen.getByText(/core · dbt · Verifying fix/).closest('.remediation-attempts')).not.toBeNull();
+    expect(screen.getByText(/core · dbt · Checking the fix… · since 2026-09-02T10:01:00Z/)).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /open release check →/ })[0]).toHaveAttribute('href', '/release-checks/verify-rel-1-core-a1');
+    // A queued release check with no activation time omits the "since" clause.
+    expect(screen.getByText(/ops · python · Queued for its release check$/)).toBeInTheDocument();
+    expect(screen.getByText(/ops · python · Queued for its release check/).closest('.remediation-subrow__line')!
+      .querySelector('a')).toHaveAttribute('href', '/release-checks/verify-rel-1-ops-a1');
+    // Both release checks sit in the attempt's release-check sub-row, inside the group's block.
+    expect(screen.getByText(/core · dbt · Checking the fix/).closest('.remediation-subrow')).not.toBeNull();
+    expect(screen.getByText(/core · dbt · Checking the fix/).closest('.remediation-attempts')).not.toBeNull();
   });
 
-  it('falls back to the single verification_run_id link when verifications is empty', async () => {
-    const proposal = makeProposal({ status: 'verifying', verification_run_id: 'verify-rel-abc-a1' });
+  it('falls back to the single release_check_id link when release_checks is empty', async () => {
+    const proposal = makeProposal({ status: 'verifying', release_check_id: 'verify-rel-abc-a1' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
 
-    const line = await screen.findByText('verification run verify-rel-abc-a1');
-    const link = line.closest('.remediation-verif__run')!.querySelector('a');
-    expect(link).toHaveTextContent('open run →');
-    expect(link).toHaveAttribute('href', '/verifications/verify-rel-abc-a1');
+    const line = await screen.findByText('release check verify-rel-abc-a1');
+    const link = line.closest('.remediation-subrow__line')!.querySelector('a');
+    expect(link).toHaveTextContent('open release check →');
+    expect(link).toHaveAttribute('href', '/release-checks/verify-rel-abc-a1');
   });
 
-  it('shows why verification failed in the attempt card', async () => {
+  it('shows why the release check failed in the attempt card', async () => {
     const proposal = makeProposal({
       status: 'failed',
-      verification_run_id: 'verify-rel-abc-a1',
+      release_check_id: 'verify-rel-abc-a1',
       verify_error: 'column "revenue_total" does not exist',
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -588,7 +588,7 @@ describe('RemediationPanel — verification runs on an attempt', () => {
     expandGroupByNodes('svc.schema.my_model');
     openAttemptByConfidence();
 
-    expect(await screen.findByText(/column "revenue_total" does not exist/)).toBeInTheDocument();
+    expect(await screen.findByText(/column "revenue_total" does not exist/)).toHaveTextContent('Release check failed: column "revenue_total" does not exist');
   });
 });
 

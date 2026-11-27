@@ -16,7 +16,7 @@ func TestCleanedReason_ReplacesACredentialAndAnEmailAddress(t *testing.T) {
 
 func TestCleanedReason_LeavesATextWithNoSecretAsItIs(t *testing.T) {
 	for _, text := range []string{
-		"", "verification timed out", "model.sales.orders: column x does not exist",
+		"", "release check timed out", "model.sales.orders: column x does not exist",
 		`step "dbt_log" failed 5 times, the last time with: s3 is down`,
 	} {
 		assert.Equal(t, text, proposal.CleanedReason(text))

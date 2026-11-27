@@ -4,7 +4,7 @@ import { groupByStage, proposalKey, releasePillClass, stageLabel } from './relea
 
 // LogView renders a node's dbt log: a toggle that fetches and shows the log
 // inline on first open, and a link to the full log in a new tab. Shared by
-// the release detail page and the verification run detail page — both show
+// the release detail page and the release check detail page — both show
 // the same per-node results table.
 export function LogView({ uri }: { uri: string }) {
   const [open, setOpen] = useState(false);
@@ -45,10 +45,10 @@ function logCell(n: NodeValidationResult) {
   return '—';
 }
 
-// NodeResultsTable renders a run's per-node results grouped by pipeline
-// stage: the same table for a candidate release and a fix-verification run.
+// NodeResultsTable renders a release check's per-node results grouped by
+// stage: the same table for a candidate release and a fix's release check.
 // fixCell, when given, adds the Fix column the release page fills with each
-// node's remediation state; a verification run has no fixes of its own, so
+// node's remediation state; a release check has no fixes of its own, so
 // its page omits it.
 export function NodeResultsTable({ perNode, fixCell }: {
   perNode: NodeValidationResult[];

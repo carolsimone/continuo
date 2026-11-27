@@ -30,8 +30,8 @@ func (k ManifestKind) HasCompileLeg() bool {
 	return k == ManifestKindDbt
 }
 
-// ParseManifestKind validates a raw kind string from a new release or
-// verification. Empty is rejected: the absent-means-dbt defaulting is an
+// ParseManifestKind validates a raw kind string from a new release or a
+// fix's release check. Empty is rejected: the absent-means-dbt defaulting is an
 // API-boundary concern; domain objects never hold an empty kind.
 func ParseManifestKind(s string) (ManifestKind, error) {
 	switch ManifestKind(s) {

@@ -12,8 +12,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/warehouse"
 	releasev1 "github.com/carolsimone/continuo/release-controller/api/release/v1"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/stretchr/testify/assert"
@@ -24,26 +24,26 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// fakeRunRepo answers Get from a map and fails it for the id errID.
-type fakeRunRepo struct {
-	repository.RunRepository
-	runs  map[string]*pipeline.Run
-	errID string
+// fakeReleaseCheckRepo answers Get from a map and fails it for the id errID.
+type fakeReleaseCheckRepo struct {
+	repository.ReleaseCheckRepository
+	checks map[string]*releasecheck.Check
+	errID  string
 }
 
-func (f fakeRunRepo) Get(_ context.Context, id string) (*pipeline.Run, error) {
+func (f fakeReleaseCheckRepo) Get(_ context.Context, id string) (*releasecheck.Check, error) {
 	if id == f.errID {
 		return nil, errors.New("database down")
 	}
-	return f.runs[id], nil
+	return f.checks[id], nil
 }
 
 type fakeUoW struct {
 	uow.UnitOfWork
-	runs repository.RunRepository
+	checks repository.ReleaseCheckRepository
 }
 
-func (f fakeUoW) RunRepo() repository.RunRepository { return f.runs }
+func (f fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository { return f.checks }
 
 func designNotice() release.Notice {
 	return release.Notice{
@@ -61,16 +61,16 @@ func designNotice() release.Notice {
 	}
 }
 
-func candidateWithNotices(id string, notices ...release.Notice) *pipeline.Run {
-	r := pipeline.NewCandidate(id, "finance", "tag", false, false, "o/r", "sha", release.ManifestKindDbt, time.Unix(1, 0).UTC())
+func candidateWithNotices(id string, notices ...release.Notice) *releasecheck.Check {
+	r := releasecheck.NewCandidate(id, "finance", "tag", false, false, "o/r", "sha", release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	r.SetNotices(notices)
 	return r
 }
 
-// startServer serves the fake runs on a free port and returns a client of it.
-func startServer(t *testing.T, repo fakeRunRepo) releasev1.ReleaseQueryClient {
+// startServer serves the fake checks on a free port and returns a client of it.
+func startServer(t *testing.T, repo fakeReleaseCheckRepo) releasev1.ReleaseQueryClient {
 	t.Helper()
-	srv, err := NewReleaseQueryServer(0, func() uow.UnitOfWork { return fakeUoW{runs: repo} }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv, err := NewReleaseQueryServer(0, func() uow.UnitOfWork { return fakeUoW{checks: repo} }, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	go func() { _ = srv.Start() }()
 	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
@@ -82,7 +82,7 @@ func startServer(t *testing.T, repo fakeRunRepo) releasev1.ReleaseQueryClient {
 }
 
 func TestGetReleaseNotices_ReturnsTheStoredNotices(t *testing.T) {
-	c := startServer(t, fakeRunRepo{runs: map[string]*pipeline.Run{
+	c := startServer(t, fakeReleaseCheckRepo{checks: map[string]*releasecheck.Check{
 		"rel-a1b2c3d-201": candidateWithNotices("rel-a1b2c3d-201", designNotice()),
 	}})
 
@@ -90,7 +90,7 @@ func TestGetReleaseNotices_ReturnsTheStoredNotices(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "rel-a1b2c3d-201", resp.ReleaseId)
-	assert.Equal(t, string(pipeline.StatusReceived), resp.Status)
+	assert.Equal(t, string(releasecheck.StatusReceived), resp.Status)
 	require.Len(t, resp.Notices, 1)
 	n := resp.Notices[0]
 	assert.Equal(t, "seed_reload", n.Kind)
@@ -114,7 +114,7 @@ func TestGetReleaseNotices_ReturnsTheStoredNotices(t *testing.T) {
 }
 
 func TestGetReleaseNotices_ACandidateWithoutNoticesAnswersNone(t *testing.T) {
-	c := startServer(t, fakeRunRepo{runs: map[string]*pipeline.Run{"rel-none-notice": candidateWithNotices("rel-none-notice")}})
+	c := startServer(t, fakeReleaseCheckRepo{checks: map[string]*releasecheck.Check{"rel-none-notice": candidateWithNotices("rel-none-notice")}})
 
 	resp, err := c.GetReleaseNotices(context.Background(), &releasev1.GetReleaseNoticesRequest{ReleaseId: "rel-none-notice"})
 
@@ -124,9 +124,9 @@ func TestGetReleaseNotices_ACandidateWithoutNoticesAnswersNone(t *testing.T) {
 }
 
 func TestGetReleaseNotices_Refusals(t *testing.T) {
-	verification := pipeline.NewVerification("verify-1", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, time.Unix(1, 0).UTC())
-	verification.SetNotices([]release.Notice{designNotice()})
-	c := startServer(t, fakeRunRepo{runs: map[string]*pipeline.Run{"verify-1": verification}, errID: "rel-broken"})
+	fix := releasecheck.NewFix("verify-1", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, time.Unix(1, 0).UTC())
+	fix.SetNotices([]release.Notice{designNotice()})
+	c := startServer(t, fakeReleaseCheckRepo{checks: map[string]*releasecheck.Check{"verify-1": fix}, errID: "rel-broken"})
 	ctx := context.Background()
 
 	_, err := c.GetReleaseNotices(ctx, &releasev1.GetReleaseNoticesRequest{})
@@ -135,7 +135,7 @@ func TestGetReleaseNotices_Refusals(t *testing.T) {
 	_, err = c.GetReleaseNotices(ctx, &releasev1.GetReleaseNoticesRequest{ReleaseId: "rel-none"})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 
-	// A verification run's id is NOT_FOUND too, as GET /releases/{id} answers 404 for it.
+	// A fix's id is NOT_FOUND too, as GET /releases/{id} answers 404 for it.
 	_, err = c.GetReleaseNotices(ctx, &releasev1.GetReleaseNoticesRequest{ReleaseId: "verify-1"})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 

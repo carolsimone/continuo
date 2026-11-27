@@ -20,7 +20,7 @@ func TestRegistry_RegistersTheCrossClusterChecksAndTheGate(t *testing.T) {
 		assert.False(t, m.MayStandAsGateRun, name)
 		assert.Implements(t, (*step.CrossCheck)(nil), s, name)
 	}
-	g, m, ok := r.Lookup("verification_run")
+	g, m, ok := r.Lookup("release_check")
 	require.True(t, ok)
 	assert.Equal(t, step.KindCheck, m.Kind)
 	assert.Equal(t, []workflow.Stage{workflow.StageGate}, m.Stages)

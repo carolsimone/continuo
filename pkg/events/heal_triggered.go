@@ -14,7 +14,7 @@ const HealTriggeredSchemaVersion = 1
 // envelope's event_id. The same shape is what agent-remediation stores as a
 // trigger's payload.
 type HealTriggered struct {
-	// Source is the pipeline stage that failed, a value of the
+	// Source is the stage of the release check that failed, a value of the
 	// remediation_source vocabulary.
 	Source string `json:"source"`
 	// ReleaseID is the rejected release.

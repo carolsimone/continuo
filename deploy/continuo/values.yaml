@@ -666,7 +666,7 @@ contracts:
 # no run (it is not caught up afterwards); release-controller activates no
 # queued release; agent-remediation records each fix attempt that comes due as
 # skipped, and **Retry remediation** starts it once maintenance is off. Runs,
-# releases and fix verifications already in progress complete. Enforced by ui,
+# releases and fixes' release checks already in progress complete. Enforced by ui,
 # run-controller, release-controller, agent-remediation and
 # dead-letter-controller, which refuse to start on any value other than true or
 # false. Changing it restarts every continuo component (the shared ConfigMap
@@ -1188,11 +1188,11 @@ components:
       REMEDIATION_PR_OPENING_GRACE_PERIOD: "10m"
       PROJECT_REPO_MAP_PATH: /etc/continuo/project_repos.yaml
       RELEASE_CONTROLLER_URL: http://release-controller:8088
-      # How long a fix proposal waits for one of its verification runs to
-      # reach a verdict. Counted from when that run leaves the release
-      # pipeline's queue and starts running, so a backlog never spends it.
-      VERIFICATION_TIMEOUT: "20m"
-      VERIFICATION_POLL_INTERVAL: "15s"
+      # How long a fix proposal waits for one of its release checks to
+      # reach a verdict. Counted from when that check leaves the release
+      # queue and starts running, so a backlog never spends it.
+      RELEASE_CHECK_TIMEOUT: "20m"
+      RELEASE_CHECK_POLL_INTERVAL: "15s"
       # The folder of the install's remediation files
       # (agentRemediation.workflows.files), mounted below.
       AGENT_REMEDIATION_WORKFLOWS_DIR: /etc/continuo-workflows

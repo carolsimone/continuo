@@ -40,7 +40,7 @@ type GatePoller struct {
 // NewGatePoller builds a poller over r. repo returns the remediation
 // repository bound to the database, and owner is the name r holds its leases
 // under. wake is called after each remediation it polled, since a failed
-// verification opens the next try for the worker.
+// release check opens the next try for the worker.
 func NewGatePoller(r *Runner, repo func() repository.RemediationRepository, owner string, interval time.Duration, wake func(), clock ports.Clock, logger *slog.Logger) *GatePoller {
 	if interval <= 0 {
 		interval = defaultPollInterval

@@ -60,7 +60,7 @@ func verifying(rem remediation.Remediation) proposal.Proposal {
 		NodeID: "model.a", ResolvedNodeIDs: []string{"model.a", "model.b"}, ErrorSignature: "sig-a",
 		Attempt: 1, Status: proposal.StatusVerifying,
 		NodeOutcomes:  map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}, "model.b": {Status: proposal.StatusVerifying}},
-		Verifications: []proposal.Verification{{Project: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a1", Phase: proposal.PhaseQueued}},
+		ReleaseChecks: []proposal.ReleaseCheck{{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a1", Phase: proposal.PhaseQueued}},
 		Confidence:    proposal.ConfidenceHigh, Rationale: "the column was renamed", Model: "model-x",
 		ProposedSQLURI: "s3://b/a.sql", DiffURI: "s3://b/a.diff", SourceResolved: true,
 		Edits: []proposal.FileEdit{
@@ -83,7 +83,7 @@ func verified(t *testing.T, proposalID string) remediation.Verified {
 	checked, err := remediation.NewChecked(remediation.Draft{}, nil)
 	require.NoError(t, err)
 	v, err := remediation.NewVerified(proposalID, []remediation.Checked{checked}, nil,
-		[]proposal.Verification{{Project: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a1", Phase: proposal.PhasePassed}})
+		[]proposal.ReleaseCheck{{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a1", Phase: proposal.PhasePassed}})
 	require.NoError(t, err)
 	return v
 }
@@ -133,7 +133,7 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 	row := store.Proposals()[0].Proposal
 	assert.Equal(t, proposal.StatusProposed, row.Status)
 	assert.Equal(t, proposal.StatusProposed, row.NodeOutcomes["model.a"].Status)
-	assert.Equal(t, proposal.PhasePassed, row.Verifications[0].Phase)
+	assert.Equal(t, proposal.PhasePassed, row.ReleaseChecks[0].Phase)
 
 	entries := store.OutboxEntries()
 	require.Len(t, entries, 1)

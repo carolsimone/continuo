@@ -247,22 +247,22 @@ func (fakeReleases) ContractBundle(context.Context, string) (string, string, err
 	return "", "", nil
 }
 
-// fakePipeline records every verification run submitted. submitErr is
-// returned by the next Submit, once. onSubmit runs after each run it records.
+// fakeReleaseChecks records every release check submitted. submitErr is
+// returned by the next Submit, once. onSubmit runs after each check it records.
 // status answers every status read, queued when it is nil, and onStatus runs
 // before each read with the read's context. A read whose context ended by
 // then returns the context's error, as a call to release-controller does.
-type fakePipeline struct {
+type fakeReleaseChecks struct {
 	mu        sync.Mutex
-	submitted []ports.VerificationRequest
+	submitted []ports.ReleaseCheckRequest
 	submitErr error
 	onSubmit  func()
-	status    func(runID string) (ports.VerificationStatus, error)
+	status    func(checkID string) (ports.ReleaseCheckStatus, error)
 	onStatus  func(ctx context.Context)
 	reads     int
 }
 
-func (p *fakePipeline) Submit(_ context.Context, r ports.VerificationRequest) error {
+func (p *fakeReleaseChecks) Submit(_ context.Context, r ports.ReleaseCheckRequest) error {
 	p.mu.Lock()
 	if p.submitErr != nil {
 		err := p.submitErr
@@ -279,7 +279,7 @@ func (p *fakePipeline) Submit(_ context.Context, r ports.VerificationRequest) er
 	return nil
 }
 
-func (p *fakePipeline) Status(ctx context.Context, runID string) (ports.VerificationStatus, error) {
+func (p *fakeReleaseChecks) Status(ctx context.Context, checkID string) (ports.ReleaseCheckStatus, error) {
 	p.mu.Lock()
 	status, onStatus := p.status, p.onStatus
 	p.reads++
@@ -288,21 +288,21 @@ func (p *fakePipeline) Status(ctx context.Context, runID string) (ports.Verifica
 		onStatus(ctx)
 	}
 	if err := ctx.Err(); err != nil {
-		return ports.VerificationStatus{}, err
+		return ports.ReleaseCheckStatus{}, err
 	}
 	if status == nil {
-		return ports.VerificationStatus{Phase: proposal.PhaseQueued}, nil
+		return ports.ReleaseCheckStatus{Phase: proposal.PhaseQueued}, nil
 	}
-	return status(runID)
+	return status(checkID)
 }
 
-// answer makes every run read as phase, with nodeErrors when it failed and
+// answer makes every check read as phase, with nodeErrors when it failed and
 // activated at t0 once it left the queue.
-func (p *fakePipeline) answer(phase proposal.Phase, nodeErrors map[string]string) {
+func (p *fakeReleaseChecks) answer(phase proposal.Phase, nodeErrors map[string]string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.status = func(string) (ports.VerificationStatus, error) {
-		st := ports.VerificationStatus{Phase: phase, NodeErrors: nodeErrors}
+	p.status = func(string) (ports.ReleaseCheckStatus, error) {
+		st := ports.ReleaseCheckStatus{Phase: phase, NodeErrors: nodeErrors}
 		if phase != proposal.PhaseQueued {
 			st.ActivatedAt = t0
 		}
@@ -310,17 +310,17 @@ func (p *fakePipeline) answer(phase proposal.Phase, nodeErrors map[string]string
 	}
 }
 
-// statusReads is how many status reads the pipeline answered.
-func (p *fakePipeline) statusReads() int {
+// statusReads is how many status reads the release checks answered.
+func (p *fakeReleaseChecks) statusReads() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.reads
 }
 
-func (p *fakePipeline) runs() []ports.VerificationRequest {
+func (p *fakeReleaseChecks) requests() []ports.ReleaseCheckRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]ports.VerificationRequest(nil), p.submitted...)
+	return append([]ports.ReleaseCheckRequest(nil), p.submitted...)
 }
 
 // artifactsURIPrefix is the URI prefix of every artifact memArtifacts stores.
@@ -451,7 +451,7 @@ func testFiles(tries int) workflow.Set {
 		Trigger:        baseName(streams.HealTriggeredV1),
 		Types:          []string{"dbt-compile", "dbt-validation", "shared-upstream", "cross-project-upstream"},
 		AcrossClusters: refs("edits_map_to_a_project", "no_path_edited_twice", "one_manifest_kind"),
-		Gate:           refs("verification_run"),
+		Gate:           refs("release_check"),
 		Tries:          tries,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.RemediationProposedV1)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
@@ -501,7 +501,7 @@ type harness struct {
 	evidence    fakeEvidence
 	bundle      *noBundle
 	artifacts   *memArtifacts
-	pipeline    *fakePipeline
+	checks      *fakeReleaseChecks
 	llm         *scriptedLLM
 	cache       *memCache
 	files       workflow.Set
@@ -524,15 +524,15 @@ type harness struct {
 	// blockBeginUnderADeadline makes a transaction that begins in a context with
 	// a deadline wait until the context ends, as a database that hangs does.
 	blockBeginUnderADeadline atomic.Bool
-	// phaseWrites counts the runner's UpdateVerificationPhase calls.
+	// phaseWrites counts the runner's UpdateReleaseCheckPhase calls.
 	phaseWrites atomic.Int64
 	// metrics is what every runner the harness builds counts on, nil unless a
 	// test sets it.
 	metrics ports.RemediationMetrics
 }
 
-// verificationTimeout is how long the gate lets a verification run take.
-const verificationTimeout = 20 * time.Minute
+// releaseCheckTimeout is how long the gate lets a release check take.
+const releaseCheckTimeout = 20 * time.Minute
 
 // hookedUoW is a memory unit of work that runs the harness's afterCommit hook
 // after it commits and counts the phase writes of its proposal repository.
@@ -568,9 +568,9 @@ type phaseCounter struct {
 	h *harness
 }
 
-func (p phaseCounter) UpdateVerificationPhase(ctx context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error {
+func (p phaseCounter) UpdateReleaseCheckPhase(ctx context.Context, id, checkID string, phase proposal.Phase, activatedAt *time.Time) error {
 	p.h.phaseWrites.Add(1)
-	return p.ProposalRepository.UpdateVerificationPhase(ctx, id, runID, phase, activatedAt)
+	return p.ProposalRepository.UpdateReleaseCheckPhase(ctx, id, checkID, phase, activatedAt)
 }
 
 type option func(*harness)
@@ -661,7 +661,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		evidence:  fakeEvidence{objects: map[string]string{}, artifacts: artifacts},
 		bundle:    &noBundle{},
 		artifacts: artifacts,
-		pipeline:  &fakePipeline{},
+		checks:    &fakeReleaseChecks{},
 		llm:       &scriptedLLM{answer: fixAnswer},
 		cache:     &memCache{},
 		images:    &fakeImages{},
@@ -694,9 +694,9 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		Packager:            h.packager,
 		ImagePackages:       h.images,
 		CurrentContracts:    noContracts{},
-		Pipeline:            h.pipeline,
+		ReleaseChecks:       h.checks,
 		Clock:               h.clock,
-		VerificationTimeout: verificationTimeout,
+		ReleaseCheckTimeout: releaseCheckTimeout,
 	}
 	_, err := runner.Validate(h.files, runner.NewRegistry(h.collab))
 	require.NoError(t, err)
@@ -739,7 +739,7 @@ func (h *harness) runnerOwnedBy(files workflow.Set, owner string) *runner.Runner
 		Logger:              discard,
 		Maintenance:         h.maintenance,
 		Owner:               owner,
-		VerificationTimeout: verificationTimeout,
+		ReleaseCheckTimeout: releaseCheckTimeout,
 		StepTimeout:         h.stepTimeout,
 		Metrics:             h.metrics,
 	})

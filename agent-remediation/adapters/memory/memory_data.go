@@ -115,7 +115,7 @@ func cloneProposal(p proposal.Proposal) proposal.Proposal {
 	p.ResolvedNodeIDs = slices.Clone(p.ResolvedNodeIDs)
 	p.NodeOutcomes = maps.Clone(p.NodeOutcomes)
 	p.Projects = slices.Clone(p.Projects)
-	p.Verifications = cloneVerifications(p.Verifications)
+	p.ReleaseChecks = cloneReleaseChecks(p.ReleaseChecks)
 	p.Approvers = slices.Clone(p.Approvers)
 	if p.Edits != nil {
 		edits := make([]proposal.FileEdit, len(p.Edits))
@@ -128,11 +128,11 @@ func cloneProposal(p proposal.Proposal) proposal.Proposal {
 	return p
 }
 
-func cloneVerifications(vs []proposal.Verification) []proposal.Verification {
+func cloneReleaseChecks(vs []proposal.ReleaseCheck) []proposal.ReleaseCheck {
 	if vs == nil {
 		return nil
 	}
-	out := make([]proposal.Verification, len(vs))
+	out := make([]proposal.ReleaseCheck, len(vs))
 	for i, v := range vs {
 		v.ActivatedAt = cloneTimePtr(v.ActivatedAt)
 		out[i] = v

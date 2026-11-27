@@ -9,8 +9,8 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,12 +86,12 @@ func putSeedBuildingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps,
 
 	r, err := store.GetRelease(releaseID)
 	require.NoError(t, err)
-	require.Equal(t, pipeline.StatusSeedBuilding, r.Status(),
+	require.Equal(t, releasecheck.StatusSeedBuilding, r.Status(),
 		"topology must have a new dbt-seed for putSeedBuildingRelease to leave release in SeedBuilding")
 }
 
 // mustGetRelease fetches a release from the fakeStore or fails the test.
-func mustGetRelease(t *testing.T, store *fakeStore, releaseID string) *pipeline.Run {
+func mustGetRelease(t *testing.T, store *fakeStore, releaseID string) *releasecheck.Check {
 	t.Helper()
 	r, err := store.GetRelease(releaseID)
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestHandleSeedBuildResult_OKEmitsValidationRequestedExcludingBuiltSeeds(t *
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, releasecheck.StatusValidating, r.Status())
 
 	entry := lastOutbox(t, store)
 	assert.Equal(t, streams.ValidationRequestedV1, entry.StreamName)
@@ -197,7 +197,7 @@ func TestHandleSeedBuildResult_KeepsEachNodesDuration(t *testing.T) {
 		PerNode: []handlers.NodeResult{{NodeID: "seed.core.fx", Status: "ok", DurationMS: 1500}},
 	}))
 
-	var seedBuild []pipeline.NodeValidationResult
+	var seedBuild []releasecheck.NodeValidationResult
 	for _, n := range mustGetRelease(t, store, releaseID).PerNodeResults() {
 		if n.Stage == "seed_build" {
 			seedBuild = append(seedBuild, n)
@@ -218,7 +218,7 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "seed_build_failed", r.FailReason())
 	e := findEntry(t, store, streams.ReleaseRejectedV1)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
@@ -227,7 +227,7 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	require.NoError(t, json.Unmarshal(e.Payload, &payload))
 	_, hasErrorClass := payload["error_class"]
 	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
-	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
 func TestHandleSeedBuildResult_Failed_RecordsTheSeedBuildingStageDuration(t *testing.T) {
@@ -297,7 +297,7 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "seed_build_failed", r.FailReason())
 
 	// The aggregate must record per-node seed-build stage results.
@@ -356,8 +356,8 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 	require.NoError(t, json.Unmarshal(topLevel["candidate_schema"], &candidateSchema))
 	assert.Equal(t, "_candidate_rel_seed_uniform", candidateSchema)
 
-	// A candidate's terminal decision also emits pipeline.run.finished:v1.
-	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	// A candidate's terminal decision also emits release_check.finished:v1.
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
 // TestHandleSeedBuildResult_OKThenValidationCompletePromotes proves the
@@ -378,7 +378,7 @@ func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {
 	// The persisted validation set must exclude the built seed so the barrier's
 	// expected set matches execution-controller's per-node emissions.
 	r := mustGetRelease(t, store, releaseID)
-	require.Equal(t, pipeline.StatusValidating, r.Status())
+	require.Equal(t, releasecheck.StatusValidating, r.Status())
 	assert.Equal(t, []string{"model.fin.report"}, r.ValidationNodeIDs(),
 		"persisted validation set must drop the just-built seed")
 
@@ -394,7 +394,7 @@ func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {
 	}))
 
 	r = mustGetRelease(t, store, releaseID)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status(),
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status(),
 		"seed-build then per-node validation-ok must promote, not hang on the barrier")
 	assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1))
 }
@@ -423,14 +423,14 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotesDirect(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "seed-only release promotes directly after seed build")
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status(), "seed-only release promotes directly after seed build")
 
 	// No validation.requested must be emitted; release.promoted:v1 is written.
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName)
 	}
 	assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1))
-	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 
 	// Verify current_prod was updated
 	cp := store.GetCurrentProd()
@@ -506,77 +506,77 @@ func TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndProject(t *testin
 		"project must be taken from the candidate topology's ProjectName")
 }
 
-// putSeedBuildingVerification mirrors putSeedBuildingRelease but seeds a
-// verification run (via seedToParsingVerification's Received → AdvanceQueue →
+// putSeedBuildingFix mirrors putSeedBuildingRelease but seeds a
+// fix's release check (via seedToParsingFix's Received → AdvanceQueue →
 // HandleCompileResult(ok) sequence) instead of a candidate.
-func putSeedBuildingVerification(t *testing.T, releaseID string, project string, topo release.Topology) (*handlers.Deps, *fakeStore) {
+func putSeedBuildingFix(t *testing.T, releaseID string, project string, topo release.Topology) (*handlers.Deps, *fakeStore) {
 	t.Helper()
-	deps, store := seedToParsingVerification(t, releaseID, map[string]string{project: "img-" + project})
+	deps, store := seedToParsingFix(t, releaseID, map[string]string{project: "img-" + project})
 
 	require.NoError(t, handlers.HandleParsedManifest(ctx(t), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: releaseID, Status: "ok", TopologyRef: putTopology(t, deps, releaseID, topo),
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	require.Equal(t, pipeline.StatusSeedBuilding, r.Status(),
-		"putSeedBuildingVerification: verification run must be in seed_building after HandleParsedManifest")
+	require.Equal(t, releasecheck.StatusSeedBuilding, r.Status(),
+		"putSeedBuildingFix: the fix's release check must be in seed_building after HandleParsedManifest")
 	return deps, store
 }
 
-// TestHandleSeedBuildResult_Verification_Failed_NoReleaseRejected_FinishedEmitted
-// verifies a verification run's seed-build failure ends the run at Failed,
-// emits no release.rejected:v1 at all (a verification failure is never a
-// release rejection — Global Constraint), and emits pipeline.run.finished:v1
-// with outcome "failed" and the run's candidate_schema.
-func TestHandleSeedBuildResult_Verification_Failed_NoReleaseRejected_FinishedEmitted(t *testing.T) {
+// TestHandleSeedBuildResult_Fix_Failed_NoReleaseRejected_FinishedEmitted
+// verifies a fix's seed-build failure ends the check at Failed,
+// emits no release.rejected:v1 at all (a fix's release check failure is never a
+// release rejection — Global Constraint), and emits release_check.finished:v1
+// with outcome "failed" and the check's candidate_schema.
+func TestHandleSeedBuildResult_Fix_Failed_NoReleaseRejected_FinishedEmitted(t *testing.T) {
 	releaseID := "rel-verify-seed-fail"
-	deps, store := putSeedBuildingVerification(t, releaseID, "svc-fin", topoSeedPlusModel())
+	deps, store := putSeedBuildingFix(t, releaseID, "svc-fin", topoSeedPlusModel())
 
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
 		ReleaseID: releaseID, Status: "failed", ErrorDetail: "csv parse",
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, pipeline.StatusFailed, r.Status())
+	assert.Equal(t, releasecheck.StatusFailed, r.Status())
 	assert.Equal(t, "seed_build_failed", r.FailReason())
-	assert.Nil(t, r.RejectionPayload(), "a verification stores no rejection payload")
+	assert.Nil(t, r.RejectionPayload(), "a fix's release check stores no rejection payload")
 
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
-			"a verification run's seed-build failure must not be reported as a release rejection")
+			"a fix's seed-build failure must not be reported as a release rejection")
 	}
-	finished := findEntry(t, store, streams.PipelineRunFinishedV1)
+	finished := findEntry(t, store, streams.ReleaseCheckFinishedV1)
 	assert.Equal(t, "failed", outcomeOf(t, finished))
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(finished.Payload, &payload))
 	assert.Equal(t, "_candidate_rel_verify_seed_fail", payload["candidate_schema"])
 }
 
-// TestHandleSeedBuildResult_Verification_SeedOnlyOK_PassesNoReleaseEvents_FinishedEmitted
-// verifies a verification run whose only change is a seed (nothing left to
+// TestHandleSeedBuildResult_Fix_SeedOnlyOK_PassesNoReleaseEvents_FinishedEmitted
+// verifies a fix's release check whose only change is a seed (nothing left to
 // validate after the built seed is excluded) ends at Passed rather than
 // Promoted, touches neither current_prod nor service_prod, emits neither
 // release.promoted:v1 nor release.rejected:v1, and emits
-// pipeline.run.finished:v1 with outcome "passed".
-func TestHandleSeedBuildResult_Verification_SeedOnlyOK_PassesNoReleaseEvents_FinishedEmitted(t *testing.T) {
+// release_check.finished:v1 with outcome "passed".
+func TestHandleSeedBuildResult_Fix_SeedOnlyOK_PassesNoReleaseEvents_FinishedEmitted(t *testing.T) {
 	releaseID := "rel-verify-seed-only"
-	deps, store := putSeedBuildingVerification(t, releaseID, "svc-fin", topoSeedOnly())
+	deps, store := putSeedBuildingFix(t, releaseID, "svc-fin", topoSeedOnly())
 
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
 		ReleaseID: releaseID, Status: "ok",
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, pipeline.StatusPassed, r.Status(),
-		"a verification run with nothing left to validate after the built seed passes rather than promotes")
-	assert.Equal(t, 0, store.CurrentProdUpsertCalls(), "a verification never writes current_prod")
-	assert.Nil(t, store.GetServiceProd("svc-fin"), "a verification never writes service_prod")
+	assert.Equal(t, releasecheck.StatusPassed, r.Status(),
+		"a fix's release check with nothing left to validate after the built seed passes rather than promotes")
+	assert.Equal(t, 0, store.CurrentProdUpsertCalls(), "a fix's release check never writes current_prod")
+	assert.Nil(t, store.GetServiceProd("svc-fin"), "a fix's release check never writes service_prod")
 
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName)
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName)
 	}
-	assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
 // seedBuildingFxRelease leaves a release in SeedBuilding with the design's
@@ -591,13 +591,13 @@ func seedBuildingFxRelease(t *testing.T, releaseID string) (*handlers.Deps, *fak
 		ReleaseID: releaseID, Status: "ok", TopologyRef: putTopology(t, deps, releaseID, candidate),
 	}))
 	r := mustGetRelease(t, store, releaseID)
-	require.Equal(t, pipeline.StatusSeedBuilding, r.Status())
+	require.Equal(t, releasecheck.StatusSeedBuilding, r.Status())
 	require.Len(t, r.Notices(), 1)
 	require.Equal(t, "reloads", r.Notices()[0].Prediction)
 	return deps, store
 }
 
-// fxFindings lists the two views the run rebuilds and one view in schema bi
+// fxFindings lists the two views the promote-seed run rebuilds and one view in schema bi
 // that continuo does not own.
 func fxFindings() *seedreload.Findings {
 	return &seedreload.Findings{DropSemantics: "drop_fails", Completeness: "exact", Checked: true, Dependents: []seedreload.Dependent{
@@ -607,7 +607,7 @@ func fxFindings() *seedreload.Findings {
 	}}
 }
 
-func assertFxNoticeStops(t *testing.T, r *pipeline.Run) {
+func assertFxNoticeStops(t *testing.T, r *releasecheck.Check) {
 	t.Helper()
 	require.Len(t, r.Notices(), 1)
 	n := r.Notices()[0]
@@ -625,7 +625,7 @@ func TestHandleSeedBuildResult_AddsTheWarehouseFindingsToTheNotice(t *testing.T)
 	}))
 
 	r := mustGetRelease(t, store, "rel-findings-ok")
-	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, releasecheck.StatusValidating, r.Status())
 	assertFxNoticeStops(t, r)
 }
 
@@ -638,7 +638,7 @@ func TestHandleSeedBuildResult_AddsTheWarehouseFindingsToTheNoticeOnAFailedLeg(t
 	}))
 
 	r := mustGetRelease(t, store, "rel-findings-failed")
-	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assertFxNoticeStops(t, r)
 }
 

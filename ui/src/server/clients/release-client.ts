@@ -15,9 +15,9 @@ export interface ReleaseClient {
   getRelease(id: string): Promise<any>;
   getCurrentProd(): Promise<any>;
   retryRemediation(id: string): Promise<{ status: number; body: unknown }>;
-  getVerificationRun(id: string): Promise<any>;
-  listVerificationRuns(releaseId: string): Promise<any>;
-  getPipeline(): Promise<any>;
+  getReleaseCheck(id: string): Promise<any>;
+  listReleaseChecks(releaseId: string): Promise<any>;
+  getReleaseQueue(): Promise<any>;
   submitRelease(body: ReleaseSubmission): Promise<{ status: number; text: string }>;
 }
 
@@ -49,14 +49,14 @@ export function createReleaseClient(baseUrl: string): ReleaseClient {
     getCurrentProd() {
       return getJson('/current-prod');
     },
-    getVerificationRun(id) {
-      return getJson(`/verification-runs/${encodeURIComponent(id)}`);
+    getReleaseCheck(id) {
+      return getJson(`/release-checks/${encodeURIComponent(id)}`);
     },
-    listVerificationRuns(releaseId) {
-      return getJson(`/verification-runs?verifies=${encodeURIComponent(releaseId)}`);
+    listReleaseChecks(releaseId) {
+      return getJson(`/release-checks?verifies=${encodeURIComponent(releaseId)}`);
     },
-    getPipeline() {
-      return getJson('/pipeline');
+    getReleaseQueue() {
+      return getJson('/release-queue');
     },
     // Forwards a release submission. release-controller answers 202 with JSON,
     // or a plain-text error body for 400/409; the caller maps both.

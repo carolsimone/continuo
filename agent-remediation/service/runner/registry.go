@@ -124,7 +124,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(cross.NewEditsMapToAProject(c.ProjectRepoPaths, c.Logger))
 	r.register(cross.NewNoPathEditedTwice(c.ProjectRepoPaths, c.Logger))
 	r.register(cross.NewOneManifestKind(c.ProjectRepoPaths, c.Logger))
-	r.register(gate.NewVerificationRun(c.Evidence, c.Artifacts, c.Releases, c.Pipeline, c.ProjectRepoPaths, c.Clock, c.VerificationTimeout, c.Logger))
+	r.register(gate.NewReleaseCheck(c.Evidence, c.Artifacts, c.Releases, c.ReleaseChecks, c.ProjectRepoPaths, c.Clock, c.ReleaseCheckTimeout, c.Logger))
 	r.register(approver.NewNodeOwner(c.CandidateSource, c.ContractInspector, c.Logger))
 	r.register(outputs.NewPullRequest(c.Clock))
 	r.register(outputs.NewHandOver())

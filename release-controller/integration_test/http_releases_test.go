@@ -134,26 +134,26 @@ func TestIntegration_PostReleases_UnknownKind_Returns400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "unknown manifest kind")
 
-	r, err := deps.NewUoW().RunRepo().Get(context.Background(), "rBadKind")
+	r, err := deps.NewUoW().ReleaseCheckRepo().Get(context.Background(), "rBadKind")
 	require.NoError(t, err)
 	assert.Nil(t, r, "no release row should be persisted for a rejected kind")
 }
 
-// TestIntegration_VerificationRunExposedOnItsOwnRoutesOnly verifies that a
-// fix-verification run, saved through the real Postgres repository, is
-// readable only via the verification-run routes: GET /releases/{id} treats
+// TestIntegration_ReleaseCheckExposedOnItsOwnRoutesOnly verifies that a
+// fix's release check, saved through the real Postgres repository, is
+// readable only via the release-check routes: GET /releases/{id} treats
 // its id as unknown, and GET /releases never lists it.
-func TestIntegration_VerificationRunExposedOnItsOwnRoutesOnly(t *testing.T) {
+func TestIntegration_ReleaseCheckExposedOnItsOwnRoutesOnly(t *testing.T) {
 	srv, deps, db := setup(t)
 	defer db.Close()
 	ctx := context.Background()
 
-	require.NoError(t, handlers.ReceiveVerification(ctx, deps, handlers.ReceiveVerificationInput{
-		RunID: "verify-rv1", Project: "service-1", ImageTag: "t", Kind: "dbt",
+	require.NoError(t, handlers.ReceiveFix(ctx, deps, handlers.ReceiveFixInput{
+		CheckID: "verify-rv1", Project: "service-1", ImageTag: "t", Kind: "dbt",
 		VerifiesReleaseID: "rv1", Attempt: 1,
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/verification-runs/verify-rv1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/release-checks/verify-rv1", nil)
 	w := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)

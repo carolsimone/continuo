@@ -4,8 +4,8 @@ FROM python:3.15-slim
 # optionally, partial-parse msgpack artifacts and compile-extras.json) to S3 (compile leg).
 # compile_extras.py writes compile-extras.json with the Python that runs dbt. parse_cache_fetcher.py
 # downloads a partial-parse msgpack cache into a per-node Job's dbt target dir (node leg).
-# overlay_fetcher.py lays a shadow release's proposed source files over the compile Job's
-# project (compile leg of a fix verification).
+# overlay_fetcher.py lays a fix's proposed source files over the compile Job's
+# project (compile leg of a fix's release check).
 RUN pip install --no-cache-dir "boto3>=1.34.0"
 COPY s3_common.py /s3_common.py
 COPY compile_uploader.py /compile_uploader.py

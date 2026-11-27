@@ -50,7 +50,7 @@ func (*MatchesPlan) Meta() step.Meta {
 // written over a checkout and the moved files gone, still names the model by
 // its old name, read by the same finder model_rename used. A plan that changes
 // the alias keeps the model's name, so no file can be left naming an old one;
-// the verification run judges whether the alias changed. A draft with a path
+// the release check judges whether the alias changed. A draft with a path
 // outside the checkout is not scanned: its edit_outside_rename finding already
 // refuses it.
 func (c *MatchesPlan) Check(ctx context.Context, in step.CheckInput) (step.CheckOutput, error) {
@@ -133,8 +133,8 @@ func (c *MatchesPlan) stillNaming(ctx context.Context, in step.CheckInput, plan 
 	if err != nil {
 		return nil, fmt.Errorf("rename_matches_plan: %w", err)
 	}
-	// The checkout still holds each file the draft moves away; the verification
-	// run and the pull request delete it, so it can leave nothing behind.
+	// The checkout still holds each file the draft moves away; the release
+	// check and the pull request delete it, so it can leave nothing behind.
 	gone := map[string]bool{}
 	for _, e := range in.Draft.Edits {
 		if e.RenamedFrom != "" {

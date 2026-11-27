@@ -100,7 +100,7 @@ type StepStatus string
 const (
 	StepRunning StepStatus = "running"
 	// StepWaiting: the step started something outside the worker (a
-	// verification run) and waits for its answer.
+	// release check) and waits for its answer.
 	StepWaiting StepStatus = "waiting"
 	StepDone    StepStatus = "done"
 	// StepFailed: the step failed. A retry moves it back to StepRunning.

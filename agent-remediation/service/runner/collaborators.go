@@ -61,13 +61,13 @@ type Collaborators struct {
 	// SQLDialect is the sqlglot dialect the warehouse this install runs
 	// speaks, resolved from the operator's configured warehouse engine.
 	SQLDialect string
-	// Pipeline submits verification runs and reads their status.
-	Pipeline ports.VerificationPipeline
+	// ReleaseChecks submits release checks and reads their status.
+	ReleaseChecks ports.ReleaseChecks
 	// Clock tells the time.
 	Clock ports.Clock
-	// VerificationTimeout is how long a verification run may be running, or
+	// ReleaseCheckTimeout is how long a release check may be running, or
 	// its status unreadable since GateInput.SubmittedAt (the start of the gate
-	// step that submitted the runs), before the gate fails the try as timed
+	// step that submitted the checks), before the gate fails the try as timed
 	// out.
-	VerificationTimeout time.Duration
+	ReleaseCheckTimeout time.Duration
 }

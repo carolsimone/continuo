@@ -1,8 +1,8 @@
 """Unit tests for overlay_fetcher.main.
 
-The fetcher lays a verification run's proposed source files into OVERLAY_DEST
+The fetcher lays a fix's proposed source files into OVERLAY_DEST
 and writes the paths the overlay removes to OVERLAY_DELETE_LIST. Unlike
-parse_cache_fetcher it FAILS the Job on any problem: a verification run that
+parse_cache_fetcher it FAILS the Job on any problem: a fix's release check that
 built the committed source instead of the proposed fix would verify the wrong
 thing.
 """

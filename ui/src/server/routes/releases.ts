@@ -117,11 +117,11 @@ export function createReleasesRouter(
     }
   });
 
-  // GET /api/releases/:id/verifications — the verification runs that judged
-  // fixes proposed for this release, newest first.
-  router.get('/:id/verifications', async (req, res) => {
+  // GET /api/releases/:id/release-checks — the release checks of the fixes
+  // proposed for this release, newest first: {checks: [...]}.
+  router.get('/:id/release-checks', async (req, res) => {
     try {
-      res.json(await client.listVerificationRuns(req.params.id));
+      res.json(await client.listReleaseChecks(req.params.id));
     } catch (err: any) {
       res.status(err.status || 502).json({ error: 'release-controller request failed' });
     }

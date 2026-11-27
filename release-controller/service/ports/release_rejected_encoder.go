@@ -23,7 +23,7 @@ const (
 	// build fails. Its stage is "seed_build" and it additionally names the
 	// candidate schema the seeds were being built into.
 	RejectionShapeSeedBuild RejectionShape = "seed_build"
-	// RejectionShapeValidation is the body emitted when the validation run
+	// RejectionShapeValidation is the body emitted when the validation leg
 	// fails. Its stage is "validation"; it carries the aggregate status and
 	// each failing node's changed ancestors instead of an error detail.
 	RejectionShapeValidation RejectionShape = "validation"
@@ -107,7 +107,7 @@ type ReleaseRejection struct {
 	// validation shape carries none: its evidence is per node.
 	ErrorDetail string
 
-	// AggregateStatus is the validation run's own terminal status.
+	// AggregateStatus is the validation leg's own terminal status.
 	AggregateStatus string
 
 	// FailingNodes names the nodes the rejection is for: every node that
@@ -130,7 +130,7 @@ type ReleaseRejection struct {
 	CandidateSchema string
 }
 
-// ReleaseRejectedEncoder renders the release.rejected:v1 payload for a run
+// ReleaseRejectedEncoder renders the release.rejected:v1 payload for a check
 // that is ending rejected. It owns the wire keys so handlers pass values.
 // Implemented by an adapter; a shape the implementation does not know is an
 // error rather than a silently truncated body.

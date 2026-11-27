@@ -16,7 +16,7 @@ import (
 // runner stamps a remediation on every row it writes: a row in flight
 // (generating or verifying) with no remediation. A row that was generating takes
 // the reason as its rationale; a row that was verifying takes it as its verify
-// error and keeps its rationale, edits and verifications. On both, each node
+// error and keeps its rationale, edits and release checks. On both, each node
 // outcome still in flight becomes failed with the reason and every other outcome
 // stays as it was, and a row that recorded no outcome at all is failed too and
 // still reads back with none. A row of a remediation, whatever its status, and a
@@ -41,9 +41,9 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 		}
 
 		edits := []proposal.FileEdit{{Path: "models/a.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "model.a", MemberNodeIDs: []string{"model.a"}}}
-		runs := []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhaseQueued}}
+		runs := []proposal.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1", Phase: proposal.PhaseQueued}}
 
-		// A row with no remediation in verification: a fix under check.
+		// A row with no remediation in its release check: a fix under check.
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-verifying", NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a", "model.b", "model.c"}, Attempt: 1, Status: proposal.StatusVerifying,
@@ -52,7 +52,7 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 				"model.b": {Status: proposal.StatusVerifying},
 				"model.c": handedOver,
 			},
-			Edits: edits, Verifications: runs, Rationale: "the fix", SourceResolved: true, CreatedAt: contractBase,
+			Edits: edits, ReleaseChecks: runs, Rationale: "the fix", SourceResolved: true, CreatedAt: contractBase,
 		}))
 		// A row with no remediation still generating.
 		require.NoError(t, env.proposals.InsertGenerating(ctx, proposal.Proposal{
@@ -81,7 +81,7 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-runner", RemediationID: r.ID.String(), NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a"}, Attempt: 2, Status: proposal.StatusVerifying,
-			NodeOutcomes: runnerVerifying, Edits: edits, Verifications: runs, Rationale: "the runner's fix", SourceResolved: true,
+			NodeOutcomes: runnerVerifying, Edits: edits, ReleaseChecks: runs, Rationale: "the runner's fix", SourceResolved: true,
 			CreatedAt: contractBase,
 		}))
 		// Rows with no remediation that ended: nothing to fail.
@@ -95,7 +95,7 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 			Source: "validation", ReleaseID: "rel-legacy-inflight-ended", NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a"}, Attempt: 2, Status: proposal.StatusProposed,
 			NodeOutcomes: map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusProposed}},
-			Edits:        edits, Verifications: runs, Rationale: "a verified fix", SourceResolved: true, CreatedAt: contractBase,
+			Edits:        edits, ReleaseChecks: runs, Rationale: "a verified fix", SourceResolved: true, CreatedAt: contractBase,
 		}))
 
 		beforeVerifying := get("rel-legacy-inflight-verifying", 1)
@@ -118,7 +118,7 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 		require.Equal(t, reason, verifying.VerifyError, "a row that was verifying records the reason as its verify error")
 		require.Equal(t, "the fix", verifying.Rationale, "and keeps its rationale")
 		require.Equal(t, edits, verifying.Edits, "its edits")
-		require.Equal(t, runs, verifying.Verifications, "and its verifications")
+		require.Equal(t, runs, verifying.ReleaseChecks, "and its release checks")
 		require.Equal(t, map[string]proposal.NodeOutcome{
 			"model.a": {Status: proposal.StatusFailed, Reason: reason},
 			"model.b": {Status: proposal.StatusFailed, Reason: reason},

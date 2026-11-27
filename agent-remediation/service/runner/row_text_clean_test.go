@@ -11,22 +11,22 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
 
-// A failed verification run records what its nodes printed, on the attempt's row as
+// A failed release check records what its nodes printed, on the attempt's row as
 // verify_error and on the run's own entry, and both are shown: neither holds a
 // credential or an email address a node's error line echoed.
-func TestRunner_GateFailRecordsTheVerificationErrorCleaned(t *testing.T) {
+func TestRunner_GateFailRecordsTheVerifyErrorCleaned(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": dirtyDetail})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": dirtyDetail})
 
 	require.NoError(t, h.poll(id))
 
 	first := h.attempt(1)
 	assert.Equal(t, proposal.StatusFailed, first.Proposal.Status)
 	assert.Equal(t, "svc-a: "+cleanDetail, first.VerifyError)
-	require.Len(t, first.Proposal.Verifications, 1)
-	assert.Equal(t, "svc-a: "+cleanDetail, first.Proposal.Verifications[0].Error)
+	require.Len(t, first.Proposal.ReleaseChecks, 1)
+	assert.Equal(t, "svc-a: "+cleanDetail, first.Proposal.ReleaseChecks[0].Error)
 }
 
 // failStepWithTheDirtyError records five failures of a step whose last error holds a
@@ -62,8 +62,8 @@ func TestRunner_ASystemFailureFailsAVerifyingRowWithAReasonThatIsCleaned(t *test
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	h.pipeline.answer(proposal.PhasePassed, nil)
-	gate := h.flowRows(id, 1)["verification_run"][0]
+	h.checks.answer(proposal.PhasePassed, nil)
+	gate := h.flowRows(id, 1)["release_check"][0]
 	gate.Failures, gate.LastError = 5, dirtyDetail
 	h.saveStep(gate)
 

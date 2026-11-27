@@ -28,4 +28,3 @@ func TestRemediationEventID_KeyedOnReleaseAndAttempt(t *testing.T) {
 		t.Fatal("must be stable")
 	}
 }
-

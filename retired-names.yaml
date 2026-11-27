@@ -267,3 +267,20 @@ names:
   # PYTHON_..., test names).
   - pattern: '(?i)\w*python[-_]?odcs\w*'
     use: python (the kind of a Python project)
+  # Release check group: the checks a release passes before production are
+  # its release check, of a candidate release (kind candidate) or of a fix
+  # (kind fix). The patterns cover the prose, the table, the stream and the
+  # names built from them (VerificationRun..., release_pipeline_runs,
+  # pipeline.run.finished, PipelineRunFinished..., fix-verification).
+  - pattern: '(?i)\w*verification[ ._-]?runs?\w*'
+    use: release check
+  - pattern: '(?i)\w*pipeline[._-]runs?\w*|\w*[pP]ipelineRuns?\w*'
+    use: release check (the stream is release_check.finished:v1)
+  - pattern: '(?i)\w*release[ ._-]?pipelines?\w*'
+    use: release check
+  - pattern: '(?i)fix[ -]verifications?'
+    use: a fix's release check
+  - pattern: '\w*VerificationPipeline\w*|\w*(Kind|New|Receive)Verification\w*'
+    use: ReleaseChecks, KindFix, NewFix, ReceiveFix
+  - pattern: 'api/(verifications|pipeline)'
+    use: api/release-checks, api/release-queue

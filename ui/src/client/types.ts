@@ -411,7 +411,8 @@ export interface ReleaseDetail {
   commit_sha?: string;
   commit_url?: string;
   // How the release's artifact is parsed: 'dbt', 'python' or 'ontology'.
-  // Decides the pipeline path — only a dbt release has a compile leg.
+  // Decides the stages its release check passes through — only a dbt release
+  // has a compile leg.
   manifest_kind?: string;
   // What the parse reported: milliseconds the parse took without its contract
   // stages, milliseconds those stages took, and how many contracts it wrote by
@@ -505,15 +506,16 @@ export interface PullRequestDTO {
   pr_closed_at: string;
 }
 
-// One fix-verification run a batched attempt ran for one edited project, with
-// the durable summary agent-remediation keeps of how it went. phase is ''
-// until the reconciler first reads the run, then queued | running | passed |
-// failed. activated_at is when the run left the pipeline's queue ('' while
-// queued); error is the named per-node errors of a failed run.
-export interface VerificationDTO {
+// One fix's release check a batched attempt ran for one edited project, with
+// the durable summary agent-remediation keeps of how it went. check_id is the
+// release check's id. phase is '' until the reconciler first reads the
+// release check, then queued | running | passed | failed. activated_at is
+// when it left the release queue ('' while queued); error is the named
+// per-node errors of a failed release check.
+export interface ReleaseCheckDTO {
   project: string;
   kind: string;
-  run_id: string;
+  check_id: string;
   phase: '' | 'queued' | 'running' | 'passed' | 'failed';
   activated_at: string;
   error: string;
@@ -539,8 +541,8 @@ export interface ProposalDTO {
   attempt: number;
   // Lifecycle of one fix attempt. Two are in flight and carry no reviewable
   // fix yet: 'generating' while the fix is being produced, and 'verifying'
-  // while a verification run judges the produced fix through the full
-  // validation pipeline. The rest are terminal: 'proposed' (a fix ready for
+  // while a release check judges the produced fix through every stage a
+  // release passes. The rest are terminal: 'proposed' (a fix ready for
   // review), 'skipped', 'failed', 'escalated'.
   status: string;
   confidence: string;
@@ -561,14 +563,15 @@ export interface ProposalDTO {
   pr_opened_at: string;
   pr_opened_by: string;
   pr_closed_at: string;
-  // verification_run_id is the run id of the first verification; the
-  // single-run view of verifications. Set while the attempt is 'verifying'
-  // and still set on the 'proposed' or 'failed' row it became, so the run
-  // that decided an attempt is always reachable from it. Empty on an attempt
-  // judged without one.
-  verification_run_id: string;
-  // verify_error is why that run rejected the fix — the reason a python
-  // contract attempt reached 'failed'. Empty unless verification failed.
+  // release_check_id is the id of the first of release_checks; the
+  // single-check view of them. Set while the attempt is 'verifying' and
+  // still set on the 'proposed' or 'failed' row it became, so the release
+  // check that decided an attempt is always reachable from it. Empty on an
+  // attempt judged without one.
+  release_check_id: string;
+  // verify_error is why that release check rejected the fix — the reason a
+  // python contract attempt reached 'failed'. Empty unless the release check
+  // failed.
   verify_error: string;
   // Every file this proposal changes. Absent or empty on a proposal that has
   // no real repository source to edit — a candidate-only fix — in which case
@@ -589,11 +592,10 @@ export interface ProposalDTO {
   // status/rationale describe that node too. See proposalStatusForNode /
   // proposalReasonForNode.
   node_outcomes?: Record<string, NodeOutcomeDTO>;
-  // verifications lists the verification runs this attempt ran, one per
-  // edited project that needed verification. Empty on a proposal judged
-  // without one, or a legacy row that only ever tracked a single
-  // verification_run_id.
-  verifications?: VerificationDTO[];
+  // release_checks lists the release checks this attempt ran, one per
+  // edited project that needed one. Empty on a proposal judged without one,
+  // or a legacy row that only ever tracked a single release_check_id.
+  release_checks?: ReleaseCheckDTO[];
   // pull_requests is one entry per (proposal, project) pull request; absent
   // or empty on a proposal that never entered the PR lifecycle, or one from
   // before the per-project split existed — in which case the singular pr_*
@@ -618,12 +620,11 @@ export interface ProposalDTO {
   approvers?: ApproverDTO[];
 }
 
-// A verification run judges one candidate against the full validation
-// pipeline without becoming prod: a fix-verification run for a remediation
-// attempt, or a standalone pipeline check. verifies_release_id names the
-// release the run judges a fix for.
-export interface VerificationRunDetail {
-  run_id: string;
+// A fix's release check puts a remediation attempt's fix through every stage
+// a release passes, without becoming prod. verifies_release_id names the
+// release whose fix it judges.
+export interface ReleaseCheckDetail {
+  check_id: string;
   status: string; // received|compiling|parsing|seed_building|validating|passed|failed
   changed_project: string;
   verifies_release_id: string;
@@ -640,15 +641,16 @@ export interface VerificationRunDetail {
   image_tags: Record<string, string>;
   manifest_kind: string;
   // What the parse reported, as on a release (see ReleaseDetail): absent until
-  // the parse reports them, and absent on a run whose parse never did.
+  // the parse reports them, and absent on a release check whose parse never
+  // did.
   parse_ms?: number;
   contracts_ms?: number;
   contracts_by_family?: Record<string, number>;
 }
 
-// One row of a release's verification-run list, newest first.
-export interface VerificationRunSummary {
-  run_id: string;
+// One row of a release's release-check list, newest first.
+export interface ReleaseCheckSummary {
+  check_id: string;
   status: string;
   project: string;
   attempt: number;
@@ -658,12 +660,12 @@ export interface VerificationRunSummary {
   fail_reason?: string;
 }
 
-// The one run — a release candidate or a verification run — currently
-// occupying the pipeline's single slot. verifies_release_id and attempt are
-// present only when run_kind is 'verification'.
-export interface PipelineActive {
-  run_id: string;
-  run_kind: 'candidate' | 'verification';
+// The one release check — a candidate release's or a fix's — that holds the
+// release queue's single slot. verifies_release_id and attempt are present
+// only when check_kind is 'fix'.
+export interface ReleaseQueueActive {
+  check_id: string;
+  check_kind: 'candidate' | 'fix';
   status: string;
   project: string;
   since: string;
@@ -671,8 +673,8 @@ export interface PipelineActive {
   attempt?: number;
 }
 
-export interface PipelineResponse {
-  active: PipelineActive | null;
+export interface ReleaseQueueResponse {
+  active: ReleaseQueueActive | null;
 }
 
 // A changed node upstream of what a rebase re-runs, as the rebase preview

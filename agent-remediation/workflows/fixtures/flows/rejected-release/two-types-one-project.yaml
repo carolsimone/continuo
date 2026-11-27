@@ -1,6 +1,6 @@
 # Two clusters of two types fix the sales project: orders is a dbt-validation
 # fix of its own, and daily_orders and weekly_orders share one fix at
-# base_orders. One verification run checks both edits, and one attempt
+# base_orders. One release check checks both edits, and one attempt
 # carries them.
 kind: fixture
 version: 1

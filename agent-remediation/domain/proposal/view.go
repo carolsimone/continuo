@@ -60,20 +60,20 @@ type View struct {
 	// sorted by node id. It is empty for an attempt row that belongs to no remediation
 	// and for one with no approvers recorded.
 	Approvers []Approver
-	// Verifications is one fix-verification run per edited project;
-	// VerificationRunID is the view of the first.
-	Verifications []Verification
-	// VerificationRunID is the run id of the first verification — the
-	// single-run view of Verifications. Written when Status is (or was)
+	// ReleaseChecks holds the fix's release checks, one per edited project;
+	// ReleaseCheckID is the view of the first.
+	ReleaseChecks []ReleaseCheck
+	// ReleaseCheckID is the id of the first release check — the
+	// single-check view of ReleaseChecks. Written when Status is (or was)
 	// 'verifying'. It is kept when the attempt is finalized, so a resolved row
-	// still names the run that judged it. Empty for an attempt that never
-	// entered verification.
-	VerificationRunID string
+	// still names the check that judged it. Empty for an attempt that never
+	// entered its release check.
+	ReleaseCheckID string
 	// Projects is every project this attempt touched: the failing nodes'
 	// projects plus the edited ones.
 	Projects []string
-	// VerifyError is the verification run's failure reason, recorded by
-	// MarkVerifyFailed; empty unless verification failed.
+	// VerifyError is the release check's failure reason, recorded by
+	// MarkVerifyFailed; empty unless the release check failed.
 	VerifyError         string
 	Confidence          Confidence
 	Rationale           string

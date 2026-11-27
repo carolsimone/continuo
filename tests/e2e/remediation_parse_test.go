@@ -54,7 +54,7 @@ const parseFixBrokenProject = "service-2"
 //	→ agent-remediation's dbt-parse type: its failing_node_source step reads
 //	  the model from stub-github under service-2's repo prefix, its prompt asks
 //	  stub-llm → proposal row (source=parse)
-//	→ one fix-verification run lays the corrected model over service-2's dbt
+//	→ one fix's release check lays the corrected model over service-2's dbt
 //	  project, compiles and validates it, and passes → proposal proposed
 //	→ remediation.proposed:v1, and the retry endpoint accepts the reason as
 //	  healable.
@@ -70,8 +70,8 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// 40 minutes: strictly greater than the 38 this test's stage budgets sum to
 	// (rejection 10 + rejected event 2 + trigger 4 + proposal 20 + proposed
 	// event 2). The rejection budget covers service-1's compile Job and the
-	// parse leg; the proposal budget covers the fix-verification run, which is
-	// a whole second pipeline in kind — compile service-2 with the overlay,
+	// parse leg; the proposal budget covers the fix's release check, which is
+	// a whole second release check in kind — compile service-2 with the overlay,
 	// build the candidate schema, run the validation Jobs — and matches what
 	// the dbt-validation type's own trigger-to-terminal-proposal wait budgets for
 	// the same span (TestE2E_AgentRemediation_ProposesFixForRejection).
@@ -80,7 +80,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	// The fix-verification run clones its four unchanged upstream models from
+	// The fix's release check clones its four unchanged upstream models from
 	// production (only ftable_e differs from current_prod in that run, see
 	// ensureParseFixClonedProdRelations), so those models must already exist in the
 	// warehouse before the release is posted. Deferred, so it runs when
@@ -105,13 +105,13 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	require.True(t, ok, "%s has no baseline manifest", parseFixBrokenProject)
 
 	// Seed production as every node except ftable_e, exactly as the validation
-	// scenario does, so ftable_e is the fix-verification run's only changed
+	// scenario does, so ftable_e is the fix's release check's only changed
 	// node and that run's verdict is about this fix and nothing else.
 	//
 	// A parse-rejected release records no candidate topology, so the
-	// fix-verification run assembles from production alone (assemble_release.go
+	// fix's release check assembles from production alone (assemble_release.go
 	// and changedNodeIDsFor both take their no-candidate fallback). Every live
-	// project keeps its baseline pointer, including service-1; the verification
+	// project keeps its baseline pointer, including service-1; the release check
 	// replaces service-2 with the fix and clones its complete upstream closure.
 	var prodNodes []map[string]string
 	for svc, si := range allProjects {
@@ -212,7 +212,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	assert.NotEmpty(t, trigger.Nodes[0].ErrorExcerpt)
 	assert.Empty(t, trigger.Nodes[0].DBTLogURI, "a parse failure has no log")
 
-	// 4. A proposal is produced, verified by a real fix-verification run, and
+	// 4. A proposal is produced, verified by a real fix's release check, and
 	//    announced for human review.
 	var row parseProposalRow
 	var last string
@@ -222,7 +222,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 		// order risks returning an earlier, already-superseded attempt while a
 		// later one is still running.
 		err := clients.agentRemediationDB.GetContext(ctx, &row,
-			`SELECT source, release_id, node_id, status, file_path, source_resolved, attempt, verify_error, verifications
+			`SELECT source, release_id, node_id, status, file_path, source_resolved, attempt, verify_error, release_checks
 			   FROM proposal WHERE release_id = $1 AND node_id = $2
 			  ORDER BY attempt DESC LIMIT 1`, releaseID, ftableEUniqueID)
 		if err != nil {
@@ -236,8 +236,8 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	}, fmt.Sprintf("timeout waiting for a parse proposal for release %s", releaseID))
 	require.Equal(t, "parse", row.Source)
 	require.Equal(t, "proposed", row.Status,
-		"the verified fix must be offered (latest attempt=%d, verify_error=%q, verifications=%s)",
-		row.Attempt, row.VerifyError, row.Verifications)
+		"the verified fix must be offered (latest attempt=%d, verify_error=%q, release_checks=%s)",
+		row.Attempt, row.VerifyError, row.ReleaseChecks)
 	require.True(t, strings.HasSuffix(row.FilePath, filePath), "proposal file_path %q must end with %q", row.FilePath, filePath)
 	require.True(t, row.SourceResolved)
 	waitForRemediationProposed(t, ctx, proposedTap, releaseID, ftableEUniqueID, 2*time.Minute)
@@ -256,7 +256,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 }
 
 // parseFixClonedProdRelations are the production relations this scenario's
-// fix-verification run clones rather than rebuilds. Only ftable_e differs from
+// fix's release check clones rather than rebuilds. Only ftable_e differs from
 // current_prod in that run (every other node's manifest content is untouched),
 // so DescendantsClosure(topo, {ftable_e}) yields {ftable_e, ftable_f} as the
 // changed closure, and FullAncestorsClosure of that closure adds {ftable_a,
@@ -324,8 +324,8 @@ func ensureParseFixClonedProdRelations(t *testing.T, ctx context.Context, client
 }
 
 // parseProposalRow captures the proposal fields asserted for a parse-stage
-// fix, plus the verification diagnostics (attempt, verify_error,
-// verifications) needed to explain a non-"proposed" terminal status from the
+// fix, plus the release check diagnostics (attempt, verify_error,
+// release_checks) needed to explain a non-"proposed" terminal status from the
 // test log alone.
 type parseProposalRow struct {
 	Source         string `db:"source"`
@@ -336,7 +336,7 @@ type parseProposalRow struct {
 	SourceResolved bool   `db:"source_resolved"`
 	Attempt        int    `db:"attempt"`
 	VerifyError    string `db:"verify_error"`
-	Verifications  []byte `db:"verifications"`
+	ReleaseChecks  []byte `db:"release_checks"`
 }
 
 // pinServiceProd points a project's production manifest pointer at one release

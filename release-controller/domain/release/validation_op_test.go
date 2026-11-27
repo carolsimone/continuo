@@ -41,7 +41,7 @@ func TestValidationOpFor(t *testing.T) {
 	}
 }
 
-// The changed closure is always built from candidate code. A verification's
+// The changed closure is always built from candidate code. A fix's
 // context rebuild is built only when it lands in the validation set.
 func TestRebuiltFromCandidateSet(t *testing.T) {
 	got := RebuiltFromCandidateSet(

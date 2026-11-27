@@ -226,7 +226,7 @@ spec:
         - port: 8088
 ---
 # agent-remediation reaches release-controller's HTTP API (port 8088) to
-# submit fix-verification runs, poll their status, and read the failing
+# submit fixes' release checks, poll their status, and read the failing
 # release's image tag. Only ui is admitted by allow-ui-upstreams above, so
 # without this edge every proposed fix stalls before it can be verified.
 apiVersion: networking.k8s.io/v1

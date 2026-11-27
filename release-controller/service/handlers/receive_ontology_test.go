@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +16,7 @@ import (
 
 const (
 	ontologyDisabledText = `kind "ontology" is accepted only when the install's ontology switch is on (contracts.ontology.enabled)`
-	verificationText     = `a verification run cannot have kind "ontology"`
+	fixText              = `a fix's release check cannot have kind "ontology"`
 )
 
 func secondOntologyText(other string) string {
@@ -63,11 +63,11 @@ func TestReceiveCandidate_AcceptsOntologyWhileTheSwitchIsOn(t *testing.T) {
 	r, err := store.GetRelease("rOnt")
 	require.NoError(t, err)
 	assert.Equal(t, release.ManifestKindOntology, r.ManifestKind())
-	assert.Equal(t, pipeline.StatusReceived, r.Status())
+	assert.Equal(t, releasecheck.StatusReceived, r.Status())
 }
 
 // An install has one ontology project: another project holding the kind in
-// service_prod, or in a candidate run that has not ended, refuses a second.
+// service_prod, or in a candidate check that has not ended, refuses a second.
 func TestReceiveCandidate_RefusesASecondOntologyProject(t *testing.T) {
 	t.Run("another project holds it in service_prod", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
@@ -82,7 +82,7 @@ func TestReceiveCandidate_RefusesASecondOntologyProject(t *testing.T) {
 		assert.Error(t, getErr)
 	})
 
-	t.Run("another project has a candidate run in flight", func(t *testing.T) {
+	t.Run("another project has a candidate check in flight", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
 		require.NoError(t, receiveOntology(deps, "rOntA", "ontology-a", "ontology"))
 
@@ -94,9 +94,9 @@ func TestReceiveCandidate_RefusesASecondOntologyProject(t *testing.T) {
 		assert.Error(t, getErr)
 	})
 
-	t.Run("a candidate run that ended does not count", func(t *testing.T) {
+	t.Run("a candidate check that ended does not count", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
-		ended := pipeline.NewCandidate("rOntA", "ontology-a", "img:1", false, false, "acme/ontology", "cafebabe",
+		ended := releasecheck.NewCandidate("rOntA", "ontology-a", "img:1", false, false, "acme/ontology", "cafebabe",
 			release.ManifestKindOntology, time.Unix(50, 0).UTC())
 		require.NoError(t, ended.Fail("invalid_contract", "", nil, time.Unix(60, 0).UTC()))
 		store.SeedRelease(ended)
@@ -104,9 +104,9 @@ func TestReceiveCandidate_RefusesASecondOntologyProject(t *testing.T) {
 		require.NoError(t, receiveOntology(deps, "rOntB", "ontology-b", "ontology"))
 	})
 
-	t.Run("a candidate run of another kind does not count", func(t *testing.T) {
+	t.Run("a candidate check of another kind does not count", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
-		store.SeedRelease(pipeline.NewCandidate("rDbt", "svc-dbt", "img:1", false, false, "acme/dbt", "cafebabe",
+		store.SeedRelease(releasecheck.NewCandidate("rDbt", "svc-dbt", "img:1", false, false, "acme/dbt", "cafebabe",
 			release.ManifestKindDbt, time.Unix(50, 0).UTC()))
 
 		require.NoError(t, receiveOntology(deps, "rOnt", "company-ontology", "ontology"))
@@ -162,7 +162,7 @@ func TestReceiveCandidate_NodeKindsKeepWorkingNextToTheOntologyRules(t *testing.
 }
 
 // The ontology project releases again and again: its own production row and its
-// own queued runs never count as a second ontology project.
+// own queued checks never count as a second ontology project.
 func TestReceiveCandidate_AcceptsTheSameOntologyProjectAgain(t *testing.T) {
 	t.Run("it holds the kind in service_prod", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
@@ -176,7 +176,7 @@ func TestReceiveCandidate_AcceptsTheSameOntologyProjectAgain(t *testing.T) {
 		assert.Equal(t, release.ManifestKindOntology, r.ManifestKind())
 	})
 
-	t.Run("it has a candidate run in flight", func(t *testing.T) {
+	t.Run("it has a candidate check in flight", func(t *testing.T) {
 		deps, _ := ontologyDeps(time.Unix(100, 0).UTC())
 		require.NoError(t, receiveOntology(deps, "rOnt1", "company-ontology", "ontology"))
 
@@ -196,21 +196,21 @@ func TestReceiveCandidate_ResubmittingAnOntologyReleaseStaysIdempotent(t *testin
 	require.NoError(t, receiveOntology(deps, "rOnt", "ontology-b", "ontology"))
 }
 
-func TestReceiveVerification_RefusesOntology(t *testing.T) {
+func TestReceiveFix_RefusesOntology(t *testing.T) {
 	for name, enabled := range map[string]bool{"switch off": false, "switch on": true} {
 		t.Run(name, func(t *testing.T) {
 			deps, store := newDeps(time.Unix(100, 0).UTC())
 			deps.OntologyEnabled = enabled
 
-			err := handlers.ReceiveVerification(context.Background(), deps, handlers.ReceiveVerificationInput{
-				RunID: "v1", Project: "company-ontology", ImageTag: "img:1", Kind: "ontology",
+			err := handlers.ReceiveFix(context.Background(), deps, handlers.ReceiveFixInput{
+				CheckID: "v1", Project: "company-ontology", ImageTag: "img:1", Kind: "ontology",
 				VerifiesReleaseID: "rel-0", Attempt: 1,
 			})
 
 			require.ErrorIs(t, err, handlers.ErrInvalidInput, "the refusal is answered as a client error")
-			assert.EqualError(t, err, verificationText)
+			assert.EqualError(t, err, fixText)
 			_, getErr := store.GetRelease("v1")
-			assert.Error(t, getErr, "a refused verification is not stored")
+			assert.Error(t, getErr, "a refused fix's release check is not stored")
 		})
 	}
 }
@@ -234,7 +234,7 @@ func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	parsing, err := store.GetRelease("rOnt")
 	require.NoError(t, err)
-	require.Equal(t, pipeline.StatusParsing, parsing.Status(), "an ontology release has no compile leg")
+	require.Equal(t, releasecheck.StatusParsing, parsing.Status(), "an ontology release has no compile leg")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:     "rOnt",
@@ -245,7 +245,7 @@ func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *
 
 	r, err := store.GetRelease("rOnt")
 	require.NoError(t, err)
-	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "nothing to validate: promote directly")
+	assert.Equal(t, releasecheck.StatusPromoted, r.Status(), "nothing to validate: promote directly")
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "an empty validation request is never sent")
 	}
@@ -263,5 +263,5 @@ func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *
 	}
 	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV1).Payload, &promoted))
 	assert.Equal(t, "rOnt", promoted.ReleaseID)
-	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }

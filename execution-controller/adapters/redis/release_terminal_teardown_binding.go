@@ -16,9 +16,9 @@ import (
 // once a terminal release stream (release.rejected:v1 or release.promoted:v1)
 // names it.
 //
-// These consumers back up the kind-neutral pipeline.run.finished:v1 teardown:
+// These consumers back up the kind-neutral release_check.finished:v1 teardown:
 // a candidate terminal that reached execution-controller on a terminal release
-// stream without a matching pipeline.run.finished:v1 (a message left in the
+// stream without a matching release_check.finished:v1 (a message left in the
 // group before that stream carried the teardown) still has its schema reclaimed
 // here. The drop is idempotent, so a run whose schema the finished-event or
 // validation-result path already reclaimed costs a harmless no-op.

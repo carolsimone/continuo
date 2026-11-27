@@ -6,7 +6,7 @@
 # arbitrates between them, so two overlapping globs mean one tag starts two
 # workflows. A bare `v*` matches any tag family that happens to start with a
 # v — the glob anchors at the first character — which can send an unrelated
-# package tag into the product release pipeline.
+# package tag into the product release workflow.
 #
 # The check reads the tag globs out of every workflow's `on:` block, turns each
 # non-release family into a sample tag, and asserts release.yml rejects it while

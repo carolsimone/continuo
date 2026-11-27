@@ -20,7 +20,7 @@ const ci = (grants: Record<string, boolean> = { core: false }): Principal => ({
 function fakeClient(over: Partial<ReleaseClient> = {}): ReleaseClient {
   return {
     listReleases: vi.fn(), getCurrentProd: vi.fn(), retryRemediation: vi.fn(),
-    getVerificationRun: vi.fn(), listVerificationRuns: vi.fn(), getPipeline: vi.fn(),
+    getReleaseCheck: vi.fn(), listReleaseChecks: vi.fn(), getReleaseQueue: vi.fn(),
     submitRelease: vi.fn(async (b) => ({ status: 202, text: JSON.stringify({ release_id: b.release_id, status: 'received' }) })),
     getRelease: vi.fn(async () => { throw new HttpError(404, 'not found'); }),
     ...over,
@@ -196,8 +196,8 @@ describe('POST /api/v1/releases', () => {
     expect(client.getRelease).not.toHaveBeenCalled();
   });
 
-  it('answers a CI identity 409 with a generic message that names no other release or run kind', async () => {
-    for (const msg of ['run id already names a run of another kind: rel-1 is a verification\n', 'release id already names a different candidate: "rel-1" has a different project\n']) {
+  it('answers a CI identity 409 with a generic message that names no other release or release check kind', async () => {
+    for (const msg of ['check id already names a release check of another kind: rel-1 is a fix\n', 'release id already names a different candidate: "rel-1" has a different project\n']) {
       const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 409, text: msg })) });
       const res = await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
       expect(res.status).toBe(409);
@@ -248,7 +248,7 @@ describe('POST /api/v1/releases', () => {
     it('keeps every other 409 as it was: the generic text for a CI identity and the upstream text for a person', async () => {
       for (const text of [
         'release id already names a different candidate: "rel-1" has a different project, image tag, kind, bootstrap or rebaseline flag, or source change\n',
-        'run id already names a run of another kind: rel-1 is a verification\n',
+        'check id already names a release check of another kind: rel-1 is a fix\n',
         'conflict',
       ]) {
         const ciRes = await post(ci(), text, 409);

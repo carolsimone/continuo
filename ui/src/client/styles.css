@@ -128,7 +128,6 @@ body {
 a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
 .pill--current,   .pill-sm--current   { background: #ede9fe; color: #6d28d9; }
 .pill--skipped, .pill-sm--skipped { background: #e2e8f0; color: #475569; }
-.pill--verification, .pill-sm--verification { background: #eef2ff; color: #4338ca; }
 .pill--muted, .pill-sm--muted { background: #f1f5f9; color: #64748b; }
 
 /* ---- Card ---- */
@@ -1058,7 +1057,7 @@ a.release-author:hover { text-decoration: underline; }
 .project-tile--changed { border-color: #c7d2fe; background: #fbfbff; }
 .pill-sm--changed { background: #eef2ff; color: #4338ca; }
 
-/* Pipeline timeline: one step per status transition, in order, joined by
+/* Release check timeline: one step per status transition, in order, joined by
    connectors; the stages an in-flight run has not reached yet are ghosted. */
 .release-timeline {
   display: flex;
@@ -1725,23 +1724,24 @@ a.release-author:hover { text-decoration: underline; }
 .remediation-attempts__table tbody td { padding: 7px 12px; }
 /* Attempt, confidence and source are one word each: keep them shoulder to
    shoulder on one line and give the status column the remaining width. A
-   colspan cell — the verification sub-row, the detail card — wraps as
+   colspan cell — the release-check sub-row, the detail card — wraps as
    normal text, so a long rationale or file path never widens the table. */
 .remediation-attempts__table td:not([colspan]) { white-space: nowrap; }
 .remediation-attempts__table th:not(:last-child),
 .remediation-attempts__table td:not(:last-child):not([colspan]) { width: 1%; }
 
-/* Verification runs: one compact labelled line per run beneath its attempt. */
-.remediation-attempts__table tbody tr.remediation-verif > td { padding-top: 0; }
-.remediation-verif__runs { display: flex; flex-direction: column; gap: 4px; }
-.remediation-verif__label {
+/* Sub-row lines: one compact labelled line per entry beneath its row (an
+   attempt's release checks, a seed load's outside objects). */
+.remediation-attempts__table tbody tr.remediation-subrow > td { padding-top: 0; }
+.remediation-subrow__lines { display: flex; flex-direction: column; gap: 4px; }
+.remediation-subrow__label {
   font-size: 10px;
   font-weight: 600;
   color: #a8b3c2;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.remediation-verif__run { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #64748b; }
+.remediation-subrow__line { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #64748b; }
 
 /* The proposal detail card sits inside the attempts block, white on the
    block's tint; scoped so other .detail-card usages are unaffected. */

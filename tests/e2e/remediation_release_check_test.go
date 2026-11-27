@@ -1,0 +1,204 @@
+package e2e
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"testing"
+
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+)
+
+// The service-2 fixture pair for the seed-set leg of a fix's release check: ybreak_up no
+// longer emits amount_eur, and ybreak_down still reads it.
+const (
+	ybreakUpUniqueID   = "e2e_schema.ybreak_up"
+	ybreakDownUniqueID = "e2e_schema.ybreak_down"
+)
+
+// TestE2E_FixReleaseCheck_FailsConsumerFixThatIgnoresChangedUpstream proves that a
+// fix's release check measures a consumer against the shape the rejected release
+// produced, not against production. ybreak_up is seeded in production at a
+// stale hash, so a service-2 release changes it (validated ok) and breaks
+// ybreak_down. The stub proposes a consumer edit that still reads the dropped
+// column. The release check must rebuild ybreak_up from the candidate and fail
+// ybreak_down; a check that cloned ybreak_up from production would pass the
+// broken fix.
+//
+// Both fixtures live in service-2 on purpose: a cross-project failure is fixed
+// at the producer, so only a same-project pair exercises a consumer-side fix.
+//
+// The flow's tries let the runner retry the same stub answer after this test
+// returns; those later release checks fail the same way and drain through
+// the release FIFO without touching any other test's state.
+func TestE2E_FixReleaseCheck_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), batchCtxBudget)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+
+	verifyComponentsHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-ver-seed-" + uuid.NewString()[:8]
+	changedProject := "service-2"
+	t.Logf("release_id=%s changed_project=%s changed_node=%s expected_failure=%s",
+		releaseID, changedProject, ybreakUpUniqueID, ybreakDownUniqueID)
+
+	// 1. Production holds every baseline node; ybreak_up at a stale hash so it
+	//    is the release's only changed node, ybreak_down at its real hash so it
+	//    is pulled in only as a descendant.
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	changedImageTag := allProjects[changedProject].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+
+	seen := map[string]bool{}
+	var prodNodes []map[string]string
+	for svc, si := range allProjects {
+		for _, n := range si.nodes {
+			seen[n.uniqueID] = true
+			hash := n.contentHash
+			if n.uniqueID == ybreakUpUniqueID {
+				hash = "stale-" + hash
+			}
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "project": svc, "content_hash": hash})
+		}
+	}
+	for _, id := range []string{ybreakUpUniqueID, ybreakDownUniqueID} {
+		require.True(t, seen[id], "%s not found in any baseline manifest — is the model in service-2 and the image rebuilt?", id)
+	}
+
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
+
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProd(t, ctx, clients, allProjects)
+	seedModelTopologyNodes(t, ctx, clients,
+		topologyModel{uniqueID: ybreakUpUniqueID, schema: "e2e_schema", table: "ybreak_up", project: changedProject, filePath: "models/ybreak_up.sql"},
+		topologyModel{uniqueID: ybreakDownUniqueID, schema: "e2e_schema", table: "ybreak_down", project: changedProject, filePath: "models/ybreak_down.sql"},
+	)
+
+	// 2. The release is rejected on the consumer alone.
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
+	waitForReleaseRejected(t, ctx, clients, releaseID, batchRejectBudget)
+	failing := releaseFailingNodes(t, ctx, clients, releaseID)
+	require.Equal(t, []string{ybreakDownUniqueID}, failing, "only the consumer of the dropped column may fail; got %v", failing)
+
+	// 3. One failing node, whose changed ancestor is in its own project, so the
+	//    agent fixes the consumer itself.
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ybreakDownUniqueID}, batchTriggerBudget)
+	require.Len(t, trigger.Nodes, 1, "the trigger must carry exactly the failing consumer; got %v", triggerNodeIDs(trigger))
+	down, ok := trigger.findNode(ybreakDownUniqueID)
+	require.True(t, ok)
+	require.Equal(t, []string{ybreakUpUniqueID}, ancestorIDs(down), "the consumer's only changed ancestor")
+
+	verifying := waitForBatchProposal(t, ctx, clients, releaseID, 1, "verifying", batchProposalBudget)
+	edits := decodeFileEdits(t, verifying.FileEdits)
+	require.Len(t, edits, 1)
+	require.Equal(t, "services/service-2/models/ybreak_down.sql", edits[0].Path, "the fix edits the consumer")
+	require.Equal(t, ybreakDownUniqueID, edits[0].TargetNodeID)
+
+	releaseChecks := decodeReleaseChecks(t, verifying.ReleaseChecks)
+	require.Len(t, releaseChecks, 1)
+	require.Equal(t, changedProject, releaseChecks[0].Project)
+	checkID := releaseChecks[0].CheckID
+	require.NotEmpty(t, checkID)
+	assertReleaseQueueNamedFix(t, ctx, clients, checkID, batchVerifyBudget)
+
+	// 4. The release check rebuilds ybreak_up from the candidate (ok) and fails
+	//    the consumer that still reads the dropped column. Under a
+	//    clone-from-production baseline the consumer would pass instead.
+	waitForReleaseCheckStatus(t, ctx, clients, checkID, "failed", batchVerifyBudget)
+	perNode := releaseCheckPerNodeStatus(t, ctx, clients, checkID)
+	require.Equal(t, "ok", perNode[ybreakUpUniqueID],
+		"the changed upstream is rebuilt from the candidate, not cloned from production; per-node=%v", perNode)
+	require.Equal(t, "failed", perNode[ybreakDownUniqueID],
+		"the consumer that still reads the dropped column must fail; per-node=%v", perNode)
+
+	// 5. The attempt records the verdict.
+	failed := waitForBatchProposal(t, ctx, clients, releaseID, 1, "failed", batchProposalBudget)
+	require.Contains(t, failed.VerifyError, "ybreak_down",
+		"the recorded reason must name the node the release check failed; got %q", failed.VerifyError)
+	t.Logf("✅ release check %s failed the consumer-side fix: %s", checkID, failed.VerifyError)
+}
+
+// releaseCheckPerNodeStatus reads a release check's per-node validation
+// results from release-controller, keyed by node id.
+func releaseCheckPerNodeStatus(t *testing.T, ctx context.Context, clients *testClients, checkID string) map[string]string {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/release-checks/%s", clients.releaseBase, checkID), nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		PerNodeResults []struct {
+			Stage  string `json:"stage"`
+			NodeID string `json:"node_id"`
+			Status string `json:"status"`
+		} `json:"per_node_results"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	out := map[string]string{}
+	for _, n := range body.PerNodeResults {
+		if n.Stage == "validation" || n.Stage == "" {
+			out[n.NodeID] = n.Status
+		}
+	}
+	return out
+}
+
+// releasePerNodeResult is one release detail's per-node result, keyed by node
+// id in releasePerNodeResults: its final status and the node kind the
+// candidate topology declared for it (dbt-model, dbt-test, ...).
+type releasePerNodeResult struct {
+	Status   string
+	NodeType string
+}
+
+// releasePerNodeResults reads a release's per-node validation results from
+// release-controller's GET /releases/{id}, keyed by node id. Modeled on
+// releaseCheckPerNodeStatus, but reads a RELEASE's detail rather than a
+// release check's, and keeps node_type alongside status — a bind-checked
+// dbt-test node and a built dbt-model node share the same per-node-results
+// list, and only node_type tells them apart.
+func releasePerNodeResults(t *testing.T, ctx context.Context, clients *testClients, releaseID string) map[string]releasePerNodeResult {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID), nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		PerNodeResults []struct {
+			Stage    string `json:"stage"`
+			NodeID   string `json:"node_id"`
+			Status   string `json:"status"`
+			NodeType string `json:"node_type"`
+		} `json:"per_node_results"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	out := map[string]releasePerNodeResult{}
+	for _, n := range body.PerNodeResults {
+		if n.Stage == "validation" || n.Stage == "" {
+			out[n.NodeID] = releasePerNodeResult{Status: n.Status, NodeType: n.NodeType}
+		}
+	}
+	return out
+}

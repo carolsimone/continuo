@@ -26,7 +26,7 @@ const (
 // returns every refusal, joined, each naming its file and line. A flow or type
 // that cannot run is an error: an unknown step, a step at a stage it may not
 // stand in, a missing stage, a flow that lists no loaded type, a gate that is
-// not exactly one step that runs the verification, a step that reads evidence
+// not exactly one step that runs the release check, a step that reads evidence
 // no earlier step of its chain provides, a flow with no `model_may_see` or one
 // that names an unknown class, a context step of a flow or of a type the flow
 // lists that provides evidence of a data class the flow's `model_may_see`
@@ -111,9 +111,9 @@ func (v *validator) flow(f workflow.Flow) {
 	case len(f.Gate) == 0:
 		v.refuse(f.Pos, "flow %q has no gate", f.Name)
 	case len(f.Gate) > 1:
-		v.refuse(f.Gate[1].Pos, "flow %q has %d gate steps, and a gate is one step that runs the verification", f.Name, len(f.Gate))
+		v.refuse(f.Gate[1].Pos, "flow %q has %d gate steps, and a gate is one step that runs the release check", f.Name, len(f.Gate))
 	case !slices.ContainsFunc(gate, func(m step.Meta) bool { return m.MayStandAsGateRun }):
-		v.refuse(f.Pos, "flow %q has a gate with no step that runs the verification", f.Name)
+		v.refuse(f.Pos, "flow %q has a gate with no step that runs the release check", f.Name)
 	}
 
 	v.output(f.OnPass, "on_pass", workflow.OutputPullRequest)

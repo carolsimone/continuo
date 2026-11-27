@@ -411,30 +411,30 @@ func TestSuite_AScenarioWhoseRoundHasNoAnswersFails(t *testing.T) {
 	}
 }
 
-// extraRuns is a world that also reports verification runs of projects no
+// extraChecks is a world that also reports release checks of projects no
 // edit touches, in the order given.
-type extraRuns struct {
+type extraChecks struct {
 	conformance.World
 	projects []string
 }
 
-func (w extraRuns) Runs() []ports.VerificationRequest {
-	runs := w.World.Runs()
+func (w extraChecks) Checks() []ports.ReleaseCheckRequest {
+	runs := w.World.Checks()
 	for _, s := range w.projects {
-		runs = append(runs, ports.VerificationRequest{RunID: "extra-" + s, Project: s})
+		runs = append(runs, ports.ReleaseCheckRequest{CheckID: "extra-" + s, Project: s})
 	}
 	return runs
 }
 
-// withExtraRuns makes every world of the suite report a run of each project.
-func withExtraRuns(s conformance.Suite, projects ...string) conformance.Suite {
+// withExtraChecks makes every world of the suite report a release check of each project.
+func withExtraChecks(s conformance.Suite, projects ...string) conformance.Suite {
 	base := s.NewWorld
 	s.NewWorld = func(f conformance.Fixture, sc conformance.Script) (conformance.World, error) {
 		w, err := base(f, sc)
 		if err != nil {
 			return nil, err
 		}
-		return extraRuns{World: w, projects: projects}, nil
+		return extraChecks{World: w, projects: projects}, nil
 	}
 	return s
 }
@@ -445,7 +445,7 @@ func withExtraRuns(s conformance.Suite, projects ...string) conformance.Suite {
 func TestSuite_AFailureNamesItsProjectsAndNodesInSortedOrder(t *testing.T) {
 	base := onlyTypes(builtinSuite(t), "dbt-compile")
 	const (
-		runsText = "project alpha had 1 verification runs and no edit; project zeta had 1 verification runs and no edit"
+		runsText = "project alpha had 1 release checks and no edit; project zeta had 1 release checks and no edit"
 		gateText = `does not name alpha.node's error "alpha broke"; attempt 1's verify error`
 	)
 
@@ -468,7 +468,7 @@ func TestSuite_AFailureNamesItsProjectsAndNodesInSortedOrder(t *testing.T) {
 			}
 		}
 		errs := map[conformance.Scenario]error{}
-		for _, r := range withExtraRuns(s, order...).Run(ctx) {
+		for _, r := range withExtraChecks(s, order...).Run(ctx) {
 			if r.Type == "dbt-compile" {
 				errs[r.Scenario] = r.Err
 			}
@@ -503,7 +503,7 @@ func withRounds(s conformance.Suite, rounds, tries int) conformance.Suite {
 // Every scenario runs for every type whatever its rounds and its flow's
 // tries: a type of one round has its refused draft handed over where a type
 // that revises passes its revision, and a flow of one try hands over the
-// attempt whose verification failed.
+// attempt whose release check failed.
 func TestSuite_EveryScenarioHoldsForTypesOfOneAndOfTwoRounds(t *testing.T) {
 	for _, tc := range []struct{ rounds, tries int }{{1, 3}, {2, 3}, {1, 1}} {
 		t.Run(fmt.Sprintf("rounds %d tries %d", tc.rounds, tc.tries), func(t *testing.T) {

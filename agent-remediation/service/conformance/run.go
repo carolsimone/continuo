@@ -20,8 +20,8 @@ const (
 	owner = "conformance"
 	// lease is how long a scenario's claim lasts.
 	lease = 5 * time.Minute
-	// verificationTimeout is how long a verification run may take.
-	verificationTimeout = 20 * time.Minute
+	// releaseCheckTimeout is how long a release check may take.
+	releaseCheckTimeout = 20 * time.Minute
 	// messageID is the stream message id a scenario delivers its trigger as.
 	messageID = "1-0"
 	// maxPasses bounds how often a scenario drives or polls its remediation
@@ -75,7 +75,7 @@ func (s Suite) start(f Fixture, flow string, script Script, maintenance bool) (*
 	collab.ContractLocator = s.Locator
 	collab.ContractInspector = s.Inspector
 	collab.ModelReferences = s.ModelReferences
-	collab.VerificationTimeout = verificationTimeout
+	collab.ReleaseCheckTimeout = releaseCheckTimeout
 	sr := &scenarioRun{w: w, script: script}
 	sr.deps = runner.Deps{
 		NewUoW:              func() uow.UnitOfWork { return hookedUoW{UnitOfWork: w.NewUoW(), sr: sr} },
@@ -87,7 +87,7 @@ func (s Suite) start(f Fixture, flow string, script Script, maintenance bool) (*
 		Logger:              slog.New(slog.DiscardHandler),
 		Maintenance:         maintenance,
 		Owner:               owner,
-		VerificationTimeout: verificationTimeout,
+		ReleaseCheckTimeout: releaseCheckTimeout,
 		Flow:                flow,
 	}
 	sr.r = runner.New(sr.deps)

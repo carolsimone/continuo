@@ -201,7 +201,7 @@ export function createRemediationRouter(
         // agent-remediation maps three distinct causes to FAILED_PRECONDITION:
         // this project already has a pull request (the message embeds its
         // URL), the proposal has no real source to fix, or the claim raced
-        // past 'proposed' (a verification run reached a verdict, or the
+        // past 'proposed' (a release check reached a verdict, or the
         // attempt budget was exhausted) since pr_projects was read. Only the
         // first is a success — skip creating a duplicate and report the
         // existing PR instead of losing it from the response. The other two

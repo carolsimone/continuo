@@ -77,7 +77,7 @@ func TestRunner_HandsTheOutputsTheApproversOfTheirNodes(t *testing.T) {
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 
@@ -99,7 +99,7 @@ func TestRunner_ThePassReadsTheBundleOnceForItsNodes(t *testing.T) {
 	h.bundle.owners = map[string]string{"svc-a": "finance", "svc-b": "e2e"}
 	id := h.accept(trigger("compile", compileNode("svc-a"), compileNode("svc-b")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 
@@ -153,7 +153,7 @@ func TestRunner_ABundleReadErrorFallsBackAndThePassCommits(t *testing.T) {
 	h.bundle.owners = map[string]string{"svc-a": "finance"}
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	h.bundle.err = errors.New("s3 answered HTTP 503")
 
 	require.NoError(t, h.poll(id))
@@ -161,7 +161,7 @@ func TestRunner_ABundleReadErrorFallsBackAndThePassCommits(t *testing.T) {
 	rem := h.remediation(id)
 	assert.Equal(t, remediation.StatusDone, rem.Status)
 	assert.Zero(t, rem.Failures)
-	assert.Zero(t, h.flowRows(id, 1)["verification_run"][0].Failures, "the gate counted no failure")
+	assert.Zero(t, h.flowRows(id, 1)["release_check"][0].Failures, "the gate counted no failure")
 	assert.Len(t, h.proposedEvents(), 1)
 	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
 	assert.Equal(t, [][]proposal.Approver{{
@@ -215,7 +215,7 @@ func TestRunner_APythonNodeWithNoBundleOwnerTakesItsContractOwner(t *testing.T) 
 			h.archive.(*checkoutOf).files[contractYAML] = brokenContract + "team:\n  name: sales-team\n"
 			calls := h.recordOutputs()
 			h.llm.answer = contractAnswer
-			h.pipeline.answer(proposal.PhasePassed, nil)
+			h.checks.answer(proposal.PhasePassed, nil)
 			id := h.accept(trigger("validation", contractNode()))
 
 			require.NoError(t, h.runner.Drive(ctx, id))
@@ -241,7 +241,7 @@ func TestRunner_ThePassedRowStoresTheApproversOfItsFixedAndHandedOverNodes(t *te
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.Empty(t, h.attempt(1).Proposal.Approvers, "a row in flight has none yet")
 
 	require.NoError(t, h.poll(id))
@@ -369,13 +369,13 @@ func TestRunner_AContractOwnerOutlivesTheTryThatReadIt(t *testing.T) {
 			id := h.accept(trigger("validation", contractNode(), validationNode(h)))
 
 			for try := 1; try <= tc.failedTries; try++ {
-				h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+				h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
 				require.NoError(t, h.drive(id))
 				require.Equal(t, remediation.TryVerifying, h.try(id, try).Status, "try %d", try)
 				require.NoError(t, h.poll(id))
 			}
 			if tc.failedTries < 3 {
-				h.pipeline.answer(proposal.PhasePassed, nil)
+				h.checks.answer(proposal.PhasePassed, nil)
 				require.NoError(t, h.drive(id))
 				require.NoError(t, h.poll(id))
 			} else {

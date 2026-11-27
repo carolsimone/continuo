@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// A run left received while no queue event fired must not wait for the next
+// A check left received while no queue event fired must not wait for the next
 // one after a restart: a candidate held while maintenance mode was on
 // activates only when something advances the queue, and the restart that
 // turns maintenance off is the first chance to. main.go therefore advances the

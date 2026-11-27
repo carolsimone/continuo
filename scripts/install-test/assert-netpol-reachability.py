@@ -94,7 +94,7 @@ NAMESPACE_NAME = "kubernetes.io/metadata.name"
 
 REQUIRED_EDGES = [
     ("agent-remediation", "release-controller", 8088,
-     "shadow-verify lane: submit/poll shadow releases, read the failing release's image tags"),
+     "fix release checks: submit/poll a fix's release checks, read the failing release's image tags"),
     ("release-controller", "agent-remediation", 50054,
      "retry-remediation: ListProposals before starting a new remediation round"),
     ("ui", "release-controller", 8088,

@@ -7,8 +7,8 @@ import (
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
@@ -38,10 +38,10 @@ type HandleValidationResultInput struct {
 // If every present validation node passed and the aggregate status is ok: a
 // candidate promotes to production (updates CurrentProd, upserts the changed
 // project's service_prod pointer, emits release.promoted:v1) and a
-// verification passes without touching either. Otherwise a candidate rejects
-// and emits release.rejected:v1, while a verification fails and emits no
-// release event. A run of either kind, on either outcome, emits
-// pipeline.run.finished:v1.
+// fix's release check passes without touching either. Otherwise a candidate rejects
+// and emits release.rejected:v1, while a fix's release check fails and emits no
+// release event. A check of either kind, on either outcome, emits
+// release_check.finished:v1.
 func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationResultInput) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -49,10 +49,10 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	// Take the release-queue advisory lock before the run row is loaded FOR
+	// Take the release-queue advisory lock before the check row is loaded FOR
 	// UPDATE below. A promotion holds both locks, and every transaction that
 	// takes both must take the advisory lock first so the global
-	// advisory→run-row order holds and the cross-process wait-for graph stays
+	// advisory→check-row order holds and the cross-process wait-for graph stays
 	// acyclic (no deadlock). Acquiring it here serializes the whole
 	// validation-result handler under the queue lock, which is acceptable: it
 	// already serializes at promotion, validation results are low-throughput and
@@ -61,7 +61,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 		return fmt.Errorf("lock release queue: %w", err)
 	}
 
-	r, err := u.RunRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
+	r, err := u.ReleaseCheckRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
 	if err != nil {
 		return fmt.Errorf("load release: %w", err)
 	}
@@ -80,7 +80,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	// Per-node content lives in the read model, projected from the earlier
 	// kind=node messages on validation.result:v1. Read the validation-stage
 	// results the stream already stored rather than re-carrying them here.
-	stored := map[string]pipeline.NodeValidationResult{}
+	stored := map[string]releasecheck.NodeValidationResult{}
 	for _, n := range r.PerNodeResults() {
 		if n.Stage == "validation" {
 			stored[n.NodeID] = n
@@ -122,24 +122,24 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	return handleValidationOK(ctx, d, u, r, in, now)
 }
 
-// finishVerification ends a verification that survived the pipeline: it
+// finishFix ends a fix's release check that every leg passed: it
 // passes, saves, and announces the terminal decision. It never reads or
 // writes current_prod or service_prod and emits no release event.
-func finishVerification(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
+func finishFix(ctx context.Context, u uow.UnitOfWork, r *releasecheck.Check, now time.Time) error {
 	if err := r.Pass(now); err != nil {
-		return fmt.Errorf("pass verification %s: %w", r.ID(), err)
+		return fmt.Errorf("pass fix's release check %s: %w", r.ID(), err)
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save verification %s: %w", r.ID(), err)
+	if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save fix's release check %s: %w", r.ID(), err)
 	}
-	return enqueueRunFinished(ctx, u, r, now)
+	return enqueueCheckFinished(ctx, u, r, now)
 }
 
-// concludeValidated ends a run whose validation set passed (or was empty): a
-// candidate is promoted to production, a verification passes.
-func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
-	if r.Kind() == pipeline.KindVerification {
-		return finishVerification(ctx, u, r, now)
+// concludeValidated ends a check whose validation set passed (or was empty): a
+// candidate is promoted to production, a fix's release check passes.
+func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, now time.Time) error {
+	if r.Kind() == releasecheck.KindFix {
+		return finishFix(ctx, u, r, now)
 	}
 	return promoteToProduction(ctx, d, u, r, now)
 }
@@ -149,11 +149,11 @@ func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 // the next promotion seq, points current_prod at this release's candidate
 // topology artifact under that seq, upserts the changed project's
 // service_prod pointer, transitions the release to Promoted, persists it, and
-// writes the release.promoted:v1 and pipeline.run.finished:v1 outbox rows. The
+// writes the release.promoted:v1 and release_check.finished:v1 outbox rows. The
 // caller owns Begin/Commit and any telemetry. The release must already hold
 // its candidate topology (i.e. be in Validating) and be a candidate — call
-// concludeValidated instead when the run's kind is unknown to the caller.
-func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
+// concludeValidated instead when the check's kind is unknown to the caller.
+func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, now time.Time) error {
 	releaseID := r.ID()
 	ref := r.CandidateTopologyRef()
 
@@ -162,7 +162,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	// re-announce cannot read current_prod, take a higher seq and clobber this
 	// promotion between those steps. Every holder takes this lock before reading
 	// current_prod, so the order is consistent. This keeps promoteToProduction
-	// correct for every caller; a caller that loads a run row FOR UPDATE first
+	// correct for every caller; a caller that loads a check row FOR UPDATE first
 	// (HandleValidationResult) takes this lock immediately after Begin, and this
 	// re-acquisition in the same transaction is a no-op (pg_advisory_xact_lock
 	// taken twice in one tx simply succeeds).
@@ -209,7 +209,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	if err := r.Promote(now); err != nil {
 		return fmt.Errorf("transition to promoted: %w", err)
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -231,10 +231,10 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	}); err != nil {
 		return err
 	}
-	return enqueueRunFinished(ctx, u, r, now)
+	return enqueueCheckFinished(ctx, u, r, now)
 }
 
-func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, now time.Time) error {
+func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, in HandleValidationResultInput, now time.Time) error {
 	if err := concludeValidated(ctx, d, u, r, now); err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipel
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, r.StageDuration(pipeline.StatusValidating))
+	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, r.StageDuration(releasecheck.StatusValidating))
 	recordTerminalTelemetry(ctx, d, r, r.CandidateTopologyRef().NodeCount)
 	return nil
 }
@@ -263,7 +263,7 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipel
 // failing nodes from that: upstream_clone_failed, which remediation does not
 // try to fix, when only such nodes failed, and validation_failed without them
 // when a built node failed too.
-func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, failing []string, now time.Time) error {
+func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, in HandleValidationResultInput, failing []string, now time.Time) error {
 	topo, err := candidateTopology(ctx, d, r)
 	if err != nil {
 		return err
@@ -281,7 +281,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 
 	// Build a per-node lookup over the candidate topology so each entry in the
 	// rejected payload carries, alongside its outcome:
-	//   - candidate_artifact_uri: the S3 pointer (derived per run) to the artifact that was
+	//   - candidate_artifact_uri: the S3 pointer (derived per check) to the artifact that was
 	//     checked — mirroring the dbt_log_uri pattern as a pointer, not inline
 	//     content;
 	//   - node_type, file_path, project: the node's kind and source location as
@@ -391,10 +391,10 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 		return err
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+	if err := enqueueCheckFinished(ctx, u, r, now); err != nil {
 		return err
 	}
 
@@ -403,7 +403,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	}
 
 	okCount := len(r.ValidationNodeIDs()) - len(failing)
-	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(failing), r.StageDuration(pipeline.StatusValidating))
+	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(failing), r.StageDuration(releasecheck.StatusValidating))
 	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }

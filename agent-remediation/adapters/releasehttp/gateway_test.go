@@ -41,22 +41,22 @@ func releaseServer(t *testing.T, wantPath string, status int, body string) *http
 	}))
 }
 
-func TestSubmit_PostsTheVerificationBody(t *testing.T) {
+func TestSubmit_PostsTheReleaseCheckBody(t *testing.T) {
 	var got map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)
-		require.Equal(t, "/verification-runs", r.URL.Path)
+		require.Equal(t, "/release-checks", r.URL.Path)
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{
-		RunID: "verify-rel-1-core-a1", Project: "core", ImageTag: "img:1", Kind: ports.VerificationKindDbt,
+	require.NoError(t, g.Submit(context.Background(), ports.ReleaseCheckRequest{
+		CheckID: "verify-rel-1-core-a1", Project: "core", ImageTag: "img:1", Kind: ports.ManifestKindDbt,
 		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 	}))
 	assert.Equal(t, map[string]any{
-		"run_id": "verify-rel-1-core-a1", "project": "core", "image_tag": "img:1", "kind": "dbt",
+		"check_id": "verify-rel-1-core-a1", "project": "core", "image_tag": "img:1", "kind": "dbt",
 		"verifies_release_id": "rel-1", "attempt": float64(1),
 		"source_overlay_uri": "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 	}, got)
@@ -70,7 +70,7 @@ func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
 	}))
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Project: "py", ImageTag: "i", Kind: ports.VerificationKindPython, VerifiesReleaseID: "rel-1", Attempt: 2}))
+	require.NoError(t, g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "py", ImageTag: "i", Kind: ports.ManifestKindPython, VerifiesReleaseID: "rel-1", Attempt: 2}))
 	_, has := got["source_overlay_uri"]
 	assert.False(t, has)
 }
@@ -80,15 +80,15 @@ func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
 // before any HTTP call is made.
 func TestSubmit_RequiresKind(t *testing.T) {
 	g := NewGateway("http://unused", &fakeEvidence{}, nil)
-	err := g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Project: "s", ImageTag: "i", VerifiesReleaseID: "rel-1", Attempt: 1})
+	err := g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "s", ImageTag: "i", VerifiesReleaseID: "rel-1", Attempt: 1})
 	require.ErrorContains(t, err, "kind is required")
 }
 
 func TestSubmit_NonAcceptedStatusIsAnError(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs", http.StatusConflict, `run id already names a candidate`)
+	srv := releaseServer(t, "/release-checks", http.StatusConflict, `run id already names a candidate`)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	err := g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Project: "s", ImageTag: "i", Kind: "dbt", VerifiesReleaseID: "rel-1", Attempt: 1})
+	err := g.Submit(context.Background(), ports.ReleaseCheckRequest{CheckID: "v", Project: "s", ImageTag: "i", Kind: "dbt", VerifiesReleaseID: "rel-1", Attempt: 1})
 	require.ErrorContains(t, err, "status 409")
 }
 
@@ -99,8 +99,8 @@ func TestStatus_PhaseFromRunStatus(t *testing.T) {
 		"passed": proposal.PhasePassed, "failed": proposal.PhaseFailed,
 	} {
 		t.Run(status, func(t *testing.T) {
-			srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-				`{"run_id":"verify-x","status":"`+status+`","activated_at":"","per_node_results":[]}`)
+			srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+				`{"check_id":"verify-x","status":"`+status+`","activated_at":"","per_node_results":[]}`)
 			defer srv.Close()
 			g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 			st, err := g.Status(context.Background(), "verify-x")
@@ -111,8 +111,8 @@ func TestStatus_PhaseFromRunStatus(t *testing.T) {
 }
 
 func TestStatus_ActivatedAtIsReadFromTheResponse(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"compiling","activated_at":"2026-09-02T10:00:00Z","per_node_results":[]}`)
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"compiling","activated_at":"2026-09-02T10:00:00Z","per_node_results":[]}`)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 	st, err := g.Status(context.Background(), "verify-x")
@@ -122,8 +122,8 @@ func TestStatus_ActivatedAtIsReadFromTheResponse(t *testing.T) {
 
 func TestStatus_FailedCarriesNodeErrorsFromRunResults(t *testing.T) {
 	ev := &fakeEvidence{byURI: map[string]string{"s3://r/orders.json": `{"status":"error","message":"column x does not exist"}`}}
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"",
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"",
 		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://r/orders.json"},
 		                      {"stage":"validation","node_id":"model.core.ok","status":"ok"}]}`)
 	defer srv.Close()
@@ -135,8 +135,8 @@ func TestStatus_FailedCarriesNodeErrorsFromRunResults(t *testing.T) {
 }
 
 func TestStatus_FailedFallsBackToFailReasonAndDetail(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"failed","fail_reason":"seed_build_failed","fail_detail":"csv is malformed",
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"failed","fail_reason":"seed_build_failed","fail_detail":"csv is malformed",
 		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed"}]}`)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
@@ -151,12 +151,12 @@ func TestStatus_FailedFallsBackToFailReasonAndDetail(t *testing.T) {
 // carries whatever the runner wrote around the structured record: a log
 // preamble before it — possibly with braces of its own — and further output
 // after it. A strict decode of the whole body fails on all of that and drops
-// the node to the run-level fallback, which for a validation failure is the
+// the node to the check-level fallback, which for a validation failure is the
 // bare word "validation_failed" with no detail, leaving the next fix attempt
 // with no real error to learn from.
 func TestStatus_FailedReadsSentinelJSONSurroundedByOutput(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"",
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"",
 		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://bucket/run-results/orders.json"}]}`)
 	defer srv.Close()
 
@@ -178,11 +178,11 @@ func TestStatus_FailedReadsSentinelJSONSurroundedByOutput(t *testing.T) {
 
 // TestStatus_FailedFallsBackWhenNoSentinelJSON pins the other half of the
 // lenient scan: a body holding no status-bearing JSON object at all is still
-// a miss, so the node falls back to the run-level fail text rather than
+// a miss, so the node falls back to the check-level fail text rather than
 // reporting a message scraped out of unrelated output.
 func TestStatus_FailedFallsBackWhenNoSentinelJSON(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"1 node failed",
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"1 node failed",
 		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://bucket/run-results/orders.json"}]}`)
 	defer srv.Close()
 
@@ -221,7 +221,7 @@ func TestFailingNodes_ReadsTheReleaseNotTheRun(t *testing.T) {
 // TestFailingNodes_FallsBackToRejectReasonAndDetail covers the node whose own
 // structured result cannot be read: it falls back to the release-level
 // reject reason and detail, the same fallback Status uses for a
-// verification run's fail_reason/fail_detail.
+// release check's fail_reason/fail_detail.
 func TestFailingNodes_FallsBackToRejectReasonAndDetail(t *testing.T) {
 	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
 		`{"release_id":"rel-1","reject_reason":"seed_build_failed","reject_detail":"csv is malformed",
@@ -254,32 +254,32 @@ func TestFailingNodes_NodeWithNoPerNodeResultFallsBackByID(t *testing.T) {
 	}, nodes)
 }
 
-// TestStatus_FailedDuplicateTableNamesTheFailingNodeWithTheRunsReason pins a
-// rejection release-controller decides itself, after the parse: the run names
+// TestStatus_FailedDuplicateTableNamesTheFailingNodeWithTheChecksReason pins a
+// rejection release-controller decides itself, after the parse: the check names
 // the node in failing_nodes and records no failing per-node result, so the
-// node's error is the run's own reason and detail — the text that tells the
+// node's error is the check's own reason and detail — the text that tells the
 // next try what its fix got wrong.
-func TestStatus_FailedDuplicateTableNamesTheFailingNodeWithTheRunsReason(t *testing.T) {
+func TestStatus_FailedDuplicateTableNamesTheFailingNodeWithTheChecksReason(t *testing.T) {
 	const detail = "unique_id analytics.table_b is declared by marketing (models/table_b.sql) and service-1 (models/table_b.sql); " +
 		"a unique_id must be declared by exactly one node — an alias rename cannot fix this, the declared model itself must be renamed"
-	body := `{"run_id":"verify-x","status":"failed","fail_reason":"duplicate_table","fail_detail":` + strconv.Quote(detail) + `,
+	body := `{"check_id":"verify-x","status":"failed","fail_reason":"duplicate_table","fail_detail":` + strconv.Quote(detail) + `,
 		  "failing_nodes":["analytics.table_b"],
 		  "per_node_results":[{"stage":"compile","node_id":"marketing","status":"ok"}]}`
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK, body)
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK, body)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"analytics.table_b": "duplicate_table — " + detail}, st.NodeErrors)
-	assert.Equal(t, "duplicate_table — "+detail, st.RunError)
+	assert.Equal(t, "duplicate_table — "+detail, st.CheckError)
 }
 
 // TestStatus_FailedCompileStageCarriesTheRunsReason pins a failing per-node
 // result of a stage that carries no text of its own (compile, seed build): the
-// node is still named, with the run's reason and detail.
+// node is still named, with the check's reason and detail.
 func TestStatus_FailedCompileStageCarriesTheRunsReason(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"failed","fail_reason":"compile_failed","fail_detail":"Compilation Error in model table_kv2",
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"failed","fail_reason":"compile_failed","fail_detail":"Compilation Error in model table_kv2",
 		  "failing_nodes":["service-3"],
 		  "per_node_results":[{"stage":"compile","node_id":"service-3","status":"failed"}]}`)
 	defer srv.Close()
@@ -291,11 +291,11 @@ func TestStatus_FailedCompileStageCarriesTheRunsReason(t *testing.T) {
 
 // TestStatus_AFailingNodesOwnResultWinsOverTheRunsReason pins the order: a node
 // named in failing_nodes whose own validation result carries a message is
-// shown that message, not the run-level text.
+// shown that message, not the check-level text.
 func TestStatus_AFailingNodesOwnResultWinsOverTheRunsReason(t *testing.T) {
 	ev := &fakeEvidence{byURI: map[string]string{"s3://r/orders.json": `{"status":"error","message":"column x does not exist"}`}}
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"1 node failed",
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"1 node failed",
 		  "failing_nodes":["model.core.orders"],
 		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://r/orders.json"}]}`)
 	defer srv.Close()
@@ -305,12 +305,12 @@ func TestStatus_AFailingNodesOwnResultWinsOverTheRunsReason(t *testing.T) {
 	assert.Equal(t, map[string]string{"model.core.orders": "column x does not exist"}, st.NodeErrors)
 }
 
-// TestStatus_AFailureThatNamesNoNodeCarriesTheRunError pins a run that fails
+// TestStatus_AFailureThatNamesNoNodeCarriesTheRunError pins a check that fails
 // with no node to blame (nothing to validate, an unbuildable upstream): no node
-// error, and the run's reason and detail as its run error.
+// error, and the check's reason and detail as its check error.
 func TestStatus_AFailureThatNamesNoNodeCarriesTheRunError(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"failed","fail_reason":"nothing_to_validate","fail_detail":"the release changes no node",
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"failed","fail_reason":"nothing_to_validate","fail_detail":"the release changes no node",
 		  "failing_nodes":[],
 		  "per_node_results":[{"stage":"compile","node_id":"marketing","status":"ok"}]}`)
 	defer srv.Close()
@@ -318,35 +318,35 @@ func TestStatus_AFailureThatNamesNoNodeCarriesTheRunError(t *testing.T) {
 	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
 	assert.Empty(t, st.NodeErrors)
-	assert.Equal(t, "nothing_to_validate — the release changes no node", st.RunError)
+	assert.Equal(t, "nothing_to_validate — the release changes no node", st.CheckError)
 }
 
-// TestStatus_APassedRunHasNoRunError pins that the run error belongs to a
-// failed run only.
+// TestStatus_APassedRunHasNoRunError pins that the check error belongs to a
+// failed check only.
 func TestStatus_APassedRunHasNoRunError(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"passed","fail_reason":"","fail_detail":"","failing_nodes":[]}`)
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"passed","fail_reason":"","fail_detail":"","failing_nodes":[]}`)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
-	assert.Empty(t, st.RunError)
+	assert.Empty(t, st.CheckError)
 	assert.Empty(t, st.NodeErrors)
 }
 
 // TestStatus_FailedParseStageCarriesInlineDetail pins the retry-loop evidence
-// for a parse-stage verification failure: a python (or dbt) parse repair that
-// still does not parse fails its verification run before any Job, so the
+// for a parse-stage failure of a release check: a python (or dbt) parse repair that
+// still does not parse fails its release check before any Job, so the
 // failing per-node result carries the parser's text inline in `detail` with no
 // run_results_uri. nodeErrors must surface that detail as the node's error, so
 // the next attempt is told why its repair still failed rather than "failed
 // without a per-node error".
 func TestStatus_FailedParseStageCarriesInlineDetail(t *testing.T) {
 	const detail = "unqualified table reference `orders`. Line 1, Col: 16."
-	body := `{"run_id":"verify-x","status":"failed","fail_reason":"unqualified_reference","fail_detail":"1 node failed to parse",
+	body := `{"check_id":"verify-x","status":"failed","fail_reason":"unqualified_reference","fail_detail":"1 node failed to parse",
 		  "per_node_results":[{"stage":"parse","node_id":"analytics.py_daily_kpis","status":"failed","node_type":"python-node","file_path":"contracts/x.yml","detail":` +
 		strconv.Quote(detail) + `}]}`
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK, body)
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK, body)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 	st, err := g.Status(context.Background(), "verify-x")
@@ -357,11 +357,11 @@ func TestStatus_FailedParseStageCarriesInlineDetail(t *testing.T) {
 }
 
 // TestStatus_FailedParseStageWithNoDetailFallsBack pins the other half: a parse
-// entry that somehow carries no inline detail still records the run-level fail
+// entry that somehow carries no inline detail still records the check-level fail
 // text rather than dropping the node to a blank reason.
 func TestStatus_FailedParseStageWithNoDetailFallsBack(t *testing.T) {
-	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
-		`{"run_id":"verify-x","status":"failed","fail_reason":"invalid_sql","fail_detail":"the compiled SQL does not parse",
+	srv := releaseServer(t, "/release-checks/verify-x", http.StatusOK,
+		`{"check_id":"verify-x","status":"failed","fail_reason":"invalid_sql","fail_detail":"the compiled SQL does not parse",
 		  "per_node_results":[{"stage":"parse","node_id":"analytics.py_daily_kpis","status":"failed"}]}`)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)

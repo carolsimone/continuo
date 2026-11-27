@@ -7,7 +7,7 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// The statuses a node of a pipeline stage (compile, seed build or validation)
+// The statuses a node of a leg (compile, seed build or validation)
 // reports besides a failure: NodeStatusOK when it passed, NodeStatusSkipped
 // when it never ran because a node upstream of it failed (the validation leg
 // reports it). Any other status means the node itself failed.

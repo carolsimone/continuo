@@ -1,15 +1,15 @@
 import { buildProjectColors } from './project-helpers';
 
-// ProjectTiles shows the set of project images a run executes with: one tile
-// per project, sorted by name so a project sits in the same place on every
-// release, carrying the accent buildProjectColors assigns it within this set,
-// its name, and its image tag. The changed project — the one whose image is
-// new in this run — is marked, and the sub-line says so, naming the kind of
-// run the page shows (subject: "release" unless the page says otherwise) and
+// ProjectTiles shows the set of project images a release check executes with:
+// one tile per project, sorted by name so a project sits in the same place on
+// every release, carrying the accent buildProjectColors assigns it within this
+// set, its name, and its image tag. The changed project — the one whose image
+// is new in this release check — is marked, and the sub-line says so, naming
+// what the page shows (subject: "release" unless the page says otherwise) and
 // where every other image was carried over from (carriedFrom: "prod" for a
-// candidate; the verified release for a verification run, whose set is that
-// release's with the fixed project swapped in). Renders nothing when no image
-// has been recorded yet.
+// candidate; the verified release for a fix's release check, whose set is
+// that release's with the fixed project swapped in). Renders nothing when no
+// image has been recorded yet.
 export default function ProjectTiles({ imageTags, changedProject, subject = 'release', carriedFrom = 'prod' }: {
   imageTags: Record<string, string>;
   changedProject?: string;

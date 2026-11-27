@@ -17,10 +17,10 @@ import (
 func TestHandlers_UndecodablePayloadIsPermanent(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handlers := map[string]pkgredis.MessageHandler{
-		"release_parsed": newReleaseParsedHandler(nil, logger),
-		"validation_result":         newValidationResultHandler(nil, logger),
-		"seed_build_completed":      newSeedBuildCompletedHandler(nil, logger),
-		"compile_completed":         newCompileCompletedHandler(nil, logger),
+		"release_parsed":       newReleaseParsedHandler(nil, logger),
+		"validation_result":    newValidationResultHandler(nil, logger),
+		"seed_build_completed": newSeedBuildCompletedHandler(nil, logger),
+		"compile_completed":    newCompileCompletedHandler(nil, logger),
 	}
 	messages := map[string]goredis.XMessage{
 		"missing payload": {ID: "1-0", Values: map[string]any{}},

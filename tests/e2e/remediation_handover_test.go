@@ -41,8 +41,8 @@ const connectionRefusedText = "connection refused"
 const rejectedReleaseFlow = "rejected-release"
 
 // Stage budgets of the hand-over test. The rejection covers one validation
-// pipeline run in kind; every later stage is one consumer hop or one runner
-// drive, with no model call and no verification run.
+// release check in kind; every later stage is one consumer hop or one runner
+// drive, with no model call and no release check.
 const (
 	handoverRejectBudget  = 10 * time.Minute
 	handoverStageBudget   = 3 * time.Minute
@@ -157,7 +157,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	assertSkippedAttempt(t, ctx, clients, releaseID, 1, 1, detail)
 
 	// 6. ONE hand-over naming the node with that reason, from a remediation
-	//    that ran no step but the hand-over: no model call, no verification run.
+	//    that ran no step but the hand-over: no model call, no release check.
 	handOver := waitForHandOver(t, ctx, handedOverTap, releaseID, 1)
 	assertHandOver(t, ctx, clients, handOver, releaseID, 1, detail)
 
@@ -242,7 +242,7 @@ func assertDecision(t *testing.T, ctx context.Context, clients *testClients, rel
 // agent-remediation proposals API, the surface release-controller and the UI
 // read, and checks that it is the round's one attempt, numbered attempt and
 // skipped: the fixture skipped with the classifier's code and detail as its
-// reason, no edit, no model and no verification run. It also checks the
+// reason, no edit, no model and no release check. It also checks the
 // release holds exactly round proposals, one per round.
 func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClients, releaseID string, round, attempt int, detail string) {
 	t.Helper()
@@ -279,8 +279,8 @@ func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClient
 	requireErrorLine(t, outcome.GetReason())
 	require.Empty(t, found.GetEdits(), "an unfixable node gets no edit")
 	require.Empty(t, found.GetModel(), "an unfixable node costs no model call")
-	require.Empty(t, found.GetVerificationRunId(), "an unfixable node starts no verification run")
-	require.Empty(t, found.GetVerifications(), "an unfixable node starts no verification run")
+	require.Empty(t, found.GetReleaseCheckId(), "an unfixable node starts no release check")
+	require.Empty(t, found.GetReleaseChecks(), "an unfixable node starts no release check")
 	t.Logf("✅ round %d: attempt %d skipped, %s handed over with code %s", round, attempt, unfixableInfraUniqueID, outcome.GetCode())
 }
 
@@ -340,6 +340,6 @@ func assertHandOver(t *testing.T, ctx context.Context, clients *testClients, h t
 	require.NoError(t, clients.agentRemediationDB.SelectContext(ctx, &steps,
 		`SELECT step FROM remediation_step WHERE remediation_id = $1 ORDER BY id`, rem.ID))
 	require.Equal(t, []string{"hand_over"}, steps,
-		"no context, prompt, check or gate step runs for an unfixable node, so no model is called and no verification run starts")
+		"no context, prompt, check or gate step runs for an unfixable node, so no model is called and no release check starts")
 	t.Logf("✅ round %d: %s names %s with reason %s", round, streams.RemediationHandedOverV1, unfixableInfraUniqueID, h.Nodes[0].Reason)
 }

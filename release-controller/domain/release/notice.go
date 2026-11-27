@@ -22,9 +22,9 @@ const (
 )
 
 // Notice says what promoting a release will do to one changed seed whose load
-// drops its table: the load, the views the run rebuilds, the nodes that wait
+// drops its table: the load, the views the check rebuilds, the nodes that wait
 // for their own schedule and, once the seed-build leg ran, what the warehouse
-// holds. A notice predicts; the run's own preflight decides.
+// holds. A notice predicts; the check's own preflight decides.
 type Notice struct {
 	Kind, NodeID, Project string
 	EngineFamily          warehouse.Family
@@ -57,7 +57,7 @@ type WarehouseFindings struct {
 	OutsideContinuo []OutsideObject
 }
 
-// OutsideObject is an object that reads the seed's table and that the run
+// OutsideObject is an object that reads the seed's table and that the check
 // neither rebuilds nor has an operator's leave to drop.
 type OutsideObject struct {
 	Object, Kind, Owner string

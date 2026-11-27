@@ -8,8 +8,8 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/maintenance"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/stretchr/testify/assert"
@@ -53,21 +53,21 @@ func TestRetryRemediation_SkippedRoundIsRetryable(t *testing.T) {
 }
 
 // During maintenance the queue skips an older candidate and activates the
-// verification run of a remediation attempt already in progress.
-func TestAdvanceQueue_MaintenanceActivatesOnlyVerificationRuns(t *testing.T) {
+// fix's release check of a remediation attempt already in progress.
+func TestAdvanceQueue_MaintenanceActivatesOnlyFixes(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	deps.Maintenance = true
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
-	store.SeedRelease(pipeline.NewCandidate("rCand", "svc-a", "tag-c", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
-	store.SeedRelease(pipeline.NewVerification("rVerify", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewCandidate("rCand", "svc-a", "tag-c", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
+	store.SeedRelease(releasecheck.NewFix("rVerify", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	cand, _ := store.GetRelease("rCand")
-	assert.Equal(t, pipeline.StatusReceived, cand.Status(), "a candidate release waits while maintenance is on")
+	assert.Equal(t, releasecheck.StatusReceived, cand.Status(), "a candidate release waits while maintenance is on")
 	verify, _ := store.GetRelease("rVerify")
-	assert.Equal(t, pipeline.StatusParsing, verify.Status(), "the verification run activates")
+	assert.Equal(t, releasecheck.StatusParsing, verify.Status(), "the fix's release check activates")
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName)
@@ -78,18 +78,18 @@ func TestAdvanceQueue_CandidatesResumeInOrderAfterMaintenance(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	deps.Maintenance = true
-	store.SeedRelease(pipeline.NewCandidate("rFirst", "svc-a", "t1", false, false, "acme/demo", "aaa", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
-	store.SeedRelease(pipeline.NewCandidate("rSecond", "svc-a", "t2", false, false, "acme/demo", "bbb", release.ManifestKindDbt, time.Unix(150, 0).UTC()))
+	store.SeedRelease(releasecheck.NewCandidate("rFirst", "svc-a", "t1", false, false, "acme/demo", "aaa", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
+	store.SeedRelease(releasecheck.NewCandidate("rSecond", "svc-a", "t2", false, false, "acme/demo", "bbb", release.ManifestKindDbt, time.Unix(150, 0).UTC()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	first, _ := store.GetRelease("rFirst")
-	assert.Equal(t, pipeline.StatusReceived, first.Status())
+	assert.Equal(t, releasecheck.StatusReceived, first.Status())
 	assert.Empty(t, outboxEntries(store))
 
 	deps.Maintenance = false
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	first, _ = store.GetRelease("rFirst")
 	second, _ := store.GetRelease("rSecond")
-	assert.Equal(t, pipeline.StatusCompiling, first.Status(), "the oldest held candidate activates first")
-	assert.Equal(t, pipeline.StatusReceived, second.Status())
+	assert.Equal(t, releasecheck.StatusCompiling, first.Status(), "the oldest held candidate activates first")
+	assert.Equal(t, releasecheck.StatusReceived, second.Status())
 }

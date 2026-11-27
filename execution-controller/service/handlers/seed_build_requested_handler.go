@@ -50,8 +50,8 @@ func (h *SeedBuildRequestedHandler) Handle(
 			ImageTag:        s.ImageTag,
 			JobName:         BuildValidationJobName(evt.ReleaseID, s.NodeID),
 			CandidateSchema: evt.CandidateSchema,
-			// A verification run verifying a proposed fix carries the overlay
-			// of proposed source files; the seed Job lays it over the
+			// A fix's release check carries the overlay of proposed
+			// source files; the seed Job lays it over the
 			// checked-in project so `dbt seed` loads the proposed CSV.
 			SourceOverlayURI: evt.SourceOverlayURI,
 			SeedPreflight:    s.SeedPreflight,

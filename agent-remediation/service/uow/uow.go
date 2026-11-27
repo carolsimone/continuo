@@ -5,9 +5,9 @@ package uow
 import (
 	"context"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 )
 
 // UnitOfWork groups the writes of one operation (a proposal attempt, or one

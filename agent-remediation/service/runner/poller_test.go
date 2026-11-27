@@ -25,7 +25,7 @@ func TestGatePoller_PollsAVerifyingRemediationAndWakesTheWorker(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	var woken atomic.Int32
 	require.NoError(t, h.poller(func() { woken.Add(1) }).Poll(ctx))
@@ -41,7 +41,7 @@ func TestGatePoller_AFailedGateOpensTheNextTryForTheWorker(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "boom"})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "boom"})
 
 	require.NoError(t, h.poller(func() {}).Poll(ctx))
 
@@ -58,12 +58,12 @@ func TestGatePoller_KeepsTheLeaseThroughAPollThatOutlastsIt(t *testing.T) {
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	// The status read takes eight minutes of the clock, past the five-minute
 	// lease the poller claimed at t0. The clock moves four minutes at a time,
 	// and each time the poller holds the lease again from then.
 	var once sync.Once
-	h.pipeline.onStatus = func(context.Context) {
+	h.checks.onStatus = func(context.Context) {
 		once.Do(func() {
 			for _, at := range []time.Duration{4 * time.Minute, 8 * time.Minute} {
 				h.clock.set(t0.Add(at))
@@ -95,11 +95,11 @@ func TestGatePoller_StopsAPollWhoseLeaseAnotherProcessTook(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 	repo := h.store.RemediationRepository()
 	require.NoError(t, repo.ReleaseLease(ctx, id, workerOwner))
-	h.pipeline.answer(proposal.PhasePassed, nil)
-	gate := h.flowRows(id, 1)["verification_run"][0]
+	h.checks.answer(proposal.PhasePassed, nil)
+	gate := h.flowRows(id, 1)["release_check"][0]
 	stopped := make(chan bool, 1)
 	var once sync.Once
-	h.pipeline.onStatus = func(readCtx context.Context) {
+	h.checks.onStatus = func(readCtx context.Context) {
 		once.Do(func() {
 			// The poller's lease ends and another process claims the
 			// remediation while the status read runs.
@@ -126,7 +126,7 @@ func TestGatePoller_StopsAPollWhoseLeaseAnotherProcessTook(t *testing.T) {
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
 	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
 	assert.Empty(t, h.proposedEvents())
-	assert.Equal(t, gate, h.flowRows(id, 1)["verification_run"][0], "the gate's row is as it was")
+	assert.Equal(t, gate, h.flowRows(id, 1)["release_check"][0], "the gate's row is as it was")
 }
 
 func TestGatePoller_LeavesARemediationAnotherWorkerHolds(t *testing.T) {
@@ -138,7 +138,7 @@ func TestGatePoller_LeavesARemediationAnotherWorkerHolds(t *testing.T) {
 	claimed, err := repo.Claim(ctx, id, "somebody-else", h.clock.Now(), lease)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	var woken atomic.Int32
 	require.NoError(t, h.poller(func() { woken.Add(1) }).Poll(ctx))
@@ -167,17 +167,17 @@ func TestRunner_APollThatCannotReachTheGateCountsOnTheGateRow(t *testing.T) {
 
 		broken := h.files
 		flow := broken.Flows["rejected-release"]
-		flow.Gate = refs("verification_run", "verification_run")
+		flow.Gate = refs("release_check", "release_check")
 		broken.Flows = map[string]workflow.Flow{flow.Name: flow}
 		h.runner = h.runnerOver(broken)
 
 		require.Error(t, h.poll(id))
 		require.Error(t, h.poll(id))
 
-		row := h.flowRows(id, 1)["verification_run"][0]
+		row := h.flowRows(id, 1)["release_check"][0]
 		assert.Equal(t, 2, row.Failures)
 		assert.Contains(t, row.LastError, "gate")
-		assert.Equal(t, remediation.StepWaiting, row.Status, "the row keeps waiting on its runs")
+		assert.Equal(t, remediation.StepWaiting, row.Status, "the row keeps waiting on its release checks")
 	})
 
 	t.Run("a verifying try with no gate row", func(t *testing.T) {
@@ -194,32 +194,32 @@ func TestRunner_APollThatCannotReachTheGateCountsOnTheGateRow(t *testing.T) {
 		require.NoError(t, repo.SaveRemediation(ctx, rem))
 
 		require.Error(t, h.poll(id))
-		row := h.flowRows(id, 1)["verification_run"][0]
+		row := h.flowRows(id, 1)["release_check"][0]
 		assert.Equal(t, 1, row.Failures)
-		assert.Contains(t, row.LastError, "no verification_run row")
+		assert.Contains(t, row.LastError, "no release_check row")
 		assert.Equal(t, remediation.StepFailed, row.Status)
 
 		// The row the first poll made counts every later error of the poll.
 		require.Error(t, h.poll(id))
-		assert.Equal(t, 2, h.flowRows(id, 1)["verification_run"][0].Failures)
+		assert.Equal(t, 2, h.flowRows(id, 1)["release_check"][0].Failures)
 	})
 }
 
 // A poll that got through resets the gate row's failures, so only consecutive
-// failed polls add up: errors spread over a verification that waits for hours
+// failed polls add up: errors spread over a release check that waits for hours
 // never end a healthy try.
 func TestRunner_AGoodPollResetsTheGateRowsFailures(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	gate := h.flowRows(id, 1)["verification_run"][0]
+	gate := h.flowRows(id, 1)["release_check"][0]
 	gate.Failures = 4
 	gate.LastError = "database blip"
 	h.saveStep(gate)
 
-	require.NoError(t, h.poll(id), "the runs are still waiting")
+	require.NoError(t, h.poll(id), "the release checks are still waiting")
 
-	row := h.flowRows(id, 1)["verification_run"][0]
+	row := h.flowRows(id, 1)["release_check"][0]
 	assert.Zero(t, row.Failures)
 	assert.Empty(t, row.LastError)
 	assert.Equal(t, remediation.StepWaiting, row.Status)
@@ -237,9 +237,9 @@ func TestRunner_APollOfACleanGateRowWritesNothing(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	before := h.flowRows(id, 1)["verification_run"][0]
+	before := h.flowRows(id, 1)["release_check"][0]
 
 	require.NoError(t, h.poll(id))
 
-	assert.Equal(t, before, h.flowRows(id, 1)["verification_run"][0])
+	assert.Equal(t, before, h.flowRows(id, 1)["release_check"][0])
 }

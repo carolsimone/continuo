@@ -1,6 +1,6 @@
 # An install's fixture of the flow scenario two_projects, for a
 # rejected-release flow that lists no dbt-validation: two dbt-parse fixes in
-# two projects, sales and finance, each with a verification run of its own.
+# two projects, sales and finance, each with a release check of its own.
 kind: fixture
 version: 1
 flow: rejected-release

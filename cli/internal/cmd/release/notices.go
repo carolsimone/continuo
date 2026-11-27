@@ -148,7 +148,7 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  missing, blank or extra release id
-  not_found  (exit 3)  no candidate release has this id (a verification run's id is not one)
+  not_found  (exit 3)  no candidate release has this id (a fix's release check id is not one)
   unavailable(exit 5)  release-controller is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo release notices rel-a1b2c3d-201",

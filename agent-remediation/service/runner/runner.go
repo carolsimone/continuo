@@ -47,11 +47,11 @@ type Deps struct {
 	// recorded skipped for every node instead of calling the model.
 	Maintenance bool
 	Owner       string
-	// VerificationTimeout is how long a try's verification runs may take. A
+	// ReleaseCheckTimeout is how long a try's release checks may take. A
 	// verifying try's deadline is recorded this long, plus an hour, after the
-	// gate started its runs; it is informational, and the gate's own timeouts,
-	// which the registry's gate step reads from Collab, end a verification.
-	VerificationTimeout time.Duration
+	// gate started its release checks; it is informational, and the gate's own timeouts,
+	// which the registry's gate step reads from Collab, end a release check.
+	ReleaseCheckTimeout time.Duration
 	// StepTimeout bounds each step of a drive. Zero is ten minutes.
 	StepTimeout time.Duration
 	// Metrics counts the tries, rounds, outcomes, stages and model tokens of

@@ -331,14 +331,14 @@ function PreflightFindings({ preflight }: { preflight: SeedPreflight | null | un
   const failed = (preflight?.probes ?? []).filter(p => !p.ok);
   if (outside.length === 0 && failed.length === 0) return null;
   return (
-    <tr className="remediation-verif nodes-row--static">
+    <tr className="remediation-subrow nodes-row--static">
       <td colSpan={6}>
-        <div className="remediation-verif__runs">
+        <div className="remediation-subrow__lines">
           {outside.length > 0 && (
             <>
-              <span className="remediation-verif__label">outside objects</span>
+              <span className="remediation-subrow__label">outside objects</span>
               {outside.map(d => (
-                <div className="remediation-verif__run" key={`${d.schema}.${d.name}`}>
+                <div className="remediation-subrow__line" key={`${d.schema}.${d.name}`}>
                   {`${d.schema}.${d.name} (${d.kind}${d.owner ? `, owner ${d.owner}` : ''})`}
                 </div>
               ))}
@@ -346,9 +346,9 @@ function PreflightFindings({ preflight }: { preflight: SeedPreflight | null | un
           )}
           {failed.length > 0 && (
             <>
-              <span className="remediation-verif__label">failed probes</span>
+              <span className="remediation-subrow__label">failed probes</span>
               {failed.map(p => (
-                <div className="remediation-verif__run" key={`${p.schema}.${p.name}`}>
+                <div className="remediation-subrow__line" key={`${p.schema}.${p.name}`}>
                   {`${p.schema}.${p.name}: ${p.error}`}
                 </div>
               ))}

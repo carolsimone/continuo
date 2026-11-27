@@ -13,8 +13,8 @@ import (
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
@@ -143,9 +143,9 @@ type fakeUoW struct {
 	releaseRepo *fakeReleaseRepo
 }
 
-func (f *fakeUoW) RunRepo() repository.RunRepository                 { return f.releaseRepo }
-func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository { panic("not implemented") }
-func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository { panic("not implemented") }
+func (f *fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository { return f.releaseRepo }
+func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository   { panic("not implemented") }
+func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository   { panic("not implemented") }
 func (f *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository {
 	panic("not implemented")
 }
@@ -170,30 +170,30 @@ type fakeReleaseRepo struct {
 	advanceLocked bool
 }
 
-func (r *fakeReleaseRepo) Get(ctx context.Context, id string) (*pipeline.Run, error) {
+func (r *fakeReleaseRepo) Get(ctx context.Context, id string) (*releasecheck.Check, error) {
 	r.gotID = id
 	return nil, nil
 }
-func (r *fakeReleaseRepo) Load(ctx context.Context, id string) (*pipeline.Run, error) {
+func (r *fakeReleaseRepo) Load(ctx context.Context, id string) (*releasecheck.Check, error) {
 	r.loadedID = id
 	return nil, nil
 }
-func (r *fakeReleaseRepo) Save(ctx context.Context, rel *pipeline.Run) error {
+func (r *fakeReleaseRepo) Save(ctx context.Context, rel *releasecheck.Check) error {
 	panic("not implemented")
 }
-func (r *fakeReleaseRepo) Create(ctx context.Context, rel *pipeline.Run) (bool, error) {
+func (r *fakeReleaseRepo) Create(ctx context.Context, rel *releasecheck.Check) (bool, error) {
 	panic("not implemented")
 }
-func (r *fakeReleaseRepo) NextQueued(ctx context.Context) (*pipeline.Run, error) {
+func (r *fakeReleaseRepo) NextQueued(ctx context.Context) (*releasecheck.Check, error) {
 	return nil, nil
 }
-func (r *fakeReleaseRepo) NextQueuedOfKind(ctx context.Context, kind pipeline.Kind) (*pipeline.Run, error) {
+func (r *fakeReleaseRepo) NextQueuedOfKind(ctx context.Context, kind releasecheck.Kind) (*releasecheck.Check, error) {
 	return nil, nil
 }
-func (r *fakeReleaseRepo) Active(ctx context.Context) (*pipeline.Run, error) {
+func (r *fakeReleaseRepo) Active(ctx context.Context) (*releasecheck.Check, error) {
 	return nil, nil
 }
-func (r *fakeReleaseRepo) List(ctx context.Context, f repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
+func (r *fakeReleaseRepo) List(ctx context.Context, f repository.ListFilter) ([]*releasecheck.Check, *repository.ListCursor, error) {
 	panic("not implemented")
 }
 func (r *fakeReleaseRepo) ActiveCandidateProjectsWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {

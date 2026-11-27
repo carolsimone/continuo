@@ -65,12 +65,12 @@ func TestProposalRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing
 		require.False(t, hit, "a row in flight is not reopened")
 
 		edits := []proposal.FileEdit{{Path: "models/a.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "model.a", MemberNodeIDs: []string{"model.a"}}}
-		runs := []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhaseQueued}}
+		runs := []proposal.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1", Phase: proposal.PhaseQueued}}
 		verifyingOutcomes := map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}, "model.c": handedOver}
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-reopen", RemediationID: r.ID.String(), NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a", "model.c"}, NodeOutcomes: verifyingOutcomes, Attempt: 2, Status: proposal.StatusVerifying,
-			Edits: edits, Verifications: runs, Rationale: "the fix", SourceResolved: true, CreatedAt: contractBase,
+			Edits: edits, ReleaseChecks: runs, Rationale: "the fix", SourceResolved: true, CreatedAt: contractBase,
 		}))
 		second := findAttempt(t, env, "rel-reopen", 2)
 		_, err = env.proposals.MarkVerifyFailed(ctx, second.ID, "stuck; dead-lettered", runs)
@@ -85,7 +85,7 @@ func TestProposalRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing
 		require.Empty(t, got.VerifyError)
 		require.Equal(t, "the fix", got.Rationale)
 		require.Equal(t, edits, got.Edits)
-		require.Equal(t, runs, got.Verifications)
+		require.Equal(t, runs, got.ReleaseChecks)
 		require.Equal(t, verifyingOutcomes, got.NodeOutcomes)
 
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{

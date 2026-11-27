@@ -50,7 +50,7 @@ func FlowScenarios() []Scenario {
 // result's type.
 // A scenario with no fixture, or with several, fails. A fixture for a scenario
 // that is not a flow scenario fails too, with one result of its own. Every
-// cluster takes its fixture's passing answers, and every verification run
+// cluster takes its fixture's passing answers, and every release check
 // passes. In the scenario whose tries all fail, every try takes them again.
 func (s Suite) RunFlowScenarios(ctx context.Context, flow string) []Result {
 	byScenario := map[Scenario][]Fixture{}
@@ -133,16 +133,16 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 		if len(as) == 1 {
 			e.that(len(as[0].Proposal.Edits) >= 2, "the verifying attempt carries %d edits, want one of each cluster", len(as[0].Proposal.Edits))
 			e.nodes(as[0], proposal.StatusProposed)
-			e.runsPerEditedProject(as[0], f.ProjectRepoPaths)
+			e.checksPerEditedProject(as[0], f.ProjectRepoPaths)
 		}
-		e.runs(1)
+		e.checks(1)
 		e.noHandedOver()
 	case FlowTwoProjects:
 		if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
 			e.nodes(as[0], proposal.StatusProposed)
-			e.runsPerEditedProject(as[0], f.ProjectRepoPaths)
+			e.checksPerEditedProject(as[0], f.ProjectRepoPaths)
 		}
-		e.runs(2)
+		e.checks(2)
 		e.noHandedOver()
 	case FlowCrossClusterFails:
 		flow := files.Flows[f.Flow]
@@ -153,7 +153,7 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 			e.handedOver(as[flow.Tries], flow.Tries, codes(model.HandoverReasonUnverifiableEdits, e.trigger.NodeIDs()...))
 		}
 		e.proposedEvents(0)
-		e.runs(0)
+		e.checks(0)
 	case FlowSharedUpstreamDeclines:
 		if c, ok := e.firstOfKind(workflow.ClusterSharedUpstream); ok {
 			e.membersRanTheirTypes(files, c)
@@ -208,7 +208,7 @@ func (e *expectation) onlyHandOverRan(flow workflow.Flow) {
 // unfixableHandedOver expects every failing node of the trigger, each marked
 // unfixable by the classifier, to have been handed over with the classifier's
 // reason and detail in the remediation's first try, with no model call, no
-// step but the flow's give-up output, no verification run and one skipped
+// step but the flow's give-up output, no release check and one skipped
 // attempt.
 func (e *expectation) unfixableHandedOver(flow workflow.Flow) {
 	want := map[string]model.HandoverReason{}
@@ -235,7 +235,7 @@ func (e *expectation) unfixableHandedOver(flow workflow.Flow) {
 	}
 	e.onlyHandOverRan(flow)
 	e.modelCalls(0)
-	e.runs(0)
+	e.checks(0)
 }
 
 // firstOfKind returns try 1's first cluster of kind k.

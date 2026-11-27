@@ -4,9 +4,9 @@ import pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 
 // RebuiltFromCandidateSet is the set of validation nodes built from their own
 // candidate code rather than copied empty from production: the scope's
-// descendant closure, plus any verification context rebuild that lands in the
+// descendant closure, plus any context rebuild of a fix's release check that lands in the
 // validation set as an ancestor of the scope. A context node outside the
-// validation set is irrelevant to the run and is not built. The parse,
+// validation set is irrelevant to the check and is not built. The parse,
 // seed-build and validation-result legs all derive a node's validation op from
 // this same set, so they never disagree on whether a node is built from the
 // candidate.

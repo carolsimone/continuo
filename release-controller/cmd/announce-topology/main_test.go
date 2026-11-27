@@ -49,7 +49,7 @@ func runWith(t *testing.T, a *fakeAnnouncer, stdin string, args ...string) (int,
 const twoNodes = `[{"unique_id":"bench.n1","project_name":"bench","node_type":"dbt-model","upstream_unique_ids":[]},
  {"unique_id":"bench.n2","project_name":"bench","node_type":"dbt-model","upstream_unique_ids":["bench.n1"]}]`
 
-func TestRun_AnnouncesATopologyFromStdin(t *testing.T) {
+func TestCheck_AnnouncesATopologyFromStdin(t *testing.T) {
 	a := &fakeAnnouncer{result: handlers.AnnounceResult{ReleaseID: "bench-1", PromotionSeq: 4, TopologyURI: "s3://b/k", TopologySHA256: "f00d"}}
 	code, stdout, _ := runWith(t, a, twoNodes, "--release-id", "bench-1", "--topology", "-")
 
@@ -62,7 +62,7 @@ func TestRun_AnnouncesATopologyFromStdin(t *testing.T) {
 	assert.Equal(t, map[string]any{"release_id": "bench-1", "promotion_seq": float64(4), "topology_uri": "s3://b/k", "topology_sha256": "f00d"}, out)
 }
 
-func TestRun_UsageErrors(t *testing.T) {
+func TestCheck_UsageErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		stdin string
@@ -88,7 +88,7 @@ func TestRun_UsageErrors(t *testing.T) {
 	}
 }
 
-func TestRun_ErrorExitCodes(t *testing.T) {
+func TestCheck_ErrorExitCodes(t *testing.T) {
 	code, _, _ := runWith(t, &fakeAnnouncer{err: handlers.ErrNoCurrentProd}, "", "--reannounce-current")
 	assert.Equal(t, exitNoCurrentProd, code)
 
@@ -103,7 +103,7 @@ func TestRun_ErrorExitCodes(t *testing.T) {
 	assert.Empty(t, stdout)
 }
 
-func TestRun_PrintsTheCurrentTopology(t *testing.T) {
+func TestCheck_PrintsTheCurrentTopology(t *testing.T) {
 	a := &fakeAnnouncer{current: release.Topology{
 		{UniqueID: "a", ProjectName: "svc", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{}},
 	}}

@@ -261,10 +261,10 @@ func main() {
 	// adapter.
 	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
 
-	// Fix verification: a proposed fix's edits are packaged (an odcs-bundle.json
+	// A fix's release check: a proposed fix's edits are packaged (an odcs-bundle.json
 	// for a python project, a source overlay for a dbt one) and submitted to
-	// release-controller as a verification run that carries the full
-	// parse -> candidate-schema -> validation pipeline through to a terminal
+	// release-controller as a release check that carries the full
+	// parse -> candidate-schema -> validation stages through to a terminal
 	// passed/failed verdict without ever promoting.
 	releaseGateway := releasehttp.NewGateway(cfg.ReleaseControllerURL, evidenceReader,
 		&http.Client{Timeout: 30 * time.Second})
@@ -491,10 +491,10 @@ const loopLivenessSlack = time.Minute
 // park of a remediation whose drive failed. A poller beats at every pass,
 // every remediation it polls and every third of a lease while a poll runs, so
 // it can be silent for at most one poll of a gate and the wait between two
-// passes, which VERIFICATION_POLL_INTERVAL sets.
+// passes, which RELEASE_CHECK_POLL_INTERVAL sets.
 func loopBudgets(cfg config.Config) (worker, poller time.Duration) {
 	worker = runner.DefaultStepTimeout + runner.ParkDuration + loopLivenessSlack
-	poller = cfg.VerificationPollInterval + runner.DefaultStepTimeout + loopLivenessSlack
+	poller = cfg.ReleaseCheckPollInterval + runner.DefaultStepTimeout + loopLivenessSlack
 	return worker, poller
 }
 
@@ -552,7 +552,7 @@ func startRunner(ctx context.Context, cfg config.Config, collab runner.Collabora
 func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring) (runnerLoops, func(context.Context, runner.Accepted) error) {
 	r := runner.New(newRunnerDeps(cfg, collab, files, w))
 	worker := runner.NewWorker(r, w.repo, w.owner, ports.SystemClock{}, w.logger)
-	poller := runner.NewGatePoller(r, w.repo, w.owner, cfg.VerificationPollInterval, worker.Wake, ports.SystemClock{}, w.logger)
+	poller := runner.NewGatePoller(r, w.repo, w.owner, cfg.ReleaseCheckPollInterval, worker.Wake, ports.SystemClock{}, w.logger)
 	sweeper := runner.NewSweeper(w.newUoW, w.repo, w.owner+"/sweeper", ports.SystemClock{}, w.logger, w.metrics)
 	workerBudget, pollerBudget := loopBudgets(cfg)
 	worker.SetHeartbeat(registerLoop(w.live, "remediation_worker", workerBudget))
@@ -618,8 +618,8 @@ func (t trackedLoop) Run(ctx context.Context) {
 // through, each typed by every port it answers for the steps: the GitHub client
 // reads single files and fetches whole checkouts, the catalog client answers
 // every graph read, the contract locator also inspects a contract's
-// declarations, and the release gateway reads a release's failures and runs
-// verifications.
+// declarations, and the release gateway reads a release's failures and submits
+// release checks.
 type runnerAdapters struct {
 	github interface {
 		ports.SourceReader
@@ -643,7 +643,7 @@ type runnerAdapters struct {
 	images   ports.ImagePackagesSource
 	release  interface {
 		ports.ReleaseReader
-		ports.VerificationPipeline
+		ports.ReleaseChecks
 	}
 	proposals repository.AttemptLister
 	tries     repository.TryLister
@@ -652,7 +652,7 @@ type runnerAdapters struct {
 // runnerCollaborators is the ports the steps are built from: the adapters main
 // built, the patcher that writes a draft over a checkout, the
 // system clock, and what the install configures (the repository paths of the
-// projects, the warehouse's SQL dialect and how long a verification may run).
+// projects, the warehouse's SQL dialect and how long a release check may take).
 func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logger) runner.Collaborators {
 	return runner.Collaborators{
 		Source:              a.github,
@@ -677,15 +677,15 @@ func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logge
 		PriorAttempts:       a.proposals,
 		Tries:               a.tries,
 		SQLDialect:          cfg.SQLDialect,
-		Pipeline:            a.release,
+		ReleaseChecks:       a.release,
 		Clock:               ports.SystemClock{},
-		VerificationTimeout: cfg.VerificationTimeout,
+		ReleaseCheckTimeout: cfg.ReleaseCheckTimeout,
 	}
 }
 
 // newRunnerDeps is what the runner works with. The registry is built from
 // collab, so the gate's budget is the one collab carries, and the verifying
-// try's deadline is built on the same VERIFICATION_TIMEOUT.
+// try's deadline is built on the same RELEASE_CHECK_TIMEOUT.
 func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring) runner.Deps {
 	return runner.Deps{
 		NewUoW:              w.newUoW,
@@ -697,7 +697,7 @@ func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflo
 		Logger:              w.logger,
 		Maintenance:         cfg.Maintenance,
 		Owner:               w.owner,
-		VerificationTimeout: cfg.VerificationTimeout,
+		ReleaseCheckTimeout: cfg.ReleaseCheckTimeout,
 		Metrics:             w.metrics,
 	}
 }

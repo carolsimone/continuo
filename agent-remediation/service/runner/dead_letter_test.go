@@ -92,9 +92,9 @@ func (h *harness) acceptedAs(trig remediation.Trigger, payload []byte, messageID
 func (h *harness) failGateSubmits(id uuid.UUID, n int) {
 	h.t.Helper()
 	for range n {
-		h.pipeline.mu.Lock()
-		h.pipeline.submitErr = errors.New("release-controller is down")
-		h.pipeline.mu.Unlock()
+		h.checks.mu.Lock()
+		h.checks.submitErr = errors.New("release-controller is down")
+		h.checks.mu.Unlock()
 		require.Error(h.t, h.drive(id))
 	}
 }
@@ -218,7 +218,7 @@ func TestRunner_RedriveResumesTheFailedRemediation(t *testing.T) {
 	tr := h.try(id, 1)
 	assert.Equal(t, remediation.TryChecking, tr.Status)
 	assert.True(t, t0.Add(time.Hour+checkingTime).Equal(tr.DeadlineAt), "the try's deadline starts again: %s", tr.DeadlineAt)
-	gate := h.flowRows(id, 1)["verification_run"]
+	gate := h.flowRows(id, 1)["release_check"]
 	require.Len(t, gate, 1)
 	assert.Zero(t, gate[0].Failures, "the failed step's failures are reset")
 	assert.Empty(t, gate[0].LastError)
@@ -234,7 +234,7 @@ func TestRunner_RedriveResumesTheFailedRemediation(t *testing.T) {
 
 	require.NoError(t, h.drive(id))
 	require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
@@ -308,7 +308,7 @@ func TestRunner_ARedriveOfAVerifyingTryIsPolledAgain(t *testing.T) {
 	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
 	verifying := h.attempt(1).Proposal
 	require.Equal(t, proposal.StatusVerifying, verifying.Status)
-	gate := h.flowRows(id, 1)["verification_run"][0]
+	gate := h.flowRows(id, 1)["release_check"][0]
 	gate.Failures = 5
 	gate.LastError = "rebuilt run ids differ"
 	h.saveStep(gate)
@@ -327,14 +327,14 @@ func TestRunner_ARedriveOfAVerifyingTryIsPolledAgain(t *testing.T) {
 	assert.Equal(t, proposal.StatusVerifying, row.Proposal.Status)
 	assert.Empty(t, row.VerifyError)
 	assert.Equal(t, verifying.Edits, row.Proposal.Edits)
-	assert.Equal(t, verifying.Verifications, row.Proposal.Verifications)
+	assert.Equal(t, verifying.ReleaseChecks, row.Proposal.ReleaseChecks)
 	assert.Equal(t, verifying.NodeOutcomes, row.Proposal.NodeOutcomes)
 	assert.Equal(t, verifying.Rationale, row.Proposal.Rationale)
-	gate = h.flowRows(id, 1)["verification_run"][0]
+	gate = h.flowRows(id, 1)["release_check"][0]
 	assert.Zero(t, gate.Failures)
 	assert.Equal(t, remediation.StepWaiting, gate.Status)
 
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poller(func() {}).Poll(ctx))
 
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
@@ -398,7 +398,7 @@ func TestRunner_APausedTryIsNotDrivenPolledOrSwept(t *testing.T) {
 		h.countRemediationFailures(id, 5)
 		require.NoError(t, h.sweeper().Sweep(ctx))
 		require.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
-		h.pipeline.answer(proposal.PhasePassed, nil)
+		h.checks.answer(proposal.PhasePassed, nil)
 
 		require.NoError(t, h.poller(func() {}).Poll(ctx))
 		require.NoError(t, h.sweeper().Sweep(ctx))
@@ -406,7 +406,7 @@ func TestRunner_APausedTryIsNotDrivenPolledOrSwept(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.False(t, found)
-		assert.Zero(t, h.pipeline.statusReads(), "the gate is not read")
+		assert.Zero(t, h.checks.statusReads(), "the gate is not read")
 		assert.Len(t, h.deadLetters(), 1)
 		assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
 		assert.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)

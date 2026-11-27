@@ -444,8 +444,8 @@ services:
       # Postgres, same as topology-controller's WAREHOUSE_ENGINE.
       - WAREHOUSE_ENGINE=postgres
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
-      - VERIFICATION_TIMEOUT=${VERIFICATION_TIMEOUT:-20m}
-      - VERIFICATION_POLL_INTERVAL=${VERIFICATION_POLL_INTERVAL:-5s}
+      - RELEASE_CHECK_TIMEOUT=${RELEASE_CHECK_TIMEOUT:-20m}
+      - RELEASE_CHECK_POLL_INTERVAL=${RELEASE_CHECK_POLL_INTERVAL:-5s}
       - MAINTENANCE_ENABLED=false
       # Outbound HTTP (the LLM, GitHub, release-controller, S3) goes through
       # egress-proxy except to the stack's own services, which are reached

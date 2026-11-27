@@ -9,8 +9,8 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
@@ -38,11 +38,11 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 	defer u.Rollback() //nolint:errcheck
 
 	// Get, not Load: the seed-build leg has a single writer of this row, so no
-	// run-row FOR UPDATE is needed. Holding no run-row lock also means the
+	// check-row FOR UPDATE is needed. Holding no check-row lock also means the
 	// nothing-to-validate short-circuit below can take the release-queue advisory
-	// lock inside promoteToProduction without inverting any advisory↔run-row
+	// lock inside promoteToProduction without inverting any advisory↔check-row
 	// order — only one of the two locks is ever held here.
-	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
+	r, err := u.ReleaseCheckRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
@@ -60,7 +60,7 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 // applyWarehouseFindings records what each seed's preflight found in the
 // warehouse on the release's notice for that seed. A result without findings
 // changes nothing, and neither does one for a seed the release has no notice for.
-func applyWarehouseFindings(d *Deps, r *pipeline.Run, perNode []NodeResult) {
+func applyWarehouseFindings(d *Deps, r *releasecheck.Check, perNode []NodeResult) {
 	for _, n := range perNode {
 		if n.SeedPreflight == nil {
 			continue
@@ -71,7 +71,7 @@ func applyWarehouseFindings(d *Deps, r *pipeline.Run, perNode []NodeResult) {
 	}
 }
 
-func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleSeedBuildResultInput, now time.Time) error {
+func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, in HandleSeedBuildResultInput, now time.Time) error {
 	// Build per-node results and derive the failing set.
 	results, failing := stageResults(in.PerNode)
 
@@ -141,21 +141,21 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 		return err
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+	if err := enqueueCheckFinished(ctx, u, r, now); err != nil {
 		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, false, r.StageDuration(pipeline.StatusSeedBuilding))
+	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, false, r.StageDuration(releasecheck.StatusSeedBuilding))
 	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 
-func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleSeedBuildResultInput, now time.Time) error {
+func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, in HandleSeedBuildResultInput, now time.Time) error {
 	// Record per-node seed-build results on the ok path so the UI can surface
 	// per-seed build status even when the overall build succeeds.
 	results, _ := stageResults(in.PerNode)
@@ -171,7 +171,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	// Recompute the rebuilt-from-candidate set to identify the just-built seeds
 	// and exclude them from the validation leg (they are already in the candidate
 	// schema). rebuiltFromCandidateFor derives it as the parse leg did, so a
-	// verification run identifies the same built seeds and assigns the same
+	// fix's release check identifies the same built seeds and assigns the same
 	// per-node build strategy here as it did when it requested the seed build.
 	prod, err := currentProdTopology(ctx, d, u)
 	if err != nil {
@@ -203,7 +203,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	if err := r.TransitionFromSeedBuilding(validationIDs, now); err != nil {
 		return fmt.Errorf("transition from seed building: %w", err)
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -217,8 +217,8 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, r.StageDuration(pipeline.StatusSeedBuilding))
-		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, r.StageDuration(pipeline.StatusValidating))
+		d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, r.StageDuration(releasecheck.StatusSeedBuilding))
+		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, r.StageDuration(releasecheck.StatusValidating))
 		recordTerminalTelemetry(ctx, d, r, len(topo))
 		return nil
 	}
@@ -254,7 +254,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, r.StageDuration(pipeline.StatusSeedBuilding))
+	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, r.StageDuration(releasecheck.StatusSeedBuilding))
 	d.Telemetry.ReleaseValidationRequested(ctx, in.ReleaseID, len(validationIDs))
 	return nil
 }

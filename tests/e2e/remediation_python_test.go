@@ -26,7 +26,7 @@ import (
 // Each scenario has a project of its own, so no two share a contract
 // directory. The packaging step packs a whole directory into one bundle, so a
 // second, still-broken node beside the node under repair would sink the
-// verification run that is verifying the repair.
+// release check that is verifying the repair.
 //
 //go:embed fixtures/py-remediation-repo
 var pyRemediationRepo embed.FS
@@ -45,7 +45,7 @@ const (
 
 	// The second project, whose first repair is also wrong: it takes two
 	// attempts, and the second only succeeds because it is shown the first
-	// one's verification-run error.
+	// one's release-check error.
 	pyLoopProject  = "svc-py-e2e-loop"
 	pyLoopUniqueID = "e2e_schema.py_loop_read"
 	pyLoopContract = "services/svc-py-e2e-loop/contracts/py_loop_read.odcs.yaml"
@@ -53,14 +53,14 @@ const (
 	// The third project, whose declared read names its relation without a
 	// schema, so the release's SQL parser rejects the node before any Job
 	// runs. Its repair is made in the same contract file and proven by a
-	// verification run whose own parse leg is the judge.
+	// release check whose own parse leg is the judge.
 	pyParseProject  = "svc-py-e2e-parse"
 	pyParseUniqueID = "e2e_schema.py_unqualified_read"
 	pyParseContract = "services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml"
 
 	// pyBindingRelation is the relation a repaired contract must read from. It
 	// exists in the warehouse only because these tests create it, which is
-	// what makes a verification run's verdict a real measurement rather than a
+	// what makes a release check's verdict a real measurement rather than a
 	// foregone conclusion.
 	pyBindingRelation = "public.right_name"
 
@@ -91,18 +91,18 @@ const (
 	// budget the rest of this suite uses; the margin here is for cold Job
 	// scheduling in kind, and this is the first release of each test.
 	pyReleaseVerdictBudget = 6 * time.Minute
-	// pyVerifyVerdictBudget covers the same shape for a verification run
+	// pyVerifyVerdictBudget covers the same shape for a release check
 	// submitted later in the same test, against a stack that is warm by
-	// then — including the poll that confirms the pipeline names it while
-	// it runs, which resolves in the first cycle or two once the run is
-	// active and does not meaningfully add to this budget.
+	// then — including the poll that confirms the release queue names it
+	// while it runs, which resolves in the first cycle or two once the check
+	// is active and does not meaningfully add to this budget.
 	pyVerifyVerdictBudget = 5 * time.Minute
 	// pyAttemptStartBudget covers trigger to recorded attempt: classification,
 	// the agent consuming it, the repository fetch, the model call, packaging
-	// via the runtime CLI, the artifact upload, and the verification-run
+	// via the runtime CLI, the artifact upload, and the release-check
 	// submission.
 	pyAttemptStartBudget = 3 * time.Minute
-	// pyAttemptFinalizeBudget covers a terminal verification verdict reaching
+	// pyAttemptFinalizeBudget covers a release check's terminal verdict reaching
 	// the proposal row: one tick of the runner's gate poller, 5s in this compose
 	// stack.
 	pyAttemptFinalizeBudget = 2 * time.Minute
@@ -123,18 +123,18 @@ const (
 //	  contract_file step fetches the repository tarball at the failing commit
 //	  from stub-github and finds the .odcs.yaml file declaring the node, its
 //	  prompt has the model correct it, its contract_packages check packs the
-//	  directory with continuo-runtime, and its verification_run gate uploads
-//	  the bundle and POSTs it back as a verification run
-//	→ the proposal parks in 'verifying' naming that verification run
-//	→ the run runs the real parse + candidate-schema + validation pipeline and
-//	  stops at 'passed' — it never promotes and is never readable as a release
+//	  directory with continuo-runtime, and its release_check gate uploads
+//	  the bundle and POSTs it back as a release check
+//	→ the proposal parks in 'verifying' naming that release check
+//	→ the release check runs the real parse, candidate-schema and validation
+//	  legs and stops at 'passed' — it never promotes and is never readable as a release
 //	→ the runner's gate poller finalizes the proposal to 'proposed' and emits
 //	  remediation.proposed:v1
 //
 // It is the feature's definition of done: every stage above has to work for it
 // to pass. It also asserts the two things that must NOT happen — the
-// verification run produced no remediation trigger of its own, and wrote no
-// promoted code version — because a verification run that fed the classifier
+// release check produced no remediation trigger of its own, and wrote no
+// promoted code version — because a release check that fed the classifier
 // would heal its own failed fix forever, and one that reached the graph would
 // put an unapproved contract into production history.
 func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
@@ -144,7 +144,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	// 22 minutes: strictly greater than the 17 this test's stage budgets sum to
 	// (release 6 + attempt 3 + verify 5 + finalize 2 + event 1).
 	// assertNotListedAsRelease is a plain read, not a poll, so it adds no
-	// budget of its own; the pipeline-naming check shares the verification
+	// budget of its own; the release-queue check shares the release check
 	// stage's budget rather than stacking one on top of it.
 	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Minute)
 	defer cancel()
@@ -156,14 +156,14 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	// The relation a correct fix reads from has to exist before the
-	// verification run bind-checks it. Both cleanups are deferred, so
+	// release check bind-checks it. Both cleanups are deferred, so
 	// they run when the test function returns, while the pools are open.
 	dropRelation := ensureBindingRelation(t, ctx, clients)
 	defer dropRelation()
 
 	// Release ids are kept short on purpose: the candidate schema of a
-	// verification run is "_candidate_" plus its id, and a run id embeds the
-	// failing release id, the node id, and the attempt number.
+	// release check is "_candidate_" plus its id, and a release check id embeds
+	// the failing release id, the node id, and the attempt number.
 	releaseID := "pyfix-" + uuid.NewString()[:8]
 	t.Logf("release_id=%s project=%s node=%s", releaseID, pyBadReadProject, pyBadReadUniqueID)
 
@@ -176,41 +176,42 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	defer clearProd()
 
 	// 1. The runner's try produced an attempt and parked it awaiting its
-	//    verification run. The run id is read off the row rather than
+	//    release check. The check id is read off the row rather than
 	//    re-derived here, so the naming rule is asserted as the system's, not
 	//    the test's.
 	verifying := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "verifying", pyAttemptStartBudget)
-	runID := verifying.VerificationRunID
-	require.NotEmpty(t, runID, "a verifying proposal must name the run that is judging it")
-	require.True(t, strings.HasPrefix(runID, "verify-"),
-		"a verification run id must be recognisable as one in every log line and UI row; got %q", runID)
-	require.Contains(t, runID, releaseID,
-		"a verification run id must name the release it is repairing; got %q", runID)
-	require.True(t, strings.HasSuffix(runID, "-a1"),
-		"the first attempt's verification run id must name attempt 1; got %q", runID)
-	t.Logf("proposal attempt 1 is verifying under verification run %s", runID)
+	checkID := verifying.ReleaseCheckID
+	require.NotEmpty(t, checkID, "a verifying proposal must name the release check that is judging it")
+	require.True(t, strings.HasPrefix(checkID, "verify-"),
+		"a release check id must be recognisable as one in every log line and UI row; got %q", checkID)
+	require.Contains(t, checkID, releaseID,
+		"a release check id must name the release it is repairing; got %q", checkID)
+	require.True(t, strings.HasSuffix(checkID, "-a1"),
+		"the first attempt's release check id must name attempt 1; got %q", checkID)
+	t.Logf("proposal attempt 1 is verifying under release check %s", checkID)
 
-	// 2. That run is not a release: it 404s at GET /releases/{id} and is
-	//    absent from GET /releases. The pipeline names it while it is active.
-	assertNotListedAsRelease(t, ctx, clients, runID)
-	assertPipelineNamedVerification(t, ctx, clients, runID, pyVerifyVerdictBudget)
+	// 2. That release check is not a release: it 404s at GET /releases/{id}
+	//    and is absent from GET /releases. The release queue names it while it
+	//    is active.
+	assertNotListedAsRelease(t, ctx, clients, checkID)
+	assertReleaseQueueNamedFix(t, ctx, clients, checkID, pyVerifyVerdictBudget)
 
-	// 3. It runs the real pipeline and stops at passed.
-	waitForVerificationStatus(t, ctx, clients, runID, "passed", pyVerifyVerdictBudget)
+	// 3. It runs the real legs and stops at passed.
+	waitForReleaseCheckStatus(t, ctx, clients, checkID, "passed", pyVerifyVerdictBudget)
 
 	// 4. The gate poller turns the verified attempt into a reviewable fix.
 	proposed := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
-	require.Empty(t, proposed.VerifyError, "a verified fix records no verification error")
-	require.Equal(t, runID, proposed.VerificationRunID,
-		"finalizing an attempt must not change which run verified it")
+	require.Empty(t, proposed.VerifyError, "a verified fix records no release check error")
+	require.Equal(t, checkID, proposed.ReleaseCheckID,
+		"finalizing an attempt must not change which release check verified it")
 
-	verifications := decodeVerifications(t, proposed.Verifications)
-	require.Len(t, verifications, 1,
-		"the fix edits one project, so exactly one verification run judged it")
-	require.Equal(t, pyBadReadProject, verifications[0].Project,
-		"the verification must name the project whose files the attempt edited")
-	require.Equal(t, runID, verifications[0].RunID,
-		"the verification must name the same run the row parked on")
+	releaseChecks := decodeReleaseChecks(t, proposed.ReleaseChecks)
+	require.Len(t, releaseChecks, 1,
+		"the fix edits one project, so exactly one release check judged it")
+	require.Equal(t, pyBadReadProject, releaseChecks[0].Project,
+		"the release check must name the project whose files the attempt edited")
+	require.Equal(t, checkID, releaseChecks[0].CheckID,
+		"the release check must name the same check the row parked on")
 
 	edits := decodeFileEdits(t, proposed.FileEdits)
 	require.Len(t, edits, 1, "the fix changes exactly the one file that declares the node")
@@ -231,49 +232,49 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	// 5. The fix is announced for human review.
 	waitForRemediationProposed(t, ctx, proposedTap, releaseID, pyBadReadUniqueID, pyRecordVisibleBudget)
 
-	// 6. Nothing from the verification run reached production. The proof that
-	//    the no-promote gate held is the run reaching "passed" above rather
+	// 6. Nothing from the release check reached production. The proof that
+	//    the no-promote gate held is the check reaching "passed" above rather
 	//    than "promoted" — a status only a candidate release can reach; these
 	//    two checks confirm the consequences of that, and would also catch a
 	//    promotion that took some other route.
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
 		`SELECT count(*) FROM service_prod WHERE project_name = $1`, pyBadReadProject))
-	require.Zero(t, prodRows, "a verification run must never write the project's production pointer")
-	assertNoNodeVersionsFor(t, ctx, clients, runID)
+	require.Zero(t, prodRows, "a release check must never write the project's production pointer")
+	assertNoNodeVersionsFor(t, ctx, clients, checkID)
 
-	// 7. No remediation trigger names the verification run. This scan cannot
-	//    fail here — a passed run emits no rejection, so no classifier path
+	// 7. No remediation trigger names the release check. This scan cannot
+	//    fail here — a passed check emits no rejection, so no classifier path
 	//    could produce one — and it is kept as a cheap guard against a future
 	//    trigger source, not as evidence. The anti-loop rule is proved where it
 	//    can actually be violated: the sibling test below, whose first
-	//    attempt's verification run genuinely fails.
-	assertNoRemediationTriggerFor(t, requestedTap, runID)
+	//    attempt's release check genuinely fails.
+	assertNoRemediationTriggerFor(t, requestedTap, checkID)
 
-	t.Log("✅ a rejected python node was repaired, verified by a real verification run, and proposed for review")
+	t.Log("✅ a rejected python node was repaired, verified by a real release check, and proposed for review")
 }
 
-// TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt drives the
+// TestE2E_PythonValidationFailure_ReleaseCheckErrorFeedsNextAttempt drives the
 // same type when the first repair is wrong, which is the property that makes
 // the python-validation type a loop rather than a single shot: the next try is
 // shown, through the previous_tries step, what the earlier try changed and the
-// error its verification run reported back.
+// error its release check reported back.
 //
 // The canned model answers the first attempt with a read that still cannot
 // bind, and answers a retry with the binding one — recognising a retry by the
 // prompt's earlier-attempts section BOTH existing AND naming the relation the
 // rejected attempt declared, read from the part of the prompt that is not the
 // contract file itself. That relation name reaches the prompt only through the
-// first attempt's recorded verification error or the diff it applied. Attempt 2
+// first attempt's recorded release check error or the diff it applied. Attempt 2
 // reaching 'proposed' is therefore proof that the failed attempt's evidence was
 // assembled AND shown, not merely that an attempt row existed; a retry whose
 // prompt lost that evidence gets the answer that already failed, and this test
 // never goes green.
 //
-// It also proves the loop cannot eat itself: a failed verification run
+// It also proves the loop cannot eat itself: a failed release check
 // reaches no classifier at all — no decision row, no remediation trigger —
 // which is what stops a failed fix from remediating itself.
-func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testing.T) {
+func TestE2E_PythonValidationFailure_ReleaseCheckErrorFeedsNextAttempt(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -281,7 +282,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 	// (release 6 + attempt 3 + verify 5 + finalize 2, then attempt 3 + verify 5
 	// + finalize 2). assertNotListedAsRelease and the classifier reads below
 	// are plain queries, not polls, so neither adds a budget of its own; the
-	// pipeline-naming check shares the verification stage's budget rather than
+	// release-queue check shares the release check stage's budget rather than
 	// stacking one on top of it.
 	ctx, cancel := context.WithTimeout(context.Background(), 34*time.Minute)
 	defer cancel()
@@ -305,37 +306,37 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyLoopProject, releaseID)
 	defer clearProd()
 
-	// 1. Attempt 1's verification run fails the fix, and its error is
+	// 1. Attempt 1's release check fails the fix, and its error is
 	//    recorded on the attempt as the evidence attempt 2 will be shown.
 	firstVerifying := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "verifying", pyAttemptStartBudget)
-	firstRunID := firstVerifying.VerificationRunID
-	require.NotEmpty(t, firstRunID)
-	require.True(t, strings.HasSuffix(firstRunID, "-a1"),
-		"the first attempt's verification run id must name attempt 1; got %q", firstRunID)
-	assertNotListedAsRelease(t, ctx, clients, firstRunID)
-	assertPipelineNamedVerification(t, ctx, clients, firstRunID, pyVerifyVerdictBudget)
-	waitForVerificationStatus(t, ctx, clients, firstRunID, "failed", pyVerifyVerdictBudget)
+	firstCheckID := firstVerifying.ReleaseCheckID
+	require.NotEmpty(t, firstCheckID)
+	require.True(t, strings.HasSuffix(firstCheckID, "-a1"),
+		"the first attempt's release check id must name attempt 1; got %q", firstCheckID)
+	assertNotListedAsRelease(t, ctx, clients, firstCheckID)
+	assertReleaseQueueNamedFix(t, ctx, clients, firstCheckID, pyVerifyVerdictBudget)
+	waitForReleaseCheckStatus(t, ctx, clients, firstCheckID, "failed", pyVerifyVerdictBudget)
 
 	firstFailed := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "failed", pyAttemptFinalizeBudget)
 	require.NotEmpty(t, firstFailed.VerifyError,
 		"a failed attempt must record why, or the next attempt has nothing new to learn from")
 	require.NotContains(t, firstFailed.VerifyError, "timed out",
-		"the recorded reason must be the verification run's own verdict, not a wait that expired")
+		"the recorded reason must be the release check's own verdict, not a wait that expired")
 	require.Contains(t, firstFailed.VerifyError, "still_wrong_name",
-		"the recorded reason must be the error the verification run reported for this node; got %q",
+		"the recorded reason must be the error the release check reported for this node; got %q",
 		firstFailed.VerifyError)
-	t.Logf("attempt 1 failed verification: %s", firstFailed.VerifyError)
+	t.Logf("attempt 1 failed its release check: %s", firstFailed.VerifyError)
 
-	// 2. Attempt 2 runs against a second verification run and this one passes.
+	// 2. Attempt 2 runs against a second release check and this one passes.
 	secondVerifying := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "verifying", pyAttemptStartBudget)
-	secondRunID := secondVerifying.VerificationRunID
-	require.NotEmpty(t, secondRunID)
-	require.NotEqual(t, firstRunID, secondRunID,
-		"each attempt must be verified by its own run, or one verdict would answer for two fixes")
-	require.True(t, strings.HasSuffix(secondRunID, "-a2"),
-		"the second attempt's verification run id must name attempt 2; got %q", secondRunID)
-	assertNotListedAsRelease(t, ctx, clients, secondRunID)
-	waitForVerificationStatus(t, ctx, clients, secondRunID, "passed", pyVerifyVerdictBudget)
+	secondCheckID := secondVerifying.ReleaseCheckID
+	require.NotEmpty(t, secondCheckID)
+	require.NotEqual(t, firstCheckID, secondCheckID,
+		"each attempt must be verified by its own release check, or one verdict would answer for two fixes")
+	require.True(t, strings.HasSuffix(secondCheckID, "-a2"),
+		"the second attempt's release check id must name attempt 2; got %q", secondCheckID)
+	assertNotListedAsRelease(t, ctx, clients, secondCheckID)
+	waitForReleaseCheckStatus(t, ctx, clients, secondCheckID, "passed", pyVerifyVerdictBudget)
 
 	secondProposed := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "proposed", pyAttemptFinalizeBudget)
 	edits := decodeFileEdits(t, secondProposed.FileEdits)
@@ -350,21 +351,21 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 	require.Contains(t, content, "id: "+pyLoopUniqueID,
 		"the fix must keep declaring the same node, not replace it with a different one")
 
-	// 3. The failed verification run reached no classifier: no decision row
+	// 3. The failed release check reached no classifier: no decision row
 	//    was written for it and no remediation trigger names it, which is
 	//    what stops a failed fix from remediating itself.
 	var n int
 	require.NoError(t, clients.remediationDB.GetContext(ctx, &n,
-		`SELECT count(*) FROM classification_decision WHERE release_id = $1`, firstRunID))
-	require.Zero(t, n, "a verification run's failure must never reach the classifier")
+		`SELECT count(*) FROM classification_decision WHERE release_id = $1`, firstCheckID))
+	require.Zero(t, n, "a release check's failure must never reach the classifier")
 	msgs := requestedTap.Entries()
 	for _, m := range msgs {
-		require.NotContains(t, m.Values["payload"], firstRunID, "no remediation trigger may name a verification run")
+		require.NotContains(t, m.Values["payload"], firstCheckID, "no remediation trigger may name a release check")
 	}
-	assertNoNodeVersionsFor(t, ctx, clients, firstRunID)
-	assertNoNodeVersionsFor(t, ctx, clients, secondRunID)
+	assertNoNodeVersionsFor(t, ctx, clients, firstCheckID)
+	assertNoNodeVersionsFor(t, ctx, clients, secondCheckID)
 
-	t.Log("✅ a rejected fix's verification error fed the next attempt, which was verified and proposed")
+	t.Log("✅ a rejected fix's release check error fed the next attempt, which was verified and proposed")
 }
 
 // rejectPythonFixtureRelease posts one of the remediation fixture repository's
@@ -433,7 +434,7 @@ func pyRemediationBundle(t *testing.T, ctx context.Context, project string) []by
 // and returns a cleanup that drops it. It lives outside the node registry, so
 // the candidate-schema rewriter passes it through verbatim and the validation
 // Job's bind check resolves it against the real warehouse — which is exactly
-// why it has to exist for a verification run to pass.
+// why it has to exist for a release check to pass.
 //
 // The cleanup is returned for the caller to defer, so it runs when the test
 // function returns, while the warehouse pool is open: the cleanup setupClients
@@ -471,20 +472,20 @@ func clearPythonServiceProd(t *testing.T, ctx context.Context, clients *testClie
 	}
 }
 
-// pyProposalRow captures the verification-related fields of a proposal row.
+// pyProposalRow captures the release-check-related fields of a proposal row.
 type pyProposalRow struct {
-	Status            string `db:"status"`
-	Attempt           int    `db:"attempt"`
-	VerificationRunID string `db:"verification_run_id"`
-	VerifyError       string `db:"verify_error"`
-	FilePath          string `db:"file_path"`
-	FileEdits         []byte `db:"file_edits"`
-	Verifications     []byte `db:"verifications"`
+	Status         string `db:"status"`
+	Attempt        int    `db:"attempt"`
+	ReleaseCheckID string `db:"release_check_id"`
+	VerifyError    string `db:"verify_error"`
+	FilePath       string `db:"file_path"`
+	FileEdits      []byte `db:"file_edits"`
+	ReleaseChecks  []byte `db:"release_checks"`
 }
 
 // waitForProposal polls the agent-remediation's proposal table until the named
 // attempt for a node reaches want, and returns the row. Every status change it
-// observes is logged, so a run that stalls in 'generating' or 'verifying' is
+// observes is logged, so an attempt that stalls in 'generating' or 'verifying' is
 // distinguishable from one that never produced an attempt at all — the timeout
 // message itself cannot carry that, since pollUntil evaluates it before any
 // polling happens.
@@ -497,7 +498,7 @@ func waitForProposal(
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row, `
-			SELECT status, attempt, verification_run_id, verify_error, file_path, file_edits, verifications
+			SELECT status, attempt, release_check_id, verify_error, file_path, file_edits, release_checks
 			  FROM proposal
 			 WHERE release_id = $1 AND node_id = $2 AND attempt = $3`,
 			releaseID, nodeID, attempt)
@@ -533,37 +534,37 @@ func decodeFileEdits(t *testing.T, raw []byte) []pyFileEdit {
 	return edits
 }
 
-// pyVerification mirrors one element of the proposal's verifications column:
-// the project whose edits a verification run judged, the manifest kind it was
-// submitted under, that run's id, and its last-read phase. An attempt posts
+// pyReleaseCheck mirrors one element of the proposal's release_checks column:
+// the project whose edits a release check judged, the manifest kind it was
+// submitted under, that check's id, and its last-read phase. An attempt posts
 // one per edited project, so the list is how a reader tells which verdict
 // covered what.
-type pyVerification struct {
+type pyReleaseCheck struct {
 	Project string `json:"project"`
 	Kind    string `json:"kind"`
-	RunID   string `json:"run_id"`
+	CheckID string `json:"check_id"`
 	Phase   string `json:"phase"`
 }
 
-// decodeVerifications reads the proposal row's verifications column.
-func decodeVerifications(t *testing.T, raw []byte) []pyVerification {
+// decodeReleaseChecks reads the proposal row's release_checks column.
+func decodeReleaseChecks(t *testing.T, raw []byte) []pyReleaseCheck {
 	t.Helper()
-	var verifications []pyVerification
-	require.NoError(t, json.Unmarshal(raw, &verifications), "decode proposal verifications: %s", raw)
-	return verifications
+	var releaseChecks []pyReleaseCheck
+	require.NoError(t, json.Unmarshal(raw, &releaseChecks), "decode proposal release_checks: %s", raw)
+	return releaseChecks
 }
 
-// waitForVerificationStatus polls GET /verification-runs/{id} until the run
-// reaches want ("passed" or "failed"); either is the expected result of one
+// waitForReleaseCheckStatus polls GET /release-checks/{id} until the
+// check reaches want ("passed" or "failed"); either is the expected result of one
 // test or the other, so no status is treated as a failure on the way.
-func waitForVerificationStatus(
+func waitForReleaseCheckStatus(
 	t *testing.T, ctx context.Context, clients *testClients,
-	runID, want string, timeout time.Duration,
+	checkID, want string, timeout time.Duration,
 ) {
 	t.Helper()
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
-		resp, err := http.Get(fmt.Sprintf("%s/verification-runs/%s", clients.releaseBase, runID))
+		resp, err := http.Get(fmt.Sprintf("%s/release-checks/%s", clients.releaseBase, checkID))
 		if err != nil {
 			return false, nil
 		}
@@ -579,21 +580,21 @@ func waitForVerificationStatus(
 			return false, nil
 		}
 		if r.Status != last {
-			t.Logf("verification run %s: status=%s fail_reason=%q", runID, r.Status, r.FailReason)
+			t.Logf("release check %s: status=%s fail_reason=%q", checkID, r.Status, r.FailReason)
 			last = r.Status
 		}
 		return r.Status == want, nil
-	}, fmt.Sprintf("timeout waiting for verification run %s to reach %q", runID, want))
+	}, fmt.Sprintf("timeout waiting for release check %s to reach %q", checkID, want))
 }
 
-// assertNotListedAsRelease asserts a verification run has no release
+// assertNotListedAsRelease asserts a release check has no release
 // identity: GET /releases/{id} answers 404 and the release list omits it.
-func assertNotListedAsRelease(t *testing.T, ctx context.Context, clients *testClients, runID string) {
+func assertNotListedAsRelease(t *testing.T, ctx context.Context, clients *testClients, checkID string) {
 	t.Helper()
-	resp, err := http.Get(fmt.Sprintf("%s/releases/%s", clients.releaseBase, runID))
+	resp, err := http.Get(fmt.Sprintf("%s/releases/%s", clients.releaseBase, checkID))
 	require.NoError(t, err)
 	resp.Body.Close()
-	require.Equal(t, http.StatusNotFound, resp.StatusCode, "a verification run must not be readable as a release")
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, "a release check must not be readable as a release")
 
 	resp, err = http.Get(clients.releaseBase + "/releases?limit=100")
 	require.NoError(t, err)
@@ -605,37 +606,37 @@ func assertNotListedAsRelease(t *testing.T, ctx context.Context, clients *testCl
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	for _, rel := range body.Releases {
-		require.NotEqual(t, runID, rel.ReleaseID, "a verification run must not appear in the release list")
+		require.NotEqual(t, checkID, rel.ReleaseID, "a release check must not appear in the release list")
 	}
 }
 
-// assertPipelineNamedVerification waits until GET /pipeline names runID as
-// the active run — the read the Releases tab's in-flight strip uses — or
-// until the run is already terminal, which a fast run may be before the
-// first poll lands.
-func assertPipelineNamedVerification(t *testing.T, ctx context.Context, clients *testClients, runID string, timeout time.Duration) {
+// assertReleaseQueueNamedFix waits until GET /release-queue names checkID as
+// the active release check, of kind fix — the read the Releases tab's
+// in-flight strip uses — or until the check has already ended, which a fast
+// check may do before the first poll lands.
+func assertReleaseQueueNamedFix(t *testing.T, ctx context.Context, clients *testClients, checkID string, timeout time.Duration) {
 	t.Helper()
 	pollUntil(t, ctx, timeout, time.Second, func() (bool, error) {
-		resp, err := http.Get(clients.releaseBase + "/pipeline")
+		resp, err := http.Get(clients.releaseBase + "/release-queue")
 		if err != nil {
 			return false, nil
 		}
-		var p struct {
+		var q struct {
 			Active *struct {
-				RunID   string `json:"run_id"`
-				RunKind string `json:"run_kind"`
+				CheckID   string `json:"check_id"`
+				CheckKind string `json:"check_kind"`
 			} `json:"active"`
 		}
-		err = json.NewDecoder(resp.Body).Decode(&p)
+		err = json.NewDecoder(resp.Body).Decode(&q)
 		resp.Body.Close()
 		if err != nil {
 			return false, nil
 		}
-		if p.Active != nil && p.Active.RunID == runID {
-			require.Equal(t, "verification", p.Active.RunKind)
+		if q.Active != nil && q.Active.CheckID == checkID {
+			require.Equal(t, "fix", q.Active.CheckKind)
 			return true, nil
 		}
-		resp, err = http.Get(fmt.Sprintf("%s/verification-runs/%s", clients.releaseBase, runID))
+		resp, err = http.Get(fmt.Sprintf("%s/release-checks/%s", clients.releaseBase, checkID))
 		if err != nil {
 			return false, nil
 		}
@@ -645,7 +646,7 @@ func assertPipelineNamedVerification(t *testing.T, ctx context.Context, clients 
 		err = json.NewDecoder(resp.Body).Decode(&r)
 		resp.Body.Close()
 		return err == nil && (r.Status == "passed" || r.Status == "failed"), nil
-	}, fmt.Sprintf("timeout waiting for the pipeline to name verification run %s", runID))
+	}, fmt.Sprintf("timeout waiting for the release queue to name release check %s", checkID))
 }
 
 // waitForRemediationProposed polls remediation.proposed:v1 for the fix a
@@ -676,35 +677,35 @@ func waitForRemediationProposed(
 }
 
 // assertNoRemediationTriggerFor fails if any remediation trigger names the
-// given run. Called with a verification run id: a trigger for one would mean
+// given release check: a trigger for one would mean
 // a failed fix attempt had been handed back to the runner as a fresh failure to
 // heal, which is a loop with no exit.
-func assertNoRemediationTriggerFor(t *testing.T, requestedTap *streamTap, runID string) {
+func assertNoRemediationTriggerFor(t *testing.T, requestedTap *streamTap, checkID string) {
 	t.Helper()
 	for _, p := range requestedTap.Triggers(t) {
-		require.NotEqual(t, runID, p.ReleaseID,
-			"verification run %s must produce no remediation trigger, found one carrying %d node(s)",
-			runID, len(p.Nodes))
+		require.NotEqual(t, checkID, p.ReleaseID,
+			"release check %s must produce no remediation trigger, found one carrying %d node(s)",
+			checkID, len(p.Nodes))
 	}
 }
 
 // assertNoNodeVersionsFor fails if the graph recorded any promoted code
-// version for the given run. A verification run never promotes, so a version
+// version for the given release check. A release check never promotes, so a version
 // stamped with its id would mean an unapproved contract entered the
 // production history the graph is the record of.
-func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testClients, runID string) {
+func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testClients, checkID string) {
 	t.Helper()
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeRead})
 	defer session.Close(ctx)
 	res, err := session.Run(ctx,
 		`MATCH (v:NodeVersion {tenant_id: 'default', release_id: $rid}) RETURN count(v) AS n`,
-		map[string]any{"rid": runID})
-	require.NoError(t, err, "count :NodeVersion rows for %s", runID)
+		map[string]any{"rid": checkID})
+	require.NoError(t, err, "count :NodeVersion rows for %s", checkID)
 	require.True(t, res.Next(ctx), "count query returned no row")
 	n, _ := res.Record().Get("n")
 	count, _ := n.(int64)
 	require.Zero(t, count,
-		"verification run %s must write no :NodeVersion — it never promoted", runID)
+		"release check %s must write no :NodeVersion — it never promoted", checkID)
 }
 
 // TestE2E_PythonParseFailure_VerifiedFix drives the runner's python-parse type
@@ -722,9 +723,9 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	  project's bundle, not in the repository, so the contract_file step finds
 //	  the .odcs.yaml file from the node id alone, the prompt has the model
 //	  qualify the read's relation, and the contract_packages check and the
-//	  verification_run gate pack the directory and POST it as a verification
-//	  run
-//	→ the run's own parse leg accepts the repaired SQL, its validation leg binds
+//	  release_check gate pack the directory and POST it as a fix's release
+//	  check
+//	→ the release check's own parse leg accepts the repaired SQL, its validation leg binds
 //	  the now-qualified read, and it stops at 'passed'
 //	→ the runner's gate poller finalizes the proposal to 'proposed'
 //
@@ -746,7 +747,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	// The qualified read the fix declares must bind in the verification run's
+	// The qualified read the fix declares must bind in the release check's
 	// validation leg, so the relation has to exist first.
 	dropRelation := ensureBindingRelation(t, ctx, clients)
 	defer dropRelation()
@@ -767,26 +768,26 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	//    what matches it to the python-parse type before any read.
 	assertRejectedPythonParseStage(t, ctx, rejectedTap, releaseID)
 
-	// 2. The runner's try produced an attempt and parked it on a verification run.
+	// 2. The runner's try produced an attempt and parked it on a release check.
 	verifying := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "verifying", pyAttemptStartBudget)
-	runID := verifying.VerificationRunID
-	require.NotEmpty(t, runID, "a verifying proposal must name the run that is judging it")
-	require.True(t, strings.HasSuffix(runID, "-a1"),
-		"the first attempt's verification run id must name attempt 1; got %q", runID)
-	t.Logf("proposal attempt 1 is verifying under verification run %s", runID)
+	checkID := verifying.ReleaseCheckID
+	require.NotEmpty(t, checkID, "a verifying proposal must name the release check that is judging it")
+	require.True(t, strings.HasSuffix(checkID, "-a1"),
+		"the first attempt's release check id must name attempt 1; got %q", checkID)
+	t.Logf("proposal attempt 1 is verifying under release check %s", checkID)
 
-	// 3. The run's own parse leg is the judge of a parse fix: it re-parses the
+	// 3. The release check's own parse leg is the judge of a parse fix: it re-parses the
 	//    packed contract, then validates, and stops at passed.
-	assertNotListedAsRelease(t, ctx, clients, runID)
-	waitForVerificationStatus(t, ctx, clients, runID, "passed", pyVerifyVerdictBudget)
+	assertNotListedAsRelease(t, ctx, clients, checkID)
+	waitForReleaseCheckStatus(t, ctx, clients, checkID, "passed", pyVerifyVerdictBudget)
 
 	// 4. The gate poller turns the verified attempt into a reviewable fix.
 	proposed := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
-	require.Empty(t, proposed.VerifyError, "a verified fix records no verification error")
+	require.Empty(t, proposed.VerifyError, "a verified fix records no release check error")
 
-	verifications := decodeVerifications(t, proposed.Verifications)
-	require.Len(t, verifications, 1, "the fix edits one project, so exactly one verification run judged it")
-	require.Equal(t, pyParseProject, verifications[0].Project)
+	releaseChecks := decodeReleaseChecks(t, proposed.ReleaseChecks)
+	require.Len(t, releaseChecks, 1, "the fix edits one project, so exactly one release check judged it")
+	require.Equal(t, pyParseProject, releaseChecks[0].Project)
 
 	edits := decodeFileEdits(t, proposed.FileEdits)
 	require.Len(t, edits, 1, "the fix changes exactly the one file that declares the node")
@@ -806,9 +807,9 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
 		`SELECT count(*) FROM service_prod WHERE project_name = $1`, pyParseProject))
-	require.Zero(t, prodRows, "a verification run must never write the project's production pointer")
+	require.Zero(t, prodRows, "a release check must never write the project's production pointer")
 
-	t.Log("✅ a python node rejected at the parse stage was repaired in its contract, verified by a real verification run, and proposed for review")
+	t.Log("✅ a python node rejected at the parse stage was repaired in its contract, verified by a real release check, and proposed for review")
 }
 
 // assertRejectedPythonParseStage reads the release's rejection off

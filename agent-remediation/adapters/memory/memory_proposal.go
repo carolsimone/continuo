@@ -214,9 +214,9 @@ func (row *proposalRow) view() proposal.View {
 	if len(outcomes) == 0 {
 		outcomes = nil
 	}
-	verifications := p.Verifications
-	if len(verifications) == 0 {
-		verifications = nil
+	releaseChecks := p.ReleaseChecks
+	if len(releaseChecks) == 0 {
+		releaseChecks = nil
 	}
 	approvers := p.Approvers
 	if len(approvers) == 0 {
@@ -234,9 +234,9 @@ func (row *proposalRow) view() proposal.View {
 		Attempt:             p.Attempt,
 		Status:              p.Status,
 		NodeOutcomes:        outcomes,
-		Verifications:       verifications,
+		ReleaseChecks:       releaseChecks,
 		Approvers:           approvers,
-		VerificationRunID:   p.VerificationRunID,
+		ReleaseCheckID:      p.ReleaseCheckID,
 		Projects:            p.Projects,
 		VerifyError:         row.verifyError,
 		Confidence:          p.Confidence,
@@ -311,16 +311,16 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-// finishVerifying moves a verifying row to status, writing verifications and
+// finishVerifying moves a verifying row to status, writing release checks and
 // carrying every node outcome still verifying to the same status. It reports
 // whether the compare-and-set on 'verifying' fired.
-func (d *data) finishVerifying(id string, status proposal.Status, verifyError string, verifications []proposal.Verification) bool {
+func (d *data) finishVerifying(id string, status proposal.Status, verifyError string, releaseChecks []proposal.ReleaseCheck) bool {
 	row := d.findProposalByID(id)
 	if row == nil || row.p.Status != proposal.StatusVerifying {
 		return false
 	}
 	row.p.Status = status
-	row.p.Verifications = cloneVerifications(verifications)
+	row.p.ReleaseChecks = cloneReleaseChecks(releaseChecks)
 	if status == proposal.StatusFailed {
 		row.verifyError = verifyError
 	}
@@ -334,24 +334,24 @@ func (d *data) finishVerifying(id string, status proposal.Status, verifyError st
 }
 
 // MarkFixVerified refuses a zero Verified and otherwise moves the verifying
-// proposal it names to proposed, writing the verifications it carries.
+// proposal it names to proposed, writing the release checks it carries.
 func (r *proposalRepository) MarkFixVerified(_ context.Context, v remediation.Verified) (bool, error) {
 	if v.IsZero() {
 		return false, errors.New("mark fix verified: the verified proposal is the zero value")
 	}
 	var hit bool
 	err := r.gate(func(d *data) error {
-		hit = d.finishVerifying(v.ProposalID(), proposal.StatusProposed, "", v.Verifications())
+		hit = d.finishVerifying(v.ProposalID(), proposal.StatusProposed, "", v.ReleaseChecks())
 		return nil
 	})
 	return hit, err
 }
 
 // MarkVerifyFailed moves a verifying proposal to failed and records the error.
-func (r *proposalRepository) MarkVerifyFailed(_ context.Context, id, verifyErr string, verifications []proposal.Verification) (bool, error) {
+func (r *proposalRepository) MarkVerifyFailed(_ context.Context, id, verifyErr string, releaseChecks []proposal.ReleaseCheck) (bool, error) {
 	var hit bool
 	err := r.gate(func(d *data) error {
-		hit = d.finishVerifying(id, proposal.StatusFailed, verifyErr, verifications)
+		hit = d.finishVerifying(id, proposal.StatusFailed, verifyErr, releaseChecks)
 		return nil
 	})
 	return hit, err
@@ -410,18 +410,18 @@ func reopenedGenerating(outcomes map[string]proposal.NodeOutcome, reason string)
 	return out
 }
 
-// UpdateVerificationPhase sets the phase and activation time of the
-// verification with runID, leaving the others alone.
-func (r *proposalRepository) UpdateVerificationPhase(_ context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error {
+// UpdateReleaseCheckPhase sets the phase and activation time of the
+// release check with checkID, leaving the others alone.
+func (r *proposalRepository) UpdateReleaseCheckPhase(_ context.Context, id, checkID string, phase proposal.Phase, activatedAt *time.Time) error {
 	return r.gate(func(d *data) error {
 		row := d.findProposalByID(id)
 		if row == nil {
 			return nil
 		}
-		for i := range row.p.Verifications {
-			if row.p.Verifications[i].RunID == runID {
-				row.p.Verifications[i].Phase = phase
-				row.p.Verifications[i].ActivatedAt = cloneTimePtr(activatedAt)
+		for i := range row.p.ReleaseChecks {
+			if row.p.ReleaseChecks[i].CheckID == checkID {
+				row.p.ReleaseChecks[i].Phase = phase
+				row.p.ReleaseChecks[i].ActivatedAt = cloneTimePtr(activatedAt)
 			}
 		}
 		return nil

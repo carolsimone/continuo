@@ -14,7 +14,7 @@ var ErrNoImagePackages = errors.New("no package list of the project's image is r
 
 // ImagePackagesSource reads the package list (package name to version) of the
 // image a project runs in a candidate release. A Python fix is packaged with
-// that list, so its verification run checks the fix against the packages the
+// that list, so its release check checks the fix against the packages the
 // rejected release was built with.
 type ImagePackagesSource interface {
 	// ImagePackages returns the package list of project's image in release

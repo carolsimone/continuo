@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 )
 
 // NodeValidationResultInput is the wire shape of the kind:"node" message on
@@ -35,7 +35,7 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.RunRepo().Load(ctx, in.ReleaseID)
+	r, err := u.ReleaseCheckRepo().Load(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("load release: %w", err)
 	}
@@ -48,7 +48,7 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 	// NodeType is stamped from the candidate topology (absent from it, e.g. a
 	// non-node compile-leg failure, leaves it empty) so a reader can tell a
 	// test's bind check from a model's build without a separate topology
-	// lookup. The topology is read from the run's artifact through the cache.
+	// lookup. The topology is read from the check's artifact through the cache.
 	topo, err := candidateTopology(ctx, d, r)
 	if err != nil {
 		return err
@@ -61,7 +61,7 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 		}
 	}
 
-	r.UpsertStageResult(in.Stage, pipeline.NodeValidationResult{
+	r.UpsertStageResult(in.Stage, releasecheck.NodeValidationResult{
 		NodeID:        in.NodeID,
 		Status:        in.Status,
 		DBTLogURI:     in.DBTLogURI,
@@ -69,7 +69,7 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 		DurationMS:    in.DurationMS,
 		NodeType:      nodeType,
 	})
-	if err := u.RunRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 	if err := u.Commit(); err != nil {

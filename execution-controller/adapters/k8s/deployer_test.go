@@ -189,7 +189,7 @@ func TestDeployCompile_CreatesJobWithMappedFields(t *testing.T) {
 }
 
 // TestDeploySeedBuild_ThreadsSourceOverlayURI verifies the seed-build deploy
-// path forwards a verification run's source overlay from the domain spec onto
+// path forwards a fix's source overlay from the domain spec onto
 // the Job it creates. A dropped field here silently verifies a proposed seed
 // fix against the checked-in CSV instead of the proposed one.
 func TestDeploySeedBuild_ThreadsSourceOverlayURI(t *testing.T) {

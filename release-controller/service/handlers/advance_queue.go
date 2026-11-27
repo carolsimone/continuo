@@ -8,8 +8,8 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
 )
@@ -36,16 +36,16 @@ import (
 //     release goes straight to TransitionToParsing and emits
 //     release.requested:v1 with the set assembled here.
 //
-// A run of the kind ontology met while the install's ontology switch is off (a
-// run accepted while it was on) is never activated: it is rejected
+// A check of the kind ontology met while the install's ontology switch is off (a
+// check accepted while it was on) is never activated: it is rejected
 // invalid_artifact with ErrOntologyDisabled as its detail
-// (rejectOntologyRunWhileSwitchOff), before anything is assembled, and the run
-// behind it is activated instead. So is a run whose kind is on the other side of the
+// (rejectOntologyCheckWhileSwitchOff), before anything is assembled, and the check
+// behind it is activated instead. So is a check whose kind is on the other side of the
 // line between the ontology and the node kinds from its project's service_prod
 // pointer: it is rejected invalid_artifact with the kind-change refusal as its
 // detail.
 //
-// While maintenance mode is on it activates only verification runs.
+// While maintenance mode is on it activates only fixes' release checks.
 func AdvanceQueue(ctx context.Context, d *Deps) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -61,7 +61,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return fmt.Errorf("lock release queue: %w", err)
 	}
 
-	active, err := u.RunRepo().Active(ctx)
+	active, err := u.ReleaseCheckRepo().Active(ctx)
 	if err != nil {
 		return fmt.Errorf("active release: %w", err)
 	}
@@ -76,11 +76,11 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	if next == nil {
 		return u.Commit()
 	}
-	if isOntologyRunWhileSwitchOff(d, next) {
-		// Nothing needs assembling for a run that is not activated. The
-		// rejection ends the run and commits, so the queue is advanced again
-		// for the run behind it.
-		if err := rejectOntologyRunWhileSwitchOff(ctx, d, u, next, d.Clock.Now()); err != nil {
+	if isOntologyCheckWhileSwitchOff(d, next) {
+		// Nothing needs assembling for a check that is not activated. The
+		// rejection ends the check and commits, so the queue is advanced again
+		// for the check behind it.
+		if err := rejectOntologyCheckWhileSwitchOff(ctx, d, u, next, d.Clock.Now()); err != nil {
 			return err
 		}
 		return AdvanceQueue(ctx, d)
@@ -111,17 +111,17 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return fmt.Errorf("list service prod: %w", err)
 	}
 	// Intake refuses a kind change against the service_prod row it sees, but a
-	// run queued before another run of the project promoted meets the row that
+	// check queued before another check of the project promoted meets the row that
 	// promotion wrote only here, where the queue lock is held and the pointers
-	// are read. Assembling the set for such a run would swap the project's
+	// are read. Assembling the set for such a check would swap the project's
 	// manifest for an artifact of the other side and drop or replace its nodes.
 	if stored := pointerOf(pointers, next.ChangedProject()); stored != nil &&
 		(stored.ManifestKind() == release.ManifestKindOntology) != (next.ManifestKind() == release.ManifestKindOntology) {
-		d.Logger.Warn("rejecting a run that changes its project between the kind ontology and a node kind",
+		d.Logger.Warn("rejecting a check that changes its project between the kind ontology and a node kind",
 			"release_id", next.ID(), "project", next.ChangedProject(),
 			"stored_kind", string(stored.ManifestKind()), "kind", string(next.ManifestKind()))
 		detail := kindChangeRefusalText(next.ChangedProject(), stored.ManifestKind())
-		if err := rejectInvalidArtifactRun(ctx, d, u, next, detail, d.Clock.Now()); err != nil {
+		if err := rejectInvalidArtifactCheck(ctx, d, u, next, detail, d.Clock.Now()); err != nil {
 			return err
 		}
 		return AdvanceQueue(ctx, d)
@@ -155,7 +155,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		if err := next.TransitionToParsing(now); err != nil {
 			return fmt.Errorf("transition to parsing: %w", err)
 		}
-		if err := u.RunRepo().Save(ctx, next); err != nil {
+		if err := u.ReleaseCheckRepo().Save(ctx, next); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
 		if err := emitReleaseRequested(ctx, u, next.ID(), set.ManifestKeys, next.ImageTags()); err != nil {
@@ -171,7 +171,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	if err := next.TransitionToCompiling(now); err != nil {
 		return fmt.Errorf("transition to compiling: %w", err)
 	}
-	if err := u.RunRepo().Save(ctx, next); err != nil {
+	if err := u.ReleaseCheckRepo().Save(ctx, next); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -254,14 +254,14 @@ func uncoveredProdProjects(prod release.Topology, pointers []*release.ServicePro
 	return missing
 }
 
-// nextToActivate is the run the queue activates next: the oldest received run
+// nextToActivate is the check the queue activates next: the oldest received check
 // of either kind or, while maintenance mode is on, the oldest received
-// verification run. Maintenance holds candidate releases in the queue, in
-// creation order, but lets the verification runs of remediation attempts
+// fix's release check. Maintenance holds candidate releases in the queue, in
+// creation order, but lets the release checks of remediation attempts
 // already in progress finish.
-func nextToActivate(ctx context.Context, u uow.UnitOfWork, maintenance bool) (*pipeline.Run, error) {
+func nextToActivate(ctx context.Context, u uow.UnitOfWork, maintenance bool) (*releasecheck.Check, error) {
 	if maintenance {
-		return u.RunRepo().NextQueuedOfKind(ctx, pipeline.KindVerification)
+		return u.ReleaseCheckRepo().NextQueuedOfKind(ctx, releasecheck.KindFix)
 	}
-	return u.RunRepo().NextQueued(ctx)
+	return u.ReleaseCheckRepo().NextQueued(ctx)
 }

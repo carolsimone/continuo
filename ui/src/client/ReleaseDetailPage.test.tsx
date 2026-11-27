@@ -30,7 +30,7 @@ const proposal = (o: Partial<ProposalDTO> & { source: string; node_id: string })
   confidence: 'high', rationale: '', proposed_sql_uri: '', diff_uri: '', candidate_fix_sql_uri: '',
   candidate_fix_diff_uri: '', source_resolved: true, repo: '', commit_sha: '', file_path: '',
   model: '', created_at: '', pr_url: '', pr_number: 0, pr_state: '', pr_opened_at: '', pr_opened_by: '',
-  pr_closed_at: '', verification_run_id: '', verify_error: '',
+  pr_closed_at: '', release_check_id: '', verify_error: '',
   ...o,
 });
 
@@ -38,13 +38,13 @@ const proposal = (o: Partial<ProposalDTO> & { source: string; node_id: string })
 // route); tests configure its resolved {status, json} shape per case.
 const mockPost = vi.fn();
 
-// verificationRuns backs the /api/releases/:id/verifications route every
+// releaseChecks backs the /api/releases/:id/release-checks route every
 // renderPage-driven test's fetch mock answers; a test that cares about the
-// "Verification runs" section overrides it with mockVerificationRuns, and
+// "Release checks" section overrides it with mockReleaseChecks, and
 // every other test keeps seeing the default empty list.
-let verificationRunsResponse: any[] = [];
-function mockVerificationRuns(runs: any[]) {
-  verificationRunsResponse = runs;
+let releaseChecksResponse: any[] = [];
+function mockReleaseChecks(checks: any[]) {
+  releaseChecksResponse = checks;
 }
 
 function renderPage(rel: ReleaseDetail) {
@@ -53,8 +53,8 @@ function renderPage(rel: ReleaseDetail) {
     // Checked before the plain release-detail route below: that route's
     // startsWith('/api/releases/rel-1') would otherwise also swallow this
     // more specific path.
-    if (String(url).startsWith('/api/releases/rel-1/verifications')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ runs: verificationRunsResponse }) });
+    if (String(url).startsWith('/api/releases/rel-1/release-checks')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ checks: releaseChecksResponse }) });
     }
     if (String(url).startsWith('/api/releases/rel-1')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(rel) });
@@ -72,7 +72,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFetchProposals.mockResolvedValue([]);
   mockPost.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
-  verificationRunsResponse = [];
+  releaseChecksResponse = [];
 });
 
 describe('ReleaseDetailPage — stage sections', () => {
@@ -147,13 +147,13 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
 
-  it('shows a disabled "Verifying fix…" chip while a verification run is judging the fix', async () => {
+  it('shows a disabled "Checking the fix…" chip while a release check is judging the fix', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'validation', node_id: 'svc', status: 'verifying' })]);
     renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
     await screen.findByText('contracts/svc.yaml');
-    const chip = await screen.findByText(/Verifying fix/);
+    const chip = await screen.findByText(/Checking the fix/);
     expect(chip).toHaveAttribute('aria-disabled', 'true');
-    // Not a link, and not the earlier phase's chip: verification follows generation.
+    // Not a link, and not the earlier phase's chip: the release check follows generation.
     expect(screen.queryByText(/Proposed fix available/)).toBeNull();
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
@@ -166,7 +166,7 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
     await screen.findByText('contracts/svc.yaml');
     await waitFor(() => expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument());
-    expect(screen.queryByText(/Verifying fix/)).toBeNull();
+    expect(screen.queryByText(/Checking the fix/)).toBeNull();
   });
 
   it('prefers the verifying chip over a generating chip when both exist for a node', async () => {
@@ -176,7 +176,7 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     ]);
     renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
     await screen.findByText('contracts/svc.yaml');
-    await waitFor(() => expect(screen.getByText(/Verifying fix/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Checking the fix/)).toBeInTheDocument());
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
 
@@ -224,7 +224,7 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
       node({ stage: 'validation', node_id: 's.b' }),
     ], 'validation_failed'));
     await screen.findByText('s.b');
-    expect(await screen.findByText(/Verifying fix/)).toBeInTheDocument();
+    expect(await screen.findByText(/Checking the fix/)).toBeInTheDocument();
     expect(await screen.findByText(/No source to fix at this commit\. Fix it in the repository\./)).toBeInTheDocument();
   });
 });
@@ -451,7 +451,7 @@ describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () =>
     ]);
     renderPage(releaseOf('s.a', 's.b'));
     expect(await screen.findByText(/Generating fix/)).toBeInTheDocument();
-    expect(screen.getByText(/Verifying fix/)).toBeInTheDocument();
+    expect(screen.getByText(/Checking the fix/)).toBeInTheDocument();
     expect(screen.queryByText(/Owner:/)).toBeNull();
   });
 
@@ -758,7 +758,7 @@ describe('ReleaseDetailPage — proposal polling settles per node on a batched a
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(mockFetchProposals).toHaveBeenCalledTimes(1);
-      expect(screen.getByText(/Verifying fix/)).toBeInTheDocument();
+      expect(screen.getByText(/Checking the fix/)).toBeInTheDocument();
 
       // s.b is still 'verifying' — not settled — so the next tick must still
       // issue a fetch (the cap is also suspended while any node verifies).
@@ -999,33 +999,33 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
   });
 });
 
-describe('ReleaseDetailPage — verification runs section', () => {
-  it('lists the verification runs that judged fixes for this release', async () => {
-    mockVerificationRuns([
+describe('ReleaseDetailPage — release checks section', () => {
+  it('lists the release checks that judged fixes for this release', async () => {
+    mockReleaseChecks([
       {
-        run_id: 'verify-rel-1-core-a1', status: 'failed', project: 'core', attempt: 1,
+        check_id: 'verify-rel-1-core-a1', status: 'failed', project: 'core', attempt: 1,
         created_at: '2026-09-02T10:00:00Z', activated_at: '2026-09-02T10:01:00Z',
         finished_at: '2026-09-02T10:05:00Z', fail_reason: 'validation_failed',
       },
       {
-        run_id: 'verify-rel-1-core-a2', status: 'validating', project: 'core', attempt: 2,
+        check_id: 'verify-rel-1-core-a2', status: 'validating', project: 'core', attempt: 2,
         created_at: '2026-09-02T10:06:00Z', activated_at: '2026-09-02T10:07:00Z', finished_at: '',
       },
     ]);
     // The per-node result's own status is 'ok' (not 'failed'), so the pill
-    // text asserted below unambiguously belongs to the verification-runs
+    // text asserted below unambiguously belongs to the release-checks
     // table, not the per-node results table above it.
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'ok' })]));
-    expect(await screen.findByText('Verification runs')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'verify-rel-1-core-a2' })).toHaveAttribute('href', '/verifications/verify-rel-1-core-a2');
+    expect(await screen.findByText('Release checks')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'verify-rel-1-core-a2' })).toHaveAttribute('href', '/release-checks/verify-rel-1-core-a2');
     expect(screen.getByText('running')).toBeInTheDocument();
     expect(screen.getByText('failed')).toBeInTheDocument();
   });
 
-  it('renders no section when the release has no verification runs', async () => {
+  it('renders no section when the release has no release checks', async () => {
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     await screen.findByText('finance');
     await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
-    expect(screen.queryByText('Verification runs')).toBeNull();
+    expect(screen.queryByText('Release checks')).toBeNull();
   });
 });

@@ -7,7 +7,7 @@ import (
 
 // candidateArtifactURI is the S3 URI of the object a node's validation Job
 // fetches to build it in the candidate schema. topology-controller writes that
-// object under a key derived from the run id and the node, so the URI is
+// object under a key derived from the check id and the node, so the URI is
 // derived the same way here rather than carried in the topology. A seed has no
 // object and gets "".
 func candidateArtifactURI(bucket, releaseID string, n release.Node) string {

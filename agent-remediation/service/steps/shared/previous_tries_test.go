@@ -75,10 +75,10 @@ func triedSnapshot(t *testing.T, round, try, attempt int, node string, draft rem
 		Status: remediation.StepDone, Output: preflight,
 	}}
 	if len(gate) > 0 {
-		out, err := serialization.EncodeRecord(serialization.CheckRecord{Result: remediation.CheckResult{Check: "verification_run", Findings: gate}, Gate: true})
+		out, err := serialization.EncodeRecord(serialization.CheckRecord{Result: remediation.CheckResult{Check: "release_check", Findings: gate}, Gate: true})
 		require.NoError(t, err)
 		steps = append(steps, remediation.StepRun{
-			Try: try, Step: "verification_run", Kind: remediation.KindCheck, Round: 1, Status: remediation.StepDone, Output: out, Findings: gate,
+			Try: try, Step: "release_check", Kind: remediation.KindCheck, Round: 1, Status: remediation.StepDone, Output: out, Findings: gate,
 		})
 	}
 	return remediation.Snapshot{
@@ -112,7 +112,7 @@ func TestPreviousTries_MetaNamesTheStepAndWhatItProvides(t *testing.T) {
 }
 
 func TestPreviousTries_IncludesEarlierRoundsAndAttemptsWithNoRemediation(t *testing.T) {
-	broken := remediation.Finding{Code: "verification_failed", Message: "model.a: still broken"}
+	broken := remediation.Finding{Code: "release_check_failed", Message: "model.a: still broken"}
 	tries := &fakeTries{snaps: []remediation.Snapshot{
 		triedSnapshot(t, 1, 1, 2, "model.a", editOf("select a\n", "select b\n"), broken),
 		triedSnapshot(t, 1, 2, 3, "model.z", editOf("select z\n", "select y\n"), broken),

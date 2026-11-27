@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPruneFinishedRuns_PassesCutoffAndKeepIDs(t *testing.T) {
+func TestPruneFinishedChecks_PassesCutoffAndKeepIDs(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	// Build deps via the shared helper so Clock/Telemetry/Logger are set
@@ -20,13 +20,13 @@ func TestPruneFinishedRuns_PassesCutoffAndKeepIDs(t *testing.T) {
 	deps, _ := newDeps(now)
 
 	// Use a dedicated store for this test so we can seed current_prod and
-	// inspect the fakeRunRepo fields after the call.
+	// inspect the fakeReleaseCheckRepo fields after the call.
 	store := newFakeStore()
 	store.SeedCurrentProd(release.RehydrateCurrentProd("live-1", release.TopologyRef{}, 0, now))
 
-	// Capture the fakeRunRepo that the handler will obtain so we can
+	// Capture the fakeReleaseCheckRepo that the handler will obtain so we can
 	// assert on the recorded cutoff and keepReleaseIDs.
-	var captured *fakeRunRepo
+	var captured *fakeReleaseCheckRepo
 	deps.NewUoW = func() uow.UnitOfWork {
 		u := newFakeUoW(store)
 		u.releases.deletedCount = 3
@@ -36,7 +36,7 @@ func TestPruneFinishedRuns_PassesCutoffAndKeepIDs(t *testing.T) {
 
 	// now is supplied via deps' fakeClock (set by newDeps), so the handler
 	// derives the cutoff from d.Clock.Now() rather than a caller-supplied time.
-	n, err := handlers.PruneFinishedRuns(context.Background(), deps, 90)
+	n, err := handlers.PruneFinishedChecks(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured, "NewUoW factory was never called")
 	assert.Equal(t, 3, n)
@@ -44,7 +44,7 @@ func TestPruneFinishedRuns_PassesCutoffAndKeepIDs(t *testing.T) {
 	assert.True(t, captured.lastCutoff.Equal(now.AddDate(0, 0, -90)))
 }
 
-func TestPruneFinishedRuns_IncludesServiceProdReleaseIDs(t *testing.T) {
+func TestPruneFinishedChecks_IncludesServiceProdReleaseIDs(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	deps, _ := newDeps(now)
@@ -56,7 +56,7 @@ func TestPruneFinishedRuns_IncludesServiceProdReleaseIDs(t *testing.T) {
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "sp-a", "s3://a", "t1", release.ManifestKindDbt, now))
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "sp-b", "s3://b", "t2", release.ManifestKindDbt, now))
 
-	var captured *fakeRunRepo
+	var captured *fakeReleaseCheckRepo
 	deps.NewUoW = func() uow.UnitOfWork {
 		u := newFakeUoW(store)
 		u.releases.deletedCount = 0
@@ -64,7 +64,7 @@ func TestPruneFinishedRuns_IncludesServiceProdReleaseIDs(t *testing.T) {
 		return u
 	}
 
-	_, err := handlers.PruneFinishedRuns(context.Background(), deps, 90)
+	_, err := handlers.PruneFinishedChecks(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 
@@ -72,7 +72,7 @@ func TestPruneFinishedRuns_IncludesServiceProdReleaseIDs(t *testing.T) {
 	assert.ElementsMatch(t, []string{"cp-1", "sp-a", "sp-b"}, captured.lastKeepReleaseIDs)
 }
 
-func TestPruneFinishedRuns_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
+func TestPruneFinishedChecks_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	deps, _ := newDeps(now)
@@ -80,14 +80,14 @@ func TestPruneFinishedRuns_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
 	// No current_prod, no service_prod rows.
 	store := newFakeStore()
 
-	var captured *fakeRunRepo
+	var captured *fakeReleaseCheckRepo
 	deps.NewUoW = func() uow.UnitOfWork {
 		u := newFakeUoW(store)
 		captured = u.releases
 		return u
 	}
 
-	_, err := handlers.PruneFinishedRuns(context.Background(), deps, 90)
+	_, err := handlers.PruneFinishedChecks(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 
@@ -95,7 +95,7 @@ func TestPruneFinishedRuns_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
 	assert.Empty(t, captured.lastKeepReleaseIDs)
 }
 
-func TestPruneFinishedRuns_DeduplicatesOverlappingIDs(t *testing.T) {
+func TestPruneFinishedChecks_DeduplicatesOverlappingIDs(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	deps, _ := newDeps(now)
@@ -105,14 +105,14 @@ func TestPruneFinishedRuns_DeduplicatesOverlappingIDs(t *testing.T) {
 	store.SeedCurrentProd(release.RehydrateCurrentProd("shared-1", release.TopologyRef{}, 0, now))
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "shared-1", "s3://a", "t1", release.ManifestKindDbt, now))
 
-	var captured *fakeRunRepo
+	var captured *fakeReleaseCheckRepo
 	deps.NewUoW = func() uow.UnitOfWork {
 		u := newFakeUoW(store)
 		captured = u.releases
 		return u
 	}
 
-	_, err := handlers.PruneFinishedRuns(context.Background(), deps, 90)
+	_, err := handlers.PruneFinishedChecks(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 

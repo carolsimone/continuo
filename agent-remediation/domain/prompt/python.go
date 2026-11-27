@@ -52,7 +52,7 @@ Rules:
 - Each contract file declares exactly one node. Leave the contract of every node other than the failing one unchanged, and never declare the failing node in a second file.
 - Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
 - Fix the contract to match what the node genuinely produces; do not weaken a declared column type or drop a column merely to make the check pass, unless the evidence shows the declaration itself is what is wrong.
-- When earlier attempts are shown, read what each one changed and why its verification failed, and do not repeat a change that has already been rejected.
+- When earlier attempts are shown, read what each one changed and why its release check failed, and do not repeat a change that has already been rejected.
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
 - Always respond by calling the propose_python_fix tool.`
 
@@ -66,7 +66,7 @@ Rules:
 - Qualify a relation with the schema the evidence shows it lives in; do not invent a schema, and do not rewrite what the query selects beyond what parsing requires.
 - Each contract file declares exactly one node. Leave the contract of every node other than the failing one unchanged, and never declare the failing node in a second file.
 - Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
-- When earlier attempts are shown, read what each one changed and why its verification failed, and do not repeat a change that has already been rejected.
+- When earlier attempts are shown, read what each one changed and why its release check failed, and do not repeat a change that has already been rejected.
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
 - Always respond by calling the propose_python_fix tool.`
 

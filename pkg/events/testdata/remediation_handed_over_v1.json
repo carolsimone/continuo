@@ -14,7 +14,7 @@
         {
           "node_id": "analytics.orders_enriched",
           "reason": "tries_spent",
-          "message": "the last try failed at the verification runs: column \"customer_segment\" does not exist",
+          "message": "the last try failed at the release checks: column \"customer_segment\" does not exist",
           "owner": "analytics-engineering"
         },
         {
@@ -47,7 +47,7 @@
         {
           "node_id": "analytics.orders_enriched",
           "reason": "tries_spent",
-          "message": "the last try failed at the verification runs: column \"customer_segment\" does not exist",
+          "message": "the last try failed at the release checks: column \"customer_segment\" does not exist",
           "owner": "analytics-engineering"
         },
         {

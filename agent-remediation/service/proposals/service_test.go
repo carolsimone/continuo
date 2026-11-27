@@ -122,7 +122,7 @@ func (r *fakeRepo) RecordPROutcome(_ context.Context, _, project string, outcome
 	return r.outcomeCASHit, nil
 }
 
-func (r *fakeRepo) MarkVerifyFailed(_ context.Context, _, _ string, _ []proposal.Verification) (bool, error) {
+func (r *fakeRepo) MarkVerifyFailed(_ context.Context, _, _ string, _ []proposal.ReleaseCheck) (bool, error) {
 	return false, nil
 }
 func (r *fakeRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (bool, error) {
@@ -136,7 +136,7 @@ func (r *fakeRepo) ReopenTryAttempt(_ context.Context, _ uuid.UUID, _ int, _ pro
 	return false, nil
 }
 
-func (r *fakeRepo) UpdateVerificationPhase(_ context.Context, _, _ string, _ proposal.Phase, _ *time.Time) error {
+func (r *fakeRepo) UpdateReleaseCheckPhase(_ context.Context, _, _ string, _ proposal.Phase, _ *time.Time) error {
 	return nil
 }
 

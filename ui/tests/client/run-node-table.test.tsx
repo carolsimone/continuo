@@ -248,6 +248,6 @@ describe('RunNodeTable', () => {
         expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     fireEvent.click(screen.getByText('seed_table_1').closest('tr')!);
-    expect(container.querySelector('.remediation-verif')).toBeNull();
+    expect(container.querySelector('.remediation-subrow')).toBeNull();
   });
 });

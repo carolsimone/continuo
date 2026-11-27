@@ -8,8 +8,8 @@ import (
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +24,7 @@ func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *t
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, pipeline.StatusCompiling, r.Status())
+	assert.Equal(t, releasecheck.StatusCompiling, r.Status())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
@@ -91,7 +91,7 @@ func TestAdvanceQueue_OtherProjectsIncluded_ImageTagsAssembledOnRelease(t *testi
 
 	// Assembled image tags must already be persisted on the release (SetAssembledImageTags).
 	r, _ := store.GetRelease("rNEW")
-	assert.Equal(t, pipeline.StatusCompiling, r.Status())
+	assert.Equal(t, releasecheck.StatusCompiling, r.Status())
 	assert.Equal(t, map[string]string{
 		"svc-a": "tag-a-new",
 		"svc-b": "tag-b-old",
@@ -120,7 +120,7 @@ func TestAdvanceQueue_ProdSeeded_UncoveredProject_BlocksActivation(t *testing.T)
 	// svc-b and svc-c are uncovered, so the release stays Received and nothing
 	// is emitted; the operator must seed service_prod first.
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, pipeline.StatusReceived, r.Status())
+	assert.Equal(t, releasecheck.StatusReceived, r.Status())
 	assert.Empty(t, outboxEntries(store))
 }
 
@@ -145,7 +145,7 @@ func TestAdvanceQueue_ProdSeeded_AllProjectsCovered_Proceeds(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, pipeline.StatusCompiling, r.Status())
+	assert.Equal(t, releasecheck.StatusCompiling, r.Status())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
@@ -172,7 +172,7 @@ func TestUncoveredProdProjects_IgnoresUnknownExternalNodes(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, pipeline.StatusCompiling, r.Status(), "svc-b is covered and the unknown-external node needs no pointer")
+	assert.Equal(t, releasecheck.StatusCompiling, r.Status(), "svc-b is covered and the unknown-external node needs no pointer")
 }
 
 // TestUncoveredProdProjects_StillBlocksOnAnUncoveredProjectBesideAnUnknownExternalNode
@@ -193,7 +193,7 @@ func TestUncoveredProdProjects_StillBlocksOnAnUncoveredProjectBesideAnUnknownExt
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, pipeline.StatusReceived, r.Status(), "svc-b has no pointer")
+	assert.Equal(t, releasecheck.StatusReceived, r.Status(), "svc-b has no pointer")
 }
 
 func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
@@ -208,7 +208,7 @@ func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rB, _ := store.GetRelease("rB")
-	assert.Equal(t, pipeline.StatusReceived, rB.Status())
+	assert.Equal(t, releasecheck.StatusReceived, rB.Status())
 	assert.Len(t, outboxEntries(store), 1) // only rA emitted
 }
 
@@ -232,7 +232,7 @@ func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testin
 
 	r, _ := store.GetRelease("rPy")
 	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
-	assert.Equal(t, pipeline.StatusParsing, r.Status(), "Python releases activate straight into Parsing")
+	assert.Equal(t, releasecheck.StatusParsing, r.Status(), "Python releases activate straight into Parsing")
 	assert.Equal(t, map[string]string{"svc-py": "img:1", "svc-dbt": "t-old"}, r.ImageTags())
 
 	entries := outboxEntries(store)
@@ -260,7 +260,7 @@ func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testin
 	assert.Equal(t, "s3://b/svc-py/rPy/odcs-bundle.json", uris["svc-py"])
 	assert.Equal(t, "s3://b/svc-dbt/rOld/manifest.json", uris["svc-dbt"])
 	assert.Equal(t, map[string]string{"svc-py": "img:1", "svc-dbt": "t-old"}, releaseRequestedImageTags(t, entries[0].Payload),
-		"release.requested carries the run's assembled image tags: topology-controller joins exactly these onto every node")
+		"release.requested carries the check's assembled image tags: topology-controller joins exactly these onto every node")
 }
 
 // The ontology project ships its ontology file before the release is
@@ -270,14 +270,14 @@ func TestAdvanceQueue_AnOntologyReleaseGoesStraightToParsing(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
-	store.SeedRelease(pipeline.NewCandidate("rOnt", "company-ontology", "img:1", false, false, "acme/ontology", "cafebabe",
+	store.SeedRelease(releasecheck.NewCandidate("rOnt", "company-ontology", "img:1", false, false, "acme/ontology", "cafebabe",
 		release.ManifestKindOntology, deps.Clock.Now()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rOnt")
 	assert.Equal(t, release.ManifestKindOntology, r.ManifestKind())
-	assert.Equal(t, pipeline.StatusParsing, r.Status(), "an ontology release has no compile leg")
+	assert.Equal(t, releasecheck.StatusParsing, r.Status(), "an ontology release has no compile leg")
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
@@ -310,7 +310,7 @@ func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	r, _ := store.GetRelease("rDbt")
-	assert.Equal(t, pipeline.StatusCompiling, r.Status())
+	assert.Equal(t, releasecheck.StatusCompiling, r.Status())
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
@@ -328,13 +328,13 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rOLD, _ := store.GetRelease("rOLD")
 	rNEW, _ := store.GetRelease("rNEW")
-	assert.Equal(t, pipeline.StatusCompiling, rOLD.Status())
-	assert.Equal(t, pipeline.StatusReceived, rNEW.Status())
+	assert.Equal(t, releasecheck.StatusCompiling, rOLD.Status())
+	assert.Equal(t, releasecheck.StatusReceived, rNEW.Status())
 }
 
 func TestAdvanceQueue_CompileRequestedCarriesSourceOverlayURI(t *testing.T) {
 	deps, store := newDeps(time.Now())
-	r := pipeline.NewVerification("r-ov", "svc", "tag", "rel-orig", 1,
+	r := releasecheck.NewFix("r-ov", "svc", "tag", "rel-orig", 1,
 		"s3://b/svc/r-ov/source-overlay.tar.gz", release.ManifestKindDbt, deps.Clock.Now())
 	store.SeedRelease(r)
 
@@ -352,17 +352,17 @@ func TestAdvanceQueue_CompileRequestedCarriesSourceOverlayURI(t *testing.T) {
 		assert.Equal(t, "s3://b/svc/r-ov/source-overlay.tar.gz", p.SourceOverlayURI)
 		found = true
 	}
-	require.True(t, found, "compile.requested must be emitted for a dbt verification run")
+	require.True(t, found, "compile.requested must be emitted for a dbt fix's release check")
 }
 
 // verifiedOriginal is a rejected candidate release of svc-a, parsed (so its
 // candidate manifest exists at its canonical key) and carrying its own image
-// tag for svc-a. A verification run verifying it must assemble THAT manifest
+// tag for svc-a. A fix's release check verifying it must assemble THAT manifest
 // for svc-a rather than svc-a's live production pointer.
-func verifiedOriginal(id string, now time.Time) *pipeline.Run {
-	return pipeline.Rehydrate(pipeline.RehydrateInput{
+func verifiedOriginal(id string, now time.Time) *releasecheck.Check {
+	return releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID:             id,
-		Status:         pipeline.StatusRejected,
+		Status:         releasecheck.StatusRejected,
 		ImageTags:      map[string]string{"svc-a": "tag-a-candidate", "svc-b": "tag-b-old"},
 		ChangedProject: "svc-a",
 		// Activation only needs to know the verified release was parsed; it
@@ -375,19 +375,19 @@ func verifiedOriginal(id string, now time.Time) *pipeline.Run {
 	})
 }
 
-// TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate covers the
+// TestAdvanceQueue_FixVerifiesTheRejectedReleasesCandidate covers the
 // fix whose edit lands in a DIFFERENT project than the one whose release was
 // rejected: the rejection came from svc-a's candidate, so verifying the fix
 // against svc-a's PRODUCTION manifest would judge it on code the rejection was
-// never about. The verification names the release it verifies, and svc-a is
+// never about. The fix's release check names the release it verifies, and svc-a is
 // assembled from that release's candidate — manifest key and image tag both.
-func TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate(t *testing.T) {
+func TestAdvanceQueue_FixVerifiesTheRejectedReleasesCandidate(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO", deps.Clock.Now()))
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	store.SeedRelease(pipeline.NewVerification("rVerify", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix("rVerify", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -396,25 +396,25 @@ func TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate(t *testin
 	uris := manifestKeyURIs(t, entries[0].Payload)
 	assert.Equal(t, "s3://b/svc-a/rO/manifest.json", uris["svc-a"],
 		"svc-a must be assembled from the rejected release's candidate, not from its production pointer")
-	assert.Equal(t, "s3://b/svc-b/rVerify/odcs-bundle.json", uris["svc-b"], "the verification run's own project is its own delta")
+	assert.Equal(t, "s3://b/svc-b/rVerify/odcs-bundle.json", uris["svc-b"], "the fix's own project is its own delta")
 
 	r, _ := store.GetRelease("rVerify")
 	assert.Equal(t, "tag-a-candidate", r.ImageTags()["svc-a"],
-		"the image tag must come from the rejected release too, or the run would execute production's image against the candidate manifest")
+		"the image tag must come from the rejected release too, or the check would execute production's image against the candidate manifest")
 	assert.Equal(t, "tag-a-candidate", releaseRequestedImageTags(t, entries[0].Payload)["svc-a"],
 		"the verified release's image tag must reach topology-controller too, or the artifact would carry production's image")
 }
 
-// TestAdvanceQueue_VerificationVerifyingAnUnknownRelease_FallsBackToProd
+// TestAdvanceQueue_FixVerifyingAnUnknownRelease_FallsBackToProd
 // covers the verified release having been deleted (or never persisted): the
-// verification still runs, assembled from the live production pointers
-// exactly as any other run is, rather than failing to activate.
-func TestAdvanceQueue_VerificationVerifyingAnUnknownRelease_FallsBackToProd(t *testing.T) {
+// fix's release check still runs, assembled from the live production pointers
+// exactly as any other check is, rather than failing to activate.
+func TestAdvanceQueue_FixVerifyingAnUnknownRelease_FallsBackToProd(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	store.SeedRelease(pipeline.NewVerification("rVerify2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix("rVerify2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -426,22 +426,22 @@ func TestAdvanceQueue_VerificationVerifyingAnUnknownRelease_FallsBackToProd(t *t
 	assert.Equal(t, "tag-a-prod", r.ImageTags()["svc-a"])
 }
 
-// TestAdvanceQueue_VerificationVerifyingItsOwnProjectsRelease_ChangesNothing
-// covers the ordinary verification, whose fix edits the very project whose
-// release was rejected: that project is the verification's own delta
+// TestAdvanceQueue_FixVerifyingItsOwnProjectsRelease_ChangesNothing
+// covers the ordinary fix's release check, whose fix edits the very project whose
+// release was rejected: that project is the fix's own delta
 // already, so there is nothing to override.
-func TestAdvanceQueue_VerificationVerifyingItsOwnProjectsRelease_ChangesNothing(t *testing.T) {
+func TestAdvanceQueue_FixVerifyingItsOwnProjectsRelease_ChangesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO2", deps.Clock.Now()))
 
-	store.SeedRelease(pipeline.NewVerification("rVerify3", "svc-a", "img:2", "rO2", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix("rVerify3", "svc-a", "img:2", "rO2", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	uris := manifestKeyURIs(t, entries[0].Payload)
-	assert.Equal(t, "s3://b/svc-a/rVerify3/odcs-bundle.json", uris["svc-a"], "the verification run's own delta wins")
+	assert.Equal(t, "s3://b/svc-a/rVerify3/odcs-bundle.json", uris["svc-a"], "the fix's own delta wins")
 
 	r, _ := store.GetRelease("rVerify3")
 	assert.Equal(t, "img:2", r.ImageTags()["svc-a"])
@@ -475,14 +475,14 @@ func releaseRequestedImageTags(t *testing.T, payload []byte) map[string]string {
 	return p.ImageTags
 }
 
-// assertKindChangeRejectedAtActivation checks that the queued run releaseID of
+// assertKindChangeRejectedAtActivation checks that the queued check releaseID of
 // the project named project ended with kind-change refusal text as an invalid_artifact
 // rejection, was never parsed, and left the project's service_prod row and
 // current_prod as they were.
 func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releaseID, project, refusal string, row *release.ServiceProd) {
 	t.Helper()
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, pipeline.StatusRejected, r.Status(), "a kind change is rejected, never promoted")
+	assert.Equal(t, releasecheck.StatusRejected, r.Status(), "a kind change is rejected, never promoted")
 	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), r.FailReason())
 	assert.Equal(t, refusal, r.FailDetail())
 
@@ -503,40 +503,40 @@ func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releas
 	assert.Equal(t, releaseID, rejected.ReleaseID)
 	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), rejected.Reason)
 	assert.Equal(t, refusal, rejected.ErrorDetail)
-	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
 // A dbt release of the project may promote between the intake of a queued
 // ontology release of the same project and its activation, so activation
 // refuses the kind change too: the ontology file would replace the project's
 // manifest and drop its nodes.
-func TestAdvanceQueue_AnOntologyRunOfAServiceNowReleasedAsDbtIsRejectedAtActivation(t *testing.T) {
+func TestAdvanceQueue_AnOntologyCheckOfAServiceNowReleasedAsDbtIsRejectedAtActivation(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	row := release.NewServiceProd("svc-x", "rDbt", "s3://b/svc-x/rDbt/manifest.json", "t-dbt", release.ManifestKindDbt, time.Unix(0, 0))
 	store.SeedServiceProd(row)
-	store.SeedRelease(pipeline.NewCandidate("rOnt", "svc-x", "img:1", false, false, "acme/ontology", "cafebabe",
+	store.SeedRelease(releasecheck.NewCandidate("rOnt", "svc-x", "img:1", false, false, "acme/ontology", "cafebabe",
 		release.ManifestKindOntology, deps.Clock.Now()))
-	store.SeedRelease(pipeline.NewCandidate("rBehind", "svc-y", "img:2", false, false, "acme/demo", "deadbeef",
+	store.SeedRelease(releasecheck.NewCandidate("rBehind", "svc-y", "img:2", false, false, "acme/demo", "deadbeef",
 		release.ManifestKindDbt, deps.Clock.Now().Add(time.Second)))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	assertKindChangeRejectedAtActivation(t, store, "rOnt", "svc-x",
 		`project "svc-x" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind`, row)
-	assert.Equal(t, pipeline.StatusCompiling, mustGetRelease(t, store, "rBehind").Status(),
-		"the queue activates the next run once the kind change is rejected")
+	assert.Equal(t, releasecheck.StatusCompiling, mustGetRelease(t, store, "rBehind").Status(),
+		"the queue activates the next check once the kind change is rejected")
 }
 
 // The ontology project of an install may be released as a node kind by a dbt
-// run queued before the ontology was released: activation refuses it, so the
+// check queued before the ontology was released: activation refuses it, so the
 // install's ontology is not silently replaced by a dbt project.
-func TestAdvanceQueue_ADbtRunOfTheOntologyProjectIsRejectedAtActivation(t *testing.T) {
+func TestAdvanceQueue_ADbtCheckOfTheOntologyProjectIsRejectedAtActivation(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	row := release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0))
 	store.SeedServiceProd(row)
-	store.SeedRelease(pipeline.NewCandidate("rDbt", "svc-x", "img:2", false, false, "acme/demo", "deadbeef",
+	store.SeedRelease(releasecheck.NewCandidate("rDbt", "svc-x", "img:2", false, false, "acme/demo", "deadbeef",
 		release.ManifestKindDbt, deps.Clock.Now()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
@@ -545,16 +545,16 @@ func TestAdvanceQueue_ADbtRunOfTheOntologyProjectIsRejectedAtActivation(t *testi
 		`project "svc-x" is released as kind "ontology": a project cannot change between kind "ontology" and a node kind`, row)
 }
 
-// A run whose kind is on the same side of the line as its project's stored
+// A check whose kind is on the same side of the line as its project's stored
 // kind activates as usual.
-func TestAdvanceQueue_ARunKeepingItsProjectsKindSideIsNotRejected(t *testing.T) {
+func TestAdvanceQueue_ACheckKeepingItsProjectsKindSideIsNotRejected(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0)))
-	store.SeedRelease(pipeline.NewCandidate("rOnt2", "svc-x", "img:2", false, false, "acme/ontology", "cafebabe",
+	store.SeedRelease(releasecheck.NewCandidate("rOnt2", "svc-x", "img:2", false, false, "acme/ontology", "cafebabe",
 		release.ManifestKindOntology, deps.Clock.Now()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
-	assert.Equal(t, pipeline.StatusParsing, mustGetRelease(t, store, "rOnt2").Status())
+	assert.Equal(t, releasecheck.StatusParsing, mustGetRelease(t, store, "rOnt2").Status())
 }

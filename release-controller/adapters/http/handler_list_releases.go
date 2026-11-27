@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 )
 
@@ -22,9 +22,9 @@ type releaseListItem struct {
 	CommitSHA    string  `json:"commit_sha"`
 }
 
-// candidateKind narrows GET /releases to candidates: a verification run is
-// not a release and is read through GET /verification-runs instead.
-var candidateKind = pipeline.KindCandidate
+// candidateKind narrows GET /releases to candidates: a fix's release check
+// is not a release and is read through GET /release-checks instead.
+var candidateKind = releasecheck.KindCandidate
 
 // handleListReleases returns paginated release history, newest-first.
 // Query params: status (optional), limit (optional), cursor (optional).
@@ -37,7 +37,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	}
 	// limit is best-effort: an unparseable, non-positive, or out-of-range value
 	// falls back to the default page size, which the repository clamps (see
-	// RunRepository.List). Only the cursor is strictly checked, since a
+	// ReleaseCheckRepository.List). Only the cursor is strictly checked, since a
 	// malformed cursor is an unambiguous client error.
 	limit := 0
 	if n, err := strconv.Atoi(q.Get("limit")); err == nil {
@@ -50,7 +50,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u := s.deps.NewUoW()
-	items, next, err := u.RunRepo().List(r.Context(), repository.ListFilter{
+	items, next, err := u.ReleaseCheckRepo().List(r.Context(), repository.ListFilter{
 		Kind: &candidateKind, Status: statusPtr, Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
@@ -74,7 +74,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 // toReleaseListItem projects a release aggregate onto the JSON list row. repo
 // and commit_sha are carried so the UI can resolve the commit author for the
 // Releases tab without a per-release detail fetch.
-func toReleaseListItem(rel *pipeline.Run) releaseListItem {
+func toReleaseListItem(rel *releasecheck.Check) releaseListItem {
 	var resolved *string
 	if t := resolvedAt(rel); t != nil {
 		resolvedStr := t.UTC().Format(time.RFC3339)
@@ -94,9 +94,9 @@ func toReleaseListItem(rel *pipeline.Run) releaseListItem {
 }
 
 // resolvedAt returns the timestamp of the terminal transition, or nil if the
-// run has not resolved. The resolved_at column is not persisted, so it is
+// check has not resolved. The resolved_at column is not persisted, so it is
 // derived from the transition history.
-func resolvedAt(rel *pipeline.Run) *time.Time {
+func resolvedAt(rel *releasecheck.Check) *time.Time {
 	ts := rel.Transitions()
 	for i := len(ts) - 1; i >= 0; i-- {
 		if ts[i].To.IsTerminal() {

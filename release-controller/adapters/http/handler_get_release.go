@@ -5,11 +5,11 @@ import (
 	"net/http"
 
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 )
 
 // getReleaseResponse builds the JSON object returned by GET /releases/{id}.
-func getReleaseResponse(rel *pipeline.Run) map[string]any {
+func getReleaseResponse(rel *releasecheck.Check) map[string]any {
 	body := map[string]any{
 		"release_id":          rel.ID(),
 		"status":              string(rel.Status()),
@@ -44,8 +44,8 @@ func (s *Server) handleGetRelease(w http.ResponseWriter, r *http.Request) {
 	// Each request gets its own UoW; no Begin is called — the repo uses the
 	// connection pool directly for this read-only path.
 	u := s.deps.NewUoW()
-	rel, err := u.RunRepo().Get(r.Context(), id)
-	if err != nil || rel == nil || rel.Kind() != pipeline.KindCandidate {
+	rel, err := u.ReleaseCheckRepo().Get(r.Context(), id)
+	if err != nil || rel == nil || rel.Kind() != releasecheck.KindCandidate {
 		http.Error(w, "release not found", http.StatusNotFound)
 		return
 	}

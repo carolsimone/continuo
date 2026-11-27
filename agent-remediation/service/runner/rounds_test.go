@@ -130,7 +130,7 @@ func TestRunner_RoundsSpentHandsTheClusterOver(t *testing.T) {
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusFailed, p.Status)
 	assert.Equal(t, want, p.NodeOutcomes["svc-a"])
-	assert.Empty(t, h.pipeline.runs())
+	assert.Empty(t, h.checks.requests())
 }
 
 func TestRunner_AnUpstreamClusterWhoseRoundsAreSpentFallsBack(t *testing.T) {

@@ -190,10 +190,10 @@ type ValidationJobParams struct {
 	ParseProdS3URI      string
 	ParseCandidateS3URI string
 
-	// SourceOverlayURI locates the source-overlay tarball a verification run
-	// lays over a staged copy of the team project before dbt runs. Populated
-	// only for mode=compile and mode=seed_build dispatches of a verification
-	// run.
+	// SourceOverlayURI locates the source-overlay tarball a fix's
+	// release check lays over a staged copy of the team project before dbt
+	// runs. Populated only for mode=compile and mode=seed_build dispatches of
+	// a fix's release check.
 	SourceOverlayURI string
 
 	// SeedPreflight is the check a seed-build pod runs against the seed's
@@ -454,8 +454,8 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
 // generate_schema_name macro materializes the seed into the candidate schema.
 // ImageTag must be non-empty — the team image must be explicitly versioned.
-// When p.SourceOverlayURI is non-empty (a verification run verifying a
-// proposed fix), an "overlay" initContainer using the s3-sidecar image fetches
+// When p.SourceOverlayURI is non-empty (a fix's release
+// check), an "overlay" initContainer using the s3-sidecar image fetches
 // the proposed source files into /shared/overlay and writes the paths the fix
 // removes, when it removes any, to /shared/overlay-delete-paths
 // (OVERLAY_DELETE_LIST); the pod gets a writable workdir emptyDir, and the team
@@ -515,7 +515,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 	}
 
 	if p.SourceOverlayURI != "" {
-		// A verification run verifies a proposed fix: the overlay fetcher lays
+		// A fix's release check: the overlay fetcher lays
 		// the proposed files into /shared/overlay and writes the paths the fix
 		// removes to /shared/overlay-delete-paths, and the team container
 		// stages the project into its workdir, lays the files over the copy,
@@ -571,7 +571,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 // job name). The Job pod has a shared emptyDir volume "shared" mounted at
 // /shared in every container:
 //   - when params.SourceOverlayURI is set, initContainer "overlay": the
-//     s3-sidecar image fetches a verification run's proposed source files
+//     s3-sidecar image fetches a fix's proposed source files
 //     into /shared/overlay, and writes the paths the fix removes to
 //     /shared/overlay-delete-paths, before any other team-image init container
 //     runs.
@@ -663,7 +663,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //     the shared s3-sidecar image that runs `python /overlay_fetcher.py` with
 //     SOURCE_OVERLAY_URI, OVERLAY_DEST=/shared/overlay,
 //     OVERLAY_DELETE_LIST=/shared/overlay-delete-paths and the S3 credential
-//     envs, laying a verification run's proposed source files into
+//     envs, laying a fix's proposed source files into
 //     /shared/overlay, and writing the paths the fix removes (when it removes
 //     any) to /shared/overlay-delete-paths, before any other team-image init
 //     container runs. Every team-image init container's shell command
@@ -743,7 +743,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 		{Name: "COMPILE_EXTRAS_S3_URI", Value: extrasURI},
 	}, s3CredEnvVars()...)
 
-	// staged is true for a verification run verifying a proposed fix. Every
+	// staged is true for a fix's release check. Every
 	// team-image init container then stages the project into its own workdir,
 	// lays the proposed files over the copy and runs dbt there, and reads the
 	// artifacts dbt wrote back from that copy rather than from the configured
@@ -1341,7 +1341,7 @@ func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string, s
 // stages a writable copy of the team project and runs dbt from.
 const overlayWorkDir = "/work"
 
-// overlayDir is where the overlay initContainer extracts a verification run's
+// overlayDir is where the overlay initContainer extracts a fix's
 // proposed files (its OVERLAY_DEST), for the team-image containers to lay over
 // their staged project.
 const overlayDir = "/shared/overlay"

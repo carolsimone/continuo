@@ -9,7 +9,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	releasev1 "github.com/carolsimone/continuo/release-controller/api/release/v1"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -79,18 +79,18 @@ func (s *ReleaseQueryServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// GetReleaseNotices returns the notices of a candidate release. A verification
-// run's id is unknown here, as it is to GET /releases/{id}.
+// GetReleaseNotices returns the notices of a candidate release. A fix's release
+// check id is unknown here, as it is to GET /releases/{id}.
 func (s *ReleaseQueryServer) GetReleaseNotices(ctx context.Context, req *releasev1.GetReleaseNoticesRequest) (*releasev1.GetReleaseNoticesResponse, error) {
 	id := req.GetReleaseId()
 	if id == "" {
 		return nil, status.Error(codes.InvalidArgument, "release_id is required")
 	}
-	rel, err := s.newUoW().RunRepo().Get(ctx, id)
+	rel, err := s.newUoW().ReleaseCheckRepo().Get(ctx, id)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read release %q: %v", id, err)
 	}
-	if rel == nil || rel.Kind() != pipeline.KindCandidate {
+	if rel == nil || rel.Kind() != releasecheck.KindCandidate {
 		return nil, status.Errorf(codes.NotFound, "release %q not found", id)
 	}
 	return &releasev1.GetReleaseNoticesResponse{

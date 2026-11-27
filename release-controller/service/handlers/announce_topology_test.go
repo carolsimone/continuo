@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,12 +48,12 @@ func TestAnnounceTopology_AnnouncesWithoutMovingCurrentProd(t *testing.T) {
 	assert.False(t, p.Bootstrap)
 }
 
-// Announcing under a release id that names a run or current_prod would
+// Announcing under a release id that names a check or current_prod would
 // replace that release's artifact, so it is refused before anything is written.
 func TestAnnounceTopology_RefusesATakenReleaseID(t *testing.T) {
-	t.Run("a pipeline run", func(t *testing.T) {
+	t.Run("a release check", func(t *testing.T) {
 		deps, store := newDeps(time.Unix(100, 0).UTC())
-		store.SeedRelease(pipeline.NewCandidate("rA", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0)))
+		store.SeedRelease(releasecheck.NewCandidate("rA", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0)))
 		_, err := handlers.AnnounceTopology(context.Background(), deps, "rA", benchTopology())
 		require.ErrorIs(t, err, handlers.ErrReleaseIDTaken)
 		assert.Equal(t, int64(0), store.LastPromotionSeq())

@@ -15,7 +15,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/maintenance"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/releasecheck"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 )
 
@@ -62,7 +62,7 @@ type RetryRemediationResult struct {
 // it writes an outbox row for remediation.retry_requested:v1 whose payload is
 // the typed retry (the release id, the new round and the stored rejection,
 // unchanged), stored under events.DefaultTenantID. It refuses when the id
-// names a verification run rather than a candidate (a verification is not a
+// names a fix's release check rather than a candidate (a fix is not a
 // release, so it is reported the same as an unknown id), when the candidate is
 // not rejected, when its reason is not healable, when the round cap is
 // reached, when the candidate has no stored rejection, when the current round
@@ -80,17 +80,17 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	}
 	defer func() { _ = u.Rollback() }()
 
-	r, err := u.RunRepo().Load(ctx, releaseID)
+	r, err := u.ReleaseCheckRepo().Load(ctx, releaseID)
 	if err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("load release: %w", err)
 	}
 	if r == nil {
 		return RetryRemediationResult{}, ErrReleaseNotFound
 	}
-	if r.Status() != pipeline.StatusRejected {
-		return RetryRemediationResult{}, pipeline.ErrNotRejected
+	if r.Status() != releasecheck.StatusRejected {
+		return RetryRemediationResult{}, releasecheck.ErrNotRejected
 	}
-	if r.Kind() != pipeline.KindCandidate {
+	if r.Kind() != releasecheck.KindCandidate {
 		return RetryRemediationResult{}, ErrReleaseNotFound
 	}
 	if !IsHealableReason(r.FailReason()) {
@@ -99,8 +99,8 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	if len(r.RejectionPayload()) == 0 {
 		return RetryRemediationResult{}, ErrNotRetryable
 	}
-	if r.RemediationRound() >= pipeline.MaxRemediationRounds {
-		return RetryRemediationResult{}, pipeline.ErrRoundsExhausted
+	if r.RemediationRound() >= releasecheck.MaxRemediationRounds {
+		return RetryRemediationResult{}, releasecheck.ErrRoundsExhausted
 	}
 
 	proposals, err := deps.Proposals.ListProposalsForRelease(ctx, releaseID)
@@ -120,7 +120,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	if err != nil {
 		return RetryRemediationResult{}, err
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseCheckRepo().Save(ctx, r); err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("save release: %w", err)
 	}
 

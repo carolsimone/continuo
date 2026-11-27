@@ -32,7 +32,7 @@ type ReleaseQueryClient interface {
 	// release, in node-id order, with the release's status. A notice predicts,
 	// the run decides: the run's own preflight and load settle what happens.
 	// Errors: INVALID_ARGUMENT for an empty release_id, NOT_FOUND when no
-	// candidate release has that id (a verification run's id is not one).
+	// candidate release has that id (a fix's release check id is not one).
 	GetReleaseNotices(ctx context.Context, in *GetReleaseNoticesRequest, opts ...grpc.CallOption) (*GetReleaseNoticesResponse, error)
 }
 
@@ -64,7 +64,7 @@ type ReleaseQueryServer interface {
 	// release, in node-id order, with the release's status. A notice predicts,
 	// the run decides: the run's own preflight and load settle what happens.
 	// Errors: INVALID_ARGUMENT for an empty release_id, NOT_FOUND when no
-	// candidate release has that id (a verification run's id is not one).
+	// candidate release has that id (a fix's release check id is not one).
 	GetReleaseNotices(context.Context, *GetReleaseNoticesRequest) (*GetReleaseNoticesResponse, error)
 	mustEmbedUnimplementedReleaseQueryServer()
 }

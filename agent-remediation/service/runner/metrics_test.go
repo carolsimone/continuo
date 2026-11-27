@@ -93,7 +93,7 @@ const flowName = "rejected-release"
 func sample(parts ...string) string { return flowName + "/" + strings.Join(parts, "/") }
 
 // Each cluster a try worked counts once, when the try ends: a try that waits
-// on its verification counts nothing, and a second try counts its clusters
+// on its release checks counts nothing, and a second try counts its clusters
 // again.
 func TestRunner_CountsOneTryPerClusterPerTry(t *testing.T) {
 	m := &recordedMetrics{}
@@ -110,8 +110,8 @@ func TestRunner_CountsOneTryPerClusterPerTry(t *testing.T) {
 	}, m.gotTries(), "the failed try counts each of its two clusters once")
 
 	require.NoError(t, h.drive(id))
-	assert.Len(t, m.gotTries(), 2, "the second try waits on its verification")
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	assert.Len(t, m.gotTries(), 2, "the second try waits on its release checks")
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.ElementsMatch(t, []string{
@@ -131,13 +131,13 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 		h := newHarness(t, withMetrics(m))
 		id := h.accept(trigger("compile", compileNode("svc-a")))
 		require.NoError(t, h.runner.Drive(ctx, id))
-		h.pipeline.answer(proposal.PhasePassed, nil)
+		h.checks.answer(proposal.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.Equal(t, []string{sample("dbt-compile", "passed")}, m.gotTries())
 	})
 
-	t.Run("a verification run failed on the last try", func(t *testing.T) {
+	t.Run("a release check failed on the last try", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m), withTries(1))
 		id := h.accept(trigger("compile", compileNode("svc-a")))
@@ -278,7 +278,7 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 		h.failGate(id, "svc-b")
 		require.NoError(t, h.drive(id))
 		assert.Empty(t, m.gotOutcomes(), "the first try is not the end")
-		h.pipeline.answer(proposal.PhasePassed, nil)
+		h.checks.answer(proposal.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.ElementsMatch(t, []string{
@@ -297,7 +297,7 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 		h := newHarness(t, withMetrics(m))
 		id := h.accept(trigger("compile", unfixable(compileNode("svc-a"), "classifier_infra", "the warehouse dropped"), compileNode("svc-b")))
 		require.NoError(t, h.runner.Drive(ctx, id))
-		h.pipeline.answer(proposal.PhasePassed, nil)
+		h.checks.answer(proposal.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.Equal(t, []string{sample("dbt-compile", "passed")}, m.gotTries(), "the unfixable node's cluster ran no step")
@@ -370,8 +370,8 @@ func TestRunner_CountsEachNodeWhenItsRemediationEnds(t *testing.T) {
 		test.NodeType = "dbt-test"
 		id := h.accept(trigger("compile", compileNode("svc-a"), test))
 		require.NoError(t, h.runner.Drive(ctx, id))
-		assert.Empty(t, m.gotOutcomes(), "a remediation that waits on its verification has not ended")
-		h.pipeline.answer(proposal.PhasePassed, nil)
+		assert.Empty(t, m.gotOutcomes(), "a remediation that waits on its release checks has not ended")
+		h.checks.answer(proposal.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.ElementsMatch(t, []string{
@@ -383,7 +383,7 @@ func TestRunner_CountsEachNodeWhenItsRemediationEnds(t *testing.T) {
 	t.Run("tries spent counts each node once, at the last try", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m))
-		h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+		h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
 		id := h.accept(trigger("compile", compileNode("svc-a")))
 		for try := 1; try <= 3; try++ {
 			require.NoError(t, h.drive(id))
@@ -498,7 +498,7 @@ func TestRunner_CountsTheNodesOfARemediationWhoseAttemptRowMoved(t *testing.T) {
 			id := h.accept(trigger("compile", compileNode("svc-a"), test))
 			require.NoError(t, h.runner.Drive(ctx, id))
 			require.NoError(t, tc.move(h, h.attempt(1).ID))
-			h.pipeline.answer(tc.phase, map[string]string{"svc-a": "broken"})
+			h.checks.answer(tc.phase, map[string]string{"svc-a": "broken"})
 
 			require.NoError(t, h.poll(id))
 
@@ -541,7 +541,7 @@ func TestRunner_CountsEachCommittedStepWithItsDuration(t *testing.T) {
 	assert.Equal(t, []time.Duration{7 * time.Second}, m.durations(sample("dbt-compile", "propose")))
 
 	h.clock.set(h.clock.Now().Add(10 * time.Minute))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	assert.Equal(t, []time.Duration{10 * time.Minute}, m.durations(sample("", "gate")), "from the submit to the verdict")
@@ -693,7 +693,7 @@ func TestRunner_CountsEachSystemFailureOnce(t *testing.T) {
 		h.clock.set(t0.Add(time.Hour))
 		h.redrive(dls[0], "2-0")
 		require.NoError(t, h.drive(id))
-		h.pipeline.answer(proposal.PhasePassed, nil)
+		h.checks.answer(proposal.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
 		assert.Equal(t, []string{sample("step_failures")}, m.gotFailures())
@@ -713,7 +713,7 @@ func TestRemediationMetrics_TypeLabelComesFromTheLoadedFiles(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 	h.failGate(id, "svc-a")
 	require.NoError(t, h.drive(id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
 	rec := httptest.NewRecorder()

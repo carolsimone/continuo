@@ -1,0 +1,399 @@
+//go:build integration
+
+package deployer_test
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"os"
+	"sync"
+	"testing"
+	"time"
+
+	ecpg "github.com/carolsimone/continuo/execution-controller/adapters/postgres"
+	ecredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
+	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/deployer"
+	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
+	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/jmoiron/sqlx"
+	goredis "github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// capturingDeployer is a fake deploy.Deployer that records every
+// DeployValidation spec so the test can assert the dispatcher projects the
+// queued validation rows onto the correct Kubernetes Job descriptions. K8s is
+// never touched; the real apiserver call is replaced by this in-memory capture.
+type capturingDeployer struct {
+	mu          sync.Mutex
+	validations []deploy.ValidationJobSpec
+}
+
+func (c *capturingDeployer) Deploy(context.Context, deploy.JobSpec) error {
+	panic("production Deploy must not be invoked for validation rows")
+}
+
+func (c *capturingDeployer) DeployValidation(_ context.Context, spec deploy.ValidationJobSpec) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.validations = append(c.validations, spec)
+	return nil
+}
+
+func (c *capturingDeployer) DeploySeedBuild(_ context.Context, spec deploy.ValidationJobSpec) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.validations = append(c.validations, spec)
+	return nil
+}
+
+func (c *capturingDeployer) DeployCompile(_ context.Context, spec deploy.ValidationJobSpec) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.validations = append(c.validations, spec)
+	return nil
+}
+
+func (c *capturingDeployer) specs() []deploy.ValidationJobSpec {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]deploy.ValidationJobSpec, len(c.validations))
+	copy(out, c.validations)
+	return out
+}
+
+// legLogger is a quiet logger shared by the bindings under test.
+func legLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+// noopSchemaCreator stubs the candidate-schema pre-create. The validation-leg test
+// drives the execution-controller command queue, not the dbt warehouse, so the binding's
+// warehouse-side schema creation is a no-op here.
+type noopSchemaCreator struct{}
+
+func (noopSchemaCreator) EnsureCandidateSchema(context.Context, string) error { return nil }
+
+// newValidationRequestedBinding builds the production validation.requested:v1
+// binding over the live *sqlx.DB.
+func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XMessage) error {
+	logger := legLogger()
+	uowFactory := func() uow.UnitOfWork { return ecpg.NewPostgresUnitOfWork(db, logger) }
+	return ecredis.NewValidationRequestedBinding(
+		uowFactory, handlers.NewValidationRequestedHandler(logger), noopSchemaCreator{}, logger)
+}
+
+// recordNodeOutcome simulates the observer's settle of an ended validation Job:
+// it opens a transaction on the live *sqlx.DB and calls outcomes.Recorder.Record
+// as the observer does — recording the outcome and settling the leg (gating
+// propagation, per-node projection, and the aggregate once every node is
+// terminal) all in that one transaction.
+func recordNodeOutcome(t *testing.T, db *sqlx.DB, releaseID, nodeID, outcome string) {
+	t.Helper()
+	logger := legLogger()
+	u := ecpg.NewPostgresUnitOfWork(db, logger)
+	ctx := context.Background()
+	require.NoError(t, u.Begin(ctx))
+	err := outcomes.NewRecorder(logger).Record(ctx, u, outcomes.NodeOutcome{
+		Mode: model.ModeValidation, ReleaseID: releaseID, NodeID: nodeID,
+		Outcome: outcome, DBTLogURI: "s3://logs/" + releaseID + "/" + nodeID,
+	})
+	if err != nil {
+		_ = u.Rollback()
+		t.Fatalf("record node outcome: %v", err)
+	}
+	require.NoError(t, u.Commit())
+}
+
+// newCapturingDispatcher wires a Dispatcher exactly as production does — real
+// Postgres deployment + aggregate repos bound to its per-batch tx — but with a
+// fake K8s deployer that records the validation specs.
+func newCapturingDispatcher(db *sqlx.DB, dep deploy.Deployer) *deployer.Dispatcher {
+	logger := legLogger()
+	return deployer.NewDispatcher(
+		db, dep, absentJobs{},
+		func(exec outbox.Executor) repository.DeploymentRepository {
+			return ecpg.NewDeploymentsRepository(exec, logger)
+		},
+		func(exec outbox.Executor) repository.ValidationAggregateRepository {
+			return ecpg.NewValidationAggregateRepository(exec)
+		},
+		func(exec outbox.Executor) repository.AdmissionRepository {
+			return ecpg.NewAdmissionRepository(exec, logger)
+		},
+		func(exec outbox.Executor) repository.CancelledRunsRepository {
+			return ecpg.NewCancelledRunsRepository(exec)
+		},
+		50, logger, deployer.DispatcherConfig{},
+	)
+}
+
+// legNode is one entry in the canonical validation.requested:v1 nodes[].
+type legNode struct {
+	UniqueID    string `json:"unique_id"`
+	ProjectName string `json:"project_name"`
+	NodeType    string `json:"node_type"`
+	SchemaName  string `json:"schema_name"`
+	TableName   string `json:"table_name"`
+	ImageTag    string `json:"image_tag"`
+}
+
+// requestedXMessage assembles a validation.requested:v1 XMessage with the full
+// canonical payload (image_tags, candidate_schema, dbt_flags) for the given
+// nodes — the exact wire shape release-controller emits.
+func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema string, nodes []legNode) goredis.XMessage {
+	t.Helper()
+	order := make([]string, 0, len(nodes))
+	imageTags := map[string]string{}
+	for _, n := range nodes {
+		order = append(order, n.UniqueID)
+		imageTags[n.ProjectName] = n.ImageTag
+	}
+	body := map[string]any{
+		"release_id":        releaseID,
+		"mode":              "validation",
+		"nodes":             nodes,
+		"node_ids_in_order": order,
+		"image_tags":        imageTags,
+		"candidate_schema":  candidateSchema,
+		"dbt_flags":         []string{"--empty"},
+	}
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	return goredis.XMessage{ID: msgID, Values: map[string]any{"payload": string(raw)}}
+}
+
+// countByStreamAndKind counts the rows on stream whose payload's "kind" field
+// matches kind. The unified validation.result:v1 stream carries two message
+// kinds — "node" (one per settled node) and "complete" (the terminal decision,
+// emitted last) — so callers that care about only one of them must filter by
+// kind rather than count every row on the stream.
+func countByStreamAndKind(t *testing.T, db *sqlx.DB, stream, kind string) int {
+	t.Helper()
+	rows, err := db.Query(`SELECT payload FROM execution_outbox WHERE stream_name=$1`, stream)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	n := 0
+	for rows.Next() {
+		var payload []byte
+		require.NoError(t, rows.Scan(&payload))
+		var v struct {
+			Kind string `json:"kind"`
+		}
+		require.NoError(t, json.Unmarshal(payload, &v))
+		if v.Kind == kind {
+			n++
+		}
+	}
+	require.NoError(t, rows.Err())
+	return n
+}
+
+func countDeployments(t *testing.T, db *sqlx.DB, query string, args ...any) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(query, args...).Scan(&n))
+	return n
+}
+
+// waitValidationRowsDue blocks until no pending validation row for releaseID has
+// a next_attempt_at in the DB's future. next_attempt_at is stamped with the Go
+// process clock and the claim compares against the DB's NOW(); on a VM-backed
+// Docker host those clocks can differ by tens of milliseconds, so a row enqueued
+// "now" can read as not-yet-due for a moment. Production dispatches on a 5s tick
+// where this is moot; the test dispatches immediately, so wait for the DB to
+// agree the rows are due before driving the dispatcher.
+func waitValidationRowsDue(t *testing.T, db *sqlx.DB, releaseID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		notYetDue := countDeployments(t, db,
+			`SELECT COUNT(*) FROM deployments
+			 WHERE release_id=$1 AND mode='validation' AND status='pending' AND next_attempt_at > NOW()`,
+			releaseID)
+		if notYetDue == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("validation rows for %s still not due after 5s (host/DB clock skew)", releaseID)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestValidationLeg_EndToEnd drives the whole dispatch side of the
+// validation leg of a release check against testcontainer Postgres with a fake K8s deployer:
+// validation.requested:v1 → per-node deployments → dispatch (validation Jobs)
+// → simulated per-node terminal settles → aggregate gating → exactly-once
+// validation.result:v1 (kind=complete). The per-node terminal settle is
+// SIMULATED here by calling outcomes.Recorder.Record directly against a
+// transaction on the live DB, as the observer does once a candidate Job's
+// attempt ends; the observer's own settle is covered by
+// service/observer/observer_integration_test.go. This test owns the dispatch
+// side.
+func TestValidationLeg_EndToEnd(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	releaseID := "rel-validation-1"
+	candidateSchema := "_candidate_" + releaseID
+	nodes := []legNode{
+		{UniqueID: "model.shop.orders", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "orders", ImageTag: "sha-orders"},
+		{UniqueID: "model.shop.customers", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "customers", ImageTag: "sha-customers"},
+		{UniqueID: "model.shop.line_items", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "line_items", ImageTag: "sha-line-items"},
+	}
+
+	// Step 2: validation.requested:v1 → one pending validation deployment per node.
+	requested := newValidationRequestedBinding(db)
+	require.NoError(t, requested(ctx, requestedXMessage(t, "100-0", releaseID, candidateSchema, nodes)))
+
+	assert.Equal(t, 3, countDeployments(t, db,
+		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1`, releaseID),
+		"one validation deployment row per node")
+	for _, n := range nodes {
+		assert.Equal(t, 1, countDeployments(t, db,
+			`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND node_id=$2 AND status='pending'`,
+			releaseID, n.UniqueID), "node %s enqueued pending", n.UniqueID)
+	}
+
+	// Step 3: dispatch the batch. Each row → a DeployValidation call; rows move
+	// to status=starting; NO terminal yet.
+	// Wait for the rows to be due first: next_attempt_at is stamped with the Go
+	// process clock while the claim compares against the DB's NOW(), and on a
+	// VM-backed Docker host (colima) those can differ by tens of ms. Production
+	// dispatches on a 5s tick so the skew is irrelevant there; the test dispatches
+	// immediately, so wait until the DB agrees the rows are due.
+	waitValidationRowsDue(t, db, releaseID)
+	dep := &capturingDeployer{}
+	require.NoError(t, newCapturingDispatcher(db, dep).ProcessBatch(ctx))
+
+	specs := dep.specs()
+	require.Len(t, specs, 3, "three validation Jobs dispatched")
+	byNode := map[string]deploy.ValidationJobSpec{}
+	for _, s := range specs {
+		byNode[s.NodeID] = s
+	}
+	for _, n := range nodes {
+		s, ok := byNode[n.UniqueID]
+		require.True(t, ok, "spec for node %s", n.UniqueID)
+		assert.Equal(t, handlers.BuildValidationJobName(releaseID, n.UniqueID), s.JobName, "job_name derived deterministically")
+		assert.Equal(t, releaseID, s.ReleaseID)
+		assert.Equal(t, n.NodeType, s.NodeType)
+		assert.Equal(t, n.TableName, s.TableName)
+		assert.Equal(t, n.SchemaName, s.SchemaName)
+		assert.Equal(t, n.ProjectName, s.ProjectName)
+		assert.Equal(t, n.ImageTag, s.ImageTag)
+		assert.Equal(t, candidateSchema, s.CandidateSchema, "candidate schema threaded to the Job")
+	}
+
+	assert.Equal(t, 3, countDeployments(t, db,
+		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND status='starting'`, releaseID),
+		"all rows now started")
+	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
+		"no aggregate yet — every node still awaits its terminal")
+
+	// Step 4: simulate the observer settling terminals for 2 of 3 nodes
+	// (outcome=ok).
+	recordNodeOutcome(t, db, releaseID, "model.shop.orders", "ok")
+	recordNodeOutcome(t, db, releaseID, "model.shop.customers", "ok")
+
+	assert.Equal(t, 2, countDeployments(t, db,
+		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND outcome='ok' AND outcome_at IS NOT NULL`, releaseID),
+		"two nodes recorded their outcome")
+	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
+		"aggregate still gated — third node not yet terminal")
+
+	// Step 5: the third node terminates ok → aggregate fires exactly once.
+	recordNodeOutcome(t, db, releaseID, "model.shop.line_items", "ok")
+
+	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
+		"validation.result:v1 (kind=complete) emitted exactly once when the last node terminates")
+	assertAggregate(t, db, releaseID, "ok", []string{
+		"model.shop.orders", "model.shop.customers", "model.shop.line_items",
+	})
+
+	// Step 6: the third node's terminal is re-observed (e.g. two workers
+	// observing the same Job). Its outcome is already recorded, so
+	// outcomes.Recorder's own idempotency check makes this a no-op — no second
+	// aggregate.
+	recordNodeOutcome(t, db, releaseID, "model.shop.line_items", "ok")
+	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
+		"a re-observed terminal must not emit a second aggregate")
+}
+
+// TestValidationLeg_FailurePath drives the same leg on a fresh release
+// where one node terminates failed: the emitted validation.result:v1
+// (kind=complete) must carry aggregate_status=failed.
+func TestValidationLeg_FailurePath(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	releaseID := "rel-validation-fail"
+	candidateSchema := "_candidate_" + releaseID
+	nodes := []legNode{
+		{UniqueID: "model.shop.orders", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "orders", ImageTag: "sha-orders"},
+		{UniqueID: "model.shop.customers", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "customers", ImageTag: "sha-customers"},
+		{UniqueID: "model.shop.line_items", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "line_items", ImageTag: "sha-line-items"},
+	}
+
+	requested := newValidationRequestedBinding(db)
+	require.NoError(t, requested(ctx, requestedXMessage(t, "500-0", releaseID, candidateSchema, nodes)))
+
+	waitValidationRowsDue(t, db, releaseID)
+	dep := &capturingDeployer{}
+	require.NoError(t, newCapturingDispatcher(db, dep).ProcessBatch(ctx))
+	require.Len(t, dep.specs(), 3)
+
+	recordNodeOutcome(t, db, releaseID, "model.shop.orders", "ok")
+	recordNodeOutcome(t, db, releaseID, "model.shop.customers", "failed")
+	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
+		"still gated until every node is terminal")
+
+	recordNodeOutcome(t, db, releaseID, "model.shop.line_items", "ok")
+
+	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"))
+	assertAggregate(t, db, releaseID, "failed", []string{
+		"model.shop.orders", "model.shop.customers", "model.shop.line_items",
+	})
+}
+
+// assertAggregate reads the single validation.result:v1 (kind=complete) outbox
+// row for a release and asserts its slim decision payload (release_id +
+// aggregate_status, no per-node content). Per-node results reach
+// release-controller through the same stream's (kind=node) rows; this checks
+// one such row was emitted per expected node so the read model can reconstruct
+// the set.
+func assertAggregate(t *testing.T, db *sqlx.DB, releaseID, wantStatus string, wantNodeIDs []string) {
+	t.Helper()
+	var payload []byte
+	require.NoError(t, db.QueryRow(
+		`SELECT payload FROM execution_outbox WHERE stream_name=$1 AND payload->>'kind'='complete' LIMIT 1`,
+		streams.ValidationResultV1).Scan(&payload))
+
+	var got struct {
+		ReleaseID       string `json:"release_id"`
+		AggregateStatus string `json:"aggregate_status"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &got))
+	assert.Equal(t, releaseID, got.ReleaseID)
+	assert.Equal(t, wantStatus, got.AggregateStatus)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(payload, &raw))
+	_, present := raw["per_node_results"]
+	assert.False(t, present, "terminal event must not re-carry per-node content")
+
+	assert.Equal(t, len(wantNodeIDs), countByStreamAndKind(t, db, streams.ValidationResultV1, "node"),
+		"one per-node projection row emitted per settled node")
+}

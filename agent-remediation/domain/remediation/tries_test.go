@@ -10,7 +10,7 @@ func TestTryRecords_KeepsOnlyEarlierTriesOfTheseNodes(t *testing.T) {
 	cluster := func(target string, members ...string) ClusterRecord {
 		return ClusterRecord{Type: "dbt-validation", TargetNodeID: target, Members: members}
 	}
-	gate := []Finding{{Code: "verification_failed", Message: "model.a: still broken"}}
+	gate := []Finding{{Code: "release_check_failed", Message: "model.a: still broken"}}
 	records := []TryRecord{
 		// The try being made, and one of a later round: neither is earlier.
 		{Round: 2, Try: 2, Attempt: 5, Clusters: []ClusterRecord{cluster("model.a", "model.a")}},
@@ -53,7 +53,7 @@ func TestStepRun_ShownToLaterTriesIsADonePreflightOrFlowCheckRow(t *testing.T) {
 		return StepRun{Cluster: cluster, Step: step, Kind: kind, Status: status}
 	}
 	assert.True(t, row(1, StepPreflight, KindRunner, StepDone).ShownToLaterTries())
-	assert.True(t, row(FlowCluster, "verification_run", KindCheck, StepDone).ShownToLaterTries())
+	assert.True(t, row(FlowCluster, "release_check", KindCheck, StepDone).ShownToLaterTries())
 	assert.False(t, row(1, StepPreflight, KindRunner, StepFailed).ShownToLaterTries(), "a failed row stores no output")
 	assert.False(t, row(1, "content_changed", KindCheck, StepDone).ShownToLaterTries(), "a pre-flight check's findings are on the pass's row")
 	assert.False(t, row(1, "dbt-validation", "prompt", StepDone).ShownToLaterTries())

@@ -21,21 +21,21 @@ func TestFileEditsRoundTripCarryTargetNode(t *testing.T) {
 	assert.Equal(t, "s.u", got[0].TargetNodeID)
 }
 
-// TestNodeOutcomesAndVerificationsRoundTrip verifies the codecs for the two
+// TestNodeOutcomesAndReleaseChecksRoundTrip verifies the codecs for the two
 // new batched-attempt columns: node_outcomes (one outcome per failing node)
-// and verifications (one fix-verification run per edited project), and that an
-// empty verifications array decodes to nil rather than an empty non-nil slice.
-func TestNodeOutcomesAndVerificationsRoundTrip(t *testing.T) {
+// and release_checks (one release check of the fix per edited project), and
+// that an empty release_checks array decodes to nil rather than an empty non-nil slice.
+func TestNodeOutcomesAndReleaseChecksRoundTrip(t *testing.T) {
 	outcomes := map[string]proposal.NodeOutcome{"s.a": {Status: proposal.StatusVerifying}, "s.b": {Status: proposal.StatusSkipped, Reason: "no source"}}
 	raw, err := marshalNodeOutcomes(outcomes)
 	require.NoError(t, err)
 	assert.Equal(t, outcomes, unmarshalNodeOutcomes(raw))
 
-	vs := []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "verify-r-svc-a1", Phase: proposal.PhasePassed}}
-	rawV, err := marshalVerifications(vs)
+	vs := []proposal.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "verify-r-svc-a1", Phase: proposal.PhasePassed}}
+	rawV, err := marshalReleaseChecks(vs)
 	require.NoError(t, err)
-	assert.Equal(t, vs, unmarshalVerifications(rawV))
-	assert.Nil(t, unmarshalVerifications([]byte("[]")))
+	assert.Equal(t, vs, unmarshalReleaseChecks(rawV))
+	assert.Nil(t, unmarshalReleaseChecks([]byte("[]")))
 }
 
 // TestNodeOutcomesCodecCarriesTheCode verifies that the reason code of a node

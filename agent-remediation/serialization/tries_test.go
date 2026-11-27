@@ -30,7 +30,7 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 	unchanged := remediation.Finding{Code: "content_unchanged", Message: "the answer repeats the original"}
 	twice := remediation.Finding{Code: "path_edited_twice", Message: "models/a.sql is edited twice"}
 	kinds := remediation.Finding{Code: "two_manifest_kinds", Message: "dbt and python edits in one try"}
-	broken := remediation.Finding{Code: "verification_failed", Message: "model.a: still broken"}
+	broken := remediation.Finding{Code: "release_check_failed", Message: "model.a: still broken"}
 	first := remediation.Draft{Edits: []remediation.Edit{{Path: "models/a.sql", Original: "select a\n", Content: "select a\n"}}}
 	second := remediation.Draft{Edits: []remediation.Edit{
 		{Path: "models/a.sql", Original: "select a\n", Content: "select b\n"},
@@ -60,7 +60,7 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 			failedRow,
 			journalRow(t, 0, "no_path_edited_twice", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "no_path_edited_twice", Findings: []remediation.Finding{twice}}}, twice),
 			journalRow(t, 0, "one_manifest_kind", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "one_manifest_kind", Findings: []remediation.Finding{kinds}}}, kinds),
-			journalRow(t, 0, "verification_run", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "verification_run", Findings: []remediation.Finding{broken}}, Gate: true}, broken),
+			journalRow(t, 0, "release_check", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "release_check", Findings: []remediation.Finding{broken}}, Gate: true}, broken),
 			{Try: 1, Step: "hand_over", Kind: "output", Round: 1, Status: remediation.StepDone},
 		},
 	}

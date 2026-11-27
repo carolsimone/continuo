@@ -488,7 +488,7 @@ received → compiling → parsing → validating → promoted
 
 ### What just happened
 
-Those statuses are the whole pipeline, and each one is a different component:
+Those statuses are the whole release check, and each one is a different component:
 
 **`compiling`** — `release-controller` published a request that
 `execution-controller` turned into a Kubernetes Job running **your `core:v1`
@@ -1106,7 +1106,7 @@ the one this chapter is about. Invalid SQL never reaches validation: it is
 rejected earlier, at the parse stage as `invalid_sql`, and healed by the parse
 lane instead (this is the comma trap from chapter 7). About a minute after
 `rel-finance-v3` is rejected, the proposed fix appears in the UI against it: a
-diff that restores `amount_eur`, already proven by a real verification run.
+diff that restores `amount_eur`, already proven by a real release check.
 `rel-finance-v2` from chapter 7 gets a proposal too — its rejection was waiting
 for the agent to have a key.
 

@@ -81,22 +81,22 @@ func TestNormalizeSingleFileView_EmptyFirstEditPathLeavesScalarsAlone(t *testing
 	}
 }
 
-// TestNormalizeRepresentativeViews_FillsNodeIDAndVerificationRunIDFromBatchFields
+// TestNormalizeRepresentativeViews_FillsNodeIDAndReleaseCheckIDFromBatchFields
 // verifies that NormalizeRepresentativeViews sorts ResolvedNodeIDs, derives
-// NodeID and VerificationRunID from the batch fields when empty, and follows
+// NodeID and ReleaseCheckID from the batch fields when empty, and follows
 // edits[0] for the single-file view.
-func TestNormalizeRepresentativeViews_FillsNodeIDAndVerificationRunIDFromBatchFields(t *testing.T) {
+func TestNormalizeRepresentativeViews_FillsNodeIDAndReleaseCheckIDFromBatchFields(t *testing.T) {
 	p := Proposal{
 		ResolvedNodeIDs: []string{"s.b", "s.a"},
-		Verifications:   []Verification{{Project: "svc", Kind: "dbt", RunID: "verify-r-svc-a1"}},
+		ReleaseChecks:   []ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "verify-r-svc-a1"}},
 		Edits:           []FileEdit{{Path: "services/svc/models/u.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "s.u"}},
 	}
 	p.NormalizeRepresentativeViews()
 	if p.NodeID != "s.a" {
 		t.Fatalf("representative node must be the smallest resolved id, got %q", p.NodeID)
 	}
-	if p.VerificationRunID != "verify-r-svc-a1" {
-		t.Fatalf("verification run id view must be the first verification, got %q", p.VerificationRunID)
+	if p.ReleaseCheckID != "verify-r-svc-a1" {
+		t.Fatalf("release check id view must be the first release check, got %q", p.ReleaseCheckID)
 	}
 	if p.FilePath != "services/svc/models/u.sql" || p.ProposedSQLURI != "s3://c" {
 		t.Fatalf("single-file view must follow edits[0]: %+v", p)

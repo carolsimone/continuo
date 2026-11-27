@@ -5,9 +5,9 @@ import (
 	"fmt"
 )
 
-// PruneFinishedRuns deletes terminal runs of either kind older than retentionDays,
-// preserving any run still referenced by current_prod or a service_prod row.
-func PruneFinishedRuns(ctx context.Context, d *Deps, retentionDays int) (int, error) {
+// PruneFinishedChecks deletes terminal checks of either kind older than retentionDays,
+// preserving any check still referenced by current_prod or a service_prod row.
+func PruneFinishedChecks(ctx context.Context, d *Deps, retentionDays int) (int, error) {
 	cutoff := d.Clock.Now().AddDate(0, 0, -retentionDays)
 
 	u := d.NewUoW()
@@ -41,7 +41,7 @@ func PruneFinishedRuns(ctx context.Context, d *Deps, retentionDays int) (int, er
 		keepIDs = append(keepIDs, id)
 	}
 
-	n, err := u.RunRepo().DeleteFinishedBefore(ctx, cutoff, keepIDs)
+	n, err := u.ReleaseCheckRepo().DeleteFinishedBefore(ctx, cutoff, keepIDs)
 	if err != nil {
 		return 0, fmt.Errorf("delete resolved before: %w", err)
 	}

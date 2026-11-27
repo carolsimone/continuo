@@ -22,7 +22,7 @@ type Deps struct {
 	Proposals ports.ProposalReader // lists a release's remediation attempts for the retry decision
 
 	// Topologies reads and writes topology artifacts: every handler that needs
-	// a run's candidate topology loads it through here by the run's reference.
+	// a check's candidate topology loads it through here by the check's reference.
 	Topologies ports.TopologyArtifactStore
 
 	// Rejections renders the release.rejected:v1 body of whichever leg ended
@@ -31,7 +31,7 @@ type Deps struct {
 
 	// Maintenance is MAINTENANCE_ENABLED. While true, release intake and
 	// remediation retries are refused and the queue activates only
-	// verification runs, so candidates wait and fixes already being verified
+	// fixes' release checks, so candidates wait and fixes already being verified
 	// finish.
 	Maintenance bool
 

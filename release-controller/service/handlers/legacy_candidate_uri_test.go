@@ -7,11 +7,11 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
-// A run created before topology artifacts stored each node's candidate SQL URI
+// A check created before topology artifacts stored each node's candidate SQL URI
 // inline, as topology-controller built it, and the candidate SQL objects stay at
-// those URIs. Validation and rejection derive the URIs per run instead; this
-// pins that the derived URI is the one the run stored, for every node type.
-func TestCandidateArtifactURI_EqualsTheURIsLegacyRunsStored(t *testing.T) {
+// those URIs. Validation and rejection derive the URIs per check instead; this
+// pins that the derived URI is the one the check stored, for every node type.
+func TestCandidateArtifactURI_EqualsTheURIsLegacyChecksStored(t *testing.T) {
 	const legacy = `[
 	  {"unique_id":"core.orders","node_type":"dbt-model","candidate_artifact_uri":"s3://continuo/candidate-sql/rel-7/candidate_core.orders.sql"},
 	  {"unique_id":"core.orders_snap","node_type":"dbt-snapshot","candidate_artifact_uri":"s3://continuo/candidate-sql/rel-7/candidate_core.orders_snap.sql"},
@@ -32,7 +32,7 @@ func TestCandidateArtifactURI_EqualsTheURIsLegacyRunsStored(t *testing.T) {
 	for _, n := range nodes {
 		got := candidateArtifactURI("continuo", "rel-7", release.Node{UniqueID: n.UniqueID, NodeType: n.NodeType})
 		if got != n.URI {
-			t.Errorf("%s (%s): derived %q, the run stored %q", n.UniqueID, n.NodeType, got, n.URI)
+			t.Errorf("%s (%s): derived %q, the check stored %q", n.UniqueID, n.NodeType, got, n.URI)
 		}
 	}
 }

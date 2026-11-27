@@ -93,7 +93,7 @@ func stubRegistry() *Registry {
 		{Name: "target_file_was_shown", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
 		{Name: "needs_a_precedent", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyFailurePrecedents}},
 		{Name: "edits_map_to_a_project", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageCrossCluster}},
-		{Name: "verification_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}, MayStandAsGateRun: true},
+		{Name: "release_check", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}, MayStandAsGateRun: true},
 		{Name: "a_gate_without_a_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}},
 		{Name: "open_pr", Kind: step.KindOutput, Stages: []workflow.Stage{workflow.StageOutput}},
 		{Name: "node_owner", Kind: step.KindApprover, Stages: []workflow.Stage{workflow.StageApprover}},
@@ -119,7 +119,7 @@ func validFlow() workflow.Flow {
 		TypesPos:       pos(flowFile, 5),
 		Context:        []workflow.StepRef{ref(flowFile, 6, "failing_node_source")},
 		AcrossClusters: []workflow.StepRef{ref(flowFile, 7, "edits_map_to_a_project")},
-		Gate:           []workflow.StepRef{ref(flowFile, 8, "verification_run")},
+		Gate:           []workflow.StepRef{ref(flowFile, 8, "release_check")},
 		Tries:          3,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: "remediation.proposed", Pos: pos(flowFile, 11)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Pos: pos(flowFile, 12)},
@@ -173,15 +173,15 @@ func TestValidate_AcceptsAValidFlowAndType(t *testing.T) {
 
 func TestValidate_RefusesAnUnknownStep(t *testing.T) {
 	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-		f.Gate = []workflow.StepRef{ref(flowFile, 8, "verification_run"), ref(flowFile, 9, "no_such_step")}
+		f.Gate = []workflow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "no_such_step")}
 	}, `flows/f.yaml:9`, `no_such_step`)
 }
 
 func TestValidate_RefusesAStepInAStageItIsNotAllowedIn(t *testing.T) {
 	t.Run("a gate step under preflight", func(t *testing.T) {
 		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
-			ty.Preflight = append(ty.Preflight, ref(typeFile, 8, "verification_run"))
-		}, `types/t.yaml:8`, `verification_run`, `preflight`)
+			ty.Preflight = append(ty.Preflight, ref(typeFile, 8, "release_check"))
+		}, `types/t.yaml:8`, `release_check`, `preflight`)
 	})
 	t.Run("a context step as the prompt", func(t *testing.T) {
 		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
@@ -254,7 +254,7 @@ func TestValidate_RefusesAFlowListingAMissingType(t *testing.T) {
 func TestValidate_RefusesAGateWithNoRealRun(t *testing.T) {
 	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
 		f.Gate = []workflow.StepRef{ref(flowFile, 8, "a_gate_without_a_run")}
-	}, `flows/f.yaml:`, `gate`, `verification`)
+	}, `flows/f.yaml:`, `gate`, `release check`)
 }
 
 // The runner runs a gate of one long check, so a gate of more steps, even one
@@ -263,12 +263,12 @@ func TestValidate_RefusesAGateWithNoRealRun(t *testing.T) {
 func TestValidate_RefusesAGateOfMoreThanOneStep(t *testing.T) {
 	t.Run("two steps", func(t *testing.T) {
 		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-			f.Gate = []workflow.StepRef{ref(flowFile, 8, "verification_run"), ref(flowFile, 9, "a_gate_without_a_run")}
+			f.Gate = []workflow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "a_gate_without_a_run")}
 		}, `flows/f.yaml:9: flow "f" has 2 gate steps`)
 	})
 	t.Run("one step twice", func(t *testing.T) {
 		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-			f.Gate = []workflow.StepRef{ref(flowFile, 8, "verification_run"), ref(flowFile, 9, "verification_run")}
+			f.Gate = []workflow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "release_check")}
 		}, `flows/f.yaml:9: flow "f" has 2 gate steps`)
 	})
 }

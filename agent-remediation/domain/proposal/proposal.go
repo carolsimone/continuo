@@ -22,11 +22,11 @@ const (
 	StatusGenerating Status = "generating"
 	// StatusVerifying is the in-flight state that follows StatusGenerating for a
 	// fix whose correctness cannot be judged synchronously: the agent has
-	// proposed a fix and posted a fix-verification run to carry it through the
-	// full parse -> candidate-schema -> validation pipeline. The row carries the
-	// run's id (VerificationRunID).
-	// The gate poller polls the run and finalizes the attempt to 'proposed' (the
-	// fix verified) or 'failed' (with the run's error recorded as evidence for
+	// proposed a fix and posted its release check to carry it through the
+	// full parse -> candidate-schema -> validation stages. The row carries the
+	// check's id (ReleaseCheckID).
+	// The gate poller polls the check and finalizes the attempt to 'proposed' (the
+	// fix verified) or 'failed' (with the check's error recorded as evidence for
 	// the next try).
 	StatusVerifying Status = "verifying"
 	StatusProposed  Status = "proposed"
@@ -43,8 +43,8 @@ const (
 // such a row, so the earlier-tries evidence leaves it out.
 const NoRemediationInFlightReason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
 
-// Phase is where a fix-verification run stands, as this component last read it
-// from release-controller. queued: waiting its turn in the pipeline's FIFO.
+// Phase is where a fix's release check stands, as this component last read it
+// from release-controller. queued: waiting its turn in the release queue.
 // running: in one of the legs. passed / failed: the verdict.
 type Phase string
 
@@ -114,7 +114,7 @@ func CleanedOutcomes(outcomes map[string]NodeOutcome) map[string]NodeOutcome {
 }
 
 // CleanedReason is text an attempt's row records as why the attempt failed, such as
-// the errors of a verification run or the reason a remediation stopped, with every
+// the errors of a release check or the reason a remediation stopped, with every
 // credential, private key and email address replaced by its fixed marker. Such a
 // text can echo what a warehouse, a build or a log printed, and the release page
 // and the Proposal read show it.
@@ -122,43 +122,43 @@ func CleanedReason(reason string) string {
 	return sanitize.Text(reason)
 }
 
-// Verification is one fix-verification run posted to judge the edits made to
+// ReleaseCheck is the release check of a fix, posted to judge the edits made to
 // a single project, and the durable summary of how it went. The summary
-// outlives the run itself: release-controller prunes finished runs on its
+// outlives the check itself: release-controller prunes finished checks on its
 // retention window, and this is what still explains an old attempt after
 // that.
-type Verification struct {
+type ReleaseCheck struct {
 	Project string
 	Kind    string
-	RunID   string
-	// Phase is the run's last-read phase; "" on a row the gate poller has
-	// not yet read since the run was recorded.
+	CheckID string
+	// Phase is the check's last-read phase; "" on a row the gate poller has
+	// not yet read since the check was recorded.
 	Phase       Phase
 	ActivatedAt *time.Time
-	// Error is the named per-node errors the run reported, or the run's own
-	// reason and detail when it named no node; empty unless the run failed.
+	// Error is the named per-node errors the check reported, or the check's own
+	// reason and detail when it named no node; empty unless the check failed.
 	Error string
 }
 
-// FailedRunReason is the reason recorded for a verification that failed
-// without naming a node: the first failed run and the error it reported, or,
+// FailedCheckReason is the reason recorded for a release check that failed
+// without naming a node: the first failed check and the error it reported, or,
 // when it reported none, that it failed without a per-node error. A list with
-// no failed run names its first run.
-func FailedRunReason(runs []Verification) string {
-	if len(runs) == 0 {
-		return "verification failed without a per-node error"
+// no failed check names its first check.
+func FailedCheckReason(checks []ReleaseCheck) string {
+	if len(checks) == 0 {
+		return "the release check failed without a per-node error"
 	}
-	failed := runs[0]
-	for _, r := range runs {
+	failed := checks[0]
+	for _, r := range checks {
 		if r.Phase == PhaseFailed {
 			failed = r
 			break
 		}
 	}
 	if failed.Error != "" {
-		return fmt.Sprintf("verification run %s failed: %s", failed.RunID, failed.Error)
+		return fmt.Sprintf("release check %s failed: %s", failed.CheckID, failed.Error)
 	}
-	return fmt.Sprintf("verification run %s failed without a per-node error", failed.RunID)
+	return fmt.Sprintf("release check %s failed without a per-node error", failed.CheckID)
 }
 
 // UnionProjects merges project-name sets into one sorted, de-duplicated
@@ -214,15 +214,15 @@ type Proposal struct {
 	// remediation settled at its end, fixed or handed over, one entry per node
 	// sorted by node id. It is empty for an attempt row that belongs to no remediation.
 	Approvers []Approver
-	// Verifications is one fix-verification run per edited project;
-	// VerificationRunID is the view of the first.
-	Verifications []Verification
-	// VerificationRunID is the run id of the first verification — the
-	// single-run view of Verifications. Written when Status is (or was)
+	// ReleaseChecks holds the fix's release checks, one per edited project;
+	// ReleaseCheckID is the view of the first.
+	ReleaseChecks []ReleaseCheck
+	// ReleaseCheckID is the id of the first release check — the
+	// single-check view of ReleaseChecks. Written when Status is (or was)
 	// StatusVerifying. It is kept when the attempt is finalized, so a
-	// resolved row still names the run that judged it. Empty for an attempt
-	// that never entered verification.
-	VerificationRunID string
+	// resolved row still names the check that judged it. Empty for an attempt
+	// that never entered its release check.
+	ReleaseCheckID string
 	// Projects is every project this attempt touched: the failing nodes'
 	// projects plus the edited ones.
 	Projects       []string
@@ -283,17 +283,17 @@ func (p *Proposal) NormalizeSingleFileView() {
 
 // NormalizeRepresentativeViews derives the single-value views of the batched
 // fields: ResolvedNodeIDs is sorted, NodeID defaults to its first entry,
-// VerificationRunID defaults to the first verification's run, and the
+// ReleaseCheckID defaults to the first release check's id, and the
 // single-file scalars follow edits[0]. Every writer calls it before the
 // aggregate is persisted or turned into an event, so the row and the event
-// cannot disagree about which node or run represents the attempt.
+// cannot disagree about which node or release check represents the attempt.
 func (p *Proposal) NormalizeRepresentativeViews() {
 	sort.Strings(p.ResolvedNodeIDs)
 	if p.NodeID == "" && len(p.ResolvedNodeIDs) > 0 {
 		p.NodeID = p.ResolvedNodeIDs[0]
 	}
-	if p.VerificationRunID == "" && len(p.Verifications) > 0 {
-		p.VerificationRunID = p.Verifications[0].RunID
+	if p.ReleaseCheckID == "" && len(p.ReleaseChecks) > 0 {
+		p.ReleaseCheckID = p.ReleaseChecks[0].CheckID
 	}
 	p.NormalizeSingleFileView()
 }

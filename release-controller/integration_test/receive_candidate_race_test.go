@@ -22,7 +22,7 @@ func TestIntegration_ConcurrentFirstSubmissionsOfOneIDHaveOneWinner(t *testing.T
 	defer db.Close()
 
 	for round := 0; round < 20; round++ {
-		_, err := db.Exec("DELETE FROM release_pipeline_runs WHERE run_id = 'race-1'")
+		_, err := db.Exec("DELETE FROM release_checks WHERE check_id = 'race-1'")
 		require.NoError(t, err)
 
 		tags := []string{"img:a", "img:b"}
@@ -54,7 +54,7 @@ func TestIntegration_ConcurrentFirstSubmissionsOfOneIDHaveOneWinner(t *testing.T
 		}
 		require.NotEqual(t, -1, winner, "round %d: neither submission was accepted: %v", round, errs)
 
-		r, err := deps.NewUoW().RunRepo().Get(context.Background(), "race-1")
+		r, err := deps.NewUoW().ReleaseCheckRepo().Get(context.Background(), "race-1")
 		require.NoError(t, err)
 		require.NotNil(t, r)
 		assert.Equal(t, tags[winner], r.ImageTags()["service-1"], "round %d", round)

@@ -42,8 +42,8 @@ import (
 const consumerHandlerTimeout = 60 * time.Second
 
 // topologyCacheSize bounds the decoded topologies release-controller keeps in
-// memory. One run is active at a time; the active run, the release it may
-// verify, and recent runs still receiving results fit with room to spare.
+// memory. One check is active at a time; the active check, the release it may
+// verify, and recent checks still receiving results fit with room to spare.
 const topologyCacheSize = 16
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
@@ -66,7 +66,7 @@ func main() {
 	}
 
 	if cfg.Maintenance {
-		logger.Warn("Maintenance mode is on: release intake and remediation retries are refused; the queue activates only verification runs")
+		logger.Warn("Maintenance mode is on: release intake and remediation retries are refused; the queue activates only fixes' release checks")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -256,7 +256,7 @@ func main() {
 	outboxProc := redisadapter.StartOutboxPublisher(ctx, db, rc, outboxWaker, outboxMetrics, liveReg, logger)
 	outboxMetrics.Watch(outboxProc)
 
-	// The queue is advanced once before any consumer runs, so a run left
+	// The queue is advanced once before any consumer runs, so a check left
 	// received while no queue event fired starts on this boot: a candidate held
 	// while maintenance mode was on activates when the restart that turns it
 	// off comes up, not with the next submission. The advance waits out an
@@ -299,13 +299,13 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n, err := handlers.PruneFinishedRuns(ctx, deps, retentionDays)
+				n, err := handlers.PruneFinishedChecks(ctx, deps, retentionDays)
 				if err != nil {
 					logger.Error("retention prune failed", "error", err)
 					continue
 				}
 				if n > 0 {
-					logger.Info("pruned finished pipeline runs", "count", n)
+					logger.Info("pruned finished release checks", "count", n)
 				}
 			}
 		}

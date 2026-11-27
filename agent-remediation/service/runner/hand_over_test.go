@@ -93,7 +93,7 @@ func TestHandOver_AFullyFixedRemediationEmitsNothing(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile", compileNode("svc-a"), compileNode("svc-b")))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 
@@ -112,7 +112,7 @@ func TestRunner_APassedRemediationHandsOverOnlyItsDeclinedNodes(t *testing.T) {
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
 	require.NoError(t, h.runner.Drive(ctx, id))
-	h.pipeline.answer(proposal.PhasePassed, nil)
+	h.checks.answer(proposal.PhasePassed, nil)
 
 	require.NoError(t, h.poll(id))
 
@@ -224,7 +224,7 @@ func TestRunner_TriesSpent(t *testing.T) {
 		}
 		return fixAnswer(req)
 	}
-	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+	h.checks.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
 	noFile := compileNode("core")
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile",
@@ -308,7 +308,7 @@ func TestRunner_UnverifiableEdits(t *testing.T) {
 			), h.handedOverEvent())
 			h.requireHandOverRow(id, 2)
 			assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-			assert.Empty(t, h.pipeline.runs())
+			assert.Empty(t, h.checks.requests())
 		})
 	}
 }

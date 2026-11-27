@@ -36,10 +36,10 @@ const (
 	CompileCompletedV1 = "compile.completed:v1"
 	// ReleasePromotedV1 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
 	ReleasePromotedV1 = "release.promoted:v1"
-	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
+	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A release check's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
-	// PipelineRunFinishedV1 — A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
-	PipelineRunFinishedV1 = "pipeline.run.finished:v1"
+	// ReleaseCheckFinishedV1 — A release check of either kind (a candidate release or a fix's release check) reached a terminal status; carries the check's candidate schema so execution-controller can drop it whatever the outcome.
+	ReleaseCheckFinishedV1 = "release_check.finished:v1"
 	// RemediationRetryRequestedV1 — An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
 	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
 	// HealTriggeredV1 — One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
@@ -98,8 +98,8 @@ const (
 	RemediationReleaseRejected = "remediation-release-rejected"
 	// ExecutionControllerReleaseRejected — execution-controller consumer group on release.rejected:v1.
 	ExecutionControllerReleaseRejected = "execution-controller-release-rejected"
-	// ExecutionControllerPipelineRunFinished — execution-controller consumer group on pipeline.run.finished:v1.
-	ExecutionControllerPipelineRunFinished = "execution-controller-pipeline-run-finished"
+	// ExecutionControllerReleaseCheckFinished — execution-controller consumer group on release_check.finished:v1.
+	ExecutionControllerReleaseCheckFinished = "execution-controller-release-check-finished"
 	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.
 	RemediationRetryRequested = "remediation-retry-requested"
 	// AgentRemediationHealTriggered — agent-remediation consumer group on heal.triggered:v1.
@@ -130,7 +130,7 @@ var All = []string{
 	CompileCompletedV1,
 	ReleasePromotedV1,
 	ReleaseRejectedV1,
-	PipelineRunFinishedV1,
+	ReleaseCheckFinishedV1,
 	RemediationRetryRequestedV1,
 	HealTriggeredV1,
 	RemediationProposedV1,
@@ -158,7 +158,7 @@ var Groups = map[string][]string{
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
 	ReleasePromotedV1:           {CatalogReleaseTopology, CatalogReleaseVersions, CatalogReleaseContracts, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
 	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
-	PipelineRunFinishedV1:       {ExecutionControllerPipelineRunFinished},
+	ReleaseCheckFinishedV1:      {ExecutionControllerReleaseCheckFinished},
 	RemediationRetryRequestedV1: {RemediationRetryRequested},
 	HealTriggeredV1:             {AgentRemediationHealTriggered, CatalogHealTriggeredRejections},
 	RemediationProposedV1:       {},

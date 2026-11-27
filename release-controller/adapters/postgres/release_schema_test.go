@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/pkg/testdeps"
+	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 )
 
 // The Flyway-built release database holds the release schema.

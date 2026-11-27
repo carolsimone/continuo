@@ -183,7 +183,7 @@ func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 }
 
 // TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir verifies a
-// verification run's compile Job fetches the proposed source into
+// fix's release check's compile Job fetches the proposed source into
 // /shared/overlay (and the paths the fix removes into
 // /shared/overlay-delete-paths) and then runs dbt from a staged copy of the
 // team project
@@ -245,7 +245,7 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 }
 
 // TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers verifies that
-// when a verification run's overlay is set alongside CandidateSchema, every
+// when a fix's overlay is set alongside CandidateSchema, every
 // team-image container stages the project into its own workdir — not just
 // compile — so parse rehearsal exercises the overlaid source rather than the
 // pristine checked-in project, and reads back the partial-parse artifact from

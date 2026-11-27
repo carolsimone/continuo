@@ -61,13 +61,13 @@ message Proposal {
   // reaches a terminal outcome (pr_state 'merged' or 'rejected').
   string pr_closed_at = 25;
   repeated FileEdit edits = 26;
-  // verification_run_id names the pipeline run that verified this attempt's
-  // fix — the first of `verifications`. Set while the attempt is 'verifying'
+  // release_check_id names the release check that verified this attempt's
+  // fix — the first of `release_checks`. Set while the attempt is 'verifying'
   // and kept on the row it became. Empty on an attempt judged without one.
-  string verification_run_id = 27;
-  // verify_error is why that release rejected the fix — the reason a python
+  string release_check_id = 27;
+  // verify_error is why that release check rejected the fix — the reason a python
   // contract attempt reached 'failed', and the evidence the next attempt is
-  // shown. Empty unless verification failed.
+  // shown. Empty unless the release check failed.
   string verify_error = 28;
   // remediation_round is the release's remediation round this attempt belongs to.
   int32 remediation_round = 29;
@@ -78,9 +78,9 @@ message Proposal {
   // cluster that was skipped or failed leaves its members
   // skipped/failed while other members verify.
   map<string, NodeOutcome> node_outcomes = 31;
-  // verifications is one fix-verification run per edited project; the first
-  // entry is the view mirrored onto verification_run_id.
-  repeated Verification verifications = 32;
+  // release_checks holds one release check of the fix per edited project; the
+  // first entry is the view mirrored onto release_check_id.
+  repeated ReleaseCheck release_checks = 32;
   // pull_requests is one entry per (proposal, project) pull request; empty
   // for a proposal that never entered the PR lifecycle. project = "" is the
   // legacy whole-proposal group. The singular pr_* fields above mirror
@@ -235,14 +235,15 @@ message Approver {
   string source = 3;
 }
 
-// Verification is one fix-verification run per edited project and the
+// ReleaseCheck is the release check of the fix for one edited project and the
 // durable summary of how it went. phase is queued | running | passed |
-// failed (empty before the first read); activated_at is RFC 3339 or empty;
-// error is the named per-node errors on a failed run.
-message Verification {
+// failed (empty before the first read); check_id is the release check's id;
+// activated_at is RFC 3339 or empty; error is the named per-node errors of a
+// failed check.
+message ReleaseCheck {
   string project = 1;
   string kind = 2;
-  string run_id = 3;
+  string check_id = 3;
   string phase = 4;
   string activated_at = 5;
   string error = 6;

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode,
-  releasePillClass, verificationPhase, verificationRunPhase,
+  releasePillClass, attemptReleaseCheckPhase, releaseCheckPhase,
   effectiveRound, groupProposals, proposalPillClass, upcomingStages,
 } from './release-helpers';
 import { HANDOVER_TEXT } from './handover-text';
@@ -99,7 +99,7 @@ const base = {
   id: 'p', source: 'validation', release_id: 'r', node_id: 's.a', error_signature: 's', attempt: 1,
   status: 'verifying', confidence: 'high', rationale: 'overall', proposed_sql_uri: '', diff_uri: '', candidate_fix_sql_uri: '',
   candidate_fix_diff_uri: '', source_resolved: true, repo: '', commit_sha: '', file_path: '', model: '', created_at: '',
-  pr_url: '', pr_number: 0, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '', verification_run_id: '', verify_error: '',
+  pr_url: '', pr_number: 0, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '', release_check_id: '', verify_error: '',
 } as ProposalDTO;
 
 describe('batched proposal helpers', () => {
@@ -154,34 +154,34 @@ describe('HANDOVER_TEXT', () => {
   });
 });
 
-describe('verificationPhase', () => {
+describe('attemptReleaseCheckPhase', () => {
   const p = (phases: string[]): ProposalDTO => ({
     ...base, status: 'verifying',
-    verifications: phases.map((phase, i) => ({ project: `s${i}`, kind: 'dbt', run_id: `verify-${i}`, phase, activated_at: '', error: '' } as any)),
+    release_checks: phases.map((phase, i) => ({ project: `s${i}`, kind: 'dbt', check_id: `verify-${i}`, phase, activated_at: '', error: '' } as any)),
   });
-  it('is running when any run is running', () => {
-    expect(verificationPhase(p(['queued', 'running']))).toBe('running');
+  it('is running when any release check is running', () => {
+    expect(attemptReleaseCheckPhase(p(['queued', 'running']))).toBe('running');
   });
   it('is queued when every known phase is queued', () => {
-    expect(verificationPhase(p(['queued', 'queued']))).toBe('queued');
+    expect(attemptReleaseCheckPhase(p(['queued', 'queued']))).toBe('queued');
   });
   it('is undefined without positive evidence', () => {
-    expect(verificationPhase(p(['', '']))).toBeUndefined();
-    expect(verificationPhase(p(['passed', 'failed']))).toBeUndefined();
-    expect(verificationPhase({ ...base, verifications: [] })).toBeUndefined();
+    expect(attemptReleaseCheckPhase(p(['', '']))).toBeUndefined();
+    expect(attemptReleaseCheckPhase(p(['passed', 'failed']))).toBeUndefined();
+    expect(attemptReleaseCheckPhase({ ...base, release_checks: [] })).toBeUndefined();
   });
 });
 
-describe('verificationRunPhase', () => {
-  it('maps run statuses onto phases', () => {
-    expect(verificationRunPhase('received')).toBe('queued');
-    for (const s of ['compiling', 'parsing', 'seed_building', 'validating']) expect(verificationRunPhase(s)).toBe('running');
-    expect(verificationRunPhase('passed')).toBe('passed');
-    expect(verificationRunPhase('failed')).toBe('failed');
+describe('releaseCheckPhase', () => {
+  it('maps release check statuses onto phases', () => {
+    expect(releaseCheckPhase('received')).toBe('queued');
+    for (const s of ['compiling', 'parsing', 'seed_building', 'validating']) expect(releaseCheckPhase(s)).toBe('running');
+    expect(releaseCheckPhase('passed')).toBe('passed');
+    expect(releaseCheckPhase('failed')).toBe('failed');
   });
 });
 
-describe('releasePillClass for verification statuses', () => {
+describe('releasePillClass for release check statuses', () => {
   it('colours passed as succeeded, failed as failed, queued as pending', () => {
     expect(releasePillClass('passed')).toBe('pill--succeeded');
     expect(releasePillClass('failed')).toBe('pill--failed');

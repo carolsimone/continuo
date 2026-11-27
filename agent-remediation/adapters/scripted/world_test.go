@@ -197,20 +197,20 @@ func TestObjectStore_ReadsTheFixturesObjectsAndEveryArtifactWritten(t *testing.T
 	assert.ErrorIs(t, err, ports.ErrNotFound)
 }
 
-func TestPipeline_FailsTheRunsOfTheFirstAttemptsWithTheGateErrors(t *testing.T) {
-	p := newPipeline(1, map[string]string{"model.a": "still broken"}, fixedClock{now: startTime})
-	require.NoError(t, p.Submit(ctx, ports.VerificationRequest{RunID: "run-1", Attempt: 1}))
-	require.NoError(t, p.Submit(ctx, ports.VerificationRequest{RunID: "run-2", Attempt: 2}))
+func TestReleaseChecks_FailsTheRunsOfTheFirstAttemptsWithTheGateErrors(t *testing.T) {
+	p := newReleaseChecks(1, map[string]string{"model.a": "still broken"}, fixedClock{now: startTime})
+	require.NoError(t, p.Submit(ctx, ports.ReleaseCheckRequest{CheckID: "run-1", Attempt: 1}))
+	require.NoError(t, p.Submit(ctx, ports.ReleaseCheckRequest{CheckID: "run-2", Attempt: 2}))
 
 	first, err := p.Status(ctx, "run-1")
 	require.NoError(t, err)
-	assert.Equal(t, ports.VerificationStatus{Phase: proposal.PhaseFailed, ActivatedAt: startTime, NodeErrors: map[string]string{"model.a": "still broken"}}, first)
+	assert.Equal(t, ports.ReleaseCheckStatus{Phase: proposal.PhaseFailed, ActivatedAt: startTime, NodeErrors: map[string]string{"model.a": "still broken"}}, first)
 	second, err := p.Status(ctx, "run-2")
 	require.NoError(t, err)
-	assert.Equal(t, ports.VerificationStatus{Phase: proposal.PhasePassed, ActivatedAt: startTime}, second)
+	assert.Equal(t, ports.ReleaseCheckStatus{Phase: proposal.PhasePassed, ActivatedAt: startTime}, second)
 	_, err = p.Status(ctx, "run-3")
 	require.Error(t, err)
-	assert.Len(t, p.runs(), 2)
+	assert.Len(t, p.requests(), 2)
 }
 
 func TestPackager_PackagesAContractDirectoryAndRefusesAsTheFixtureSays(t *testing.T) {

@@ -517,7 +517,7 @@ func TestDBTValidation_BothFirstRoundRequestsAreShownTheEarlierTries(t *testing.
 	tries := []remediation.TryRecord{{
 		Round: 1, Try: 1, Attempt: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"model.svc.a"}, Edits: []remediation.EditRecord{{Path: repoFilePath, Diff: "<-bad\n+worse>"}}}},
-		Gate:     []remediation.Finding{{Code: "verification_failed", Message: "<model.svc.a: column worse does not exist>"}},
+		Gate:     []remediation.Finding{{Code: "release_check_failed", Message: "<model.svc.a: column worse does not exist>"}},
 	}}
 	ev := validationEvidence(resolvedBundle()).With(remediation.KeyPreviousTries, tries)
 	model := answers(stepOne(fixedSQL), stepTwo(fixedSource, "high"))

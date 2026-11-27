@@ -26,8 +26,8 @@ func TestTeardownBindings_ReturnCleanerErrorOnlyWhenContextIsDone(t *testing.T) 
 	}{
 		{"validation.result", redis.NewValidationResultTeardownBinding,
 			map[string]any{"payload": `{"kind":"complete","release_id":"rel","candidate_schema":"_candidate_rel"}`}},
-		{"pipeline.run.finished", redis.NewPipelineRunFinishedTeardownBinding,
-			map[string]any{"payload": `{"run_id":"rel","run_kind":"candidate","outcome":"rejected","candidate_schema":"_candidate_rel"}`}},
+		{"release_check.finished", redis.NewReleaseCheckFinishedTeardownBinding,
+			map[string]any{"payload": `{"check_id":"rel","check_kind":"candidate","outcome":"rejected","candidate_schema":"_candidate_rel"}`}},
 		{"release.rejected", redis.NewReleaseRejectedTeardownBinding,
 			map[string]any{"payload": `{"release_id":"rel","candidate_schema":"_candidate_rel"}`}},
 		{"release.promoted", redis.NewReleasePromotedTeardownBinding, releasePromotedFields(t, "_candidate_rel")},
