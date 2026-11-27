@@ -582,7 +582,7 @@ export interface FixDTO {
   // the single-file diff_uri above still points at a previewable diff.
   edits?: FileEditDTO[];
   // round is the release's round this try
-  // belongs to. Absent on a fix from before rounds existed, which the
+  // belongs to. Absent on a fix that names no round, which the
   // reader treats the same as round 1.
   round?: number;
   // resolved_node_ids lists every failing node this try addresses. Absent

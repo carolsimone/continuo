@@ -226,7 +226,7 @@ export function tryReleaseCheckPhase(p: FixDTO): 'queued' | 'running' | undefine
 
 // effectiveRound is the round a fix belongs to. The gRPC
 // client (ui/src/server/remediation-client.ts) loads the proto with
-// `defaults: true`, so a fix recorded before round existed
+// `defaults: true`, so a fix row that names no round
 // arrives over the wire as 0, not undefined — a plain `?? 1` fallback would
 // not catch it. Both a missing field and an explicit 0 read as round 1.
 export function effectiveRound(p: FixDTO): number {
