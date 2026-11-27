@@ -221,10 +221,10 @@ echo "Compiling and uploading dbt manifests to MinIO S3..."
 docker exec dbt-compile-and-load uv run python -m dbt_upload load --projects-dir /app/projects --target minio --release-id e2e-baseline
 echo "✓ dbt manifests compiled and uploaded to MinIO S3 (key: <project>/e2e-baseline/manifest.json)"
 
-# Per-project image tags are seeded into release-controller's production
-# pointers at the end of this script (after the final compose up runs the
-# release-controller migrations). The e2e reads image_tag from the production pointers — the
-# production source of truth — so no S3 image-tag sidecar is needed.
+# The e2e writes release-controller's production pointers from the per-project
+# image tags in tests/e2e/.image-tags (seedBaselineProductionPointers) and reads
+# image_tag from the production pointers, the production source of truth, so no
+# S3 image-tag sidecar is needed.
 
 # Materialize dbt seeds into e2e_schema. The e2e topology is seeded directly
 # into Neo4j (no manifest.loaded ingest), and the standing "seed" schedule is

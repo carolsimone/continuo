@@ -1,7 +1,10 @@
 // seed-production-pointers writes a production pointer for every project of
 // the live release's topology. Run it on an install whose live release lists
 // projects that have no production pointer: release activation stays blocked
-// until each of them has one.
+// until each of them has one. It rewrites the pointer of every project the
+// topology lists, a project that already has one included, to name the live
+// release, the image tag of the project's nodes and the manifest key --keys
+// gives, so --keys names every project.
 //
 // The --keys flag accepts a JSON object mapping project names to their existing
 // manifest S3 keys: a dbt project's manifest.json, and a python project's
