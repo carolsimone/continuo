@@ -639,7 +639,7 @@ func runningSeedTask(t *testing.T, spec run.DispatchSpec) (*run.Run, *fakeTaskCo
 	g := fxGraph()
 	op := spec.Operation
 	plan := runplan.Plan{Tasks: []runplan.PlannedTask{
-		{Key: "analytics.seed_fx_rates_eur", Operation: &op, Reason: spec.Reason, Preflight: spec.Preflight},
+		{Key: "analytics.seed_fx_rates_eur", Operation: &op, Reason: spec.Reason, DependentsCheck: spec.DependentsCheck},
 	}, Ready: []topology.NodeKey{"analytics.seed_fx_rates_eur"}}
 	_, err := r.Start(context.Background(), tc, plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
@@ -652,9 +652,9 @@ func seedTaskOf(r *run.Run) uuid.UUID {
 }
 
 // The retry of a seed's load carries the task's own operation, plan reason
-// and preflight, not the run's operation.
+// and dependents check, not the run's operation.
 func TestRecordAttemptReport_ARetryKeepsTheTasksDispatchSpec(t *testing.T) {
-	spec := run.DispatchSpec{Operation: model.OperationFullRefresh, Reason: "columns changed", Preflight: checkPreflight()}
+	spec := run.DispatchSpec{Operation: model.OperationFullRefresh, Reason: "columns changed", DependentsCheck: checkModeDependentsCheck()}
 	r, tc, g := runningSeedTask(t, spec)
 
 	events, _, err := r.RecordAttemptReport(context.Background(), tc, g, run.AttemptReport{TaskID: seedTaskOf(r), Attempt: 0,
@@ -665,15 +665,15 @@ func TestRecordAttemptReport_ARetryKeepsTheTasksDispatchSpec(t *testing.T) {
 	assert.Equal(t, int32(1), d.Attempt)
 	assert.Equal(t, spec.Operation, d.Operation)
 	assert.Equal(t, spec.Reason, d.Reason)
-	assert.Equal(t, spec.Preflight, d.Preflight)
+	assert.Equal(t, spec.DependentsCheck, d.DependentsCheck)
 }
 
 // The success of the seed dispatches the view it rebuilds with the view's own
-// spec: the run's operation, its rebuild reason and no preflight.
+// spec: the run's operation, its rebuild reason and no dependents check.
 func TestRecordAttemptReport_DispatchesEachReadyCandidateWithItsSpec(t *testing.T) {
 	r, tc := promotedSeedsRun(t)
 	g := &memTaskGraph{g: fxGraph(), tc: tc}
-	_, err := r.Start(context.Background(), tc, fxReloadPlan(checkPreflight()), g.g, taskDefaults, startNow)
+	_, err := r.Start(context.Background(), tc, fxReloadPlan(checkModeDependentsCheck()), g.g, taskDefaults, startNow)
 	require.NoError(t, err)
 	view := createdByKey(tc)["analytics.fx_rates_current"]
 	candidates, err := g.ReadyCandidates(context.Background(), r.RunID(), r.ReleaseID(), "analytics.seed_fx_rates_eur")
@@ -691,5 +691,5 @@ func TestRecordAttemptReport_DispatchesEachReadyCandidateWithItsSpec(t *testing.
 	assert.Equal(t, view.TaskID, d.TaskID)
 	assert.Equal(t, model.OperationRun, d.Operation)
 	assert.Equal(t, "rebuild: dropped by the load of analytics.seed_fx_rates_eur", d.Reason)
-	assert.Nil(t, d.Preflight)
+	assert.Nil(t, d.DependentsCheck)
 }

@@ -21,7 +21,7 @@ import (
 )
 
 func TestProbeJob_RunsTheProbeOpOnTheOutsideViews(t *testing.T) {
-	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-trino:v0.14.0")
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-trino:v0.15.0")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	job, err := probeJob(ports.ProbeRequest{JobName: "finance-analytics-seed-fx-rates-eur-6f1c-0", NodeID: "analytics.seed_fx_rates_eur",
 		Views: []string{"bi.fx_rates_report"}}, "default")
@@ -36,7 +36,7 @@ func TestProbeJob_RunsTheProbeOpOnTheOutsideViews(t *testing.T) {
 		{Name: "VALIDATION_OP", Value: "probe_views"}, {Name: "PROBE_VIEWS", Value: `["bi.fx_rates_report"]`},
 		{Name: "NODE_ID", Value: "analytics.seed_fx_rates_eur"}})
 	for _, e := range env {
-		assert.False(t, strings.HasPrefix(e.Name, "PREFLIGHT_") || strings.HasPrefix(e.Name, "SEED_PREFLIGHT_"), "probe_views reads only PROBE_VIEWS and NODE_ID: %s", e.Name)
+		assert.False(t, strings.HasPrefix(e.Name, "DEPENDENTS_CHECK_"), "probe_views reads only PROBE_VIEWS and NODE_ID: %s", e.Name)
 	}
 	assert.LessOrEqual(t, len(probeJobName(strings.Repeat("x", 63))), 52)
 	assert.Equal(t, probeJobName("a"), probeJobName("a"))

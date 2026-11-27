@@ -57,16 +57,16 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 	return handleSeedBuildOK(ctx, d, u, r, in, now)
 }
 
-// applyWarehouseFindings records what each seed's preflight found in the
+// applyWarehouseFindings records what each seed's dependents check found in the
 // warehouse on the release's notice for that seed. A result without findings
 // changes nothing, and neither does one for a seed the release has no notice for.
 func applyWarehouseFindings(d *Deps, r *releasecheck.Check, perNode []NodeResult) {
 	for _, n := range perNode {
-		if n.SeedPreflight == nil {
+		if n.DependentsCheck == nil {
 			continue
 		}
-		if !r.ApplyWarehouseFindings(n.NodeID, *n.SeedPreflight) {
-			d.Logger.Info("seed preflight findings for a seed with no notice", "release_id", r.ID(), "node_id", n.NodeID)
+		if !r.ApplyWarehouseFindings(n.NodeID, *n.DependentsCheck) {
+			d.Logger.Info("dependents check findings for a seed with no notice", "release_id", r.ID(), "node_id", n.NodeID)
 		}
 	}
 }

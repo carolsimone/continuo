@@ -98,8 +98,8 @@ func TestCheckSchema_RequiresTheSeedReloadColumns(t *testing.T) {
 	}
 	for _, c := range []string{"topology_nodes.materialized", "topology_nodes.full_refresh",
 		"topology_nodes.resolved_relation_id", "topology_releases.bootstrap",
-		"tasks.plan_reason", "tasks.seed_preflight", "tasks.rebuild_seed_key",
-		"task_attempts.seed_preflight_findings",
+		"tasks.plan_reason", "tasks.dependents_check", "tasks.rebuild_seed_key",
+		"task_attempts.dependents_check_findings",
 		"view_outages.tenant_id", "view_outages.node_key", "view_outages.state", "view_outages.since",
 		"view_outages.seed_key", "view_outages.run_id"} {
 		if !required[c] {

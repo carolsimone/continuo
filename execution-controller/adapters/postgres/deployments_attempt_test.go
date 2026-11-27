@@ -169,17 +169,17 @@ func TestRepo_AStoppedAttemptRoundTrips(t *testing.T) {
 	assert.True(t, now.Add(time.Minute).Equal(*got.Facts().StopRequestedAt))
 }
 
-// A seed's preflight is stored in job_params with the attempt, so the Job the
+// A seed's dependents check is stored in job_params with the attempt, so the Job the
 // dispatcher creates or adopts after a restart, built from the loaded
 // command, still runs the check before the load.
-func TestRepo_TheSeedPreflightRoundTrips(t *testing.T) {
+func TestRepo_TheDependentsCheckRoundTrips(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())
 	cmd := validCmd()
 	cmd.NodeType, cmd.SchemaName, cmd.TableName = string(pkgmodel.NodeTypeDbtSeed), "analytics", "seed_fx_rates_eur"
-	cmd.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+	cmd.DependentsCheck = &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound,
 		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}
 	d := model.NewDeployment(cmd, nil, time.Now())
 	d.RecordReport(d.ReportOf(pkgmodel.AttemptStatusQueued, ""))
@@ -190,10 +190,10 @@ func TestRepo_TheSeedPreflightRoundTrips(t *testing.T) {
 	got, found, err := repo.LoadByTaskAttempt(ctx, cmd.TaskID, 0)
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.Equal(t, cmd.SeedPreflight, got.Command().SeedPreflight)
-	assert.Equal(t, cmd.SeedPreflight, got.Command().ToJobSpec().SeedPreflight)
+	assert.Equal(t, cmd.DependentsCheck, got.Command().DependentsCheck)
+	assert.Equal(t, cmd.DependentsCheck, got.Command().ToJobSpec().DependentsCheck)
 	var stored string
-	require.NoError(t, db.Get(&stored, `SELECT job_params->'seed_preflight'->>'allowed' FROM deployments WHERE id = $1`, d.ID()))
+	require.NoError(t, db.Get(&stored, `SELECT job_params->'dependents_check'->>'allowed' FROM deployments WHERE id = $1`, d.ID()))
 	assert.JSONEq(t, `["analytics.fx_rates_current"]`, stored)
 
 	plain := validCmd()
@@ -202,5 +202,5 @@ func TestRepo_TheSeedPreflightRoundTrips(t *testing.T) {
 	got, found, err = repo.LoadByTaskAttempt(ctx, plain.TaskID, 0)
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.Nil(t, got.Command().SeedPreflight)
+	assert.Nil(t, got.Command().DependentsCheck)
 }

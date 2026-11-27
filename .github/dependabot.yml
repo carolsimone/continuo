@@ -173,6 +173,12 @@ updates:
       # x86_64 and aarch64.
       - dependency-name: "python"
         versions: [">=3.15"]
+      # The continuo-python-runtime images are pinned to one tag in every
+      # location scripts/check-validation-image-pin.sh reads (the validation
+      # image and the e2e py-probe fixture's base among them), and that tag moves
+      # with the op names execution-controller sends. A bump of one location
+      # alone fails the guard, so the tag moves by hand, everywhere at once.
+      - dependency-name: "*continuo-python-runtime-*"
     groups:
       docker:
         patterns: ["*"]

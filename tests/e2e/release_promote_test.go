@@ -214,7 +214,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	// 7d. rel_probe is a dbt node the release keeps, so the release's contract
 	//     bundle holds its dbt contract, whose schedule is its topology node's.
-	//     Catalog publishes it, and `continuo node contract` prints it.
+	//     Catalog publishes it, and `continuo node data-contract` prints it.
 	assertDbtNodeContract(t, ctx, clients, releaseID, probeNode)
 
 	// 8. The promoted release must surface in the history list and carry per-node

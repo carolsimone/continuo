@@ -79,8 +79,8 @@ type RejectedNode struct {
 
 	// ValidationOp names how the validation leg prepared the node:
 	// build_from_sql, build_from_columns or check_binds for a node checked
-	// from its own candidate code, clone_from_prod for an unchanged upstream
-	// cloned empty from its production table. Only the validation leg sets it.
+	// from its own candidate code, build_from_prod for an unchanged upstream
+	// built empty from its production table. Only the validation leg sets it.
 	ValidationOp pkg_model.ValidationOp
 
 	// RelationID, OtherProject and OtherFilePath describe a duplicate-table
@@ -112,7 +112,7 @@ type ReleaseRejection struct {
 
 	// FailingNodes names the nodes the rejection is for: every node that
 	// failed, except that a validation rejection with a failed node built from
-	// the candidate leaves out the unchanged upstreams whose copy from
+	// the candidate leaves out the unchanged upstreams whose build from
 	// production failed. PerNode carries the evidence for the nodes a fixer
 	// can act on. A nil slice and an empty one are distinct on the wire (null
 	// vs []), so both are passed through as the handler built them.

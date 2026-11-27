@@ -72,9 +72,9 @@ type Attempt struct {
 	RunResultsURI    *string
 	ParseCache       *string
 	ParseCacheReason *string
-	// SeedPreflight is what the preflight of a seed's load found in the
+	// DependentsCheck is what the dependents check of a seed's load found in the
 	// warehouse; nil when the attempt reported none.
-	SeedPreflight *seedreload.Findings
+	DependentsCheck *seedreload.Findings
 
 	// NextCheckIn is when, from now on the database clock, run-controller next asks
 	// execution-controller about the attempt; zero when saving it leaves the

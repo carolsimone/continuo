@@ -153,8 +153,8 @@ func TestEvidenceFromRejected_CarriesNoRound(t *testing.T) {
 func TestRoundRequestedBinding_NothingToClassifyIsAcknowledged(t *testing.T) {
 	r := &retryRecorder{}
 	h := newRoundRequestedHandler(retryDeps(r, ""), slog.New(slog.DiscardHandler))
-	notHealable := `{"release_id":"rel-1","stage":"validation","reason":"upstream_clone_failed",
-		"per_node":[{"node_id":"analytics.b","status":"failed","validation_op":"clone_from_prod"}]}`
+	notHealable := `{"release_id":"rel-1","stage":"validation","reason":"upstream_build_from_prod_failed",
+		"per_node":[{"node_id":"analytics.b","status":"failed","validation_op":"build_from_prod"}]}`
 
 	msg := retryMessage(t, "acme", pkgevents.RoundRequested{ReleaseID: "rel-1", Round: 2, Rejection: json.RawMessage(notHealable)})
 

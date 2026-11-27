@@ -93,13 +93,14 @@ assert "py-probe fixture older than the validation image is caught" "[ $rc -ne 0
 assert "py-probe fixture lag names the offending location" "[[ \"\$out\" == *'py-probe/Dockerfile'* ]]"
 
 # --- the python-node e2e fixture runs ahead ---------------------------------
-# The fixture is a project's image: it packs with the runtime it is built on,
-# which may be newer than the validation image.
+# The fixture packs with the runtime it is built on, which must be the one the
+# validation image ships: a newer one is drift too.
 write_fixture "$tmp/fixture-ahead" "v0.9.0"
 sed -i.bak 's/v0.9.0/v0.10.0/' "$tmp/fixture-ahead/tests/e2e/fixtures/py-probe/Dockerfile"
 rm -f "$tmp/fixture-ahead/tests/e2e/fixtures/py-probe/Dockerfile.bak"
 out="$(bash "$G" "$tmp/fixture-ahead" 2>&1)"; rc=$?
-assert "py-probe fixture newer than the validation image passes (0.10.0 is newer than 0.9.0)" "[ $rc -eq 0 ]"
+assert "py-probe fixture newer than the validation image is caught (0.10.0 is not 0.9.0)" "[ $rc -ne 0 ]"
+assert "py-probe fixture ahead names the offending location" "[[ \"\$out\" == *'py-probe/Dockerfile'* ]]"
 
 # --- the python-node e2e fixture names another image -----------------------
 write_fixture "$tmp/fixture-repo" "v0.2.0"

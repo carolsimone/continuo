@@ -9,15 +9,15 @@ const (
 	// names when the image it runs from does not match the content hash it
 	// was dispatched with.
 	resultBlockReasonImageContractMismatch = "image_contract_mismatch"
-	// resultBlockReasonUnownedDependents is the reason a seed preflight names
+	// resultBlockReasonUnownedDependents is the reason a dependents check names
 	// when an object reads the seed outside the views the run rebuilds and
 	// the objects an operator named.
 	resultBlockReasonUnownedDependents = "unowned_dependents"
-	// resultBlockReasonEngineMismatch is the reason a seed preflight names
+	// resultBlockReasonEngineMismatch is the reason a dependents check names
 	// when the runner's engine adapter declares another drop family than the
 	// one it was asked to check for.
 	resultBlockReasonEngineMismatch = "engine_mismatch"
-	// resultBlockReasonWarehouseUnreachable is the reason a seed preflight
+	// resultBlockReasonWarehouseUnreachable is the reason a dependents check
 	// names when it cannot connect to the warehouse.
 	resultBlockReasonWarehouseUnreachable = "warehouse_unreachable"
 )
@@ -25,7 +25,7 @@ const (
 // ReasonFromResultBlock maps the reason a result block names to the failure
 // reason of the attempt that printed it: image_contract_mismatch from a python
 // harness, and unowned_dependents, engine_mismatch and warehouse_unreachable
-// from a seed preflight. A block that names no reason, or one this component
+// from a dependents check. A block that names no reason, or one this component
 // does not know, maps to "" and leaves the attempt to be classified from what
 // Kubernetes shows of it.
 func ReasonFromResultBlock(reason string) pkgmodel.FailureReason {

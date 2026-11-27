@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
 import Tabs, { useActiveTab } from './Tabs';
-import NodeContractPanel from './NodeContractPanel';
+import NodeDataContractPanel from './NodeDataContractPanel';
 import { useSingleNodeRun } from './useSingleNodeRun';
 import type { NodeOutage, NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
 import { kindLabel, computeNodeStats, dormantTitle, formatDuration, formatRelative, formatTimeout } from './node-helpers';
@@ -95,7 +95,7 @@ const HISTORY_POLL_INTERVAL_MS = 5000;
 
 // The page's tabs, as the `tab` query parameter names them; History is the
 // default and writes nothing to the URL.
-const TAB_SLUGS = ['history', 'contract'];
+const TAB_SLUGS = ['history', 'data-contract'];
 
 export default function NodeDetailPage() {
   const { fqn } = useParams<{ fqn: string }>();
@@ -405,7 +405,7 @@ export default function NodeDetailPage() {
         defaultSlug="history"
         tabs={[
           { slug: 'history', label: 'History', count: stats.total },
-          { slug: 'contract', label: 'Contract' },
+          { slug: 'data-contract', label: 'Data contract' },
         ]}
       />
 
@@ -492,7 +492,7 @@ export default function NodeDetailPage() {
       )}
 
       <main className="page-content">
-        {activeTab === 'contract' && <NodeContractPanel project={project} schema={schema} table={table} />}
+        {activeTab === 'data-contract' && <NodeDataContractPanel project={project} schema={schema} table={table} />}
         {activeTab === 'history' && (
           <section className="detail-card">
             <div className="section-header">

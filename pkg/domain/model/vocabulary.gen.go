@@ -100,8 +100,8 @@ const (
 	RejectReasonValidationFailed RejectReason = "validation_failed"
 	// RejectReasonUpgradeInterrupted — the release check was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
 	RejectReasonUpgradeInterrupted RejectReason = "upgrade_interrupted"
-	// RejectReasonUpstreamCloneFailed — validation could not copy the production table of an unchanged upstream; a run of that node, not a code change, settles it.
-	RejectReasonUpstreamCloneFailed RejectReason = "upstream_clone_failed"
+	// RejectReasonUpstreamBuildFromProdFailed — the release check could not build an unchanged upstream from its production table; a run of that node, not a code change, settles it.
+	RejectReasonUpstreamBuildFromProdFailed RejectReason = "upstream_build_from_prod_failed"
 )
 
 // RejectReasons returns every value in contract.yaml declaration order.
@@ -121,7 +121,7 @@ func RejectReasons() []RejectReason {
 		RejectReasonSeedBuildFailed,
 		RejectReasonValidationFailed,
 		RejectReasonUpgradeInterrupted,
-		RejectReasonUpstreamCloneFailed,
+		RejectReasonUpstreamBuildFromProdFailed,
 	}
 }
 
@@ -156,7 +156,7 @@ func (v RejectReason) IsValid() bool {
 		return true
 	case RejectReasonUpgradeInterrupted:
 		return true
-	case RejectReasonUpstreamCloneFailed:
+	case RejectReasonUpstreamBuildFromProdFailed:
 		return true
 	}
 	return false
@@ -182,7 +182,7 @@ func (v RejectReason) Healable() bool {
 	return false
 }
 
-// ValidationOp — How the validation leg prepares one node of a candidate release in the candidate schema. release-controller names it per node on validation.requested:v1 and on each per_node entry of a validation rejection on release.rejected:v1; execution-controller passes it to the validation runner as VALIDATION_OP; remediation never turns a failed clone_from_prod node into a failure to fix.
+// ValidationOp — How the validation leg prepares one node of a candidate release in the candidate schema. release-controller names it per node on validation.requested:v1 and on each per_node entry of a validation rejection on release.rejected:v1; execution-controller passes it to the validation runner as VALIDATION_OP; remediation never turns a failed build_from_prod node into a failure to fix.
 // Values come from the vocabulary "validation_op" in contract.yaml, in
 // declaration order.
 type ValidationOp string
@@ -194,8 +194,8 @@ const (
 	ValidationOpBuildFromColumns ValidationOp = "build_from_columns"
 	// ValidationOpCheckBinds — a dbt test built from its own candidate code; the runner EXPLAINs its compiled SQL against the candidate schema and creates nothing.
 	ValidationOpCheckBinds ValidationOp = "check_binds"
-	// ValidationOpCloneFromProd — an unchanged upstream of a node built from candidate code; the runner copies its production table, empty, into the candidate schema. A failure points at that production table, which a run of the node settles, not a code change.
-	ValidationOpCloneFromProd ValidationOp = "clone_from_prod"
+	// ValidationOpBuildFromProd — an unchanged upstream of a node built from candidate code; the runner builds it as an empty table with its production table's columns and types (its production shape) in the candidate schema and copies no rows. A failure points at that production table, which a run of the node settles, not a code change.
+	ValidationOpBuildFromProd ValidationOp = "build_from_prod"
 )
 
 // ValidationOps returns every value in contract.yaml declaration order.
@@ -204,7 +204,7 @@ func ValidationOps() []ValidationOp {
 		ValidationOpBuildFromSQL,
 		ValidationOpBuildFromColumns,
 		ValidationOpCheckBinds,
-		ValidationOpCloneFromProd,
+		ValidationOpBuildFromProd,
 	}
 }
 
@@ -217,7 +217,7 @@ func (v ValidationOp) IsValid() bool {
 		return true
 	case ValidationOpCheckBinds:
 		return true
-	case ValidationOpCloneFromProd:
+	case ValidationOpBuildFromProd:
 		return true
 	}
 	return false
@@ -827,7 +827,7 @@ const (
 	FailureClassTask FailureClass = "task"
 	// FailureClassResource — the pod ran out of a node resource; it was killed for memory or evicted.
 	FailureClassResource FailureClass = "resource"
-	// FailureClassInfra — the attempt was lost to the platform; its node, its Job or its record is gone, Kubernetes refused its Job, or the seed preflight could not reach the warehouse.
+	// FailureClassInfra — the attempt was lost to the platform; its node, its Job or its record is gone, Kubernetes refused its Job, or the dependents check could not reach the warehouse.
 	FailureClassInfra FailureClass = "infra"
 	// FailureClassStart — the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
 	FailureClassStart FailureClass = "start"
@@ -912,15 +912,15 @@ const (
 	FailureReasonImageContractMismatch FailureReason = "image_contract_mismatch"
 	// FailureReasonSeedFullRefreshDisabled — the seed sets +full_refresh false where only a full refresh can apply its change, so no command can rebuild it; refused before any container starts.
 	FailureReasonSeedFullRefreshDisabled FailureReason = "seed_full_refresh_disabled"
-	// FailureReasonUnownedDependents — the seed preflight found an object reading the seed outside the views the run rebuilds and the objects an operator named, on a warehouse where dropping the seed destroys it; nothing was dropped.
+	// FailureReasonUnownedDependents — the dependents check found an object reading the seed outside the views the run rebuilds and the objects an operator named, on a warehouse where dropping the seed destroys it; nothing was dropped.
 	FailureReasonUnownedDependents FailureReason = "unowned_dependents"
-	// FailureReasonEngineMismatch — the validation image's engine adapter declares another drop family than the install's warehouse engine, so the seed preflight cannot tell what a drop destroys; nothing was dropped.
+	// FailureReasonEngineMismatch — the validation image's engine adapter declares another drop family than the install's warehouse engine, so the dependents check cannot tell what a drop destroys; nothing was dropped.
 	FailureReasonEngineMismatch FailureReason = "engine_mismatch"
 	// FailureReasonSeedFullRefreshUndefined — the task is a seed full refresh and the dbt-commands block that governs its project defines no seed_full_refresh command; refused before any container starts.
 	FailureReasonSeedFullRefreshUndefined FailureReason = "seed_full_refresh_undefined"
 	// FailureReasonFullRefreshUndefined — the task is a model full refresh and the dbt-commands block that governs its project defines no full_refresh command; refused before any container starts.
 	FailureReasonFullRefreshUndefined FailureReason = "full_refresh_undefined"
-	// FailureReasonWarehouseUnreachable — the seed preflight could not connect to the warehouse; nothing was dropped.
+	// FailureReasonWarehouseUnreachable — the dependents check could not connect to the warehouse; nothing was dropped.
 	FailureReasonWarehouseUnreachable FailureReason = "warehouse_unreachable"
 )
 

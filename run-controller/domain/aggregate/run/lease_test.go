@@ -393,9 +393,9 @@ func TestGrantLease_RefusesATaskTheRunDoesNotHold(t *testing.T) {
 }
 
 // The grant of a seed that waited for its node's lease dispatches it with the
-// task's own operation, plan reason and preflight.
+// task's own operation, plan reason and dependents check.
 func TestGrantLease_DispatchKeepsTheTasksDispatchSpec(t *testing.T) {
-	pf := checkPreflight()
+	pf := checkModeDependentsCheck()
 	r, tc := promotedSeedsRun(t)
 	tc.leases["analytics.seed_fx_rates_eur"] = otherRunsTask
 	g := &memTaskGraph{g: fxGraph(), tc: tc}
@@ -413,5 +413,5 @@ func TestGrantLease_DispatchKeepsTheTasksDispatchSpec(t *testing.T) {
 	assert.Equal(t, seed, d.TaskID)
 	assert.Equal(t, model.OperationFullRefresh, d.Operation)
 	assert.Equal(t, "columns changed", d.Reason)
-	assert.Equal(t, pf, d.Preflight)
+	assert.Equal(t, pf, d.DependentsCheck)
 }

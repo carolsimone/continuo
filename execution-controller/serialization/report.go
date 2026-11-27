@@ -18,7 +18,7 @@ func ReportFromDomain(cmd command.DeployTask, r model.Report) pkgevents.TaskStat
 		ExecutionSeconds: r.ExecutionSeconds, ExitCode: r.ExitCode,
 		ErrorMessage: r.ErrorMessage, LogS3Key: r.LogKey, RunResultsURI: r.RunResultsKey,
 		ParseCache: r.ParseCache, ParseCacheReason: r.ParseCacheReason,
-		SeedPreflight: pkgevents.SeedPreflightFindingsOf(r.SeedPreflight),
+		DependentsCheck: pkgevents.DependentsCheckFindingsOf(r.DependentsCheck),
 	}
 	if r.FailureReason != "" {
 		p.FailureReason, p.FailureClass = string(r.FailureReason), string(r.FailureReason.Class())
@@ -33,6 +33,6 @@ func ReportToDomain(p pkgevents.TaskStatusReport) model.Report {
 		ExecutionSeconds: p.ExecutionSeconds, ExitCode: p.ExitCode, FailureReason: pkgmodel.FailureReason(p.FailureReason),
 		ErrorMessage: p.ErrorMessage, LogKey: p.LogS3Key, RunResultsKey: p.RunResultsURI,
 		ParseCache: p.ParseCache, ParseCacheReason: p.ParseCacheReason,
-		SeedPreflight: p.SeedPreflight.ToDomain(),
+		DependentsCheck: p.DependentsCheck.ToDomain(),
 	}
 }

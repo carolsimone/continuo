@@ -166,26 +166,26 @@ func TestEncodeValidationRejection(t *testing.T) {
 }
 
 // validation_op names how the validation leg prepared each node: built from
-// its own candidate code, or cloned empty from its production table. A copied
-// node's failure is not a fault in the release's code, so a consumer reads
+// its own candidate code, or built empty from its production table. A failure of a
+// node built from production is not a fault in the release's code, so a consumer reads
 // this key to tell the two apart. An entry with no op omits the key.
 func TestReleaseRejected_ValidationOpIsEncoded(t *testing.T) {
 	got := encode(t, ports.ReleaseRejection{
 		Shape:           ports.RejectionShapeValidation,
 		ReleaseID:       "rel-8",
-		Reason:          pkg_model.RejectReasonUpstreamCloneFailed,
+		Reason:          pkg_model.RejectReasonUpstreamBuildFromProdFailed,
 		AggregateStatus: "failed",
 		FailingNodes:    []string{"analytics.b"},
 		PerNode: []ports.RejectedNode{
-			{NodeID: "analytics.b", Status: "failed", NodeType: "dbt-model", ValidationOp: pkg_model.ValidationOpCloneFromProd},
+			{NodeID: "analytics.b", Status: "failed", NodeType: "dbt-model", ValidationOp: pkg_model.ValidationOpBuildFromProd},
 			{NodeID: "analytics.s", Status: "skipped", NodeType: "dbt-model", ValidationOp: pkg_model.ValidationOpBuildFromSQL},
 			{NodeID: "analytics.x", Status: "skipped"},
 		},
 	})
-	const want = `{"release_id":"rel-8","stage":"validation","reason":"upstream_clone_failed",` +
+	const want = `{"release_id":"rel-8","stage":"validation","reason":"upstream_build_from_prod_failed",` +
 		`"failing_nodes":["analytics.b"],"missing_nodes":[],"aggregate_status":"failed",` +
 		`"per_node":[` +
-		`{"node_id":"analytics.b","status":"failed","node_type":"dbt-model","validation_op":"clone_from_prod"},` +
+		`{"node_id":"analytics.b","status":"failed","node_type":"dbt-model","validation_op":"build_from_prod"},` +
 		`{"node_id":"analytics.s","status":"skipped","node_type":"dbt-model","validation_op":"build_from_sql"},` +
 		`{"node_id":"analytics.x","status":"skipped"}],` +
 		`"repo":"","commit_sha":"","code_bundle_uri":""}`

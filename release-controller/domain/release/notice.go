@@ -16,7 +16,7 @@ const (
 	predictionStops   = "stops"
 	predictionRefused = "refused"
 
-	// completenessNone is the completeness a preflight reports when the
+	// completenessNone is the completeness a dependents check reports when the
 	// warehouse cannot list the dependants of a table.
 	completenessNone = "none"
 )
@@ -24,7 +24,7 @@ const (
 // Notice says what promoting a release will do to one changed seed whose load
 // drops its table: the load, the views the check rebuilds, the nodes that wait
 // for their own schedule and, once the seed-build leg ran, what the warehouse
-// holds. A notice predicts; the check's own preflight decides.
+// holds. A notice predicts; the check's own dependents check decides.
 type Notice struct {
 	Kind, NodeID, Project string
 	EngineFamily          warehouse.Family
@@ -49,8 +49,8 @@ type ColumnChanges struct {
 	Added, Removed, Retyped []string
 }
 
-// WarehouseFindings is what the seed-build leg's preflight found in the
-// warehouse. Checked is false until a preflight ran to the end.
+// WarehouseFindings is what the seed-build leg's dependents check found in the
+// warehouse. Checked is false until a dependents check ran to the end.
 type WarehouseFindings struct {
 	Checked         bool
 	Completeness    string
@@ -65,17 +65,17 @@ type OutsideObject struct {
 
 // BuildNotices returns one notice per candidate seed that production holds
 // with another content hash and whose load drops its table or is refused, in
-// node-id order, and the report-mode preflight of each noticed seed whose load
+// node-id order, and the report-mode dependents check of each noticed seed whose load
 // goes ahead, by node id. bootstrap is true for a release that skips
 // validation.
-func BuildNotices(candidate, prod Topology, family warehouse.Family, engine string, bootstrap bool) ([]Notice, map[string]*seedreload.Preflight) {
+func BuildNotices(candidate, prod Topology, family warehouse.Family, engine string, bootstrap bool) ([]Notice, map[string]*seedreload.DependentsCheck) {
 	prodByID := make(map[string]Node, len(prod))
 	for _, n := range prod {
 		prodByID[n.UniqueID] = n
 	}
 	graph := newSeedGraph(candidate)
 	notices := []Notice{}
-	preflights := map[string]*seedreload.Preflight{}
+	dependentsChecks := map[string]*seedreload.DependentsCheck{}
 	for _, cand := range candidate {
 		if cand.NodeType != string(pkg_model.NodeTypeDbtSeed) {
 			continue
@@ -117,13 +117,13 @@ func BuildNotices(candidate, prod Topology, family warehouse.Family, engine stri
 		}
 		if plan.Load.Refusal != "" {
 			n.Prediction, n.StopReason = predictionRefused, string(plan.Load.Refusal)
-		} else if p := plan.ReportPreflight(); p != nil {
-			preflights[cand.UniqueID] = p
+		} else if p := plan.ReportDependentsCheck(); p != nil {
+			dependentsChecks[cand.UniqueID] = p
 		}
 		notices = append(notices, n)
 	}
 	slices.SortFunc(notices, func(a, b Notice) int { return strings.Compare(a.NodeID, b.NodeID) })
-	return notices, preflights
+	return notices, dependentsChecks
 }
 
 // ColumnChangesOf compares a seed's declared columns in production with the
@@ -154,9 +154,9 @@ func ColumnChangesOf(prod, candidate []SeedColumn) ColumnChanges {
 	return out
 }
 
-// ApplyFindings records what the seed-build leg's preflight found and updates
+// ApplyFindings records what the seed-build leg's dependents check found and updates
 // the prediction. A refused load stays refused. On a schema_bound engine a
-// checked preflight that lists an object outside continuo, or that could not
+// checked dependents check that lists an object outside continuo, or that could not
 // list the dependants at all, predicts that the load stops; anything else
 // predicts that it reloads.
 func (n *Notice) ApplyFindings(f seedreload.Findings) {

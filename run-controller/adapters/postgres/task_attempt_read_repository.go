@@ -26,22 +26,22 @@ func NewTaskAttemptReadRepository(db *sqlx.DB) *TaskAttemptReadRepository {
 }
 
 type taskAttemptReadRow struct {
-	TaskID           uuid.UUID  `db:"task_id"`
-	Attempt          int        `db:"attempt"`
-	JobName          string     `db:"job_name"`
-	Status           string     `db:"status"`
-	FailureClass     *string    `db:"failure_class"`
-	FailureReason    *string    `db:"failure_reason"`
-	ExitCode         *int       `db:"exit_code"`
-	DispatchedAt     time.Time  `db:"dispatched_at"`
-	QueuedAt         *time.Time `db:"queued_at"`
-	StartedAt        *time.Time `db:"started_at"`
-	FinishedAt       *time.Time `db:"finished_at"`
-	ExecutionSeconds *float64   `db:"execution_seconds"`
-	ErrorMessage     *string    `db:"error_message"`
-	LogS3Key         *string    `db:"log_s3_key"`
-	RunResultsURI    *string    `db:"run_results_uri"`
-	SeedFindings     *string    `db:"seed_preflight_findings"`
+	TaskID                  uuid.UUID  `db:"task_id"`
+	Attempt                 int        `db:"attempt"`
+	JobName                 string     `db:"job_name"`
+	Status                  string     `db:"status"`
+	FailureClass            *string    `db:"failure_class"`
+	FailureReason           *string    `db:"failure_reason"`
+	ExitCode                *int       `db:"exit_code"`
+	DispatchedAt            time.Time  `db:"dispatched_at"`
+	QueuedAt                *time.Time `db:"queued_at"`
+	StartedAt               *time.Time `db:"started_at"`
+	FinishedAt              *time.Time `db:"finished_at"`
+	ExecutionSeconds        *float64   `db:"execution_seconds"`
+	ErrorMessage            *string    `db:"error_message"`
+	LogS3Key                *string    `db:"log_s3_key"`
+	RunResultsURI           *string    `db:"run_results_uri"`
+	DependentsCheckFindings *string    `db:"dependents_check_findings"`
 }
 
 // ListRunAttempts implements repository.TaskAttemptReader.
@@ -62,7 +62,7 @@ func (r *TaskAttemptReadRepository) ListRunAttempts(
 	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT a.task_id, a.attempt, a.job_name, a.status, a.failure_class, a.failure_reason, a.exit_code,
 		       a.dispatched_at, a.queued_at, a.started_at, a.finished_at, a.execution_seconds,
-		       a.error_message, a.log_s3_key, a.run_results_uri, a.seed_preflight_findings`+filter+`
+		       a.error_message, a.log_s3_key, a.run_results_uri, a.dependents_check_findings`+filter+`
 		ORDER BY a.task_id, a.attempt
 		LIMIT $4 OFFSET $5`, tenantID, runID, taskID, pageSize, pageOffset); err != nil {
 		return nil, 0, fmt.Errorf("list attempts of run %s: %w", runID, err)
@@ -70,7 +70,7 @@ func (r *TaskAttemptReadRepository) ListRunAttempts(
 
 	out := make([]projection.TaskAttempt, 0, len(rows))
 	for _, row := range rows {
-		findings, err := seedPreflightFindingsFromColumn(row.SeedFindings)
+		findings, err := dependentsCheckFindingsFromColumn(row.DependentsCheckFindings)
 		if err != nil {
 			return nil, 0, fmt.Errorf("read attempt %d of task %s: %w", row.Attempt, row.TaskID, err)
 		}
@@ -79,7 +79,7 @@ func (r *TaskAttemptReadRepository) ListRunAttempts(
 			FailureClass: row.FailureClass, FailureReason: row.FailureReason, ExitCode: row.ExitCode,
 			DispatchedAt: row.DispatchedAt, QueuedAt: row.QueuedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
 			ExecutionSeconds: row.ExecutionSeconds, ErrorMessage: row.ErrorMessage,
-			LogS3Key: row.LogS3Key, RunResultsURI: row.RunResultsURI, SeedPreflight: findings,
+			LogS3Key: row.LogS3Key, RunResultsURI: row.RunResultsURI, DependentsCheck: findings,
 		})
 	}
 	return out, total, nil

@@ -458,13 +458,13 @@ describe('proto wire: run.proto', () => {
       error_message: 'boom',
       log_s3_key: 'logs/task-1-2.log',
       run_results_uri: 'run-results/task-1-2.json',
-      seed_preflight: {
+      dependents_check: {
         drop_semantics: 'cascade', completeness: 'complete', checked: true,
         dependents: [{ schema: 'bi', name: 'fx_rates_report', kind: 'view', owner: 'bi_owner', depth: 2, allowed: false }],
         probes: [{ schema: 'bi', name: 'fx_rates_report', ok: false, error: 'no such relation' }],
       },
     };
-    const second = { ...attempt, task_id: 'task-2', attempt: 0, status: 'succeeded', seed_preflight: null };
+    const second = { ...attempt, task_id: 'task-2', attempt: 0, status: 'succeeded', dependents_check: null };
     const resp = method.responseDeserialize(method.responseSerialize({
       attempts: [attempt, second], total_count: 2,
     }));

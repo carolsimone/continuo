@@ -295,12 +295,12 @@ const ybreakMarker = "ybreak_up"
 
 // ybreakConsumerFix is a consumer-side edit that still reads the column the
 // upstream dropped. A release check that rebuilds ybreak_up from the candidate
-// fails it; one that clones ybreak_up from production would pass it.
+// fails it; one that builds ybreak_up from production would pass it.
 const ybreakConsumerFix = `{{ config(materialized='table') }}
 SELECT amount_eur AS amount FROM e2e_schema.ybreak_up
 `
 
-// Relation names the python-node contract fixtures declare and the stub
+// Relation names the fixtures of a python node's data contract declare and the stub
 // rewrites between. Only bindingRead names a relation the e2e test actually
 // creates in the warehouse; a contract left pointing at any of the others
 // fails the validation Job's bind check.

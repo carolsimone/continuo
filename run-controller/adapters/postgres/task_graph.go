@@ -15,12 +15,12 @@ import (
 
 // readyCandidatesQuery reads the pending, undispatched tasks of tenant $1's run
 // $2 that read node $4 directly over release $3's edges, with their Job names,
-// the operation, plan reason and seed preflight their dispatch carries, and the
+// the operation, plan reason and dependents check their dispatch carries, and the
 // statuses of their upstream tasks in the run. Each lookup is an index probe:
 // topology_edges by its primary key prefix (tenant, release, upstream) or by
 // idx_topology_edges_downstream, tasks by uq_tasks_run_node.
 const readyCandidatesQuery = `
-	SELECT t.task_id, t.job_name, t.operation, t.plan_reason, t.seed_preflight,
+	SELECT t.task_id, t.job_name, t.operation, t.plan_reason, t.dependents_check,
 	       n.node_key, n.unique_id, n.project_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 	       n.content_hash, n.seed_columns_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds,
 	       ARRAY(

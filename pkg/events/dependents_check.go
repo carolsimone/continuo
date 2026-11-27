@@ -8,12 +8,12 @@ import (
 	"github.com/carolsimone/continuo/pkg/warehouse"
 )
 
-// SeedPreflight is the check a seed task's dispatch asks for: execution-controller
+// DependentsCheck is the check a seed task's dispatch asks for: execution-controller
 // runs it in the pod, before the seed's load, against Relation. Mode is check or
 // report, EngineFamily the install's warehouse family, Allowed the relations of
 // the views the run rebuilds and Acknowledged the objects an operator named. Both
 // lists marshal as arrays, `[]` when empty or nil.
-type SeedPreflight struct {
+type DependentsCheck struct {
 	Mode         string   `json:"mode"`
 	EngineFamily string   `json:"engine_family"`
 	Relation     string   `json:"relation"`
@@ -22,8 +22,8 @@ type SeedPreflight struct {
 }
 
 // MarshalJSON renders an absent list as `[]`, never `null`.
-func (p SeedPreflight) MarshalJSON() ([]byte, error) {
-	type plain SeedPreflight
+func (p DependentsCheck) MarshalJSON() ([]byte, error) {
+	type plain DependentsCheck
 	if p.Allowed == nil {
 		p.Allowed = []string{}
 	}
@@ -33,12 +33,12 @@ func (p SeedPreflight) MarshalJSON() ([]byte, error) {
 	return json.Marshal(plain(p))
 }
 
-// SeedPreflightOf renders p for the wire; nil in, nil out.
-func SeedPreflightOf(p *seedreload.Preflight) *SeedPreflight {
+// DependentsCheckOf renders p for the wire; nil in, nil out.
+func DependentsCheckOf(p *seedreload.DependentsCheck) *DependentsCheck {
 	if p == nil {
 		return nil
 	}
-	return &SeedPreflight{
+	return &DependentsCheck{
 		Mode:         string(p.Mode),
 		EngineFamily: string(p.Family),
 		Relation:     p.Relation,
@@ -47,13 +47,13 @@ func SeedPreflightOf(p *seedreload.Preflight) *SeedPreflight {
 	}
 }
 
-// ToDomain is the preflight spec the entry carries; nil in, nil out.
-func (p *SeedPreflight) ToDomain() *seedreload.Preflight {
+// ToDomain is the dependents check spec the entry carries; nil in, nil out.
+func (p *DependentsCheck) ToDomain() *seedreload.DependentsCheck {
 	if p == nil {
 		return nil
 	}
-	return &seedreload.Preflight{
-		Mode:         seedreload.PreflightMode(p.Mode),
+	return &seedreload.DependentsCheck{
+		Mode:         seedreload.DependentsCheckMode(p.Mode),
 		Family:       warehouse.Family(p.EngineFamily),
 		Relation:     p.Relation,
 		Allowed:      slices.Clone(p.Allowed),
@@ -61,20 +61,20 @@ func (p *SeedPreflight) ToDomain() *seedreload.Preflight {
 	}
 }
 
-// SeedPreflightFindings is what a seed's preflight found in the warehouse, as
+// DependentsCheckFindings is what a seed's dependents check found in the warehouse, as
 // the seed task's final report carries it. Probes are the answers of the probe
-// of each view outside the allowed set that the preflight found, left out
+// of each view outside the allowed set that the dependents check found, left out
 // when no probe ran.
-type SeedPreflightFindings struct {
-	DropSemantics string               `json:"drop_semantics"`
-	Completeness  string               `json:"completeness"`
-	Checked       bool                 `json:"checked"`
-	Dependents    []PreflightDependent `json:"dependents"`
-	Probes        []ViewProbe          `json:"probes,omitempty"`
+type DependentsCheckFindings struct {
+	DropSemantics string            `json:"drop_semantics"`
+	Completeness  string            `json:"completeness"`
+	Checked       bool              `json:"checked"`
+	Dependents    []DependentObject `json:"dependents"`
+	Probes        []ViewProbe       `json:"probes,omitempty"`
 }
 
-// PreflightDependent is one object in the warehouse that depends on the seed's table.
-type PreflightDependent struct {
+// DependentObject is one object in the warehouse that depends on the seed's table.
+type DependentObject struct {
 	Schema  string `json:"schema"`
 	Name    string `json:"name"`
 	Kind    string `json:"kind"`
@@ -93,26 +93,26 @@ type ViewProbe struct {
 
 // MarshalJSON renders absent dependents as `[]`, never `null`; probes are left
 // out when there are none.
-func (f SeedPreflightFindings) MarshalJSON() ([]byte, error) {
-	type plain SeedPreflightFindings
+func (f DependentsCheckFindings) MarshalJSON() ([]byte, error) {
+	type plain DependentsCheckFindings
 	if f.Dependents == nil {
-		f.Dependents = []PreflightDependent{}
+		f.Dependents = []DependentObject{}
 	}
 	return json.Marshal(plain(f))
 }
 
-// SeedPreflightFindingsOf renders f for the wire; nil in, nil out.
-func SeedPreflightFindingsOf(f *seedreload.Findings) *SeedPreflightFindings {
+// DependentsCheckFindingsOf renders f for the wire; nil in, nil out.
+func DependentsCheckFindingsOf(f *seedreload.Findings) *DependentsCheckFindings {
 	if f == nil {
 		return nil
 	}
-	out := &SeedPreflightFindings{
+	out := &DependentsCheckFindings{
 		DropSemantics: f.DropSemantics,
 		Completeness:  f.Completeness,
 		Checked:       f.Checked,
 	}
 	for _, d := range f.Dependents {
-		out.Dependents = append(out.Dependents, PreflightDependent(d))
+		out.Dependents = append(out.Dependents, DependentObject(d))
 	}
 	for _, p := range f.Probes {
 		out.Probes = append(out.Probes, ViewProbe(p))
@@ -121,7 +121,7 @@ func SeedPreflightFindingsOf(f *seedreload.Findings) *SeedPreflightFindings {
 }
 
 // ToDomain is the findings the report carries; nil in, nil out.
-func (f *SeedPreflightFindings) ToDomain() *seedreload.Findings {
+func (f *DependentsCheckFindings) ToDomain() *seedreload.Findings {
 	if f == nil {
 		return nil
 	}

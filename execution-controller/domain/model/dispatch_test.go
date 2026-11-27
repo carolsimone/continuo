@@ -222,43 +222,43 @@ func TestNewAdoptedAndRefusedDeployments(t *testing.T) {
 }
 
 // seedDispatch is a dispatch of a seed load that drops its table, with the
-// check-mode preflight run-controller asks for on a schema_bound warehouse.
+// check-mode dependents check run-controller asks for on a schema_bound warehouse.
 func seedDispatch() command.DeployTask {
 	cmd := validDispatch()
 	cmd.NodeType = string(pkgmodel.NodeTypeDbtSeed)
-	cmd.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+	cmd.DependentsCheck = &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound,
 		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}}
 	return cmd
 }
 
-// A preflight runs only before a seed's load, in a mode and for a family the
+// A dependents check runs only before a seed's load, in a mode and for a family the
 // runner knows, against a relation that names a schema and a table; any other
-// preflight cannot run and is refused as malformed.
-func TestDispatchProblem_APreflightMustFitASeed(t *testing.T) {
+// dependents check cannot run and is refused as malformed.
+func TestDispatchProblem_ADependentsCheckMustFitASeed(t *testing.T) {
 	reason, message := DispatchProblem(seedDispatch(), pkgmodel.AttemptStatusDispatched)
 	assert.Empty(t, reason, message)
 	report := seedDispatch()
-	report.SeedPreflight.Mode, report.SeedPreflight.Family = seedreload.PreflightReport, warehouse.LateBinding
+	report.DependentsCheck.Mode, report.DependentsCheck.Family = seedreload.ReportMode, warehouse.LateBinding
 	reason, message = DispatchProblem(report, pkgmodel.AttemptStatusDispatched)
 	assert.Empty(t, reason, message)
 
 	for name, edit := range map[string]func(*command.DeployTask){
 		"a model":                 func(c *command.DeployTask) { c.NodeType = string(pkgmodel.NodeTypeDbtModel) },
 		"a snapshot":              func(c *command.DeployTask) { c.NodeType = string(pkgmodel.NodeTypeDbtSnapshot) },
-		"an unknown mode":         func(c *command.DeployTask) { c.SeedPreflight.Mode = "warn" },
-		"no mode":                 func(c *command.DeployTask) { c.SeedPreflight.Mode = "" },
-		"an unknown family":       func(c *command.DeployTask) { c.SeedPreflight.Family = "snowflake" },
-		"no family":               func(c *command.DeployTask) { c.SeedPreflight.Family = "" },
-		"a relation of no dot":    func(c *command.DeployTask) { c.SeedPreflight.Relation = "seed_fx_rates_eur" },
-		"a relation of no schema": func(c *command.DeployTask) { c.SeedPreflight.Relation = ".seed" },
-		"a relation of no name":   func(c *command.DeployTask) { c.SeedPreflight.Relation = "analytics." },
-		"no relation":             func(c *command.DeployTask) { c.SeedPreflight.Relation = "" },
+		"an unknown mode":         func(c *command.DeployTask) { c.DependentsCheck.Mode = "warn" },
+		"no mode":                 func(c *command.DeployTask) { c.DependentsCheck.Mode = "" },
+		"an unknown family":       func(c *command.DeployTask) { c.DependentsCheck.Family = "snowflake" },
+		"no family":               func(c *command.DeployTask) { c.DependentsCheck.Family = "" },
+		"a relation of no dot":    func(c *command.DeployTask) { c.DependentsCheck.Relation = "seed_fx_rates_eur" },
+		"a relation of no schema": func(c *command.DeployTask) { c.DependentsCheck.Relation = ".seed" },
+		"a relation of no name":   func(c *command.DeployTask) { c.DependentsCheck.Relation = "analytics." },
+		"no relation":             func(c *command.DeployTask) { c.DependentsCheck.Relation = "" },
 	} {
 		cmd := seedDispatch()
 		edit(&cmd)
 		reason, message := DispatchProblem(cmd, pkgmodel.AttemptStatusDispatched)
 		assert.Equal(t, pkgmodel.FailureReasonMalformedDispatch, reason, name)
-		assert.Contains(t, message, "seed_preflight", name)
+		assert.Contains(t, message, "dependents_check", name)
 	}
 }
 

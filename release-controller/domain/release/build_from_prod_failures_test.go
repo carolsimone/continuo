@@ -18,13 +18,13 @@ func TestSplitValidationFailures(t *testing.T) {
 	}
 	rebuilt := map[string]bool{"analytics.s": true, "analytics.c": true, "analytics.d": true}
 
-	built, cloned := splitValidationFailures(results, rebuilt)
+	built, fromProd := splitValidationFailures(results, rebuilt)
 
 	assert.Equal(t, []string{"analytics.s"}, built, "a failed node built from its own code")
-	assert.Equal(t, []string{"analytics.b"}, cloned, "a failed node cloned from its production table")
+	assert.Equal(t, []string{"analytics.b"}, fromProd, "a failed node built from its production table")
 }
 
-// A skipped node never ran, so it is neither a code failure nor a copy that
+// A skipped node never ran, so it is neither a code failure nor a build from production that
 // failed, wherever it would have been built from.
 func TestSplitValidationFailures_SkippedAndOKNodesAreInNeitherList(t *testing.T) {
 	results := []NodeOutcome{
@@ -34,17 +34,17 @@ func TestSplitValidationFailures_SkippedAndOKNodesAreInNeitherList(t *testing.T)
 		{NodeID: "d", Status: "skipped"},
 	}
 
-	built, cloned := splitValidationFailures(results, map[string]bool{"a": true, "b": true})
+	built, fromProd := splitValidationFailures(results, map[string]bool{"a": true, "b": true})
 
 	assert.Empty(t, built)
-	assert.Empty(t, cloned)
+	assert.Empty(t, fromProd)
 }
 
 func TestSplitValidationFailures_NoResults(t *testing.T) {
-	built, cloned := splitValidationFailures(nil, nil)
+	built, fromProd := splitValidationFailures(nil, nil)
 
 	assert.Empty(t, built)
-	assert.Empty(t, cloned)
+	assert.Empty(t, fromProd)
 }
 
 // Every status other than ok and skipped is a failure of the node itself.
@@ -54,10 +54,10 @@ func TestSplitValidationFailures_AnyOtherStatusIsAFailure(t *testing.T) {
 		{NodeID: "b", Status: ""},
 	}
 
-	built, cloned := splitValidationFailures(results, map[string]bool{"a": true})
+	built, fromProd := splitValidationFailures(results, map[string]bool{"a": true})
 
 	assert.Equal(t, []string{"a"}, built)
-	assert.Equal(t, []string{"b"}, cloned)
+	assert.Equal(t, []string{"b"}, fromProd)
 }
 
 // Both lists come out sorted by id whatever order the results arrive in.
@@ -76,21 +76,21 @@ func TestSplitValidationFailures_SortsBothListsWhateverTheInputOrder(t *testing.
 
 	for name, results := range map[string][]NodeOutcome{"forward": forward, "backward": backward} {
 		t.Run(name, func(t *testing.T) {
-			built, cloned := splitValidationFailures(results, rebuilt)
+			built, fromProd := splitValidationFailures(results, rebuilt)
 
 			assert.Equal(t, []string{"m.x", "m.y"}, built)
-			assert.Equal(t, []string{"c.a", "c.b"}, cloned)
+			assert.Equal(t, []string{"c.a", "c.b"}, fromProd)
 		})
 	}
 }
 
-// DecideValidationRejection names a failed copy of production apart from a
-// failure of the release's code: only copies failed is upstream_clone_failed,
-// a code failure keeps validation_failed and drops the copies from the
-// failing nodes.
+// DecideValidationRejection names a failed build from production apart from a
+// failure of the release's code: when only builds from production failed it is
+// upstream_build_from_prod_failed, and a code failure keeps validation_failed
+// and drops the nodes built from production from the failing nodes.
 func TestDecideValidationRejection(t *testing.T) {
 	const summary = "2 of 4 nodes failed validation: m.s and m.t"
-	// m.* nodes are built from their own code, c.* nodes copied from production.
+	// m.* nodes are built from their own code, c.* nodes built from production.
 	rebuilt := map[string]bool{"m.s": true, "m.t": true, "m.u": true, "m.v": true}
 	cases := []struct {
 		name    string
@@ -99,7 +99,7 @@ func TestDecideValidationRejection(t *testing.T) {
 		want    ValidationRejection
 	}{
 		{
-			name: "only copies failed",
+			name: "only builds from production failed",
 			results: []NodeOutcome{
 				{NodeID: "c.b", Status: "failed"},
 				{NodeID: "c.a", Status: "failed"},
@@ -108,8 +108,8 @@ func TestDecideValidationRejection(t *testing.T) {
 			},
 			failing: []string{"c.b", "c.a", "m.s"},
 			want: ValidationRejection{
-				Reason:       pkg_model.RejectReasonUpstreamCloneFailed,
-				Detail:       "Could not copy the production table of c.a, c.b. Run them, then release again.",
+				Reason:       pkg_model.RejectReasonUpstreamBuildFromProdFailed,
+				Detail:       "Could not build c.a, c.b from their production tables. Run them, then release again.",
 				FailingNodes: []string{"c.a", "c.b"},
 			},
 		},
@@ -128,7 +128,7 @@ func TestDecideValidationRejection(t *testing.T) {
 			},
 		},
 		{
-			name: "copies and built nodes failed, with skipped dependants",
+			name: "nodes built from production and nodes built from code failed, with skipped dependants",
 			results: []NodeOutcome{
 				{NodeID: "c.a", Status: "failed"},
 				{NodeID: "m.v", Status: NodeStatusSkipped},
@@ -139,7 +139,7 @@ func TestDecideValidationRejection(t *testing.T) {
 			failing: []string{"m.v", "c.a", "m.t", "m.s"},
 			want: ValidationRejection{
 				Reason:       pkg_model.RejectReasonValidationFailed,
-				Detail:       summary + ". Could not copy the production table of c.a. Run it, then release again.",
+				Detail:       summary + ". Could not build c.a from its production table. Run it, then release again.",
 				FailingNodes: []string{"m.s", "m.t", "m.v"},
 			},
 		},
@@ -173,7 +173,7 @@ func TestDecideValidationRejection(t *testing.T) {
 	}
 }
 
-// The failing nodes and the copies the detail names come out in id order,
+// The failing nodes and the nodes built from production the detail names come out in id order,
 // whatever order the results and the failing nodes arrive in.
 func TestDecideValidationRejection_SortsWhateverTheInputOrder(t *testing.T) {
 	rebuilt := map[string]bool{"m.x": true, "m.y": true}
@@ -196,7 +196,7 @@ func TestDecideValidationRejection_SortsWhateverTheInputOrder(t *testing.T) {
 
 	want := ValidationRejection{
 		Reason:       pkg_model.RejectReasonValidationFailed,
-		Detail:       "summary. Could not copy the production table of c.a, c.b. Run them, then release again.",
+		Detail:       "summary. Could not build c.a, c.b from their production tables. Run them, then release again.",
 		FailingNodes: []string{"m.x", "m.y"},
 	}
 	assert.Equal(t, want, forward)

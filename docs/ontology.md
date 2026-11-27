@@ -411,7 +411,7 @@ check: they print one error line and read no contract. Check the file itself wit
 - **The release log.** The line of a release that passed has `ontology_warnings`
   and `ontology_information`, the number of findings of each kind, when there are
   some.
-- **The contract.** `continuo node contract <unique_id>` prints the published
+- **The data contract.** `continuo node data-contract <unique_id>` prints the published
   contract. Its `provenance` property holds `ontologyVersion`, the ontology the
   version was made against, and its links name the things. The same file is in
   [the live folder](contracts.md#the-live-folder).

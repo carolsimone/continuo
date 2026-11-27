@@ -150,7 +150,7 @@ func TestValidationRequestedHandler_ThreadsOp(t *testing.T) {
 			{
 				NodeID: "model.core.dim", ProjectName: "s", SchemaName: "sc",
 				TableName: "dim", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t",
-				ValidationOp: string(pkg_model.ValidationOpCloneFromProd), ProdSchema: "analytics",
+				ValidationOp: string(pkg_model.ValidationOpBuildFromProd), ProdSchema: "analytics",
 			},
 		},
 	}
@@ -160,7 +160,7 @@ func TestValidationRequestedHandler_ThreadsOp(t *testing.T) {
 	require.Len(t, depl.added, 1)
 
 	cmd := depl.added[0].ValidationCommand()
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), cmd.ValidationOp)
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), cmd.ValidationOp)
 	assert.Equal(t, "analytics", cmd.ProdSchema)
 }
 

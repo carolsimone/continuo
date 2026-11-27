@@ -359,21 +359,21 @@ func fxGraph(extra ...topology.Node) topology.Graph {
 	})
 }
 
-// checkPreflight is the check-mode preflight of the seed's load on a
+// checkModeDependentsCheck is the check-mode dependents check of the seed's load on a
 // schema_bound engine, which allows the view the run rebuilds.
-func checkPreflight() *seedreload.Preflight {
-	return &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+func checkModeDependentsCheck() *seedreload.DependentsCheck {
+	return &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound,
 		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}
 }
 
 // fxReloadPlan is the plan of a load of the seed that drops its table: the
-// seed loads with a full refresh and a preflight, and the view it drops is
+// seed loads with a full refresh and a dependents check, and the view it drops is
 // rebuilt after it.
-func fxReloadPlan(pf *seedreload.Preflight) runplan.Plan {
+func fxReloadPlan(pf *seedreload.DependentsCheck) runplan.Plan {
 	full := model.OperationFullRefresh
 	return runplan.Plan{Tasks: []runplan.PlannedTask{
 		{Key: "analytics.fx_rates_current", Reason: "rebuild: dropped by the load of analytics.seed_fx_rates_eur", RebuildOf: "analytics.seed_fx_rates_eur"},
-		{Key: "analytics.seed_fx_rates_eur", Operation: &full, Reason: "columns changed", Preflight: pf},
+		{Key: "analytics.seed_fx_rates_eur", Operation: &full, Reason: "columns changed", DependentsCheck: pf},
 	}, Ready: []topology.NodeKey{"analytics.seed_fx_rates_eur"}}
 }
 
@@ -431,11 +431,11 @@ func refusalsOf(events []run.DomainEvent) []run.TaskRefused {
 	return out
 }
 
-// Each task is stored with its own operation, plan reason and seed preflight,
+// Each task is stored with its own operation, plan reason and dependents check,
 // and the run's operation where the plan names none; the dispatch of the seed
 // carries its own.
-func TestStart_StampsEachTasksOwnOperationReasonAndPreflight(t *testing.T) {
-	pf := checkPreflight()
+func TestStart_StampsEachTasksOwnOperationReasonAndDependentsCheck(t *testing.T) {
+	pf := checkModeDependentsCheck()
 	r, tc := promotedSeedsRun(t)
 
 	events, err := r.Start(context.Background(), tc, fxReloadPlan(pf), fxGraph(), taskDefaults, startNow)
@@ -445,17 +445,17 @@ func TestStart_StampsEachTasksOwnOperationReasonAndPreflight(t *testing.T) {
 	seed, view := tasks["analytics.seed_fx_rates_eur"], tasks["analytics.fx_rates_current"]
 	assert.Equal(t, model.OperationFullRefresh, seed.Operation)
 	assert.Equal(t, "columns changed", seed.PlanReason)
-	assert.Equal(t, pf, seed.SeedPreflight)
+	assert.Equal(t, pf, seed.DependentsCheck)
 	assert.Empty(t, seed.RebuildOf)
 	assert.Equal(t, model.OperationRun, view.Operation)
 	assert.Equal(t, "rebuild: dropped by the load of analytics.seed_fx_rates_eur", view.PlanReason)
-	assert.Nil(t, view.SeedPreflight)
+	assert.Nil(t, view.DependentsCheck)
 	assert.Equal(t, topology.NodeKey("analytics.seed_fx_rates_eur"), view.RebuildOf)
 	d := onlyDispatch(t, events)
 	assert.Equal(t, seed.TaskID, d.TaskID)
 	assert.Equal(t, model.OperationFullRefresh, d.Operation)
 	assert.Equal(t, "columns changed", d.Reason)
-	assert.Equal(t, pf, d.Preflight)
+	assert.Equal(t, pf, d.DependentsCheck)
 	assert.Empty(t, refusalsOf(events))
 }
 

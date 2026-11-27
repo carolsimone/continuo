@@ -38,9 +38,9 @@ type TaskStatusReport struct {
 	RunResultsURI    string              `json:"run_results_uri,omitempty"`
 	ParseCache       string              `json:"parse_cache,omitempty"`
 	ParseCacheReason string              `json:"parse_cache_reason,omitempty"`
-	// SeedPreflight is what the seed preflight found in the warehouse. Absent
-	// on a report of an attempt that ran no preflight.
-	SeedPreflight *SeedPreflightFindings `json:"seed_preflight,omitempty"`
+	// DependentsCheck is what the dependents check found in the warehouse. Absent
+	// on a report of an attempt that ran no dependents check.
+	DependentsCheck *DependentsCheckFindings `json:"dependents_check,omitempty"`
 }
 
 // TaskStatusReportFields renders p as the Redis fields of one

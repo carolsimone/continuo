@@ -3,7 +3,7 @@ package release
 import "sort"
 
 // FixBuildSets partitions the nodes a fix's release check rebuilds from
-// its candidate (rather than clones empty from production) into two roles that
+// its candidate (rather than builds empty from production) into two roles that
 // the check must keep apart:
 //
 //   - scope: the fix's own delta — nodes of the fix's candidate topology that
@@ -24,7 +24,7 @@ import "sort"
 //     and that sibling is left to its own fix's release check.
 //
 // A node the rejected release recorded as not ok (failed or skipped) that the
-// fix did not touch is in neither set: cloned from production. A node another
+// fix did not touch is in neither set: built from production. A node another
 // release promoted since the rejection matches the live release and is in neither
 // set. Both slices are sorted and deduplicated; nil when empty.
 func FixBuildSets(fix, prod, rejected Topology, rejectedFailing []string) (scope, context []string) {

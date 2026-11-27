@@ -108,15 +108,15 @@ func fullContractView() *catalogv1.ContractVersionView {
 	}
 }
 
-func TestContract_AsksForTheDocumentAndMapsEveryField(t *testing.T) {
-	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeContractResponse{Contract: fullContractView()}}
+func TestDataContract_AsksForTheDocumentAndMapsEveryField(t *testing.T) {
+	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeDataContractResponse{Contract: fullContractView()}}
 
-	stdout, stderr, exit := runContractCommand(t, NewContractCommand, fake, []string{"analytics.py_daily_kpis"}, false)
+	stdout, stderr, exit := runContractCommand(t, NewDataContractCommand, fake, []string{"analytics.py_daily_kpis"}, false)
 
 	require.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
 	assert.Equal(t, "analytics.py_daily_kpis", fake.gotContractUniqueID)
-	assert.True(t, fake.gotContractIncludeDocument, "node contract always asks for the document")
+	assert.True(t, fake.gotContractIncludeDocument, "node data-contract always asks for the document")
 
 	var payload struct {
 		Contract map[string]any `json:"contract"`
@@ -135,12 +135,12 @@ func TestContract_AsksForTheDocumentAndMapsEveryField(t *testing.T) {
 	assert.Equal(t, "apiVersion: v3.1.0\nkind: DataContract\nid: analytics.py_daily_kpis\n", c["document_yaml"])
 }
 
-func TestContract_OmitsWhatAVersionDoesNotCarry(t *testing.T) {
-	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeContractResponse{Contract: &catalogv1.ContractVersionView{
+func TestDataContract_OmitsWhatAVersionDoesNotCarry(t *testing.T) {
+	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeDataContractResponse{Contract: &catalogv1.ContractVersionView{
 		UniqueId: "analytics.py_daily_kpis", Version: 1, ContractHash: "sha256:aaa", ContentHash: "sha256:ccc", IsCurrent: true,
 	}}}
 
-	stdout, _, exit := runContractCommand(t, NewContractCommand, fake, []string{"analytics.py_daily_kpis"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractCommand, fake, []string{"analytics.py_daily_kpis"}, false)
 
 	require.Equal(t, 0, exit)
 	var payload struct {
@@ -155,12 +155,12 @@ func TestContract_OmitsWhatAVersionDoesNotCarry(t *testing.T) {
 	}
 }
 
-func TestContract_OutputMatchesItsSchema(t *testing.T) {
-	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeContractResponse{Contract: fullContractView()}}
-	stdout, _, exit := runContractCommand(t, NewContractCommand, fake, []string{"analytics.py_daily_kpis"}, false)
+func TestDataContract_OutputMatchesItsSchema(t *testing.T) {
+	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeDataContractResponse{Contract: fullContractView()}}
+	stdout, _, exit := runContractCommand(t, NewDataContractCommand, fake, []string{"analytics.py_daily_kpis"}, false)
 	require.Equal(t, 0, exit)
 
-	assertEmitsItsSchema(t, NewContractCommand(nil, &config.Config{}, io.Discard, io.Discard), stdout)
+	assertEmitsItsSchema(t, NewDataContractCommand(nil, &config.Config{}, io.Discard, io.Discard), stdout)
 }
 
 // dbtContractYAML is the published document of a dbt model, as catalog renders
@@ -188,12 +188,12 @@ schema:
 // A dbt model's contract is printed as a Python node's is: the document goes
 // through as the YAML catalog rendered, whole, and the command's help tells
 // which nodes have a contract, so a reader of "describe" asks for a dbt node's.
-func TestNodeContract_PrintsADbtContract(t *testing.T) {
+func TestNodeDataContract_PrintsADbtDataContract(t *testing.T) {
 	view := fullContractView()
 	view.UniqueId, view.Version, view.DocumentYaml = "analytics.orders", 2, dbtContractYAML
-	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeContractResponse{Contract: view}}
+	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeDataContractResponse{Contract: view}}
 
-	stdout, stderr, exit := runContractCommand(t, NewContractCommand, fake, []string{"analytics.orders"}, false)
+	stdout, stderr, exit := runContractCommand(t, NewDataContractCommand, fake, []string{"analytics.orders"}, false)
 
 	require.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
@@ -205,29 +205,29 @@ func TestNodeContract_PrintsADbtContract(t *testing.T) {
 	assert.Equal(t, "analytics.orders", payload.Contract["unique_id"])
 	assert.Equal(t, float64(2), payload.Contract["version"])
 	assert.Equal(t, dbtContractYAML, payload.Contract["document_yaml"], "the document is passed through whole")
-	cmd := NewContractCommand(nil, &config.Config{}, io.Discard, io.Discard)
+	cmd := NewDataContractCommand(nil, &config.Config{}, io.Discard, io.Discard)
 	assertEmitsItsSchema(t, cmd, stdout)
-	assert.Contains(t, cmd.Long, "Every dbt model, seed and snapshot has a contract, and so has every Python node.")
+	assert.Contains(t, cmd.Long, "Every dbt model, seed and snapshot has a data contract, and so has every Python node.")
 	assert.Contains(t, cmd.Long, "A dbt test and an unknown-external table have none")
 	assert.Contains(t, cmd.Example, "analytics.orders", "the example is a dbt node")
 }
 
-func TestContract_NotFoundExits3(t *testing.T) {
-	fake := &fakeNodeCatalog{contractErr: status.Error(codes.NotFound, `node "analytics.orders" has no contract`)}
+func TestDataContract_NotFoundExits3(t *testing.T) {
+	fake := &fakeNodeCatalog{contractErr: status.Error(codes.NotFound, `node "analytics.orders" has no data contract`)}
 
-	stdout, _, exit := runContractCommand(t, NewContractCommand, fake, []string{"analytics.orders"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractCommand, fake, []string{"analytics.orders"}, false)
 
 	assert.Equal(t, 3, exit)
 	var env map[string]output.CLIError
 	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 	assert.Equal(t, output.CodeNotFound, env["error"].Code)
-	assert.Contains(t, env["error"].Message, "has no contract")
+	assert.Contains(t, env["error"].Message, "has no data contract")
 }
 
-func TestContract_WrongArgCountExits2WithoutCallingTheServer(t *testing.T) {
+func TestDataContract_WrongArgCountExits2WithoutCallingTheServer(t *testing.T) {
 	for _, args := range [][]string{{}, {"analytics.orders", "extra"}} {
 		fake := &fakeNodeCatalog{}
-		stdout, _, exit := runContractCommand(t, NewContractCommand, fake, args, false)
+		stdout, _, exit := runContractCommand(t, NewDataContractCommand, fake, args, false)
 		assert.Equal(t, 2, exit, "%v", args)
 		var env map[string]output.CLIError
 		require.NoError(t, json.Unmarshal([]byte(stdout), &env))
@@ -236,16 +236,16 @@ func TestContract_WrongArgCountExits2WithoutCallingTheServer(t *testing.T) {
 	}
 }
 
-func TestContract_UnavailableExits5AndInternalExits6(t *testing.T) {
-	_, _, exit := runContractCommand(t, NewContractCommand, &fakeNodeCatalog{contractErr: status.Error(codes.Unavailable, "down")}, []string{"analytics.orders"}, false)
+func TestDataContract_UnavailableExits5AndInternalExits6(t *testing.T) {
+	_, _, exit := runContractCommand(t, NewDataContractCommand, &fakeNodeCatalog{contractErr: status.Error(codes.Unavailable, "down")}, []string{"analytics.orders"}, false)
 	assert.Equal(t, 5, exit)
-	_, _, exit = runContractCommand(t, NewContractCommand, &fakeNodeCatalog{contractErr: status.Error(codes.Internal, "boom")}, []string{"analytics.orders"}, false)
+	_, _, exit = runContractCommand(t, NewDataContractCommand, &fakeNodeCatalog{contractErr: status.Error(codes.Internal, "boom")}, []string{"analytics.orders"}, false)
 	assert.Equal(t, 6, exit)
 }
 
-func TestContract_FactoryErrorExits5(t *testing.T) {
+func TestDataContract_FactoryErrorExits5(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
-	cmd := NewContractCommand(func(context.Context, string) (client.CatalogClient, error) {
+	cmd := NewDataContractCommand(func(context.Context, string) (client.CatalogClient, error) {
 		return nil, status.Error(codes.Unavailable, "dial failed")
 	}, &config.Config{Timeout: 2 * time.Second}, &outBuf, &errBuf)
 	cmd.SetArgs([]string{"analytics.orders"})
@@ -256,10 +256,10 @@ func TestContract_FactoryErrorExits5(t *testing.T) {
 	assert.Equal(t, 5, cliErr.ExitCode())
 }
 
-func TestContract_HumanModeWritesTheSummaryAndTheDocumentToStderr(t *testing.T) {
-	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeContractResponse{Contract: fullContractView()}}
+func TestDataContract_HumanModeWritesTheSummaryAndTheDocumentToStderr(t *testing.T) {
+	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeDataContractResponse{Contract: fullContractView()}}
 
-	stdout, stderr, exit := runContractCommand(t, NewContractCommand, fake, []string{"analytics.py_daily_kpis"}, true)
+	stdout, stderr, exit := runContractCommand(t, NewDataContractCommand, fake, []string{"analytics.py_daily_kpis"}, true)
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
@@ -268,8 +268,8 @@ func TestContract_HumanModeWritesTheSummaryAndTheDocumentToStderr(t *testing.T) 
 	assert.Contains(t, stderr, "kind: DataContract")
 }
 
-func TestContract_IsDocumentedAsAReadOnlyCommandThatTheChatSetsNoFlagsOn(t *testing.T) {
-	cmd := NewContractCommand(nil, &config.Config{}, io.Discard, io.Discard)
+func TestDataContract_IsDocumentedAsAReadOnlyCommandThatTheChatSetsNoFlagsOn(t *testing.T) {
+	cmd := NewDataContractCommand(nil, &config.Config{}, io.Discard, io.Discard)
 
 	assert.NotEmpty(t, cmd.Short)
 	assert.NotEmpty(t, cmd.Long)

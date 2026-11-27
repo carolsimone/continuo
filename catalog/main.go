@@ -293,7 +293,7 @@ func main() {
 	// which is not the export lease, renewing the message's in-flight mark
 	// while the rewrite runs. The published files carry the install's warehouse
 	// servers entry (cfg.ContractsServer, nil when no host is set) and absolute
-	// ontology links under cfg.OntologyBaseURL, as GetNodeContract's document
+	// ontology links under cfg.OntologyBaseURL, as GetNodeDataContract's document
 	// does. Isolated
 	// from the swap and the code versions so neither waits on the contracts.
 	// Its series are registered here whatever the install enables, every label

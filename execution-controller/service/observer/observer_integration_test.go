@@ -90,12 +90,12 @@ func (h *harness) started(t testing.TB, attempt int, deployedAt time.Time) *mode
 	return h.startedWith(t, attempt, deployedAt, func(*command.DeployTask) {})
 }
 
-// startedSeed is started for a seed whose pod runs a preflight in mode.
-func (h *harness) startedSeed(t testing.TB, deployedAt time.Time, mode seedreload.PreflightMode) *model.Deployment {
+// startedSeed is started for a seed whose pod runs a dependents check in mode.
+func (h *harness) startedSeed(t testing.TB, deployedAt time.Time, mode seedreload.DependentsCheckMode) *model.Deployment {
 	t.Helper()
 	return h.startedWith(t, 0, deployedAt, func(cmd *command.DeployTask) {
 		cmd.NodeType = string(pkgmodel.NodeTypeDbtSeed)
-		cmd.SeedPreflight = &seedreload.Preflight{Mode: mode, Relation: cmd.SchemaName + "." + cmd.TableName}
+		cmd.DependentsCheck = &seedreload.DependentsCheck{Mode: mode, Relation: cmd.SchemaName + "." + cmd.TableName}
 	})
 }
 
@@ -1147,12 +1147,12 @@ func TestProcess_AnImageContractMismatchBlockFailsTheAttemptInvalid(t *testing.T
 	assert.Equal(t, "image does not match", status[0]["error_message"])
 }
 
-// A seed attempt that succeeded reports what its preflight found.
-func TestSettle_TheFinalReportCarriesThePreflightFindings(t *testing.T) {
+// A seed attempt that succeeded reports what its dependents check found.
+func TestSettle_TheFinalReportCarriesTheDependentsCheckFindings(t *testing.T) {
 	h := newHarness(t)
 	h.probe.log = probeBlock(true, `[]`)
-	dep := h.startedSeed(t, h.now.Add(-time.Minute), seedreload.PreflightReport)
-	h.logs.containers = map[string]string{model.SeedPreflightContainer: preflightBlock("success", "unowned_dependents",
+	dep := h.startedSeed(t, h.now.Add(-time.Minute), seedreload.ReportMode)
+	h.logs.containers = map[string]string{model.DependentsCheckContainer: dependentsCheckBlock("success", "unowned_dependents",
 		`"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)}
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
 		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Second), h.now.Add(-20*time.Second), 0, "Completed")}})
@@ -1162,21 +1162,21 @@ func TestSettle_TheFinalReportCarriesThePreflightFindings(t *testing.T) {
 	reports := h.reports(t)
 	require.Len(t, reports, 1)
 	assert.Equal(t, "succeeded", reports[0]["status"])
-	want, err := json.Marshal(pkgevents.SeedPreflightFindingsOf(&seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
+	want, err := json.Marshal(pkgevents.DependentsCheckFindingsOf(&seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
 		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}))
 	require.NoError(t, err)
-	got, err := json.Marshal(reports[0]["seed_preflight"])
+	got, err := json.Marshal(reports[0]["dependents_check"])
 	require.NoError(t, err)
 	assert.JSONEq(t, string(want), string(got))
-	require.NotNil(t, h.reload(t, dep.JobName()).Facts().SeedPreflight, "the findings are kept with the attempt's facts")
+	require.NotNil(t, h.reload(t, dep.JobName()).Facts().DependentsCheck, "the findings are kept with the attempt's facts")
 }
 
-// A check that stopped the load fails the attempt with the preflight's reason,
+// A check that stopped the load fails the attempt with the dependents check's reason,
 // whatever exit code the container left.
 func TestSettle_ACheckThatStoppedTheLoadFailsTheAttemptWithItsReason(t *testing.T) {
 	h := newHarness(t)
-	dep := h.startedSeed(t, h.now.Add(-time.Minute), seedreload.PreflightCheck)
-	h.logs.containers = map[string]string{model.SeedPreflightContainer: preflightBlock("error", "unowned_dependents",
+	dep := h.startedSeed(t, h.now.Add(-time.Minute), seedreload.CheckMode)
+	h.logs.containers = map[string]string{model.DependentsCheckContainer: dependentsCheckBlock("error", "unowned_dependents",
 		`"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)}
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
 		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 1, "Error")}})
@@ -1188,10 +1188,10 @@ func TestSettle_ACheckThatStoppedTheLoadFailsTheAttemptWithItsReason(t *testing.
 	assert.Equal(t, "failed", reports[0]["status"])
 	assert.Equal(t, "unowned_dependents", reports[0]["failure_reason"])
 	assert.Equal(t, "invalid", reports[0]["failure_class"])
-	assert.NotNil(t, reports[0]["seed_preflight"])
+	assert.NotNil(t, reports[0]["dependents_check"])
 }
 
-// outsideViewFindings is a report-mode preflight block that lists
+// outsideViewFindings is a report-mode dependents check block that lists
 // bi.fx_rates_report outside the allowed set and analytics.fx_rates_current
 // inside it.
 const outsideViewFindings = `"checked":true,"dependents":[` +
@@ -1199,23 +1199,23 @@ const outsideViewFindings = `"checked":true,"dependents":[` +
 	`{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`
 
 // succeededSeed stores a seed attempt of mode whose Job succeeded and whose
-// preflight printed findings.
-func (h *harness) succeededSeed(t *testing.T, mode seedreload.PreflightMode, findings string) *model.Deployment {
+// dependents check printed findings.
+func (h *harness) succeededSeed(t *testing.T, mode seedreload.DependentsCheckMode, findings string) *model.Deployment {
 	t.Helper()
 	dep := h.startedSeed(t, h.now.Add(-time.Minute), mode)
-	h.logs.containers = map[string]string{model.SeedPreflightContainer: preflightBlock("success", "", findings)}
+	h.logs.containers = map[string]string{model.DependentsCheckContainer: dependentsCheckBlock("success", "", findings)}
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
 		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Second), h.now.Add(-20*time.Second), 0, "Completed")}})
 	return dep
 }
 
-// probesOfReport is the seed_preflight.probes of the only report written.
+// probesOfReport is the dependents_check.probes of the only report written.
 func (h *harness) probesOfReport(t *testing.T) any {
 	t.Helper()
 	reports := h.reports(t)
 	require.Len(t, reports, 1)
 	assert.Equal(t, "succeeded", reports[0]["status"])
-	findings, ok := reports[0]["seed_preflight"].(map[string]any)
+	findings, ok := reports[0]["dependents_check"].(map[string]any)
 	require.True(t, ok, "the report carries the findings")
 	return findings["probes"]
 }
@@ -1223,7 +1223,7 @@ func (h *harness) probesOfReport(t *testing.T) any {
 func TestSettleEnded_ProbesTheExternalViewsOfALateBindingLoadThatSucceeded(t *testing.T) {
 	h := newHarness(t)
 	h.probe.log = probeBlock(true, `[{"schema":"bi","name":"fx_rates_report","ok":false,"error":"VIEW_IS_STALE"}]`)
-	dep := h.succeededSeed(t, seedreload.PreflightReport, outsideViewFindings)
+	dep := h.succeededSeed(t, seedreload.ReportMode, outsideViewFindings)
 
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
@@ -1232,7 +1232,7 @@ func TestSettleEnded_ProbesTheExternalViewsOfALateBindingLoadThatSucceeded(t *te
 	assert.Equal(t, "e2e_schema.ftable_e", h.probe.requests[0].NodeID)
 	assert.Equal(t, []string{"bi.fx_rates_report"}, h.probe.requests[0].Views, "only the view outside the allowed set")
 	assert.Equal(t, []any{map[string]any{"schema": "bi", "name": "fx_rates_report", "ok": false, "error": "VIEW_IS_STALE"}}, h.probesOfReport(t))
-	kept := h.reload(t, dep.JobName()).Facts().SeedPreflight
+	kept := h.reload(t, dep.JobName()).Facts().DependentsCheck
 	require.NotNil(t, kept)
 	assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", Error: "VIEW_IS_STALE"}}, kept.Probes)
 }
@@ -1240,8 +1240,8 @@ func TestSettleEnded_ProbesTheExternalViewsOfALateBindingLoadThatSucceeded(t *te
 func TestSettleEnded_DoesNotProbeWithoutAReasonTo(t *testing.T) {
 	t.Run("the load failed", func(t *testing.T) {
 		h := newHarness(t)
-		dep := h.startedSeed(t, h.now.Add(-time.Minute), seedreload.PreflightReport)
-		h.logs.containers = map[string]string{model.SeedPreflightContainer: preflightBlock("success", "", outsideViewFindings)}
+		dep := h.startedSeed(t, h.now.Add(-time.Minute), seedreload.ReportMode)
+		h.logs.containers = map[string]string{model.DependentsCheckContainer: dependentsCheckBlock("success", "", outsideViewFindings)}
 		h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
 			Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 1, "Error")}})
 
@@ -1251,7 +1251,7 @@ func TestSettleEnded_DoesNotProbeWithoutAReasonTo(t *testing.T) {
 	})
 	t.Run("nothing is outside the allowed set", func(t *testing.T) {
 		h := newHarness(t)
-		dep := h.succeededSeed(t, seedreload.PreflightReport, `"checked":true,"dependents":[`+
+		dep := h.succeededSeed(t, seedreload.ReportMode, `"checked":true,"dependents":[`+
 			`{"schema":"analytics","name":"fx_rates_current","kind":"view","owner":"analytics","depth":1,"allowed":true}]`)
 
 		require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
@@ -1259,15 +1259,15 @@ func TestSettleEnded_DoesNotProbeWithoutAReasonTo(t *testing.T) {
 		assert.Empty(t, h.probe.requests)
 		assert.Nil(t, h.probesOfReport(t))
 	})
-	t.Run("the preflight ran in check mode on a schema-bound warehouse", func(t *testing.T) {
+	t.Run("the dependents check ran in check mode on a schema-bound warehouse", func(t *testing.T) {
 		h := newHarness(t)
-		dep := h.succeededSeed(t, seedreload.PreflightCheck, outsideViewFindings)
+		dep := h.succeededSeed(t, seedreload.CheckMode, outsideViewFindings)
 
 		require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
 		assert.Empty(t, h.probe.requests)
 	})
-	t.Run("the attempt is no seed with a preflight", func(t *testing.T) {
+	t.Run("the attempt is no seed with a dependents check", func(t *testing.T) {
 		h := newHarness(t)
 		dep := h.started(t, 0, h.now.Add(-time.Minute))
 		h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
@@ -1293,7 +1293,7 @@ func TestSettleEnded_AProbeThatCannotRunMarksEachViewNotProbed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
 			h.probe.log, h.probe.err = tc.log, tc.err
-			dep := h.succeededSeed(t, seedreload.PreflightReport, outsideViewFindings)
+			dep := h.succeededSeed(t, seedreload.ReportMode, outsideViewFindings)
 
 			require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
@@ -1306,7 +1306,7 @@ func TestSettleEnded_AProbeThatCannotRunMarksEachViewNotProbed(t *testing.T) {
 func TestSettleEnded_ProbesOnlyOnceAnAttemptIsSettled(t *testing.T) {
 	h := newHarness(t)
 	h.probe.log = probeBlock(true, `[]`)
-	dep := h.succeededSeed(t, seedreload.PreflightReport, outsideViewFindings)
+	dep := h.succeededSeed(t, seedreload.ReportMode, outsideViewFindings)
 
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
@@ -1319,8 +1319,8 @@ func TestSettleEnded_ProbesOnlyOnceAnAttemptIsSettled(t *testing.T) {
 func TestSettleEnded_ProbesFindingsAnEarlierRecordPassAlreadyStored(t *testing.T) {
 	h := newHarness(t)
 	h.probe.log = probeBlock(true, `[{"schema":"bi","name":"fx_rates_report","ok":true,"error":""}]`)
-	dep := h.startedSeed(t, h.now.Add(-time.Hour), seedreload.PreflightReport)
-	h.logs.containers = map[string]string{model.SeedPreflightContainer: preflightBlock("success", "", outsideViewFindings)}
+	dep := h.startedSeed(t, h.now.Add(-time.Hour), seedreload.ReportMode)
+	h.logs.containers = map[string]string{model.DependentsCheckContainer: dependentsCheckBlock("success", "", outsideViewFindings)}
 	h.logs.full = "partial output"
 	pod := runningPod(h.now.Add(-50 * time.Minute))
 	pod.DeletingSince = ts(h.now)
@@ -1330,8 +1330,8 @@ func TestSettleEnded_ProbesFindingsAnEarlierRecordPassAlreadyStored(t *testing.T
 
 	stored := h.reload(t, dep.JobName()).Facts()
 	require.NotEmpty(t, stored.LogKey, "the record pass read the log")
-	require.NotNil(t, stored.SeedPreflight, "and stored the findings")
-	require.Empty(t, stored.SeedPreflight.Probes)
+	require.NotNil(t, stored.DependentsCheck, "and stored the findings")
+	require.Empty(t, stored.DependentsCheck.Probes)
 	require.Empty(t, h.probe.requests, "nothing is probed while the attempt runs")
 
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
@@ -1342,10 +1342,10 @@ func TestSettleEnded_ProbesFindingsAnEarlierRecordPassAlreadyStored(t *testing.T
 	reports := h.reports(t)
 	require.Len(t, reports, 2, "the running report, then the final one")
 	assert.Equal(t, "succeeded", reports[1]["status"])
-	findings, ok := reports[1]["seed_preflight"].(map[string]any)
+	findings, ok := reports[1]["dependents_check"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, []any{map[string]any{"schema": "bi", "name": "fx_rates_report", "ok": true}}, findings["probes"])
-	kept := h.reload(t, dep.JobName()).Facts().SeedPreflight
+	kept := h.reload(t, dep.JobName()).Facts().DependentsCheck
 	require.NotNil(t, kept)
 	assert.Len(t, kept.Probes, 1)
 }

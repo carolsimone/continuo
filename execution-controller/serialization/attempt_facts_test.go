@@ -56,17 +56,17 @@ func TestAttemptFactsDTO_NoFactsEncodesEmpty(t *testing.T) {
 	}
 }
 
-// The seed preflight's findings are stored in the facts as seed_preflight,
-// and the dependents of a preflight that listed none stay absent.
-func TestAttemptFactsDTO_StoresTheSeedPreflightFindings(t *testing.T) {
-	want := model.AttemptFacts{SeedPreflight: &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
+// The dependents check's findings are stored in the facts as dependents_check,
+// and the dependents of a dependents check that listed none stay absent.
+func TestAttemptFactsDTO_StoresTheDependentsCheckFindings(t *testing.T) {
+	want := model.AttemptFacts{DependentsCheck: &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
 		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}}
 
 	out, err := json.Marshal(AttemptFactsFromDomain(want))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	const golden = `{"seed_preflight":{"drop_semantics":"cascade","completeness":"exact","checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]}}`
+	const golden = `{"dependents_check":{"drop_semantics":"cascade","completeness":"exact","checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]}}`
 	if string(out) != golden {
 		t.Fatalf("bytes changed:\n got %s\nwant %s", out, golden)
 	}

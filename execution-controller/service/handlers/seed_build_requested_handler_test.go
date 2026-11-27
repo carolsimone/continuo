@@ -150,17 +150,17 @@ func TestSeedBuildRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
 	}
 }
 
-// Each seed's preflight is stored on its deployment's command, so the Job
+// Each seed's dependents check is stored on its deployment's command, so the Job
 // created for it runs the check.
-func TestSeedBuildRequestedHandler_StoresEachSeedsPreflight(t *testing.T) {
+func TestSeedBuildRequestedHandler_StoresEachSeedsDependentsCheck(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
 	u := &fakes.FakeUnitOfWork{Deployments: depl}
-	pf := &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.SchemaBound, Relation: "public.country_codes"}
+	pf := &seedreload.DependentsCheck{Mode: seedreload.ReportMode, Family: warehouse.SchemaBound, Relation: "public.country_codes"}
 	evt := events.SeedBuildRequested{
 		ReleaseID: "rel-seed-2026", Mode: "seed_build", CandidateSchema: "_candidate_rel_seed_2026",
 		Seeds: []events.SeedBuildNode{
 			{NodeID: "seed.shop.country_codes", ProjectName: "shop", SchemaName: "public", TableName: "country_codes",
-				NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed1", SeedPreflight: pf},
+				NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed1", DependentsCheck: pf},
 			{NodeID: "seed.shop.currencies", ProjectName: "shop", SchemaName: "public", TableName: "currencies",
 				NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed2"},
 		},
@@ -169,6 +169,6 @@ func TestSeedBuildRequestedHandler_StoresEachSeedsPreflight(t *testing.T) {
 	require.NoError(t, handlers.NewSeedBuildRequestedHandler(discardLogger()).Handle(context.Background(), u, evt, uuid.New()))
 
 	require.Len(t, depl.added, 2)
-	assert.Same(t, pf, depl.added[0].ValidationCommand().SeedPreflight)
-	assert.Nil(t, depl.added[1].ValidationCommand().SeedPreflight)
+	assert.Same(t, pf, depl.added[0].ValidationCommand().DependentsCheck)
+	assert.Nil(t, depl.added[1].ValidationCommand().DependentsCheck)
 }

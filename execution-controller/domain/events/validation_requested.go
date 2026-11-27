@@ -28,7 +28,7 @@ import (
 // For model/snapshot nodes it is passed as the CANDIDATE_SQL_URI env var on
 // the validation Job's main container, which fetches the object directly from
 // S3 and builds an empty CTAS table without a dbt recompile. Empty for seed
-// nodes (unchanged seeds are cloned from prod; new/changed seeds are
+// nodes (unchanged seeds are built from prod; new/changed seeds are
 // pre-built).
 type ValidationNode struct {
 	NodeID               string // dbt unique_id
@@ -41,9 +41,9 @@ type ValidationNode struct {
 	CandidateArtifactURI string
 	// ValidationOp selects the runner operation for this node, a value of the
 	// validation_op vocabulary (pkg/domain/model.ValidationOp):
-	// build_from_sql, build_from_columns, check_binds or clone_from_prod; an
+	// build_from_sql, build_from_columns, check_binds or build_from_prod; an
 	// empty op runs build_from_sql. ProdSchema is the source schema for
-	// clone_from_prod (empty otherwise). Set per node by release-controller
+	// build_from_prod (empty otherwise). Set per node by release-controller
 	// from the changed-closure membership.
 	ValidationOp string
 	ProdSchema   string

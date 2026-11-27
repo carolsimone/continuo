@@ -21,9 +21,9 @@
 # VALIDATION_IMAGE_PULL_POLICY=IfNotPresent — it silently validates against
 # the OLD runner instead of failing at all.
 #
-# This check extracts the full image ref from every location above and fails
-# unless they are all one identical string. The python-node e2e fixture's base
-# image is checked apart: same image, at or above that string.
+# This check extracts the full image ref from every location above, and from
+# the base image of the python-node e2e fixture, and fails unless they are all
+# one identical string.
 #
 # Scope note: every hand-maintained location here only ever pins the
 # postgres engine (the default/e2e engine) as a bare `repo:tag` ref. The only
@@ -120,6 +120,12 @@ record "tests/e2e/provision-k8s-test-env.sh (kind load)" "${prov_refs[1]:-}"
 record "tests/e2e/k8s/execution-controller-deployment.yaml" \
   "$(extract_all_refs "${REPO_ROOT}/tests/e2e/k8s/execution-controller-deployment.yaml" | head -1)"
 
+# The python-node e2e fixture is a project's image: it builds FROM the same
+# runtime image and packs its contracts with that image's runtime, so it pins
+# the very ref the validation image does.
+record "tests/e2e/fixtures/py-probe/Dockerfile (FROM)" \
+  "$(extract_all_refs "${REPO_ROOT}/tests/e2e/fixtures/py-probe/Dockerfile" | head -1)"
+
 record "docker-compose.yml" \
   "$(extract_all_refs "${REPO_ROOT}/docker-compose.yml" | head -1)"
 
@@ -188,30 +194,5 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-# The python-node e2e fixture is a project's image: it builds FROM a runtime
-# image of the same repository and packs its contracts with that image's
-# runtime, which may be newer than the validation image (a runtime release can
-# change what `pack` writes before execution-controller sends the validation
-# image's new op names). Left behind, the e2e proves the harness on an older
-# base than every other location, so it may run ahead, never lag.
-probe_name="tests/e2e/fixtures/py-probe/Dockerfile (FROM)"
-probe_ref="$(extract_all_refs "${REPO_ROOT}/tests/e2e/fixtures/py-probe/Dockerfile" | head -1)"
-if [ -z "$probe_ref" ]; then
-  echo "check-validation-image-pin: no image ref found for ${probe_name}" >&2
-  exit 1
-fi
-probe_repo="${probe_ref%:*}"; probe_tag="${probe_ref##*:v}"
-canonical_repo="${canonical%:*}"; canonical_tag="${canonical##*:v}"
-canonical_tag="${canonical_tag%%@*}"
-if [ "$probe_repo" != "$canonical_repo" ]; then
-  echo "check-validation-image-pin: ${probe_name} builds FROM ${probe_ref}, another image than ${canonical}" >&2
-  exit 1
-fi
-if [ "$probe_tag" != "$canonical_tag" ] && \
-   [ "$(printf '%s\n%s\n' "$probe_tag" "$canonical_tag" | sort -V | head -1)" = "$probe_tag" ]; then
-  echo "check-validation-image-pin: ${probe_name} builds FROM ${probe_ref}, older than ${canonical}" >&2
-  exit 1
-fi
-
-echo "Validation image pin OK: ${canonical} (${#refs[@]} locations; py-probe fixture ${probe_ref})"
+echo "Validation image pin OK: ${canonical} (${#refs[@]} locations)"
 exit 0

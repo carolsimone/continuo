@@ -261,19 +261,19 @@ func orderRebuilds(rebuilds map[string]Node, g Graph) []string {
 	return ordered
 }
 
-// PreflightMode says whether a preflight stops the load or only reports.
-type PreflightMode string
+// DependentsCheckMode says whether a dependents check stops the load or only reports.
+type DependentsCheckMode string
 
 const (
-	// PreflightCheck stops the load when a dependant is neither rebuilt nor named by an operator.
-	PreflightCheck PreflightMode = "check"
-	// PreflightReport lists the dependants and never stops the load.
-	PreflightReport PreflightMode = "report"
+	// CheckMode stops the load when a dependant is neither rebuilt nor named by an operator.
+	CheckMode DependentsCheckMode = "check"
+	// ReportMode lists the dependants and never stops the load.
+	ReportMode DependentsCheckMode = "report"
 )
 
-// Preflight is the spec of the check a seed's pod runs before its load.
-type Preflight struct {
-	Mode   PreflightMode
+// DependentsCheck is the spec of the check a seed's pod runs before its load.
+type DependentsCheck struct {
+	Mode   DependentsCheckMode
 	Family warehouse.Family
 	// Relation is the seed's warehouse relation.
 	Relation string
@@ -283,24 +283,24 @@ type Preflight struct {
 	Acknowledged []string
 }
 
-// Preflight returns the check for the load, in check mode on a schema_bound
+// DependentsCheck returns the check for the load, in check mode on a schema_bound
 // engine and report mode on a late_binding one, or nil when the load drops
 // nothing or is refused.
-func (p Plan) Preflight(acknowledged []string) *Preflight {
-	mode := PreflightReport
+func (p Plan) DependentsCheck(acknowledged []string) *DependentsCheck {
+	mode := ReportMode
 	if p.Family == warehouse.SchemaBound {
-		mode = PreflightCheck
+		mode = CheckMode
 	}
-	return p.preflight(mode, acknowledged)
+	return p.dependentsCheck(mode, acknowledged)
 }
 
-// ReportPreflight returns the report-mode preflight with nothing acknowledged,
+// ReportDependentsCheck returns the report-mode dependents check with nothing acknowledged,
 // or nil when the load drops nothing or is refused.
-func (p Plan) ReportPreflight() *Preflight {
-	return p.preflight(PreflightReport, nil)
+func (p Plan) ReportDependentsCheck() *DependentsCheck {
+	return p.dependentsCheck(ReportMode, nil)
 }
 
-func (p Plan) preflight(mode PreflightMode, acknowledged []string) *Preflight {
+func (p Plan) dependentsCheck(mode DependentsCheckMode, acknowledged []string) *DependentsCheck {
 	if !p.Load.DropsTable || p.Load.Refusal != "" {
 		return nil
 	}
@@ -308,7 +308,7 @@ func (p Plan) preflight(mode PreflightMode, acknowledged []string) *Preflight {
 	for _, r := range p.Rebuilds {
 		allowed = append(allowed, r.Relation)
 	}
-	return &Preflight{
+	return &DependentsCheck{
 		Mode:         mode,
 		Family:       p.Family,
 		Relation:     p.Seed.Relation,

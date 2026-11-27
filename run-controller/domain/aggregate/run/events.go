@@ -61,7 +61,7 @@ func (e RunCancelled) RunID() uuid.UUID { return e.ID }
 // until execution-controller acknowledged it), the node it builds as the run's
 // release holds it, the attempt's Kubernetes Job name, how long the attempt's
 // container may run, and the task's DispatchSpec: the dbt verb, why the plan
-// chose it, and a seed's preflight. Every dispatch of a task carries the spec
+// chose it, and a seed's dependents check. Every dispatch of a task carries the spec
 // its row stores. TenantID is the tenant of the run, which the event's outbox
 // row stores. No retry budget travels: run-controller decides every retry.
 type TaskDispatched struct {
@@ -77,8 +77,8 @@ type TaskDispatched struct {
 	Timeout      time.Duration
 	// Reason is the task's plan reason; empty when its plan stated none.
 	Reason string
-	// Preflight is the seed's preflight; nil on every other task.
-	Preflight *seedreload.Preflight
+	// DependentsCheck is the seed's dependents check; nil on every other task.
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 func (TaskDispatched) runDomainEvent()    {}

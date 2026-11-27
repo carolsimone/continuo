@@ -33,7 +33,7 @@ type TaskAttempt struct {
 	ErrorMessage     *string
 	LogS3Key         *string
 	RunResultsURI    *string
-	// SeedPreflight is what the attempt's seed preflight found in the
-	// warehouse; nil when the attempt ran no preflight.
-	SeedPreflight *seedreload.Findings
+	// DependentsCheck is what the attempt's dependents check found in the
+	// warehouse; nil when the attempt ran no dependents check.
+	DependentsCheck *seedreload.Findings
 }

@@ -59,23 +59,23 @@ func SummarizeValidationFailure(total int, nodes []FailedNode, upstream []Change
 	return summary
 }
 
-// SummarizeCloneFailure is the operator-facing explanation of the unchanged
-// upstreams whose production table validation could not copy: it names the
-// first maxNamedNodes in id order and counts the rest. Running a node builds
-// its production table, so the text asks for that. It is empty when no copy
-// failed.
-func SummarizeCloneFailure(cloned []string) string {
-	if len(cloned) == 0 {
+// SummarizeBuildFromProdFailure is the operator-facing explanation of the
+// unchanged upstreams the release check could not build from their production
+// shape: it names the first maxNamedNodes in id order and counts the rest.
+// Running a node builds its production table, so the text asks for that. It
+// is empty when no such build failed.
+func SummarizeBuildFromProdFailure(fromProd []string) string {
+	if len(fromProd) == 0 {
 		return ""
 	}
-	ids := slices.Sorted(slices.Values(cloned))
+	ids := slices.Sorted(slices.Values(fromProd))
 	named := ids[:min(maxNamedNodes, len(ids))]
 	list := strings.Join(named, ", ")
 	if rest := len(ids) - len(named); rest > 0 {
 		list = andMore(list, rest)
 	}
-	return fmt.Sprintf("Could not copy the production table of %s. Run %s, then release again.",
-		list, plural(len(ids), "it", "them"))
+	return fmt.Sprintf("Could not build %s from %s. Run %s, then release again.",
+		list, plural(len(ids), "its production table", "their production tables"), plural(len(ids), "it", "them"))
 }
 
 // SummarizeSeedFailure is the operator-facing explanation of a seed-build

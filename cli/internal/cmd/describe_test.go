@@ -50,7 +50,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule run", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "release notices", "node contract", "node contract-history", "node contract-diff", "describe", "precedents"} {
+	for _, want := range []string{"schedule list", "schedule run", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "release notices", "node data-contract", "node data-contract-history", "node data-contract-diff", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -115,7 +115,7 @@ func TestDescribe_ReleaseNoticesIsADocumentedReadOnlyCommand(t *testing.T) {
 	require.NotEmpty(t, c.Examples)
 	assert.Equal(t, "continuo release notices rel-a1b2c3d-201", c.Examples[0])
 	assert.Contains(t, c.Long, "predicts")
-	assert.Contains(t, c.Long, "preflight")
+	assert.Contains(t, c.Long, "dependents check")
 
 	var schema map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(c.OutputSchema, &schema))
@@ -253,7 +253,7 @@ func TestDescribe_CronCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing
 	assert.Contains(t, setCronCodes, 4, "set-cron must document the conflict of a schedule that changed twice while it ran")
 }
 
-// The contract commands are reads the chat runs without approval, and the chat
+// The data contract commands are reads the chat runs without approval, and the chat
 // sets no flag on them: every value it passes is a positional.
 func TestDescribe_ContractCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing.T) {
 	p := runDescribe(t)
@@ -262,10 +262,10 @@ func TestDescribe_ContractCommandsDocumentTheirPositionalArgsAndExitCodes(t *tes
 		args  []string
 		exits []int
 	}{
-		"node contract": {[]string{"<unique_id>"}, []int{0, 2, 3, 5, 6}},
+		"node data-contract": {[]string{"<unique_id>"}, []int{0, 2, 3, 5, 6}},
 		// The catalog answers a node with no history with an empty list, never not_found.
-		"node contract-history": {[]string{"<unique_id>", "[limit]"}, []int{0, 2, 5, 6}},
-		"node contract-diff":    {[]string{"<unique_id>", "<from>", "<to>"}, []int{0, 2, 3, 5, 6}},
+		"node data-contract-history": {[]string{"<unique_id>", "[limit]"}, []int{0, 2, 5, 6}},
+		"node data-contract-diff":    {[]string{"<unique_id>", "<from>", "<to>"}, []int{0, 2, 3, 5, 6}},
 	} {
 		c := findCmd(t, p, path)
 		assert.Equal(t, want.args, c.Args, path)

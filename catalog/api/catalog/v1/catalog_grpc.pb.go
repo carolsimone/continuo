@@ -19,16 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CatalogQuery_GetNode_FullMethodName                  = "/catalog.v1.CatalogQuery/GetNode"
-	CatalogQuery_GetNodeLocation_FullMethodName          = "/catalog.v1.CatalogQuery/GetNodeLocation"
-	CatalogQuery_GetNodeVersions_FullMethodName          = "/catalog.v1.CatalogQuery/GetNodeVersions"
-	CatalogQuery_GetNodeVersionDiff_FullMethodName       = "/catalog.v1.CatalogQuery/GetNodeVersionDiff"
-	CatalogQuery_GetUpstreamChanges_FullMethodName       = "/catalog.v1.CatalogQuery/GetUpstreamChanges"
-	CatalogQuery_GetCodeUnitVersions_FullMethodName      = "/catalog.v1.CatalogQuery/GetCodeUnitVersions"
-	CatalogQuery_GetPrecedents_FullMethodName            = "/catalog.v1.CatalogQuery/GetPrecedents"
-	CatalogQuery_GetNodeContract_FullMethodName          = "/catalog.v1.CatalogQuery/GetNodeContract"
-	CatalogQuery_ListNodeContractVersions_FullMethodName = "/catalog.v1.CatalogQuery/ListNodeContractVersions"
-	CatalogQuery_GetNodeContractDiff_FullMethodName      = "/catalog.v1.CatalogQuery/GetNodeContractDiff"
+	CatalogQuery_GetNode_FullMethodName                      = "/catalog.v1.CatalogQuery/GetNode"
+	CatalogQuery_GetNodeLocation_FullMethodName              = "/catalog.v1.CatalogQuery/GetNodeLocation"
+	CatalogQuery_GetNodeVersions_FullMethodName              = "/catalog.v1.CatalogQuery/GetNodeVersions"
+	CatalogQuery_GetNodeVersionDiff_FullMethodName           = "/catalog.v1.CatalogQuery/GetNodeVersionDiff"
+	CatalogQuery_GetUpstreamChanges_FullMethodName           = "/catalog.v1.CatalogQuery/GetUpstreamChanges"
+	CatalogQuery_GetCodeUnitVersions_FullMethodName          = "/catalog.v1.CatalogQuery/GetCodeUnitVersions"
+	CatalogQuery_GetPrecedents_FullMethodName                = "/catalog.v1.CatalogQuery/GetPrecedents"
+	CatalogQuery_GetNodeDataContract_FullMethodName          = "/catalog.v1.CatalogQuery/GetNodeDataContract"
+	CatalogQuery_ListNodeDataContractVersions_FullMethodName = "/catalog.v1.CatalogQuery/ListNodeDataContractVersions"
+	CatalogQuery_GetNodeDataContractDiff_FullMethodName      = "/catalog.v1.CatalogQuery/GetNodeDataContractDiff"
 )
 
 // CatalogQueryClient is the client API for CatalogQuery service.
@@ -85,24 +85,24 @@ type CatalogQueryClient interface {
 	// a signature is a search key, and "no precedent" is a valid answer.
 	// Neither signature nor a full (category, reason) pair → INVALID_ARGUMENT.
 	GetPrecedents(ctx context.Context, in *GetPrecedentsRequest, opts ...grpc.CallOption) (*GetPrecedentsResponse, error)
-	// GetNodeContract returns the contract a live node currently has, with the
+	// GetNodeDataContract returns the contract a live node currently has, with the
 	// version number of the promotion that made it current. A node with no
 	// contract, a retired node and an unknown unique_id are NOT_FOUND. With
 	// include_document the response carries the contract as its published ODCS
 	// YAML, without the `servers` list; without it document_yaml is "".
-	GetNodeContract(ctx context.Context, in *GetNodeContractRequest, opts ...grpc.CallOption) (*GetNodeContractResponse, error)
-	// ListNodeContractVersions lists a node's contract history, one row per
+	GetNodeDataContract(ctx context.Context, in *GetNodeDataContractRequest, opts ...grpc.CallOption) (*GetNodeDataContractResponse, error)
+	// ListNodeDataContractVersions lists a node's contract history, one row per
 	// promotion that changed its contract, newest first; is_current marks the
 	// version the node has now. A retired node keeps its history, none of it
 	// current. limit 0 returns every version; a negative limit is
 	// INVALID_ARGUMENT. A node with no history returns an empty list, never
 	// NOT_FOUND. Rows carry no document_yaml.
-	ListNodeContractVersions(ctx context.Context, in *ListNodeContractVersionsRequest, opts ...grpc.CallOption) (*ListNodeContractVersionsResponse, error)
-	// GetNodeContractDiff returns the fields that differ between two stored
+	ListNodeDataContractVersions(ctx context.Context, in *ListNodeDataContractVersionsRequest, opts ...grpc.CallOption) (*ListNodeDataContractVersionsResponse, error)
+	// GetNodeDataContractDiff returns the fields that differ between two stored
 	// versions of one node's contract, one row per changed path, in a fixed
 	// order. A version below 1 is INVALID_ARGUMENT; a version the node has no
 	// promotion for is NOT_FOUND. Two equal versions return an empty list.
-	GetNodeContractDiff(ctx context.Context, in *GetNodeContractDiffRequest, opts ...grpc.CallOption) (*GetNodeContractDiffResponse, error)
+	GetNodeDataContractDiff(ctx context.Context, in *GetNodeDataContractDiffRequest, opts ...grpc.CallOption) (*GetNodeDataContractDiffResponse, error)
 }
 
 type catalogQueryClient struct {
@@ -183,30 +183,30 @@ func (c *catalogQueryClient) GetPrecedents(ctx context.Context, in *GetPrecedent
 	return out, nil
 }
 
-func (c *catalogQueryClient) GetNodeContract(ctx context.Context, in *GetNodeContractRequest, opts ...grpc.CallOption) (*GetNodeContractResponse, error) {
+func (c *catalogQueryClient) GetNodeDataContract(ctx context.Context, in *GetNodeDataContractRequest, opts ...grpc.CallOption) (*GetNodeDataContractResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetNodeContractResponse)
-	err := c.cc.Invoke(ctx, CatalogQuery_GetNodeContract_FullMethodName, in, out, cOpts...)
+	out := new(GetNodeDataContractResponse)
+	err := c.cc.Invoke(ctx, CatalogQuery_GetNodeDataContract_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *catalogQueryClient) ListNodeContractVersions(ctx context.Context, in *ListNodeContractVersionsRequest, opts ...grpc.CallOption) (*ListNodeContractVersionsResponse, error) {
+func (c *catalogQueryClient) ListNodeDataContractVersions(ctx context.Context, in *ListNodeDataContractVersionsRequest, opts ...grpc.CallOption) (*ListNodeDataContractVersionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListNodeContractVersionsResponse)
-	err := c.cc.Invoke(ctx, CatalogQuery_ListNodeContractVersions_FullMethodName, in, out, cOpts...)
+	out := new(ListNodeDataContractVersionsResponse)
+	err := c.cc.Invoke(ctx, CatalogQuery_ListNodeDataContractVersions_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *catalogQueryClient) GetNodeContractDiff(ctx context.Context, in *GetNodeContractDiffRequest, opts ...grpc.CallOption) (*GetNodeContractDiffResponse, error) {
+func (c *catalogQueryClient) GetNodeDataContractDiff(ctx context.Context, in *GetNodeDataContractDiffRequest, opts ...grpc.CallOption) (*GetNodeDataContractDiffResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetNodeContractDiffResponse)
-	err := c.cc.Invoke(ctx, CatalogQuery_GetNodeContractDiff_FullMethodName, in, out, cOpts...)
+	out := new(GetNodeDataContractDiffResponse)
+	err := c.cc.Invoke(ctx, CatalogQuery_GetNodeDataContractDiff_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -267,24 +267,24 @@ type CatalogQueryServer interface {
 	// a signature is a search key, and "no precedent" is a valid answer.
 	// Neither signature nor a full (category, reason) pair → INVALID_ARGUMENT.
 	GetPrecedents(context.Context, *GetPrecedentsRequest) (*GetPrecedentsResponse, error)
-	// GetNodeContract returns the contract a live node currently has, with the
+	// GetNodeDataContract returns the contract a live node currently has, with the
 	// version number of the promotion that made it current. A node with no
 	// contract, a retired node and an unknown unique_id are NOT_FOUND. With
 	// include_document the response carries the contract as its published ODCS
 	// YAML, without the `servers` list; without it document_yaml is "".
-	GetNodeContract(context.Context, *GetNodeContractRequest) (*GetNodeContractResponse, error)
-	// ListNodeContractVersions lists a node's contract history, one row per
+	GetNodeDataContract(context.Context, *GetNodeDataContractRequest) (*GetNodeDataContractResponse, error)
+	// ListNodeDataContractVersions lists a node's contract history, one row per
 	// promotion that changed its contract, newest first; is_current marks the
 	// version the node has now. A retired node keeps its history, none of it
 	// current. limit 0 returns every version; a negative limit is
 	// INVALID_ARGUMENT. A node with no history returns an empty list, never
 	// NOT_FOUND. Rows carry no document_yaml.
-	ListNodeContractVersions(context.Context, *ListNodeContractVersionsRequest) (*ListNodeContractVersionsResponse, error)
-	// GetNodeContractDiff returns the fields that differ between two stored
+	ListNodeDataContractVersions(context.Context, *ListNodeDataContractVersionsRequest) (*ListNodeDataContractVersionsResponse, error)
+	// GetNodeDataContractDiff returns the fields that differ between two stored
 	// versions of one node's contract, one row per changed path, in a fixed
 	// order. A version below 1 is INVALID_ARGUMENT; a version the node has no
 	// promotion for is NOT_FOUND. Two equal versions return an empty list.
-	GetNodeContractDiff(context.Context, *GetNodeContractDiffRequest) (*GetNodeContractDiffResponse, error)
+	GetNodeDataContractDiff(context.Context, *GetNodeDataContractDiffRequest) (*GetNodeDataContractDiffResponse, error)
 	mustEmbedUnimplementedCatalogQueryServer()
 }
 
@@ -316,14 +316,14 @@ func (UnimplementedCatalogQueryServer) GetCodeUnitVersions(context.Context, *Get
 func (UnimplementedCatalogQueryServer) GetPrecedents(context.Context, *GetPrecedentsRequest) (*GetPrecedentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPrecedents not implemented")
 }
-func (UnimplementedCatalogQueryServer) GetNodeContract(context.Context, *GetNodeContractRequest) (*GetNodeContractResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetNodeContract not implemented")
+func (UnimplementedCatalogQueryServer) GetNodeDataContract(context.Context, *GetNodeDataContractRequest) (*GetNodeDataContractResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNodeDataContract not implemented")
 }
-func (UnimplementedCatalogQueryServer) ListNodeContractVersions(context.Context, *ListNodeContractVersionsRequest) (*ListNodeContractVersionsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListNodeContractVersions not implemented")
+func (UnimplementedCatalogQueryServer) ListNodeDataContractVersions(context.Context, *ListNodeDataContractVersionsRequest) (*ListNodeDataContractVersionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNodeDataContractVersions not implemented")
 }
-func (UnimplementedCatalogQueryServer) GetNodeContractDiff(context.Context, *GetNodeContractDiffRequest) (*GetNodeContractDiffResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetNodeContractDiff not implemented")
+func (UnimplementedCatalogQueryServer) GetNodeDataContractDiff(context.Context, *GetNodeDataContractDiffRequest) (*GetNodeDataContractDiffResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNodeDataContractDiff not implemented")
 }
 func (UnimplementedCatalogQueryServer) mustEmbedUnimplementedCatalogQueryServer() {}
 func (UnimplementedCatalogQueryServer) testEmbeddedByValue()                      {}
@@ -472,56 +472,56 @@ func _CatalogQuery_GetPrecedents_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CatalogQuery_GetNodeContract_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetNodeContractRequest)
+func _CatalogQuery_GetNodeDataContract_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNodeDataContractRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CatalogQueryServer).GetNodeContract(ctx, in)
+		return srv.(CatalogQueryServer).GetNodeDataContract(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CatalogQuery_GetNodeContract_FullMethodName,
+		FullMethod: CatalogQuery_GetNodeDataContract_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CatalogQueryServer).GetNodeContract(ctx, req.(*GetNodeContractRequest))
+		return srv.(CatalogQueryServer).GetNodeDataContract(ctx, req.(*GetNodeDataContractRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CatalogQuery_ListNodeContractVersions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListNodeContractVersionsRequest)
+func _CatalogQuery_ListNodeDataContractVersions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodeDataContractVersionsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CatalogQueryServer).ListNodeContractVersions(ctx, in)
+		return srv.(CatalogQueryServer).ListNodeDataContractVersions(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CatalogQuery_ListNodeContractVersions_FullMethodName,
+		FullMethod: CatalogQuery_ListNodeDataContractVersions_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CatalogQueryServer).ListNodeContractVersions(ctx, req.(*ListNodeContractVersionsRequest))
+		return srv.(CatalogQueryServer).ListNodeDataContractVersions(ctx, req.(*ListNodeDataContractVersionsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CatalogQuery_GetNodeContractDiff_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetNodeContractDiffRequest)
+func _CatalogQuery_GetNodeDataContractDiff_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNodeDataContractDiffRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CatalogQueryServer).GetNodeContractDiff(ctx, in)
+		return srv.(CatalogQueryServer).GetNodeDataContractDiff(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CatalogQuery_GetNodeContractDiff_FullMethodName,
+		FullMethod: CatalogQuery_GetNodeDataContractDiff_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CatalogQueryServer).GetNodeContractDiff(ctx, req.(*GetNodeContractDiffRequest))
+		return srv.(CatalogQueryServer).GetNodeDataContractDiff(ctx, req.(*GetNodeDataContractDiffRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -562,16 +562,16 @@ var CatalogQuery_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CatalogQuery_GetPrecedents_Handler,
 		},
 		{
-			MethodName: "GetNodeContract",
-			Handler:    _CatalogQuery_GetNodeContract_Handler,
+			MethodName: "GetNodeDataContract",
+			Handler:    _CatalogQuery_GetNodeDataContract_Handler,
 		},
 		{
-			MethodName: "ListNodeContractVersions",
-			Handler:    _CatalogQuery_ListNodeContractVersions_Handler,
+			MethodName: "ListNodeDataContractVersions",
+			Handler:    _CatalogQuery_ListNodeDataContractVersions_Handler,
 		},
 		{
-			MethodName: "GetNodeContractDiff",
-			Handler:    _CatalogQuery_GetNodeContractDiff_Handler,
+			MethodName: "GetNodeDataContractDiff",
+			Handler:    _CatalogQuery_GetNodeDataContractDiff_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

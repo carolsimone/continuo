@@ -54,7 +54,7 @@ func TestBuildNotices_TheDesignsExample(t *testing.T) {
 		{UniqueID: "analytics.fx_rates_latest_eur", NodeType: "dbt-model", Materialized: "view", Schedule: "hourly", UpstreamUniqueIDs: []string{"analytics.fx_rates_current"}},
 		{UniqueID: "analytics.fx_transactions_eur", NodeType: "dbt-model", Materialized: "table", Schedule: "daily", UpstreamUniqueIDs: []string{"analytics.seed_fx_rates_eur"}},
 	}
-	notices, preflights := release.BuildNotices(append(release.Topology{candSeed}, views...), release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
+	notices, dependentsChecks := release.BuildNotices(append(release.Topology{candSeed}, views...), release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
 	require.Len(t, notices, 1)
 	n := notices[0]
 	assert.Equal(t, release.ColumnChanges{Added: []string{"source"}, Removed: []string{}, Retyped: []string{}}, n.Columns)
@@ -63,7 +63,7 @@ func TestBuildNotices_TheDesignsExample(t *testing.T) {
 	assert.Equal(t, []seedreload.Boundary{{Key: "analytics.fx_transactions_eur", Materialized: "table", Schedule: "daily"}}, n.RefreshOnSchedule)
 	assert.Equal(t, "reloads", n.Prediction)
 	assert.False(t, n.Warehouse.Checked)
-	assert.Equal(t, seedreload.PreflightReport, preflights["analytics.seed_fx_rates_eur"].Mode)
+	assert.Equal(t, seedreload.ReportMode, dependentsChecks["analytics.seed_fx_rates_eur"].Mode)
 
 	n.ApplyFindings(seedreload.Findings{Checked: true, Completeness: "exact", Dependents: []seedreload.Dependent{
 		{Schema: "analytics", Name: "fx_rates_current", Kind: "view", Owner: "dbt", Depth: 1, Allowed: true},
@@ -75,7 +75,7 @@ func TestBuildNotices_TheDesignsExample(t *testing.T) {
 
 func TestBuildNotices_TheNoticeNamesTheSeedAndItsChange(t *testing.T) {
 	prodSeed, candSeed := fxSeeds()
-	notices, preflights := release.BuildNotices(append(release.Topology{candSeed}, fxViews()...), release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
+	notices, dependentsChecks := release.BuildNotices(append(release.Topology{candSeed}, fxViews()...), release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
 	require.Len(t, notices, 1)
 	n := notices[0]
 	assert.Equal(t, "seed_reload", n.Kind)
@@ -85,7 +85,7 @@ func TestBuildNotices_TheNoticeNamesTheSeedAndItsChange(t *testing.T) {
 	assert.Equal(t, seedreload.ChangeColumns, n.Change)
 	assert.Empty(t, n.StopReason)
 	assert.False(t, n.Unvalidated)
-	p := preflights["analytics.seed_fx_rates_eur"]
+	p := dependentsChecks["analytics.seed_fx_rates_eur"]
 	require.NotNil(t, p)
 	assert.Equal(t, "analytics.seed_fx_rates_eur", p.Relation)
 	assert.Equal(t, []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"}, p.Allowed)
@@ -103,23 +103,23 @@ func TestBuildNotices_SkipsNewUnchangedAndNonDroppingSeeds(t *testing.T) {
 	view := release.Node{UniqueID: "analytics.v", NodeType: "dbt-model", Materialized: "view",
 		UpstreamUniqueIDs: []string{"analytics.seed_unset", "analytics.seed_same", "analytics.seed_new"}}
 
-	notices, preflights := release.BuildNotices(release.Topology{unsetCand, same, brandNew, view}, release.Topology{unset, same}, warehouse.SchemaBound, "postgres", false)
+	notices, dependentsChecks := release.BuildNotices(release.Topology{unsetCand, same, brandNew, view}, release.Topology{unset, same}, warehouse.SchemaBound, "postgres", false)
 	assert.Empty(t, notices)
-	assert.Empty(t, preflights)
+	assert.Empty(t, dependentsChecks)
 }
 
 func TestBuildNotices_AFalseSeedWithNewColumnsIsRefused(t *testing.T) {
 	no := false
 	prodSeed, candSeed := fxSeeds()
 	prodSeed.FullRefresh, candSeed.FullRefresh = &no, &no
-	notices, preflights := release.BuildNotices(append(release.Topology{candSeed}, fxViews()...), release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
+	notices, dependentsChecks := release.BuildNotices(append(release.Topology{candSeed}, fxViews()...), release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
 	require.Len(t, notices, 1)
 	n := notices[0]
 	assert.Equal(t, "refused", n.Prediction)
 	assert.Equal(t, "seed_full_refresh_disabled", n.StopReason)
 	assert.Equal(t, model.FailureReasonSeedFullRefreshDisabled, n.Load.Refusal)
 	assert.Empty(t, n.Rebuilds)
-	assert.NotContains(t, preflights, "analytics.seed_fx_rates_eur")
+	assert.NotContains(t, dependentsChecks, "analytics.seed_fx_rates_eur")
 
 	// A refused load stays refused whatever the warehouse holds.
 	n.ApplyFindings(seedreload.Findings{Checked: true, Completeness: "exact",
@@ -160,14 +160,14 @@ func TestBuildNotices_LeavesTestsOutOfTheWalk(t *testing.T) {
 	assert.Equal(t, []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"}, rebuildIDs(notices[0]))
 }
 
-// The preflight names each relation by its resolved relation when the node has one.
+// The dependents check names each relation by its resolved relation when the node has one.
 func TestBuildNotices_RelationsAreTheResolvedOnes(t *testing.T) {
 	prodSeed, candSeed := fxSeeds()
 	candSeed.ResolvedRelationID = "analytics.fx_rates_seed"
 	views := fxViews()
 	views[0].ResolvedRelationID = "analytics.fx_rates_now"
-	_, preflights := release.BuildNotices(append(release.Topology{candSeed}, views...), release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
-	p := preflights["analytics.seed_fx_rates_eur"]
+	_, dependentsChecks := release.BuildNotices(append(release.Topology{candSeed}, views...), release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
+	p := dependentsChecks["analytics.seed_fx_rates_eur"]
 	require.NotNil(t, p)
 	assert.Equal(t, "analytics.fx_rates_seed", p.Relation)
 	assert.Equal(t, []string{"analytics.fx_rates_latest_eur", "analytics.fx_rates_now"}, p.Allowed)
@@ -196,11 +196,11 @@ func TestColumnChangesOf(t *testing.T) {
 
 func TestNoticeApplyFindings_OnTrinoAnOutsideViewIsListedAndTheReloadGoesAhead(t *testing.T) {
 	prodSeed, candSeed := fxSeeds()
-	notices, preflights := release.BuildNotices(append(release.Topology{candSeed}, fxViews()...), release.Topology{prodSeed}, warehouse.LateBinding, "trino", false)
+	notices, dependentsChecks := release.BuildNotices(append(release.Topology{candSeed}, fxViews()...), release.Topology{prodSeed}, warehouse.LateBinding, "trino", false)
 	require.Len(t, notices, 1)
 	n := notices[0]
 	assert.Equal(t, warehouse.LateBinding, n.EngineFamily)
-	assert.Equal(t, seedreload.PreflightReport, preflights["analytics.seed_fx_rates_eur"].Mode)
+	assert.Equal(t, seedreload.ReportMode, dependentsChecks["analytics.seed_fx_rates_eur"].Mode)
 
 	n.ApplyFindings(seedreload.Findings{Checked: true, Completeness: "best_effort", Dependents: []seedreload.Dependent{
 		{Schema: "BI", Name: "FX_Rates_Report", Kind: "view", Owner: "bi", Depth: 1}}})

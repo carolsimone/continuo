@@ -29,17 +29,17 @@ func TestReport_IsEmittedAsItsPayloadAndReadsBack(t *testing.T) {
 	assert.Equal(t, r, ReportToDomain(p))
 }
 
-// The findings of a seed's preflight ride on the report as its seed_preflight
+// The findings of a seed's dependents check ride on the report as its dependents_check
 // and read back as the same findings.
-func TestReport_CarriesTheSeedPreflightFindings(t *testing.T) {
+func TestReport_CarriesTheDependentsCheckFindings(t *testing.T) {
 	cmd := command.DeployTask{RunID: "run-1", TaskID: "task-1", JobName: "svc-sch-tbl-7f3e1a2b-r0"}
 	findings := &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
 		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1, Allowed: true}}}
-	r := model.Report{Status: pkgmodel.AttemptStatusSucceeded, SeedPreflight: findings}
+	r := model.Report{Status: pkgmodel.AttemptStatusSucceeded, DependentsCheck: findings}
 
 	p := ReportFromDomain(cmd, r)
 
-	assert.Equal(t, pkgevents.SeedPreflightFindingsOf(findings), p.SeedPreflight)
+	assert.Equal(t, pkgevents.DependentsCheckFindingsOf(findings), p.DependentsCheck)
 	assert.Equal(t, r, ReportToDomain(p))
-	assert.Nil(t, ReportFromDomain(cmd, model.Report{Status: pkgmodel.AttemptStatusQueued}).SeedPreflight)
+	assert.Nil(t, ReportFromDomain(cmd, model.Report{Status: pkgmodel.AttemptStatusQueued}).DependentsCheck)
 }

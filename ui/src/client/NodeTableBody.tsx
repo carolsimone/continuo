@@ -1,5 +1,5 @@
 import { Fragment, useRef, useState, type MutableRefObject } from 'react';
-import type { Task, TaskAttempt, GraphEdge, SeedPreflight } from './types';
+import type { Task, TaskAttempt, GraphEdge, DependentsCheck } from './types';
 import type { ProjectGroup } from './NodesPanel';
 import { intraProjectOrder } from './run-graph-helpers';
 import {
@@ -314,7 +314,7 @@ function AttemptRows({ attempts }: { attempts: TaskAttempt[] }) {
                     : <span className="nodes-dash">—</span>}
                 </td>
               </tr>
-              <PreflightFindings preflight={a.seed_preflight} />
+              <DependentsCheckFindings dependentsCheck={a.dependents_check} />
             </Fragment>
           );
         })}
@@ -323,12 +323,12 @@ function AttemptRows({ attempts }: { attempts: TaskAttempt[] }) {
   );
 }
 
-// PreflightFindings is the sub-row under a seed attempt that lists what its
-// preflight found wrong: each dependant outside the set the load may drop and
+// DependentsCheckFindings is the sub-row under a seed attempt that lists what its
+// dependents check found wrong: each dependant outside the set the load may drop and
 // each view whose probe failed. It renders nothing when there is neither.
-function PreflightFindings({ preflight }: { preflight: SeedPreflight | null | undefined }) {
-  const outside = (preflight?.dependents ?? []).filter(d => !d.allowed);
-  const failed = (preflight?.probes ?? []).filter(p => !p.ok);
+function DependentsCheckFindings({ dependentsCheck }: { dependentsCheck: DependentsCheck | null | undefined }) {
+  const outside = (dependentsCheck?.dependents ?? []).filter(d => !d.allowed);
+  const failed = (dependentsCheck?.probes ?? []).filter(p => !p.ok);
   if (outside.length === 0 && failed.length === 0) return null;
   return (
     <tr className="remediation-subrow nodes-row--static">

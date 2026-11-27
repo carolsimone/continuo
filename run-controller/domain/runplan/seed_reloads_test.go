@@ -18,7 +18,7 @@ const (
 	table   topology.NodeKey = "analytics.fx_transactions_eur"
 )
 
-var pf = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: string(seed), Allowed: []string{string(current)}}
+var dependentsCheck = &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: string(seed), Allowed: []string{string(current)}}
 
 // nodes returns one dbt-model node per key.
 func nodes(keys ...topology.NodeKey) []topology.Node {
@@ -51,7 +51,7 @@ func taskOf(p Plan, k topology.NodeKey) PlannedTask {
 func TestApplySeedReloads_AddsTheRebuildsAfterTheSeed(t *testing.T) {
 	g := fxGraph()
 	full := model.OperationFullRefresh
-	p := ApplySeedReloads(flatPlan([]topology.NodeKey{seed}), g, model.OperationRun, []SeedReload{{Seed: seed, Preflight: pf, Plan: seedreload.Plan{
+	p := ApplySeedReloads(flatPlan([]topology.NodeKey{seed}), g, model.OperationRun, []SeedReload{{Seed: seed, DependentsCheck: dependentsCheck, Plan: seedreload.Plan{
 		Load: seedreload.Load{Operation: full, DropsTable: true, Reason: "columns changed"},
 		Rebuilds: []seedreload.Rebuild{
 			{Key: string(current), Operation: model.OperationRun, Reason: "rebuild: dropped by the load of analytics.seed_fx_rates_eur"},
@@ -60,7 +60,7 @@ func TestApplySeedReloads_AddsTheRebuildsAfterTheSeed(t *testing.T) {
 	assert.Equal(t, []PlannedTask{
 		{Key: current, Reason: "rebuild: dropped by the load of analytics.seed_fx_rates_eur", RebuildOf: seed},
 		{Key: latest, Reason: "rebuild: dropped by the load of analytics.seed_fx_rates_eur, through analytics.fx_rates_current", RebuildOf: seed},
-		{Key: seed, Operation: &full, Reason: "columns changed", Preflight: pf},
+		{Key: seed, Operation: &full, Reason: "columns changed", DependentsCheck: dependentsCheck},
 	}, p.Tasks)
 	assert.Equal(t, []topology.NodeKey{seed}, p.Ready)
 }

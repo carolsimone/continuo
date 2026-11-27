@@ -9,7 +9,7 @@ import (
 )
 
 // A node built from its own candidate code gets the op of its runtime; any
-// other node of the validation set is an unchanged upstream, copied from its
+// other node of the validation set is an unchanged upstream, built from its
 // production schema whatever its type.
 func TestValidationOpFor(t *testing.T) {
 	rebuilt := map[string]bool{"m": true, "s": true, "py": true, "csv": true, "api": true, "tst": true}
@@ -25,9 +25,9 @@ func TestValidationOpFor(t *testing.T) {
 		{"csv", pkg_model.NodeTypePythonCsv, pkg_model.ValidationOpBuildFromColumns, ""},
 		{"api", pkg_model.NodeTypePythonApi, pkg_model.ValidationOpBuildFromColumns, ""},
 		{"tst", pkg_model.NodeTypeDbtTest, pkg_model.ValidationOpCheckBinds, ""},
-		{"up-model", pkg_model.NodeTypeDbtModel, pkg_model.ValidationOpCloneFromProd, "prod_schema"},
-		{"up-python", pkg_model.NodeTypePythonNode, pkg_model.ValidationOpCloneFromProd, "prod_schema"},
-		{"up-seed", pkg_model.NodeTypeDbtSeed, pkg_model.ValidationOpCloneFromProd, "prod_schema"},
+		{"up-model", pkg_model.NodeTypeDbtModel, pkg_model.ValidationOpBuildFromProd, "prod_schema"},
+		{"up-python", pkg_model.NodeTypePythonNode, pkg_model.ValidationOpBuildFromProd, "prod_schema"},
+		{"up-seed", pkg_model.NodeTypeDbtSeed, pkg_model.ValidationOpBuildFromProd, "prod_schema"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.id, func(t *testing.T) {

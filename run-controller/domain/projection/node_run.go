@@ -51,7 +51,7 @@ type NodeRun struct {
 	// task waits for no lease or no task holds the node.
 	WaitingOnRunID *uuid.UUID
 	// BlockingObjects are the "schema.name" of each dependent of the seed that
-	// its preflight did not allow, on a seed task whose latest attempt failed
+	// its dependents check did not allow, on a seed task whose latest attempt failed
 	// unowned_dependents; empty otherwise.
 	BlockingObjects []string
 }

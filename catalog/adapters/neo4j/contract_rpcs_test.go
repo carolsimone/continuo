@@ -39,13 +39,13 @@ func (f *swapFixture) contractHandler() (*grpcadapter.QueryHandler, context.Cont
 	return f.newQueryHandler(NewCodeVersionQueryRepository(f.client, quietLogger())), identity.WithTenant(context.Background(), f.tenant)
 }
 
-func TestGetNodeContract_ServesTheCurrentVersionOfTheDesignsHistory(t *testing.T) {
+func TestGetNodeDataContract_ServesTheCurrentVersionOfTheDesignsHistory(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode(kpisNode)
 	f.designHistory()
 	h, ctx := f.contractHandler()
 
-	resp, err := h.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: kpisNode, IncludeDocument: true})
+	resp, err := h.GetNodeDataContract(ctx, &catalogv1.GetNodeDataContractRequest{UniqueId: kpisNode, IncludeDocument: true})
 
 	require.NoError(t, err)
 	got := resp.GetContract()
@@ -62,18 +62,18 @@ func TestGetNodeContract_ServesTheCurrentVersionOfTheDesignsHistory(t *testing.T
 	assert.Contains(t, got.GetDocumentYaml(), "releaseId: rel-77aa0bc-230", "the provenance of the promotion")
 	assert.NotContains(t, got.GetDocumentYaml(), "servers", "the published form without servers")
 
-	bare, err := h.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: kpisNode})
+	bare, err := h.GetNodeDataContract(ctx, &catalogv1.GetNodeDataContractRequest{UniqueId: kpisNode})
 	require.NoError(t, err)
 	assert.Empty(t, bare.GetContract().GetDocumentYaml(), "no document unless asked for")
 }
 
-func TestListNodeContractVersions_ServesTheDesignsHistoryNewestFirst(t *testing.T) {
+func TestListNodeDataContractVersions_ServesTheDesignsHistoryNewestFirst(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode(kpisNode)
 	f.designHistory()
 	h, ctx := f.contractHandler()
 
-	resp, err := h.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: kpisNode})
+	resp, err := h.ListNodeDataContractVersions(ctx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: kpisNode})
 	require.NoError(t, err)
 
 	var order []int64
@@ -88,39 +88,39 @@ func TestListNodeContractVersions_ServesTheDesignsHistoryNewestFirst(t *testing.
 	assert.Equal(t, []int64{3, 2, 1}, order)
 	assert.Equal(t, []int64{3}, current)
 
-	two, err := h.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: kpisNode, Limit: 2})
+	two, err := h.ListNodeDataContractVersions(ctx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: kpisNode, Limit: 2})
 	require.NoError(t, err)
 	assert.Len(t, two.GetVersions(), 2)
 
-	none, err := h.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: "analytics.absent"})
+	none, err := h.ListNodeDataContractVersions(ctx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: "analytics.absent"})
 	require.NoError(t, err)
 	assert.Empty(t, none.GetVersions(), "a node with no history has an empty list")
 }
 
-func TestGetNodeContractDiff_ServesTheFieldsTwoVersionsDifferAt(t *testing.T) {
+func TestGetNodeDataContractDiff_ServesTheFieldsTwoVersionsDifferAt(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode(kpisNode)
 	f.designHistory()
 	h, ctx := f.contractHandler()
 
-	resp, err := h.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: kpisNode, FromVersion: 1, ToVersion: 2})
+	resp, err := h.GetNodeDataContractDiff(ctx, &catalogv1.GetNodeDataContractDiffRequest{UniqueId: kpisNode, FromVersion: 1, ToVersion: 2})
 	require.NoError(t, err)
 	require.Len(t, resp.GetChanges(), 1)
 	assert.Equal(t, "team.name", resp.GetChanges()[0].GetPath())
 	assert.Equal(t, `"service-py"`, resp.GetChanges()[0].GetBeforeJson())
 	assert.Equal(t, `"analytics-eng"`, resp.GetChanges()[0].GetAfterJson())
 
-	revert, err := h.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: kpisNode, FromVersion: 1, ToVersion: 3})
+	revert, err := h.GetNodeDataContractDiff(ctx, &catalogv1.GetNodeDataContractDiffRequest{UniqueId: kpisNode, FromVersion: 1, ToVersion: 3})
 	require.NoError(t, err)
 	assert.Empty(t, revert.GetChanges(), "version 3 reverts to version 1's contract")
 
-	_, err = h.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: kpisNode, FromVersion: 1, ToVersion: 4})
+	_, err = h.GetNodeDataContractDiff(ctx, &catalogv1.GetNodeDataContractDiffRequest{UniqueId: kpisNode, FromVersion: 1, ToVersion: 4})
 	assert.Equal(t, codes.NotFound, status.Code(err))
-	_, err = h.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: kpisNode, FromVersion: 0, ToVersion: 2})
+	_, err = h.GetNodeDataContractDiff(ctx, &catalogv1.GetNodeDataContractDiffRequest{UniqueId: kpisNode, FromVersion: 0, ToVersion: 2})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
-func TestGetNodeContract_NotFoundWithoutAContractOrForARetiredNode(t *testing.T) {
+func TestGetNodeDataContract_NotFoundWithoutAContractOrForARetiredNode(t *testing.T) {
 	f := newSwapFixture(t)
 	f.promoteAt("rel-40", 40, []topology.ReleasePromotedTopologyNode{modelNode(kpisNode), modelNode("analytics.retired"), modelNode("analytics.no_contract")}, time.Now())
 	f.writeContracts(contractPromotion("rel-41", 41),
@@ -129,14 +129,14 @@ func TestGetNodeContract_NotFoundWithoutAContractOrForARetiredNode(t *testing.T)
 	require.Equal(t, false, f.node("analytics.retired")["active"])
 	h, ctx := f.contractHandler()
 
-	_, err := h.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: "analytics.no_contract"})
+	_, err := h.GetNodeDataContract(ctx, &catalogv1.GetNodeDataContractRequest{UniqueId: "analytics.no_contract"})
 	assert.Equal(t, codes.NotFound, status.Code(err), "a node never promoted with a contract")
-	_, err = h.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: "analytics.retired"})
+	_, err = h.GetNodeDataContract(ctx, &catalogv1.GetNodeDataContractRequest{UniqueId: "analytics.retired"})
 	assert.Equal(t, codes.NotFound, status.Code(err), "a retired node has no current contract")
-	_, err = h.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: "analytics.absent"})
+	_, err = h.GetNodeDataContract(ctx, &catalogv1.GetNodeDataContractRequest{UniqueId: "analytics.absent"})
 	assert.Equal(t, codes.NotFound, status.Code(err), "an unknown node")
 
-	history, err := h.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: "analytics.retired"})
+	history, err := h.ListNodeDataContractVersions(ctx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: "analytics.retired"})
 	require.NoError(t, err)
 	require.Len(t, history.GetVersions(), 1, "a retired node keeps its history")
 	assert.False(t, history.GetVersions()[0].GetIsCurrent())
@@ -150,11 +150,11 @@ func TestContractRPCs_ReadOnlyTheRequestTenant(t *testing.T) {
 	h, _ := f.contractHandler()
 	otherCtx := identity.WithTenant(context.Background(), other.tenant)
 
-	_, err := h.GetNodeContract(otherCtx, &catalogv1.GetNodeContractRequest{UniqueId: kpisNode})
+	_, err := h.GetNodeDataContract(otherCtx, &catalogv1.GetNodeDataContractRequest{UniqueId: kpisNode})
 	assert.Equal(t, codes.NotFound, status.Code(err))
-	history, err := h.ListNodeContractVersions(otherCtx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: kpisNode})
+	history, err := h.ListNodeDataContractVersions(otherCtx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: kpisNode})
 	require.NoError(t, err)
 	assert.Empty(t, history.GetVersions())
-	_, err = h.GetNodeContractDiff(otherCtx, &catalogv1.GetNodeContractDiffRequest{UniqueId: kpisNode, FromVersion: 1, ToVersion: 2})
+	_, err = h.GetNodeDataContractDiff(otherCtx, &catalogv1.GetNodeDataContractDiffRequest{UniqueId: kpisNode, FromVersion: 1, ToVersion: 2})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }

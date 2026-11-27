@@ -47,9 +47,9 @@ type AttemptFacts struct {
 	// reported.
 	ParseCache       string
 	ParseCacheReason string
-	// SeedPreflight is what the seed-preflight init container found in the
-	// warehouse; nil when the attempt ran no preflight or it printed no result.
-	SeedPreflight *seedreload.Findings
+	// DependentsCheck is what the dependents-check init container found in the
+	// warehouse; nil when the attempt ran no dependents check or it printed no result.
+	DependentsCheck *seedreload.Findings
 	// AwaitingStopSince is when a pod of the attempt was first seen
 	// terminating, or on a node that stopped reporting.
 	AwaitingStopSince *time.Time
@@ -94,8 +94,8 @@ func (f AttemptFacts) Merge(next AttemptFacts) (AttemptFacts, bool) {
 			*s.dst, changed = s.src, true
 		}
 	}
-	if f.SeedPreflight == nil && next.SeedPreflight != nil {
-		f.SeedPreflight, changed = next.SeedPreflight, true
+	if f.DependentsCheck == nil && next.DependentsCheck != nil {
+		f.DependentsCheck, changed = next.DependentsCheck, true
 	}
 	if f.Reason == "" && next.Reason != "" {
 		f.Reason, changed = next.Reason, true

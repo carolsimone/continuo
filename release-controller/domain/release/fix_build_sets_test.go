@@ -15,9 +15,9 @@ func seedNode(id, hash string) release.Node { return release.Node{UniqueID: id, 
 //     did not touch it -> context: rebuilt for its descendants but never expanded
 //   - finance.report: the fix's own edit -> scope
 //   - svc3.sibling: changed vs prod, untouched by the fix, recorded failing -> a
-//     still-unfixed failure another fix answers for -> neither (cloned)
+//     still-unfixed failure another fix answers for -> neither (built from production)
 //   - svc2.skipped: changed vs prod, untouched, recorded not-ok because its
-//     upstream failed -> neither (cloned)
+//     upstream failed -> neither (built from production)
 //   - other.promoted: matches the live release (another release promoted it since)
 //     even though it differs from the rejected candidate -> not changed at all
 //   - finance.new_model: absent from both prod and the rejected candidate -> the

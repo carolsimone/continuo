@@ -57,8 +57,8 @@ type SeedColumn struct {
 
 // IsExternal reports whether the node only marks a table that something
 // outside continuo builds. An unknown-external node has no content and nothing builds
-// it, so it is never changed, built, cloned or duplicated, and it needs no
-// project.
+// it, so it is never changed, built (from its code or from production) or
+// duplicated, and it needs no project.
 func (n Node) IsExternal() bool {
 	return pkg_model.NodeType(n.NodeType).IsExternal()
 }

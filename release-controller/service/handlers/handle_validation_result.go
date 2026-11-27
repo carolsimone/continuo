@@ -257,10 +257,10 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 // projection write was permanently dropped may be absent from the read model, in
 // which case only present, non-ok nodes appear in failing.
 //
-// A failed node that validation cloned from its production table, rather than
+// A failed node that validation built from its production table, rather than
 // built from its own candidate code, did not fail on the release's code.
 // release.DecideValidationRejection decides the reason, the detail and the
-// failing nodes from that: upstream_clone_failed, which remediation does not
+// failing nodes from that: upstream_build_from_prod_failed, which remediation does not
 // try to fix, when only such nodes failed, and validation_failed without them
 // when a built node failed too.
 func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, in HandleValidationResultInput, failing []string, now time.Time) error {
@@ -273,7 +273,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		return err
 	}
 	// Which validation nodes were built from their own candidate code; every
-	// other validation node was cloned empty from its production table.
+	// other validation node was built empty from its production table.
 	rebuilt, err := rebuiltFromCandidateFor(ctx, d, u, r, topo, prod, r.ValidationNodeIDs())
 	if err != nil {
 		return err
@@ -322,7 +322,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	// validation op from the candidate topology. A failing node additionally
 	// names its changed ancestors, which may be the root cause of its failure.
 	var perNode []ports.RejectedNode
-	var outcomes []release.NodeOutcome     // every node's status, to split code failures from copy failures
+	var outcomes []release.NodeOutcome     // every node's status, to split code failures from build-from-production failures
 	var notPassed []release.FailedNode     // every node that did not pass, for the summary
 	var upstream []release.ChangedAncestor // the changed ancestors of the nodes that failed, for the summary
 	for _, nr := range r.PerNodeResults() {
@@ -364,7 +364,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	// operator-facing detail is what the topology can say: which nodes failed,
 	// how many were skipped because of them, and which changed nodes sit upstream
 	// of the failures. It reuses the ancestors gathered above, so explaining the
-	// rejection walks the graph once. A failed node cloned from production
+	// rejection walks the graph once. A failed node built from production
 	// failed on its production table, not on the release's code, and the
 	// domain decides the reason, detail and failing nodes from that.
 	summary := release.SummarizeValidationFailure(len(r.ValidationNodeIDs()), notPassed, upstream)

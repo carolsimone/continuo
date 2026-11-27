@@ -167,23 +167,23 @@ export interface TaskAttempt {
   error_message: string | null;
   log_s3_key: string | null;
   run_results_uri: string | null;
-  // What a seed's preflight found before its load; null on an attempt that ran
+  // What a seed's dependents check found before its load; null on an attempt that ran
   // none.
-  seed_preflight?: SeedPreflight | null;
+  dependents_check?: DependentsCheck | null;
 }
 
-// A seed preflight's findings: the objects that depend on the seed (allowed
+// A dependents check's findings: the objects that depend on the seed (allowed
 // marks the ones the load may drop) and the probe of each view outside the
-// allowed set that the preflight found.
-export interface SeedPreflight {
+// allowed set that the dependents check found.
+export interface DependentsCheck {
   drop_semantics: string;
   completeness: string;
   checked: boolean;
-  dependents: SeedPreflightDependent[];
-  probes: SeedPreflightProbe[];
+  dependents: DependentObject[];
+  probes: ViewProbe[];
 }
 
-export interface SeedPreflightDependent {
+export interface DependentObject {
   schema: string;
   name: string;
   kind: string;
@@ -192,7 +192,7 @@ export interface SeedPreflightDependent {
   allowed: boolean;
 }
 
-export interface SeedPreflightProbe {
+export interface ViewProbe {
   schema: string;
   name: string;
   ok: boolean;
@@ -239,7 +239,7 @@ export interface NodeRunsResponse {
   outage?: NodeOutage | null;
 }
 
-// One version of a node's contract. catalog numbers a node's versions 1, 2, 3
+// One version of a node's data contract. catalog numbers a node's versions 1, 2, 3
 // and so on, one for each promotion that changed its contract. same_as_version
 // is the earlier version a revert repeats, null on any other version. The
 // published YAML is on the current contract only.
@@ -259,7 +259,7 @@ export interface ContractVersion {
 
 // A node's current contract (null when it has none) and every version catalog
 // kept of it, newest first.
-export interface NodeContractResponse {
+export interface NodeDataContractResponse {
   contract: ContractVersion | null;
   versions: ContractVersion[];
 }
@@ -273,7 +273,7 @@ export interface ContractFieldChange {
   after_json: string;
 }
 
-export interface NodeContractDiffResponse {
+export interface NodeDataContractDiffResponse {
   changes: ContractFieldChange[];
 }
 
@@ -364,7 +364,7 @@ export interface ReleaseNotice {
   // schedule is empty for a dormant node, which only a run by hand refreshes.
   refresh_on_schedule: { node_id: string; materialized: string; schedule: string }[];
   warehouse: {
-    // False until the seed-build leg's preflight ran to the end.
+    // False until the seed-build leg's dependents check ran to the end.
     checked: boolean;
     completeness: string;
     // Warehouse objects outside continuo that read the seed's table.

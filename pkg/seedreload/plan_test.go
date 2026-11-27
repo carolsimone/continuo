@@ -176,7 +176,7 @@ func TestPlanSeed_ALoadThatDropsNothingOrIsRefusedRebuildsNothing(t *testing.T) 
 	seed.FullRefresh = &no
 	refused := seedreload.PlanSeed(seedreload.Request{Seed: seed, Family: warehouse.SchemaBound, Change: seedreload.ChangeColumns, Trigger: seedreload.TriggerLoad}, g)
 	assert.Empty(t, refused.Rebuilds)
-	assert.Nil(t, refused.Preflight(nil))
+	assert.Nil(t, refused.DependentsCheck(nil))
 }
 
 func TestPlanSeed_AColumnChangeOfABootstrapReleaseIsUnvalidated(t *testing.T) {
@@ -217,28 +217,28 @@ func TestPlanSeed_RebuildsAreOrderedAfterTheViewsTheyRead(t *testing.T) {
 	assert.Equal(t, []seedreload.Boundary{}, p.RefreshOnSchedule)
 }
 
-func TestPreflight(t *testing.T) {
+func TestDependentsCheck(t *testing.T) {
 	g := fxEstate()
 	pg := seedreload.PlanSeed(seedreload.Request{Seed: g.nodes[seedKey], Family: warehouse.SchemaBound, Change: seedreload.ChangeColumns, Trigger: seedreload.TriggerLoad}, g)
-	assert.Equal(t, &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur",
+	assert.Equal(t, &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur",
 		Allowed:      []string{"analytics.fx_rates_clean_view", "analytics.fx_rates_latest_eur", "analytics.fx_rates_mv", "analytics.fx_rates_now"},
-		Acknowledged: []string{"bi.fx_rates_report"}}, pg.Preflight([]string{" BI.Fx_Rates_Report ", "bi.fx_rates_report", ""}))
-	assert.Equal(t, seedreload.PreflightReport, pg.ReportPreflight().Mode)
-	assert.Empty(t, pg.ReportPreflight().Acknowledged)
+		Acknowledged: []string{"bi.fx_rates_report"}}, pg.DependentsCheck([]string{" BI.Fx_Rates_Report ", "bi.fx_rates_report", ""}))
+	assert.Equal(t, seedreload.ReportMode, pg.ReportDependentsCheck().Mode)
+	assert.Empty(t, pg.ReportDependentsCheck().Acknowledged)
 	tr := seedreload.PlanSeed(seedreload.Request{Seed: g.nodes[seedKey], Family: warehouse.LateBinding, Engine: "trino", Change: seedreload.ChangeRows, Trigger: seedreload.TriggerLoad}, g)
-	assert.Equal(t, seedreload.PreflightReport, tr.Preflight(nil).Mode)
+	assert.Equal(t, seedreload.ReportMode, tr.DependentsCheck(nil).Mode)
 	rows := seedreload.PlanSeed(seedreload.Request{Seed: g.nodes[seedKey], Family: warehouse.SchemaBound, Change: seedreload.ChangeRows, Trigger: seedreload.TriggerLoad}, g)
-	assert.Nil(t, rows.Preflight(nil))
-	assert.Nil(t, rows.ReportPreflight())
+	assert.Nil(t, rows.DependentsCheck(nil))
+	assert.Nil(t, rows.ReportDependentsCheck())
 }
 
-func TestPreflight_ListsAreNeverNil(t *testing.T) {
+func TestDependentsCheck_ListsAreNeverNil(t *testing.T) {
 	g := estate{nodes: map[string]seedreload.Node{}, up: map[string][]string{}}
 	g.nodes[seedKey] = seedreload.Node{Key: seedKey, NodeType: "dbt-seed", Materialized: "seed", Relation: seedKey}
 	p := seedreload.PlanSeed(seedreload.Request{Seed: g.nodes[seedKey], Family: warehouse.SchemaBound, Change: seedreload.ChangeColumns, Trigger: seedreload.TriggerLoad}, g)
 	assert.NotNil(t, p.Rebuilds)
 	assert.NotNil(t, p.RefreshOnSchedule)
-	pf := p.Preflight(nil)
+	pf := p.DependentsCheck(nil)
 	require.NotNil(t, pf)
 	assert.Equal(t, []string{}, pf.Allowed)
 	assert.Equal(t, []string{}, pf.Acknowledged)

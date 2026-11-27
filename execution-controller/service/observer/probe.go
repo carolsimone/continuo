@@ -11,19 +11,19 @@ import (
 	"github.com/carolsimone/continuo/pkg/validationresult"
 )
 
-// probeViews probes the external views the preflight of d's seed found outside
+// probeViews probes the external views the dependents check of d's seed found outside
 // the allowed set, and returns each view's answer. facts are the facts d settles on. It returns nil, and probes nothing, unless
-// d is a production attempt whose preflight ran in report mode (a
+// d is a production attempt whose dependents check ran in report mode (a
 // late-binding warehouse), its findings list a dependant outside the allowed
 // set and hold no probes yet, and the attempt succeeded. A probe that cannot
 // run, that times out, or whose block says the warehouse was not reached
 // records every view as not probed; it never fails the attempt.
 func (o *Observer) probeViews(ctx context.Context, d *model.Deployment, facts model.AttemptFacts) []seedreload.Probe {
 	cmd := d.Command()
-	if d.Mode() != model.ModeProduction || cmd.SeedPreflight == nil || cmd.SeedPreflight.Mode != seedreload.PreflightReport {
+	if d.Mode() != model.ModeProduction || cmd.DependentsCheck == nil || cmd.DependentsCheck.Mode != seedreload.ReportMode {
 		return nil
 	}
-	findings := facts.SeedPreflight
+	findings := facts.DependentsCheck
 	if findings == nil || len(findings.Probes) > 0 || !model.Classify(facts).Succeeded {
 		return nil
 	}
@@ -63,7 +63,7 @@ func probesOf(log string, runErr error) ([]seedreload.Probe, error) {
 	if raw == "" {
 		return nil, errors.New("the probe printed no result")
 	}
-	p, err := validationresult.ParsePreflight([]byte(raw))
+	p, err := validationresult.ParseWarehouseRead([]byte(raw))
 	if err != nil || p.Op != validationresult.OpProbeViews {
 		return nil, errors.New("the probe printed no probe result")
 	}

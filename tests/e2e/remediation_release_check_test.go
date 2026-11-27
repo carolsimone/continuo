@@ -25,7 +25,7 @@ const (
 // stale hash, so a service-2 release changes it (validated ok) and breaks
 // ybreak_down. The stub proposes a consumer edit that still reads the dropped
 // column. The release check must rebuild ybreak_up from the candidate and fail
-// ybreak_down; a check that cloned ybreak_up from production would pass the
+// ybreak_down; a check that built ybreak_up from production would pass the
 // broken fix.
 //
 // Both fixtures live in service-2 on purpose: a cross-project failure is fixed
@@ -119,11 +119,11 @@ func TestE2E_FixReleaseCheck_FailsConsumerFixThatIgnoresChangedUpstream(t *testi
 
 	// 4. The release check rebuilds ybreak_up from the candidate (ok) and fails
 	//    the consumer that still reads the dropped column. Under a
-	//    clone-from-production baseline the consumer would pass instead.
+	//    build-from-production baseline the consumer would pass instead.
 	waitForReleaseCheckStatus(t, ctx, clients, checkID, "failed", batchVerifyBudget)
 	perNode := releaseCheckPerNodeStatus(t, ctx, clients, checkID)
 	require.Equal(t, "ok", perNode[ybreakUpUniqueID],
-		"the changed upstream is rebuilt from the candidate, not cloned from production; per-node=%v", perNode)
+		"the changed upstream is rebuilt from the candidate, not built from production; per-node=%v", perNode)
 	require.Equal(t, "failed", perNode[ybreakDownUniqueID],
 		"the consumer that still reads the dropped column must fail; per-node=%v", perNode)
 

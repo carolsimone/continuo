@@ -359,10 +359,10 @@ vocabularies:
         const: UpgradeInterrupted
         healable: false
         description: the release check was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
-      - value: upstream_clone_failed
-        const: UpstreamCloneFailed
+      - value: upstream_build_from_prod_failed
+        const: UpstreamBuildFromProdFailed
         healable: false
-        description: validation could not copy the production table of an unchanged upstream; a run of that node, not a code change, settles it.
+        description: the release check could not build an unchanged upstream from its production table; a run of that node, not a code change, settles it.
 
   - name: validation_op
     const: ValidationOp
@@ -372,7 +372,7 @@ vocabularies:
       validation.requested:v1 and on each per_node entry of a validation
       rejection on release.rejected:v1; execution-controller passes it to the
       validation runner as VALIDATION_OP; remediation never turns a failed
-      clone_from_prod node into a failure to fix.
+      build_from_prod node into a failure to fix.
     values:
       - value: build_from_sql
         const: BuildFromSQL
@@ -383,9 +383,9 @@ vocabularies:
       - value: check_binds
         const: CheckBinds
         description: a dbt test built from its own candidate code; the runner EXPLAINs its compiled SQL against the candidate schema and creates nothing.
-      - value: clone_from_prod
-        const: CloneFromProd
-        description: an unchanged upstream of a node built from candidate code; the runner copies its production table, empty, into the candidate schema. A failure points at that production table, which a run of the node settles, not a code change.
+      - value: build_from_prod
+        const: BuildFromProd
+        description: an unchanged upstream of a node built from candidate code; the runner builds it as an empty table with its production table's columns and types (its production shape) in the candidate schema and copies no rows. A failure points at that production table, which a run of the node settles, not a code change.
 
   - name: handover_reason
     const: HandoverReason
@@ -672,7 +672,7 @@ vocabularies:
         description: the pod ran out of a node resource; it was killed for memory or evicted.
       - value: infra
         const: Infra
-        description: the attempt was lost to the platform; its node, its Job or its record is gone, Kubernetes refused its Job, or the seed preflight could not reach the warehouse.
+        description: the attempt was lost to the platform; its node, its Job or its record is gone, Kubernetes refused its Job, or the dependents check could not reach the warehouse.
       - value: start
         const: Start
         description: the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
@@ -770,11 +770,11 @@ vocabularies:
       - value: unowned_dependents
         const: UnownedDependents
         class: invalid
-        description: the seed preflight found an object reading the seed outside the views the run rebuilds and the objects an operator named, on a warehouse where dropping the seed destroys it; nothing was dropped.
+        description: the dependents check found an object reading the seed outside the views the run rebuilds and the objects an operator named, on a warehouse where dropping the seed destroys it; nothing was dropped.
       - value: engine_mismatch
         const: EngineMismatch
         class: invalid
-        description: the validation image's engine adapter declares another drop family than the install's warehouse engine, so the seed preflight cannot tell what a drop destroys; nothing was dropped.
+        description: the validation image's engine adapter declares another drop family than the install's warehouse engine, so the dependents check cannot tell what a drop destroys; nothing was dropped.
       - value: seed_full_refresh_undefined
         const: SeedFullRefreshUndefined
         class: invalid
@@ -786,4 +786,4 @@ vocabularies:
       - value: warehouse_unreachable
         const: WarehouseUnreachable
         class: infra
-        description: the seed preflight could not connect to the warehouse; nothing was dropped.
+        description: the dependents check could not connect to the warehouse; nothing was dropped.

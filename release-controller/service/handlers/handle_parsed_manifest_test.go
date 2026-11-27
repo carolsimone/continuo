@@ -709,7 +709,7 @@ func unknownExternalProbeNode() release.Node {
 
 // TestHandleParsedManifest_UnknownExternalUpstreamIsNotValidated pins that an unknown-external
 // table a changed reader names is not part of the validation request: nothing
-// builds it, so it is neither cloned from production nor built from SQL, and
+// builds it, so it is neither built from production nor built from SQL, and
 // the reader is the only node validated.
 func TestHandleParsedManifest_UnknownExternalUpstreamIsNotValidated(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
@@ -1428,7 +1428,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 //     python family (IsPython), so it is classified the same as
 //     python-node here;
 //   - an unchanged upstream, dbt, python-node, or python-csv, is never
-//     built from a candidate artifact: it gets clone_from_prod with
+//     built from a candidate artifact: it gets build_from_prod with
 //     prod_schema = its schema_name.
 func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	deps, store := seedToParsing(t, "rel-op-1", map[string]string{"shop": "sha-shop"})
@@ -1468,7 +1468,7 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	assert.Equal(t, "", byID["model.shop.orders"]["prod_schema"])
 
 	// dbt unchanged.
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["model.core.dim"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), byID["model.core.dim"]["validation_op"])
 	assert.Equal(t, "analytics", byID["model.core.dim"]["prod_schema"])
 
 	// python-node changed.
@@ -1476,7 +1476,7 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	assert.Equal(t, "", byID["python.shop.enrich"]["prod_schema"])
 
 	// python-node unchanged.
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["python.core.stats"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), byID["python.core.stats"]["validation_op"])
 	assert.Equal(t, "analytics", byID["python.core.stats"]["prod_schema"])
 
 	// python-csv changed.
@@ -1484,7 +1484,7 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	assert.Equal(t, "", byID["csv.shop.fx"]["prod_schema"])
 
 	// python-csv unchanged.
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["csv.core.rates"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), byID["csv.core.rates"]["validation_op"])
 	assert.Equal(t, "analytics", byID["csv.core.rates"]["prod_schema"])
 }
 
@@ -1519,12 +1519,12 @@ func indexNodesByUniqueID(t *testing.T, nodes []map[string]any) map[string]map[s
 // TestHandleParsedManifest_DbtTestGetsCheckBinds verifies a dbt-test node in
 // the changed closure gets validation_op check_binds with an empty
 // prod_schema — a test builds nothing, so it is neither build_from_sql/
-// build_from_columns nor clone_from_prod. "svc.m" is a changed model tested
+// build_from_columns nor build_from_prod. "svc.m" is a changed model tested
 // by "test.p.not_null_m_id.1" (upstream svc.m alone); "test.p.rel.2" also
 // tests the relationship between svc.m and the UNCHANGED "svc.u" (upstreams
 // svc.m, svc.u), so both tests land in the changed closure as svc.m's
 // descendants while svc.u itself is pulled in only as an ancestor and stays
-// clone_from_prod.
+// build_from_prod.
 func TestHandleParsedManifest_DbtTestGetsCheckBinds(t *testing.T) {
 	deps, store := seedToParsing(t, "rel-test-op-1", map[string]string{"svc": "sha-svc"})
 
@@ -1558,7 +1558,7 @@ func TestHandleParsedManifest_DbtTestGetsCheckBinds(t *testing.T) {
 	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), byID["svc.m"]["validation_op"])
 	assert.Equal(t, "", byID["svc.m"]["prod_schema"])
 
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["svc.u"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), byID["svc.u"]["validation_op"])
 	assert.Equal(t, "analytics", byID["svc.u"]["prod_schema"])
 }
 
@@ -2078,7 +2078,7 @@ func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 // submits one check per edited project, and each check assembles the OTHER edited
 // project's node unchanged — still carrying its not-yet-fixed failure at the
 // exact content_hash it had in the rejected candidate, and listed in that
-// release's failing_nodes — so it is left out and cloned from production. A
+// release's failing_nodes — so it is left out and built from production. A
 // node the rejected release changed and validated ok is rebuilt from the
 // candidate, so the fix is measured against the shape the release produced.
 
@@ -2416,7 +2416,7 @@ const verifySID = "svc3.ftable_s"
 // re-fail the fix's release check on a node its fix was never about — sinking
 // the good fix. The sibling is in the rejected release's failing_nodes and the
 // fix did not touch it (it matches the rejected candidate), so FixBuildSets
-// leaves it out and clones it from production. The fix's own node, which the
+// leaves it out and builds it from production. The fix's own node, which the
 // fix touched, is still checked.
 func TestHandleParsedManifest_OK_FixExcludesEstablishedSiblingModification(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -2460,7 +2460,7 @@ func TestHandleParsedManifest_OK_FixExcludesEstablishedSiblingModification(t *te
 	assert.Contains(t, validIDs, verifyEID,
 		"the fix's own edit departs from both the live release and the rejected candidate -> checked")
 	assert.NotContains(t, validIDs, verifySID,
-		"the sibling's still-broken modification differs from the live release (which holds it at its pre-rejection hash) but matches the rejected candidate and is in its failing_nodes, so the seed set leaves it out and clones it from production -> NOT checked again")
+		"the sibling's still-broken modification differs from the live release (which holds it at its pre-rejection hash) but matches the rejected candidate and is in its failing_nodes, so the seed set leaves it out and builds it from production -> NOT checked again")
 	assert.NotContains(t, validIDs, verifyUID,
 		"an unchanged upstream is neither changed nor pulled into the build set")
 }
@@ -2469,7 +2469,7 @@ func TestHandleParsedManifest_OK_FixExcludesEstablishedSiblingModification(t *te
 // the rejected release changed verifyMID (validated ok) and that change broke
 // its consumer verifyDID in another project. A fix's release check of a fix at
 // verifyDID must rebuild verifyMID from the candidate — build_from_sql, not
-// clone_from_prod — or the consumer is measured against production's old shape.
+// build_from_prod — or the consumer is measured against production's old shape.
 func TestHandleParsedManifest_OK_FixRebuildsTheRejectedReleasesValidatedChange(t *testing.T) {
 	const (
 		verifyMID = "svc2.changed_ok"
@@ -2524,7 +2524,7 @@ func TestHandleParsedManifest_OK_FixRebuildsTheRejectedReleasesValidatedChange(t
 	for _, n := range payload.Nodes {
 		ops[n.UniqueID] = n.ValidationOp
 	}
-	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), ops[verifyMID], "the validated change is built from its candidate SQL, never cloned from production")
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), ops[verifyMID], "the validated change is built from its candidate SQL, never built from production")
 	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), ops[verifyDID])
 }
 
@@ -2890,8 +2890,8 @@ func TestHandleParsedManifest_StoresTheNoticesOfEachDroppingSeed(t *testing.T) {
 	assert.Len(t, n.Rebuilds, 2)
 }
 
-func TestEmitSeedBuildRequested_CarriesAReportPreflightForEachNoticedSeed(t *testing.T) {
-	deps, store := seedToParsing(t, "rel-preflight", map[string]string{"finance": "sha-f"})
+func TestEmitSeedBuildRequested_CarriesAReportDependentsCheckForEachNoticedSeed(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-dependents-check", map[string]string{"finance": "sha-f"})
 	candidate, prod := fxReleaseTopologies()
 	// A second changed seed whose load drops nothing has no notice.
 	prodZones := release.Node{UniqueID: "analytics.seed_zones", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed",
@@ -2903,7 +2903,7 @@ func TestEmitSeedBuildRequested_CarriesAReportPreflightForEachNoticedSeed(t *tes
 	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rel-preflight", Status: "ok", TopologyRef: putTopology(t, deps, "rel-preflight", candidate),
+		ReleaseID: "rel-dependents-check", Status: "ok", TopologyRef: putTopology(t, deps, "rel-dependents-check", candidate),
 	}))
 
 	var payload struct {
@@ -2913,9 +2913,9 @@ func TestEmitSeedBuildRequested_CarriesAReportPreflightForEachNoticedSeed(t *tes
 	require.Len(t, payload.Seeds, 2)
 	assert.JSONEq(t, `"analytics.seed_fx_rates_eur"`, string(payload.Seeds[0]["unique_id"]))
 	assert.JSONEq(t, `{"mode":"report","engine_family":"schema_bound","relation":"analytics.seed_fx_rates_eur","allowed":["analytics.fx_rates_current","analytics.fx_rates_latest_eur"],"acknowledged":[]}`,
-		string(payload.Seeds[0]["seed_preflight"]))
+		string(payload.Seeds[0]["dependents_check"]))
 	assert.JSONEq(t, `"analytics.seed_zones"`, string(payload.Seeds[1]["unique_id"]))
-	assert.NotContains(t, payload.Seeds[1], "seed_preflight")
+	assert.NotContains(t, payload.Seeds[1], "dependents_check")
 }
 
 func TestHandleParsedManifest_ABootstrapStoresNoticesToo(t *testing.T) {

@@ -16,13 +16,13 @@
 {{- $name = printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- if or (eq $name "continuo-api") (hasPrefix "continuo-api-" $name) -}}
-{{- fail (printf "the chart fullname %q (the release name, or fullnameOverride) is inside the reserved \"continuo-api-\" prefix: every Secret the chart creates is named <fullname>-<suffix>, and a python-api node contract may name any Secret starting with \"continuo-api-\", so it could receive the chart's datastore and platform credentials. Choose a release name or fullnameOverride that neither equals \"continuo-api\" nor starts with \"continuo-api-\"." $name) -}}
+{{- fail (printf "the chart fullname %q (the release name, or fullnameOverride) is inside the reserved \"continuo-api-\" prefix: every Secret the chart creates is named <fullname>-<suffix>, and a python-api node's data contract may name any Secret starting with \"continuo-api-\", so it could receive the chart's datastore and platform credentials. Choose a release name or fullnameOverride that neither equals \"continuo-api\" nor starts with \"continuo-api-\"." $name) -}}
 {{- end -}}
 {{- include "continuo.assertSecretValuesOutsideApiPrefix" . -}}
 {{- $name -}}
 {{- end -}}
 
-{{/* A python-api node contract may name one Secret whose name starts with
+{{/* A python-api node's data contract may name one Secret whose name starts with
      "continuo-api-" (secret_ref); execution-controller attaches it to the
      node's pod as environment variables. The prefix is reserved for those
      operator-created API Secrets, so a Secret the chart is told to use for
@@ -46,7 +46,7 @@
 {{- range $key := keys $names | sortAlpha -}}
 {{- $name := get $names $key | default "" | toString -}}
 {{- if hasPrefix "continuo-api-" $name -}}
-{{- fail (printf "%s=%q is inside the reserved \"continuo-api-\" prefix: a python-api node contract may name any Secret starting with \"continuo-api-\", so it could receive these credentials. Rename the Secret outside that prefix." $key $name) -}}
+{{- fail (printf "%s=%q is inside the reserved \"continuo-api-\" prefix: a python-api node's data contract may name any Secret starting with \"continuo-api-\", so it could receive these credentials. Rename the Secret outside that prefix." $key $name) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -108,16 +108,18 @@ app.kubernetes.io/name: {{ .name }}
      An explicit validation.imageTag override also gets a capability gate,
      the same fail-closed treatment as validation.engine above. Three known-bad
      ranges are refused, each because the pinned runner cannot run what
-     continuo already sends it: v0.1.x-v0.3.x predate python-csv
+     continuo already sends it: v0.0.x-v0.3.x predate python-csv
      support (added in v0.4.0) — that runner ignores the "kind"/"csv_source"
      contract fields, so a csv node with a mismatched header would promote
      unvalidated; v0.4.x predate check_binds (dbt-test bind checks, added in
      v0.5.0) — that runner does not run the "kind: check_binds" nodes emitted
      for a changed dbt test, so a release with a changed test would promote its
-     bind unvalidated; v0.5.x-v0.11.x predate seed_preflight (added in v0.12.0) —
-     run-controller sends that op to every seed load that drops its table, so
-     each such load would fail before dbt starts. Together the three gates
-     refuse every tag below v0.12.0. A
+     bind unvalidated; v0.5.x-v0.14.x predate the dependents_check and
+     build_from_prod ops (added in v0.15.0) — execution-controller runs
+     dependents_check before every seed load that drops its table and
+     build_from_prod for every unchanged upstream a release check builds, so
+     each such load and release check would fail. Together the three gates
+     refuse every tag below v0.15.0. A
      tag that isn't even shaped like "vX.Y.Z" (optionally "@sha256:<digest>")
      can't be compared against those ranges at all, so it fails closed the same
      way rather than rendering a chart that may silently skip validation. */}}
@@ -137,17 +139,17 @@ app.kubernetes.io/name: {{ .name }}
 {{- if not (regexMatch "^v[0-9]+\\.[0-9]+\\.[0-9]+$" $bareTag) -}}
 {{- fail (printf "validation.imageTag=%q is not shaped like a released continuo-python-runtime tag (\"vX.Y.Z\" or \"vX.Y.Z@sha256:<digest>\"); the chart cannot tell whether an unparseable tag predates python-csv validation support (added in v0.4.0), so it refuses to render rather than risk silently skipping the csv header check. Re-pin to a real vX.Y.Z tag." $tag) -}}
 {{- end -}}
-{{- if regexMatch "^v0\\.[1-3]\\." $bareTag -}}
+{{- if regexMatch "^v0\\.[0-3]\\." $bareTag -}}
 {{- fail (printf "validation.imageTag=%q predates python-csv validation support (added in v0.4.0): topology-controller already accepts \"kind: python-csv\" nodes and emits csv_source, but this runner ignores that field and reports success without checking the file's header, so a csv node with a mismatched header would promote unvalidated. Re-pin validation.imageTag to \"v0.4.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- if regexMatch "^v0\\.4\\." $bareTag -}}
 {{- fail (printf "validation.imageTag=%q predates check_binds (dbt-test bind checks, added in v0.5.0): topology-controller already emits \"kind: check_binds\" nodes for a changed dbt test, but this runner does not run them and would report success without checking that the test binds, so a release with a changed test would promote its bind unvalidated. Re-pin validation.imageTag to \"v0.5.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
-{{- if regexMatch "^v0\\.([5-9]|1[01])\\." $bareTag -}}
-{{- fail (printf "validation.imageTag=%q predates seed_preflight (the seed reload check, added in v0.12.0): run-controller sends that op to every seed load that drops its table, and this runner cannot run it, so each such load would fail before dbt starts. Re-pin validation.imageTag to \"v0.12.0\" or later, or drop the override to track the chart's default." $tag) -}}
+{{- if regexMatch "^v0\\.([5-9]|1[0-4])\\." $bareTag -}}
+{{- fail (printf "validation.imageTag=%q predates the dependents_check and build_from_prod ops (added in v0.15.0): execution-controller runs dependents_check before every seed load that drops its table and build_from_prod for every unchanged upstream a release check builds, and this runner knows neither op, so each such load and release check would fail. Re-pin validation.imageTag to \"v0.15.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- else -}}
-{{- $tag = "v0.14.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
+{{- $tag = "v0.15.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
 {{- end -}}
 {{- if .Values.global.imageRegistry -}}
 {{- printf "%s/%s/continuo-python-runtime-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}

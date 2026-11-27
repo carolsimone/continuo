@@ -150,14 +150,14 @@ func TestParse_ReasonIsEmptyWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestParsePreflight_ReadsTheSeedPreflightBlock(t *testing.T) {
+func TestParseWarehouseRead_ReadsTheDependentsCheckBlock(t *testing.T) {
 	// A check-mode stop: status "error", failures 1, a message that starts with the reason.
-	raw := `{"schema_version":1,"status":"error","message":"unowned_dependents: bi.fx_rates_report (view, owner bi)","failures":1,"unique_id":"analytics.seed_fx_rates_eur","reason":"unowned_dependents","op":"seed_preflight","mode":"check","engine_family":"schema_bound","checked":true,"drop_semantics":"cascade","completeness":"exact","dependents":[{"schema":"analytics","name":"fx_rates_current","kind":"view","owner":"dbt","depth":1,"allowed":true},{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]}`
-	p, err := ParsePreflight([]byte("stderr noise\n" + raw))
+	raw := `{"schema_version":1,"status":"error","message":"unowned_dependents: bi.fx_rates_report (view, owner bi)","failures":1,"unique_id":"analytics.seed_fx_rates_eur","reason":"unowned_dependents","op":"dependents_check","mode":"check","engine_family":"schema_bound","checked":true,"drop_semantics":"cascade","completeness":"exact","dependents":[{"schema":"analytics","name":"fx_rates_current","kind":"view","owner":"dbt","depth":1,"allowed":true},{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]}`
+	p, err := ParseWarehouseRead([]byte("stderr noise\n" + raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Op != OpSeedPreflight || p.Status != "error" || p.Failures != 1 {
+	if p.Op != OpDependentsCheck || p.Status != "error" || p.Failures != 1 {
 		t.Fatalf("parsed = %+v", p)
 	}
 	// Reason is the embedded Result's field.
@@ -169,8 +169,8 @@ func TestParsePreflight_ReadsTheSeedPreflightBlock(t *testing.T) {
 	}
 }
 
-func TestParsePreflight_ReadsAProbeBlock(t *testing.T) {
-	p, err := ParsePreflight([]byte(`{"schema_version":1,"status":"success","message":"1 of 1 views failed: bi.fx_rates_report","failures":0,"unique_id":"analytics.seed_fx_rates_eur","op":"probe_views","checked":true,"views":[{"schema":"bi","name":"fx_rates_report","ok":false,"error":"VIEW_IS_STALE"}]}`))
+func TestParseWarehouseRead_ReadsAProbeBlock(t *testing.T) {
+	p, err := ParseWarehouseRead([]byte(`{"schema_version":1,"status":"success","message":"1 of 1 views failed: bi.fx_rates_report","failures":0,"unique_id":"analytics.seed_fx_rates_eur","op":"probe_views","checked":true,"views":[{"schema":"bi","name":"fx_rates_report","ok":false,"error":"VIEW_IS_STALE"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,21 +179,21 @@ func TestParsePreflight_ReadsAProbeBlock(t *testing.T) {
 	}
 }
 
-func TestParsePreflight_SkipsABlockWithNoPreflightOp(t *testing.T) {
-	if _, err := ParsePreflight([]byte(`{"schema_version":1,"status":"success","message":"","failures":0,"unique_id":"x"}`)); err == nil {
-		t.Fatal("a block with no preflight op is not a preflight block")
+func TestParseWarehouseRead_SkipsABlockWithNoWarehouseReadOp(t *testing.T) {
+	if _, err := ParseWarehouseRead([]byte(`{"schema_version":1,"status":"success","message":"","failures":0,"unique_id":"x"}`)); err == nil {
+		t.Fatal("a block with no warehouse-read op is not a warehouse-read block")
 	}
-	// A result block ahead of the preflight block does not hide it.
-	raw := `{"schema_version":1,"status":"success","message":"","failures":0,"unique_id":"x"} {"schema_version":1,"status":"success","message":"","failures":0,"unique_id":"x","op":"seed_preflight","checked":true}`
-	if p, err := ParsePreflight([]byte(raw)); err != nil || p.Op != OpSeedPreflight {
+	// A result block ahead of the dependents check block does not hide it.
+	raw := `{"schema_version":1,"status":"success","message":"","failures":0,"unique_id":"x"} {"schema_version":1,"status":"success","message":"","failures":0,"unique_id":"x","op":"dependents_check","checked":true}`
+	if p, err := ParseWarehouseRead([]byte(raw)); err != nil || p.Op != OpDependentsCheck {
 		t.Fatalf("parsed = %+v, err = %v", p, err)
 	}
 }
 
-// Preflight leaves the reason to the embedded Result: a field of its own would
+// WarehouseRead leaves the reason to the embedded Result: a field of its own would
 // shadow it and read empty.
-func TestPreflight_DeclaresNoReasonOfItsOwn(t *testing.T) {
-	p := Preflight{Result: Result{Reason: "engine_mismatch"}}
+func TestWarehouseRead_DeclaresNoReasonOfItsOwn(t *testing.T) {
+	p := WarehouseRead{Result: Result{Reason: "engine_mismatch"}}
 	if p.Reason != "engine_mismatch" {
 		t.Fatalf("Reason = %q, want the embedded Result's", p.Reason)
 	}

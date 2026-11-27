@@ -19,9 +19,9 @@ const proto = grpc.loadPackageDefinition(packageDefinition) as any;
 export interface GrpcGraphClient {
   getNode: (request: any, callback: (err: any, res: any) => void) => void;
   getNodeVersions: (request: any, callback: (err: any, res: any) => void) => void;
-  getNodeContract: (request: any, callback: (err: any, res: any) => void) => void;
-  listNodeContractVersions: (request: any, callback: (err: any, res: any) => void) => void;
-  getNodeContractDiff: (request: any, callback: (err: any, res: any) => void) => void;
+  getNodeDataContract: (request: any, callback: (err: any, res: any) => void) => void;
+  listNodeDataContractVersions: (request: any, callback: (err: any, res: any) => void) => void;
+  getNodeDataContractDiff: (request: any, callback: (err: any, res: any) => void) => void;
 }
 
 export function createGrpcGraphClient(address: string): GrpcGraphClient {

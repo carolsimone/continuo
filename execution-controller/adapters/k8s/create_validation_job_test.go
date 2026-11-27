@@ -25,7 +25,7 @@ import (
 // individually. Tests exercising the missing-image / missing-secret paths override
 // them with t.Setenv.
 func TestMain(m *testing.M) {
-	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0")
+	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0")
 	os.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	os.Exit(m.Run())
 }
@@ -95,7 +95,7 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 
 	main := spec.Containers[0]
 	assert.Equal(t, "dbt-job", main.Name)
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0", main.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0", main.Image)
 	assert.Equal(t, []string{"continuo-runtime", "validation-op"}, main.Command)
 	// The main container fetches its own SQL: it carries the URI + S3 creds.
 	assert.Equal(t, p.CandidateArtifactURI, envByName(spec, "CANDIDATE_SQL_URI"))
@@ -333,26 +333,26 @@ func TestCreateValidationJob_LongDbtTestTableNameLabelIsValid(t *testing.T) {
 	assert.Equal(t, p.TableName, envByName(job.Spec.Template.Spec, "TABLE_NAME"))
 }
 
-func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {
+func TestCreateValidationJob_BuildFromProd_SingleContainerNoS3(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
 	c := newValidationTestClient()
 	p := validationParams()
-	p.JobName = "validate-orders-rel123-clone"
-	p.ValidationOp = string(pkg_model.ValidationOpCloneFromProd)
+	p.JobName = "validate-orders-rel123-from-prod"
+	p.ValidationOp = string(pkg_model.ValidationOpBuildFromProd)
 	p.ProdSchema = "analytics"
-	p.CandidateArtifactURI = "" // clone nodes have no candidate SQL
+	p.CandidateArtifactURI = "" // build_from_prod nodes have no candidate SQL
 
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
 
-	assert.Empty(t, spec.InitContainers, "clone_from_prod has no fetch init container")
-	assert.Empty(t, spec.Volumes, "clone_from_prod needs no shared emptyDir")
+	assert.Empty(t, spec.InitContainers, "build_from_prod has no fetch init container")
+	assert.Empty(t, spec.Volumes, "build_from_prod needs no shared emptyDir")
 	require.Len(t, spec.Containers, 1)
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), envByName(spec, "VALIDATION_OP"))
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), envByName(spec, "VALIDATION_OP"))
 	assert.Equal(t, "analytics", envByName(spec, "PROD_SCHEMA"))
-	assert.Empty(t, envByName(spec, "AWS_SECRET_ACCESS_KEY"), "clone_from_prod must not carry S3 creds")
+	assert.Empty(t, envByName(spec, "AWS_SECRET_ACCESS_KEY"), "build_from_prod must not carry S3 creds")
 	assert.Empty(t, envByName(spec, "CANDIDATE_SQL_PATH"),
-		"clone_from_prod has no fetch sidecar/emptyDir, so it must not carry CANDIDATE_SQL_PATH")
+		"build_from_prod has no fetch sidecar/emptyDir, so it must not carry CANDIDATE_SQL_PATH")
 }
 
 func repeatStr(s string, n int) string {
@@ -447,7 +447,7 @@ func TestCreateValidationJob_AttachesWarehouseSecretEnvFrom(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	c := newValidationTestClient()
 	p := validationParams()
-	p.ValidationOp = string(pkg_model.ValidationOpCloneFromProd)
+	p.ValidationOp = string(pkg_model.ValidationOpBuildFromProd)
 	p.ProdSchema = "analytics"
 	p.CandidateArtifactURI = ""
 
@@ -499,15 +499,15 @@ func TestCreateValidationJob_SetsValidationOpAndProdSchema(t *testing.T) {
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), envByName(job.Spec.Template.Spec, "VALIDATION_OP"))
 
-	// explicit clone op + prod schema forwarded; clone nodes have no candidate SQL.
+	// explicit build_from_prod op + prod schema forwarded; build_from_prod nodes have no candidate SQL.
 	p2 := validationParams()
-	p2.JobName = "validate-orders-rel123-clone"
-	p2.ValidationOp = string(pkg_model.ValidationOpCloneFromProd)
+	p2.JobName = "validate-orders-rel123-from-prod"
+	p2.ValidationOp = string(pkg_model.ValidationOpBuildFromProd)
 	p2.ProdSchema = "analytics"
 	p2.CandidateArtifactURI = ""
 	require.NoError(t, c.CreateValidationJob(context.Background(), p2))
 	job2 := fetchJob(t, c, p2.Namespace, p2.JobName)
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), envByName(job2.Spec.Template.Spec, "VALIDATION_OP"))
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), envByName(job2.Spec.Template.Spec, "VALIDATION_OP"))
 	assert.Equal(t, "analytics", envByName(job2.Spec.Template.Spec, "PROD_SCHEMA"))
 }
 

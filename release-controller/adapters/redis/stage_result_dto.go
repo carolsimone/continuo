@@ -21,9 +21,9 @@ type stageNodeResultDTO struct {
 	// successes and for non-compile legs.
 	FailedContainer string `json:"failed_container,omitempty"`
 
-	// SeedPreflight is what the preflight of a seed found in the warehouse,
+	// DependentsCheck is what the dependents check of a seed found in the warehouse,
 	// sent on the seed-build leg's entry of a seed that asked for one.
-	SeedPreflight *events.SeedPreflightFindings `json:"seed_preflight,omitempty"`
+	DependentsCheck *events.DependentsCheckFindings `json:"dependents_check,omitempty"`
 }
 
 // stageNodeResultsToInput maps the decoded per-node wire entries to the
@@ -43,7 +43,7 @@ func stageNodeResultsToInput(in []stageNodeResultDTO) []handlers.NodeResult {
 			RunResultsURI:   n.RunResultsURI,
 			DurationMS:      n.DurationMS,
 			FailedContainer: n.FailedContainer,
-			SeedPreflight:   n.SeedPreflight.ToDomain(),
+			DependentsCheck: n.DependentsCheck.ToDomain(),
 		}
 	}
 	return out

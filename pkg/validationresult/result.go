@@ -83,24 +83,24 @@ func Parse(raw []byte) (*Result, error) {
 	return nil, fmt.Errorf("no structured validation-result JSON object found in %d bytes", len(raw))
 }
 
-// The values of a preflight block's op field, which are the VALIDATION_OP
+// The values of a warehouse-read block's op field, which are the VALIDATION_OP
 // values of the two runs that print one.
 const (
-	// OpSeedPreflight is the block of the check that lists what depends on a
+	// OpDependentsCheck is the block of the check that lists what depends on a
 	// seed's table before the seed loads.
-	OpSeedPreflight = "seed_preflight"
+	OpDependentsCheck = "dependents_check"
 	// OpProbeViews is the block of the probe that queries each view outside
-	// the allowed set that a seed's preflight found.
+	// the allowed set that a seed's dependents check found.
 	OpProbeViews = "probe_views"
 )
 
-// Preflight is the result block of a seed preflight or a view probe: a Result
-// (its Status, Message, Failures and Reason) plus the findings of the
-// warehouse. A check-mode preflight that stops the load has status error,
+// WarehouseRead is the result block of a warehouse-read op, a dependents check
+// or a view probe: a Result (its Status, Message, Failures and Reason) plus the
+// findings of the warehouse. A check-mode dependents check that stops the load has status error,
 // failures 1 and the reason that stopped it.
-type Preflight struct {
+type WarehouseRead struct {
 	Result
-	// Op is OpSeedPreflight or OpProbeViews.
+	// Op is OpDependentsCheck or OpProbeViews.
 	Op string `json:"op"`
 	// DropSemantics is how the engine treats a drop of a table that views read.
 	DropSemantics string `json:"drop_semantics"`
@@ -114,7 +114,7 @@ type Preflight struct {
 	Views []ProbedView `json:"views"`
 }
 
-// Dependent is one object of a preflight's findings.
+// Dependent is one object of a dependents check's findings.
 type Dependent struct {
 	Schema  string `json:"schema"`
 	Name    string `json:"name"`
@@ -132,18 +132,18 @@ type ProbedView struct {
 	Error  string `json:"error"`
 }
 
-// ParsePreflight decodes the preflight or probe block in raw with the scan
+// ParseWarehouseRead decodes the dependents check or probe block in raw with the scan
 // Parse uses, and accepts the first candidate that Parse would accept and whose
-// op is OpSeedPreflight or OpProbeViews. An error is returned when there is
+// op is OpDependentsCheck or OpProbeViews. An error is returned when there is
 // none.
-func ParsePreflight(raw []byte) (*Preflight, error) {
-	if p, ok := scanBlock(raw, func(p *Preflight) bool {
+func ParseWarehouseRead(raw []byte) (*WarehouseRead, error) {
+	if p, ok := scanBlock(raw, func(p *WarehouseRead) bool {
 		return p.SchemaVersion == SchemaVersion && supportedRunStatuses[p.Status] &&
-			(p.Op == OpSeedPreflight || p.Op == OpProbeViews)
+			(p.Op == OpDependentsCheck || p.Op == OpProbeViews)
 	}); ok {
 		return p, nil
 	}
-	return nil, fmt.Errorf("no seed preflight or view probe JSON object found in %d bytes", len(raw))
+	return nil, fmt.Errorf("no dependents check or view probe JSON object found in %d bytes", len(raw))
 }
 
 // scanBlock decodes a T from each '{' of raw in turn, ignoring what follows

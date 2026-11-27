@@ -280,11 +280,11 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releaseche
 	if err != nil {
 		return err
 	}
-	notices, preflights := releaseNotices(d, r, topo, prod)
+	notices, dependentsChecks := releaseNotices(d, r, topo, prod)
 	r.SetNotices(notices)
 
 	// Derive the validation build sets: candidate nodes rebuilt from their own
-	// SQL rather than cloned from production, split into the fix's own delta
+	// SQL rather than built from production, split into the fix's own delta
 	// (scope) and the rejected release's validated-ok changes (context). A
 	// production release returns every node that differs from the live release
 	// as scope with no context (bootstrap, with no live release, treats every candidate
@@ -361,7 +361,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releaseche
 	// leg; validation.requested is emitted later, on seed.build.completed.
 	seedIDs := newChangedSeedIDs(topo, validationIDs, rebuiltFromCandidate)
 	if len(seedIDs) > 0 {
-		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, validationIDs, seedIDs, preflights, now)
+		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, validationIDs, seedIDs, dependentsChecks, now)
 	}
 
 	// No new/changed seeds: Part A path (validate directly).
@@ -413,7 +413,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releaseche
 }
 
 // changedNodeIDsFor returns the check's validation build sets — the candidate
-// node ids rebuilt from their own SQL rather than cloned empty from
+// node ids rebuilt from their own SQL rather than built empty from
 // production, split into two roles:
 //   - scope: the fix's own delta. These seed the downstream validation
 //     closure, so the check measures the fix and everything below it.
@@ -477,7 +477,7 @@ func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *releas
 // (release.RebuiltFromCandidateSet over the check's scope closure and context
 // rebuilds). The seed-build leg reads it to find the seeds it just built, and
 // the validation-result leg reads it to tell a node checked from its own code
-// from an unchanged upstream cloned from production. Both derive it exactly as
+// from an unchanged upstream built from production. Both derive it exactly as
 // the parse leg did when it requested the check, so every leg names the same
 // validation op for a node.
 func rebuiltFromCandidateFor(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check, topo, prod release.Topology, validationIDs []string) (map[string]bool, error) {
@@ -491,7 +491,7 @@ func rebuiltFromCandidateFor(ctx context.Context, d *Deps, u uow.UnitOfWork, r *
 
 // newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
 // changed-closure (new or content-changed). These cannot be checked by the
-// adapter (no compiled SQL) and cannot be cloned (structure may have changed) — they are
+// adapter (no compiled SQL) and cannot be built from production (their structure may have changed) — they are
 // built into the candidate schema by the seed-build leg. Sorted for determinism.
 func newChangedSeedIDs(topo release.Topology, validationIDs []string, rebuiltFromCandidate map[string]bool) []string {
 	inSet := make(map[string]bool, len(validationIDs))
@@ -512,9 +512,9 @@ func newChangedSeedIDs(topo release.Topology, validationIDs []string, rebuiltFro
 // carrying the fields execution-controller needs to build the seed into the
 // candidate schema with the team image. No candidate_artifact_uri / validation_op:
 // seeds are built, not checked by the adapter; no upstreams: seeds are roots.
-// A seed with an entry in preflights also carries it as seed_preflight, the
-// check execution-controller runs against the warehouse before the seed loads.
-func seedBuildNodesInOrder(topo release.Topology, seedIDs []string, preflights map[string]*seedreload.Preflight) []map[string]any {
+// A seed with an entry in dependentsChecks also carries it as dependents_check,
+// the check execution-controller runs against the warehouse before the seed loads.
+func seedBuildNodesInOrder(topo release.Topology, seedIDs []string, dependentsChecks map[string]*seedreload.DependentsCheck) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
 		byID[n.UniqueID] = n
@@ -533,8 +533,8 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string, preflights m
 			"table_name":   n.TableName,
 			"image_tag":    n.ImageTag,
 		}
-		if p := preflights[id]; p != nil {
-			seed["seed_preflight"] = events.SeedPreflightOf(p)
+		if p := dependentsChecks[id]; p != nil {
+			seed["dependents_check"] = events.DependentsCheckOf(p)
 		}
 		out = append(out, seed)
 	}
@@ -544,10 +544,10 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string, preflights m
 // emitSeedBuildRequested transitions the release to SeedBuilding (recording the
 // reference to the candidate topology + validation IDs for the later validation.requested),
 // emits seed.build.requested:v1 with ONLY the seed nodes, and commits.
-// preflights holds the report preflight of each noticed seed.
+// dependentsChecks holds the report-mode dependents check of each noticed seed.
 func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releasecheck.Check,
 	releaseID string, ref release.TopologyRef, topo release.Topology, validationIDs, seedIDs []string,
-	preflights map[string]*seedreload.Preflight, now time.Time) error {
+	dependentsChecks map[string]*seedreload.DependentsCheck, now time.Time) error {
 
 	if err := r.TransitionToSeedBuilding(ref, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to seed building: %w", err)
@@ -562,7 +562,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"mode":              "seed_build",
 		"candidate_schema":  candidateSchema,
 		"image_tags":        r.ImageTags(),
-		"seeds":             seedBuildNodesInOrder(topo, seedIDs, preflights),
+		"seeds":             seedBuildNodesInOrder(topo, seedIDs, dependentsChecks),
 		"seed_ids_in_order": seedIDs,
 	}
 	// A fix's release check carries the overlay of proposed source files; the
@@ -639,24 +639,24 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release
 }
 
 // releaseNotices returns the seed reload notices of r against the production
-// topology prod, and the report-mode preflight of each noticed seed whose load
+// topology prod, and the report-mode dependents check of each noticed seed whose load
 // goes ahead. A fix's release check gets an empty list and an empty map, since it
 // never promotes. So does a rebaseline release: its promotion records every
 // seed as loaded at its new fingerprint and reloads none.
-func releaseNotices(d *Deps, r *releasecheck.Check, candidate, prod release.Topology) ([]release.Notice, map[string]*seedreload.Preflight) {
+func releaseNotices(d *Deps, r *releasecheck.Check, candidate, prod release.Topology) ([]release.Notice, map[string]*seedreload.DependentsCheck) {
 	if r.Kind() == releasecheck.KindFix {
 		d.Logger.Info("fix's release check: no seed reload notices", "release_id", r.ID())
-		return []release.Notice{}, map[string]*seedreload.Preflight{}
+		return []release.Notice{}, map[string]*seedreload.DependentsCheck{}
 	}
 	if r.IsRebaseline() {
 		d.Logger.Info("rebaseline release: no seed reload notices", "release_id", r.ID())
-		return []release.Notice{}, map[string]*seedreload.Preflight{}
+		return []release.Notice{}, map[string]*seedreload.DependentsCheck{}
 	}
-	notices, preflights := release.BuildNotices(candidate, prod, d.Family, d.Engine, r.IsBootstrap())
+	notices, dependentsChecks := release.BuildNotices(candidate, prod, d.Family, d.Engine, r.IsBootstrap())
 	for _, n := range notices {
 		d.Logger.Info("seed reload notice", "release_id", r.ID(), "node_id", n.NodeID, "prediction", n.Prediction)
 	}
-	return notices, preflights
+	return notices, dependentsChecks
 }
 
 // validationNodesInOrder returns one map per validation node in lexical

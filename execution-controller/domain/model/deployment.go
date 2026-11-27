@@ -438,13 +438,13 @@ func (d *Deployment) Observe(f AttemptFacts) bool {
 // on, when it has findings that hold none yet. The findings are copied, never
 // changed in place. It reports whether it set them.
 func (d *Deployment) RecordProbes(probes []seedreload.Probe) bool {
-	f := d.facts.SeedPreflight
+	f := d.facts.DependentsCheck
 	if len(probes) == 0 || f == nil || len(f.Probes) > 0 {
 		return false
 	}
 	probed := *f
 	probed.Probes = probes
-	d.facts.SeedPreflight = &probed
+	d.facts.DependentsCheck = &probed
 	return true
 }
 

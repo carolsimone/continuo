@@ -161,49 +161,49 @@ func TestDeployTaskDTO_RoundTripsContentHash(t *testing.T) {
 	}
 }
 
-// A seed's preflight is stored in job_params as the dispatch carried it, so a
+// A seed's dependents check is stored in job_params as the dispatch carried it, so a
 // Job created or adopted after a restart still runs it. Its lists are stored
-// as arrays, `[]` when empty, and a task without a preflight stores none.
-func TestDeployTaskDTO_RoundTripsTheSeedPreflight(t *testing.T) {
-	cmd := command.DeployTask{TaskID: "t", NodeType: "dbt-seed", SeedPreflight: &seedreload.Preflight{
-		Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur",
+// as arrays, `[]` when empty, and a task without a dependents check stores none.
+func TestDeployTaskDTO_RoundTripsTheDependentsCheck(t *testing.T) {
+	cmd := command.DeployTask{TaskID: "t", NodeType: "dbt-seed", DependentsCheck: &seedreload.DependentsCheck{
+		Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur",
 		Allowed: []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"}}}
 	raw, err := json.Marshal(DeployTaskFromDomain(cmd))
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"seed_preflight":{"mode":"check","engine_family":"schema_bound","relation":"analytics.seed_fx_rates_eur",`+
+	assert.Contains(t, string(raw), `"dependents_check":{"mode":"check","engine_family":"schema_bound","relation":"analytics.seed_fx_rates_eur",`+
 		`"allowed":["analytics.fx_rates_current","analytics.fx_rates_latest_eur"],"acknowledged":[]}`)
 
 	var back DeployTaskDTO
 	require.NoError(t, json.Unmarshal(raw, &back))
-	want := *cmd.SeedPreflight
+	want := *cmd.DependentsCheck
 	want.Acknowledged = []string{}
-	require.NotNil(t, back.ToDomain().SeedPreflight)
-	assert.Equal(t, want, *back.ToDomain().SeedPreflight)
+	require.NotNil(t, back.ToDomain().DependentsCheck)
+	assert.Equal(t, want, *back.ToDomain().DependentsCheck)
 
 	raw, err = json.Marshal(DeployTaskFromDomain(command.DeployTask{TaskID: "t"}))
 	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "seed_preflight")
+	assert.NotContains(t, string(raw), "dependents_check")
 	var plain DeployTaskDTO
 	require.NoError(t, json.Unmarshal(raw, &plain))
-	assert.Nil(t, plain.ToDomain().SeedPreflight)
+	assert.Nil(t, plain.ToDomain().DependentsCheck)
 }
 
-// A seed-build leg's preflight is stored in job_params as the request carried
+// A seed-build leg's dependents check is stored in job_params as the request carried
 // it, so a Job created after a restart still runs it; a leg without one stores
 // none.
-func TestValidationDeployTaskDTO_RoundTripsTheSeedPreflight(t *testing.T) {
-	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "analytics.seed_fx_rates_eur", SeedPreflight: &seedreload.Preflight{
-		Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.seed_fx_rates_eur",
+func TestValidationDeployTaskDTO_RoundTripsTheDependentsCheck(t *testing.T) {
+	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "analytics.seed_fx_rates_eur", DependentsCheck: &seedreload.DependentsCheck{
+		Mode: seedreload.ReportMode, Family: warehouse.LateBinding, Relation: "analytics.seed_fx_rates_eur",
 		Allowed: []string{"analytics.fx_rates_current"}}}
 	raw, err := json.Marshal(ValidationDeployTaskFromDomain(cmd))
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"seed_preflight":{"mode":"report","engine_family":"late_binding","relation":"analytics.seed_fx_rates_eur",`+
+	assert.Contains(t, string(raw), `"dependents_check":{"mode":"report","engine_family":"late_binding","relation":"analytics.seed_fx_rates_eur",`+
 		`"allowed":["analytics.fx_rates_current"],"acknowledged":[]}`)
 
 	var back ValidationDeployTaskDTO
 	require.NoError(t, json.Unmarshal(raw, &back))
-	want := *cmd.SeedPreflight
+	want := *cmd.DependentsCheck
 	want.Acknowledged = []string{}
-	require.NotNil(t, back.ToDomain().SeedPreflight)
-	assert.Equal(t, want, *back.ToDomain().SeedPreflight)
+	require.NotNil(t, back.ToDomain().DependentsCheck)
+	assert.Equal(t, want, *back.ToDomain().DependentsCheck)
 }

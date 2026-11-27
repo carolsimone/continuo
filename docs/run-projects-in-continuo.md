@@ -113,9 +113,9 @@ in it, deliberately:
    `continuo node run`). The one exception is a dormant view below a seed:
    a run whose load of the seed drops the seed's table rebuilds it (see
    [Seeds that change](#seeds-that-change)). Run a dormant node once before you
-   release a change to any node below it: validation copies the production
-   table of the dormant node, and a table that does not exist yet rejects that
-   release with `upstream_clone_failed`. Seeds are exempt and default to
+   release a change to any node below it: the release check builds the dormant
+   node empty from its production table, and a table that does not exist yet rejects that
+   release with `upstream_build_from_prod_failed`. Seeds are exempt and default to
    build-on-release.
    The tag decides which models a schedule runs, not when: a schedule runs on
    its own once you give it a cron in the UI (**Add cron** on its card) or with
@@ -529,15 +529,15 @@ The obvious next step — release `marketing` normally and let it validate — d
 not work yet, and the reason teaches you how validation actually operates. Two
 rules collide on a first install:
 
-- **Validation clones what a change reads from production.** To prove a release
-  against real structure, continuo builds a temporary candidate schema by
-  cloning the release's unchanged upstream tables from production — so those
-  tables must already physically exist.
+- **Validation builds what a change reads from production.** To prove a release
+  against real structure, continuo builds a temporary candidate schema and
+  builds each of the release's unchanged upstream tables in it, empty, with the
+  columns of its production table — so those tables must already physically exist.
 - **Promotion materialises only seeds.** Models become real tables when a *run*
   executes them (chapter 5), not at promotion.
 
 You have promoted `core`, but nothing has run: core's *models* do not exist as
-tables yet. Validate any project that reads them and the clone step fails with
+tables yet. Validate any project that reads them and the build from production fails with
 `relation "analytics.daily_transactions" does not exist` — continuo refusing to
 prove a change against tables that are not there. No release order escapes
 this, because the demo's projects read from each other in both directions
@@ -547,7 +547,7 @@ another one's models materialised, and that needs a run.
 So a cold install is seeded the way production was born: **every project's
 first release is a bootstrap.** Promote all four without validation, run the
 graph once so every model physically exists, and from then on validation has a
-production to clone from. This chapter is the last time you will pass
+production to build from. This chapter is the last time you will pass
 `"bootstrap": true`; every release after it is validated for real.
 
 💡 Order among the remaining three does not matter. Every release reparses the
@@ -724,8 +724,8 @@ your files. If the release is rejected as `invalid_contract`,
 [Troubleshooting](#troubleshooting) says what to do.
 
 Open the platform UI and the new `service-py` node now appears in the topology.
-Its page has a Contract tab with the contract as continuo stores it, and
-`continuo node contract analytics.py_daily_kpis` prints it from the command
+Its page has a Data contract tab with the data contract as continuo stores it, and
+`continuo node data-contract analytics.py_daily_kpis` prints it from the command
 line.
 
 ### python-api nodes
@@ -888,8 +888,8 @@ curl -s -X POST $API/releases \
 The stages are the same ones every release walks — but this time `validating`
 is not instant. It runs for a minute or two, and this is the
 blue/green mechanism at work: continuo created a temporary candidate schema,
-built the release's seeds into it, **cloned the unchanged upstream tables the
-change reads from production** — this is why chapter 4 had to bootstrap —
+built the release's seeds into it, **built the unchanged upstream tables the
+change reads, empty, from their production tables** — this is why chapter 4 had to bootstrap —
 rewrote the in-scope models' compiled SQL to read from that schema instead of
 production, and ran them there. Production was untouched throughout, and the
 candidate schema was torn down afterwards. No data is copied — only
@@ -930,7 +930,7 @@ sixteen of the graph's twenty-two nodes in scope: your new node and its entire
 upstream lineage — `ltv_per_user` from finance, `revenue_per_user` and
 `daily_transactions` from core, and the seeds under all of them. You changed
 marketing; continuo worked out from the SQL that proving the change requires
-two other teams' models, cloned their production structure, and ran your model
+two other teams' models, built them empty from their production tables, and ran your model
 against it. Nobody declared those relationships anywhere.
 
 Only because all of that passed did `marketing:v2` become marketing's

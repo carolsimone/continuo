@@ -18,10 +18,10 @@ mkfix "$tmp/match" 0.6.0 0.6.0 0.6.0
 bash "$G" "$tmp/match" >/dev/null 2>&1; assert "pins equal to the target pass" "[ $? -eq 0 ]"
 
 mkfix "$tmp/ahead" 0.6.0 0.7.0 0.7.0
-bash "$G" "$tmp/ahead" >/dev/null 2>&1; assert "pins newer than the target pass" "[ $? -eq 0 ]"
+bash "$G" "$tmp/ahead" >/dev/null 2>&1; assert "pins newer than the target fail" "[ $? -ne 0 ]"
 
 mkfix "$tmp/ahead-minor" 0.9.0 0.10.0 0.10.0
-bash "$G" "$tmp/ahead-minor" >/dev/null 2>&1; assert "pins compare as versions, not text (0.10.0 is newer than 0.9.0)" "[ $? -eq 0 ]"
+bash "$G" "$tmp/ahead-minor" >/dev/null 2>&1; assert "a pin a minor version ahead of the target fails (0.10.0 is not 0.9.0)" "[ $? -ne 0 ]"
 
 mkfix "$tmp/split" 0.6.0 0.7.0 0.8.0
 bash "$G" "$tmp/split" >/dev/null 2>&1; assert "dev and prod pins that differ fail" "[ $? -ne 0 ]"

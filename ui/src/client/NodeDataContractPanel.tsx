@@ -5,8 +5,8 @@ import { readJson } from './read-json';
 import type {
   ContractFieldChange,
   ContractVersion,
-  NodeContractDiffResponse,
-  NodeContractResponse,
+  NodeDataContractDiffResponse,
+  NodeDataContractResponse,
 } from './types';
 
 type Props = {
@@ -18,7 +18,7 @@ type Props = {
 type ContractRead =
   | { state: 'loading' }
   | { state: 'failed' }
-  | { state: 'ready'; data: NodeContractResponse };
+  | { state: 'ready'; data: NodeDataContractResponse };
 
 // The answer for one pair of versions. `key` names the pair the answer is for,
 // so an answer is never shown beside a pick it does not belong to.
@@ -44,7 +44,7 @@ function VersionHistory({ versions }: { versions: ContractVersion[] }) {
         </div>
         {oldest > 1 && (
           <div className="section-header__sub">
-            {`Versions before ${oldest} were removed by the contract history setting.`}
+            {`Versions before ${oldest} were removed by the data contract history setting.`}
           </div>
         )}
       </div>
@@ -119,7 +119,7 @@ function CompareVersions({ base, versions }: { base: string; versions: ContractV
   useEffect(() => {
     if (pairKey === '') return;
     const read = new AbortController();
-    readJson<NodeContractDiffResponse>(`${base}/diff?from=${from}&to=${to}`, read.signal)
+    readJson<NodeDataContractDiffResponse>(`${base}/diff?from=${from}&to=${to}`, read.signal)
       .then(data => {
         if (!read.signal.aborted) setDiff({ state: 'ready', key: pairKey, changes: data.changes ?? [] });
       })
@@ -162,27 +162,27 @@ function CompareVersions({ base, versions }: { base: string; versions: ContractV
         </div>
       )}
       {shown?.state === 'ready' && shown.changes.length === 0 && (
-        <p className="empty">{`Version ${from} and version ${to} have the same contract.`}</p>
+        <p className="empty">{`Version ${from} and version ${to} have the same data contract.`}</p>
       )}
       {shown?.state === 'ready' && shown.changes.length > 0 && <ChangesTable changes={shown.changes} />}
     </section>
   );
 }
 
-// The Contract tab of a node page: the contract the node has now as the YAML
+// The Data contract tab of a node page: the data contract the node has now as the YAML
 // continuo publishes, every version catalog kept, and the fields two versions
 // differ at.
-export default function NodeContractPanel({ project, schema, table }: Props) {
+export default function NodeDataContractPanel({ project, schema, table }: Props) {
   const [read, setRead] = useState<ContractRead>({ state: 'loading' });
-  const base = `/api/nodes/${encodeURIComponent(project)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/contract`;
+  const base = `/api/nodes/${encodeURIComponent(project)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/data-contract`;
 
   useEffect(() => {
     setRead({ state: 'loading' });
     const request = new AbortController();
-    readJson<NodeContractResponse>(base, request.signal)
+    readJson<NodeDataContractResponse>(base, request.signal)
       .then(data => {
         if (request.signal.aborted) return;
-        // An answer without the two fields is read as a node with no contract.
+        // An answer without the two fields is read as a node with no data contract.
         setRead({ state: 'ready', data: { contract: data.contract ?? null, versions: data.versions ?? [] } });
       })
       .catch(() => {
@@ -191,12 +191,12 @@ export default function NodeContractPanel({ project, schema, table }: Props) {
     return () => request.abort();
   }, [base]);
 
-  if (read.state === 'loading') return <p className="empty">Reading the contract…</p>;
+  if (read.state === 'loading') return <p className="empty">Reading the data contract…</p>;
   if (read.state === 'failed') {
     return (
       <div className="info-strip info-strip--error">
         <span className="info-strip__icon">⚠</span>
-        Could not read this node's contract. Reload the page to try again.
+        Could not read this node's data contract. Reload the page to try again.
       </div>
     );
   }
@@ -205,7 +205,7 @@ export default function NodeContractPanel({ project, schema, table }: Props) {
   if (contract === null && versions.length === 0) {
     return (
       <section className="detail-card">
-        <p className="empty">This node has no contract. A dbt test and an unknown-external table have none.</p>
+        <p className="empty">This node has no data contract. A dbt test and an unknown-external table have none.</p>
       </section>
     );
   }
@@ -215,13 +215,13 @@ export default function NodeContractPanel({ project, schema, table }: Props) {
       {contract === null ? (
         <div className="info-strip info-strip--neutral">
           <span className="info-strip__icon">ⓘ</span>
-          This node has no current contract.
+          This node has no current data contract.
         </div>
       ) : (
-        <section className="detail-card" aria-label="Current contract">
+        <section className="detail-card" aria-label="Current data contract">
           <div className="section-header">
             <div className="section-header__main">
-              <span className="section-header__title">Current contract</span>
+              <span className="section-header__title">Current data contract</span>
             </div>
             <div className="section-header__sub">
               <span>{`Version ${contract.version}`}</span>

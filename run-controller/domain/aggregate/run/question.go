@@ -32,18 +32,18 @@ type Question struct {
 // knows it as dispatched.
 func (q Question) Dispatch(d TaskDefaults) (TaskDispatched, time.Duration) {
 	return TaskDispatched{
-		ID:           q.RunID,
-		TenantID:     q.TenantID,
-		ScheduleName: q.ScheduleName,
-		TaskID:       q.TaskID,
-		Attempt:      q.Attempt,
-		KnownStatus:  q.Status,
-		Node:         q.Node,
-		JobName:      q.JobName,
-		Operation:    q.Spec.Operation,
-		Reason:       q.Spec.Reason,
-		Preflight:    q.Spec.Preflight,
-		Timeout:      TaskTimeout(q.Node, d),
+		ID:              q.RunID,
+		TenantID:        q.TenantID,
+		ScheduleName:    q.ScheduleName,
+		TaskID:          q.TaskID,
+		Attempt:         q.Attempt,
+		KnownStatus:     q.Status,
+		Node:            q.Node,
+		JobName:         q.JobName,
+		Operation:       q.Spec.Operation,
+		Reason:          q.Spec.Reason,
+		DependentsCheck: q.Spec.DependentsCheck,
+		Timeout:         TaskTimeout(q.Node, d),
 	}, NextCheckAfter(q.Status, q.ChecksSent+1)
 }
 

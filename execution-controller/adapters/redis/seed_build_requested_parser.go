@@ -31,8 +31,8 @@ type seedBuildNodeDTO struct {
 	SchemaName  string `json:"schema_name"`
 	TableName   string `json:"table_name"`
 	ImageTag    string `json:"image_tag"`
-	// SeedPreflight is present only on a seed whose release noticed a reload.
-	SeedPreflight *pkgevents.SeedPreflight `json:"seed_preflight,omitempty"`
+	// DependentsCheck is present only on a seed whose release noticed a reload.
+	DependentsCheck *pkgevents.DependentsCheck `json:"dependents_check,omitempty"`
 }
 
 // ParseSeedBuildRequested translates a seed.build.requested:v1 XMessage into a
@@ -93,13 +93,13 @@ func ParseSeedBuildRequested(msg goredis.XMessage) (events.SeedBuildRequested, e
 					i, s.UniqueID, s.NodeType, string(pkg_model.NodeTypeDbtSeed))
 		}
 		seeds = append(seeds, events.SeedBuildNode{
-			NodeID:        s.UniqueID,
-			ProjectName:   s.ProjectName,
-			SchemaName:    s.SchemaName,
-			TableName:     s.TableName,
-			NodeType:      nodeType,
-			ImageTag:      s.ImageTag,
-			SeedPreflight: s.SeedPreflight.ToDomain(),
+			NodeID:          s.UniqueID,
+			ProjectName:     s.ProjectName,
+			SchemaName:      s.SchemaName,
+			TableName:       s.TableName,
+			NodeType:        nodeType,
+			ImageTag:        s.ImageTag,
+			DependentsCheck: s.DependentsCheck.ToDomain(),
 		})
 		seedIDSet[s.UniqueID] = struct{}{}
 	}

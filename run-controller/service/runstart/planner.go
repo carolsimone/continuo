@@ -115,7 +115,7 @@ func (p Planner) Rerun(ctx context.Context, u uow.UnitOfWork, source *run.Run) (
 // op: on source's release when source is not nil, else on the tenant's live
 // release. A source is a run of tenantID. A full refresh of a seed is an
 // operator's request for it, and so is a rerun or a rebase of one; acknowledged
-// are the objects reading the seed that an operator named, which its preflight
+// are the objects reading the seed that an operator named, which its dependents check
 // lets the load drop. Naming any for a run that is not a full refresh of a dbt
 // seed is runplan.ErrAcknowledgementNotAllowed. A seed whose +full_refresh:
 // false keeps its table cannot be rebuilt, so a request whose seed task would
@@ -297,7 +297,7 @@ func (p Planner) withSeedReloads(ctx context.Context, u uow.UnitOfWork, tenantID
 			Trigger:     trigger,
 			Unvalidated: bootstrap,
 		}, runplan.SeedReloadGraph(g))
-		reloads = append(reloads, runplan.SeedReload{Seed: k, Plan: plan, Preflight: plan.Preflight(acknowledged)})
+		reloads = append(reloads, runplan.SeedReload{Seed: k, Plan: plan, DependentsCheck: plan.DependentsCheck(acknowledged)})
 	}
 	sel.Plan = runplan.ApplySeedReloads(sel.Plan, g, op, reloads)
 	sel.Graph = g

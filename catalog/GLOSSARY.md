@@ -1,6 +1,6 @@
 # catalog
 
-catalog keeps the graph of the live release's nodes and edges, every version of each node's code and data contract, and the failures seen at each node, so other components can read them. The shared words (node, release, live release, topology, data contract, project). Inside catalog, contract always means a data contract are in the root `GLOSSARY.md`.
+catalog keeps the graph of the live release's nodes and edges, every version of each node's code and data contract, and the failures seen at each node, so other components can read them. The shared words (node, release, live release, topology, data contract, project) are in the root `GLOSSARY.md`. Inside catalog, contract always means a data contract.
 
 ## Language
 

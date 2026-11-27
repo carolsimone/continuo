@@ -31,21 +31,21 @@ func operationName(op model.Operation) string {
 	return string(op)
 }
 
-// toProtoFindings renders the findings of an attempt's seed preflight; nil
+// toProtoFindings renders the findings of an attempt's dependents check; nil
 // stays unset.
-func toProtoFindings(f *seedreload.Findings) *runv1.SeedPreflightFindings {
+func toProtoFindings(f *seedreload.Findings) *runv1.DependentsCheckFindings {
 	if f == nil {
 		return nil
 	}
-	out := &runv1.SeedPreflightFindings{
+	out := &runv1.DependentsCheckFindings{
 		DropSemantics: f.DropSemantics,
 		Completeness:  f.Completeness,
 		Checked:       f.Checked,
-		Dependents:    make([]*runv1.PreflightDependent, 0, len(f.Dependents)),
+		Dependents:    make([]*runv1.DependentObject, 0, len(f.Dependents)),
 		Probes:        make([]*runv1.ViewProbe, 0, len(f.Probes)),
 	}
 	for _, d := range f.Dependents {
-		out.Dependents = append(out.Dependents, &runv1.PreflightDependent{
+		out.Dependents = append(out.Dependents, &runv1.DependentObject{
 			Schema: d.Schema, Name: d.Name, Kind: d.Kind, Owner: d.Owner,
 			Depth: num.ClampInt32(d.Depth), Allowed: d.Allowed,
 		})
@@ -210,7 +210,7 @@ func toProtoAttempt(a projection.TaskAttempt) *runv1.TaskAttempt {
 		LogS3Key:      stringOrEmpty(a.LogS3Key),
 		RunResultsUri: stringOrEmpty(a.RunResultsURI),
 	}
-	out.SeedPreflight = toProtoFindings(a.SeedPreflight)
+	out.DependentsCheck = toProtoFindings(a.DependentsCheck)
 	if a.ExitCode != nil {
 		out.ExitCode = num.ClampInt32(*a.ExitCode)
 	}

@@ -8,10 +8,10 @@ describe('createGrpcGraphClient', () => {
     expect(typeof client.getNodeVersions).toBe('function');
   });
 
-  it('exposes the three contract reads of the vendored catalog proto', () => {
+  it('exposes the three data contract reads of the vendored catalog proto', () => {
     const client = createGrpcGraphClient('localhost:50052');
-    expect(typeof client.getNodeContract).toBe('function');
-    expect(typeof client.listNodeContractVersions).toBe('function');
-    expect(typeof client.getNodeContractDiff).toBe('function');
+    expect(typeof client.getNodeDataContract).toBe('function');
+    expect(typeof client.listNodeDataContractVersions).toBe('function');
+    expect(typeof client.getNodeDataContractDiff).toBe('function');
   });
 });

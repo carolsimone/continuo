@@ -7,11 +7,11 @@
 export type ParseFailureKind = 'invalid_sql' | 'unqualified_reference' | 'invalid_contract' | 'invalid_artifact' | 'internal';
 export const PARSE_FAILURE_KINDS: readonly ParseFailureKind[] = ['invalid_sql', 'unqualified_reference', 'invalid_contract', 'invalid_artifact', 'internal'];
 
-export type RejectReason = 'compile_failed' | 'parse_rehearsal_failed' | 'artifact_upload_failed' | 'invalid_sql' | 'unqualified_reference' | 'invalid_contract' | 'invalid_artifact' | 'internal_error' | 'duplicate_table' | 'unbuildable_cross_project_upstream' | 'nothing_to_validate' | 'seed_build_failed' | 'validation_failed' | 'upgrade_interrupted' | 'upstream_clone_failed';
-export const REJECT_REASONS: readonly RejectReason[] = ['compile_failed', 'parse_rehearsal_failed', 'artifact_upload_failed', 'invalid_sql', 'unqualified_reference', 'invalid_contract', 'invalid_artifact', 'internal_error', 'duplicate_table', 'unbuildable_cross_project_upstream', 'nothing_to_validate', 'seed_build_failed', 'validation_failed', 'upgrade_interrupted', 'upstream_clone_failed'];
+export type RejectReason = 'compile_failed' | 'parse_rehearsal_failed' | 'artifact_upload_failed' | 'invalid_sql' | 'unqualified_reference' | 'invalid_contract' | 'invalid_artifact' | 'internal_error' | 'duplicate_table' | 'unbuildable_cross_project_upstream' | 'nothing_to_validate' | 'seed_build_failed' | 'validation_failed' | 'upgrade_interrupted' | 'upstream_build_from_prod_failed';
+export const REJECT_REASONS: readonly RejectReason[] = ['compile_failed', 'parse_rehearsal_failed', 'artifact_upload_failed', 'invalid_sql', 'unqualified_reference', 'invalid_contract', 'invalid_artifact', 'internal_error', 'duplicate_table', 'unbuildable_cross_project_upstream', 'nothing_to_validate', 'seed_build_failed', 'validation_failed', 'upgrade_interrupted', 'upstream_build_from_prod_failed'];
 
-export type ValidationOp = 'build_from_sql' | 'build_from_columns' | 'check_binds' | 'clone_from_prod';
-export const VALIDATION_OPS: readonly ValidationOp[] = ['build_from_sql', 'build_from_columns', 'check_binds', 'clone_from_prod'];
+export type ValidationOp = 'build_from_sql' | 'build_from_columns' | 'check_binds' | 'build_from_prod';
+export const VALIDATION_OPS: readonly ValidationOp[] = ['build_from_sql', 'build_from_columns', 'check_binds', 'build_from_prod'];
 
 export type HandoverReason = 'tries_spent' | 'drafts_spent' | 'declined' | 'no_type' | 'classifier_infra' | 'classifier_unhealable_parse' | 'no_repository' | 'unverifiable_edits';
 export const HANDOVER_REASONS: readonly HandoverReason[] = ['tries_spent', 'drafts_spent', 'declined', 'no_type', 'classifier_infra', 'classifier_unhealable_parse', 'no_repository', 'unverifiable_edits'];

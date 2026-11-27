@@ -73,7 +73,7 @@ func (c *GraphClient) UpstreamChanges(ctx context.Context, uniqueID string) ([]p
 // unknown one) degrades to ("", nil); other gRPC errors are returned to the
 // caller.
 func (c *GraphClient) CurrentContract(ctx context.Context, uniqueID string) (string, error) {
-	resp, err := c.client.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: uniqueID, IncludeDocument: true})
+	resp, err := c.client.GetNodeDataContract(ctx, &catalogv1.GetNodeDataContractRequest{UniqueId: uniqueID, IncludeDocument: true})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return "", nil

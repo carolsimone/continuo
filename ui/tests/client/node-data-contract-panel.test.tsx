@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import NodeContractPanel from '../../src/client/NodeContractPanel';
-import type { ContractFieldChange, ContractVersion, NodeContractResponse } from '../../src/client/types';
+import NodeDataContractPanel from '../../src/client/NodeDataContractPanel';
+import type { ContractFieldChange, ContractVersion, NodeDataContractResponse } from '../../src/client/types';
 
 const mockFetch = vi.fn();
 beforeEach(() => {
@@ -23,7 +23,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-const CONTRACT_URL = '/api/nodes/py-service/analytics/py_daily_kpis/contract';
+const CONTRACT_URL = '/api/nodes/py-service/analytics/py_daily_kpis/data-contract';
 const diffUrl = (from: number, to: number) => `${CONTRACT_URL}/diff?from=${from}&to=${to}`;
 
 const YAML_TEXT = [
@@ -64,7 +64,7 @@ const version = (n: number, over: Partial<ContractVersion> = {}): ContractVersio
 });
 
 const v3 = version(3, { is_current: true, same_as_version: 1, document_yaml: YAML_TEXT });
-const designHistory: NodeContractResponse = {
+const designHistory: NodeDataContractResponse = {
   contract: v3,
   versions: [{ ...v3, document_yaml: undefined }, version(2), version(1)],
 };
@@ -73,7 +73,7 @@ const teamChange: ContractFieldChange = {
   path: 'team.name', before_json: '"service-py"', after_json: '"analytics-eng"',
 };
 
-function serve(contract: NodeContractResponse, diffs: Record<string, ContractFieldChange[]> = {}) {
+function serve(contract: NodeDataContractResponse, diffs: Record<string, ContractFieldChange[]> = {}) {
   mockFetch.mockImplementation((input: RequestInfo | URL) => {
     const url = String(input);
     if (url === CONTRACT_URL) return jsonResp(contract);
@@ -86,17 +86,17 @@ function serve(contract: NodeContractResponse, diffs: Record<string, ContractFie
 function renderPanel(table = 'py_daily_kpis') {
   return render(
     <MemoryRouter>
-      <NodeContractPanel project="py-service" schema="analytics" table={table} />
+      <NodeDataContractPanel project="py-service" schema="analytics" table={table} />
     </MemoryRouter>,
   );
 }
 
-describe('NodeContractPanel', () => {
+describe('NodeDataContractPanel', () => {
   it('shows the current contract as YAML with its version, release and date', async () => {
     serve(designHistory);
     const { container } = renderPanel();
 
-    const current = await screen.findByRole('region', { name: 'Current contract' });
+    const current = await screen.findByRole('region', { name: 'Current data contract' });
     expect(container.querySelector('pre')).toHaveTextContent('id: analytics.py_daily_kpis');
     expect(container.querySelector('pre')?.textContent).toBe(YAML_TEXT);
     expect(within(current).getByText('Version 3')).toBeInTheDocument();
@@ -145,7 +145,7 @@ describe('NodeContractPanel', () => {
     expect(mockFetch).toHaveBeenCalledWith(diffUrl(1, 2), expect.anything());
   });
 
-  it('says two versions with the same contract differ nowhere', async () => {
+  it('says two versions with the same data contract differ nowhere', async () => {
     serve(designHistory, { [diffUrl(1, 3)]: [] });
     renderPanel();
     const user = userEvent.setup();
@@ -154,7 +154,7 @@ describe('NodeContractPanel', () => {
     await user.selectOptions(within(compare).getByLabelText('From'), '1');
     await user.selectOptions(within(compare).getByLabelText('To'), '3');
 
-    expect(await within(compare).findByText('Version 1 and version 3 have the same contract.')).toBeInTheDocument();
+    expect(await within(compare).findByText('Version 1 and version 3 have the same data contract.')).toBeInTheDocument();
     expect(within(compare).queryByRole('table')).not.toBeInTheDocument();
   });
 
@@ -209,7 +209,7 @@ describe('NodeContractPanel', () => {
     await user.selectOptions(within(compare).getByLabelText('To'), '2');
 
     expect(await within(compare).findByText(/Could not compare these versions/)).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Current contract' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Current data contract' })).toBeInTheDocument();
   });
 
   it('offers no comparison for a node with one version', async () => {
@@ -221,11 +221,11 @@ describe('NodeContractPanel', () => {
     expect(screen.queryByRole('region', { name: 'Compare versions' })).not.toBeInTheDocument();
   });
 
-  it('says which nodes have no contract', async () => {
+  it('says which nodes have no data contract', async () => {
     serve({ contract: null, versions: [] });
     renderPanel();
 
-    expect(await screen.findByText('This node has no contract. A dbt test and an unknown-external table have none.')).toBeInTheDocument();
+    expect(await screen.findByText('This node has no data contract. A dbt test and an unknown-external table have none.')).toBeInTheDocument();
     expect(screen.queryByText(/Only Python projects/)).not.toBeInTheDocument();
     expect(screen.queryByRole('region')).not.toBeInTheDocument();
   });
@@ -234,8 +234,8 @@ describe('NodeContractPanel', () => {
     serve({ contract: null, versions: [version(2), version(1)] });
     renderPanel();
 
-    expect(await screen.findByText('This node has no current contract.')).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'Current contract' })).not.toBeInTheDocument();
+    expect(await screen.findByText('This node has no current data contract.')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Current data contract' })).not.toBeInTheDocument();
     const history = screen.getByRole('region', { name: 'Version history' });
     expect(within(history).getAllByRole('row')).toHaveLength(3);
     expect(within(history).queryByText('current')).not.toBeInTheDocument();
@@ -246,7 +246,7 @@ describe('NodeContractPanel', () => {
     serve({ contract: kept[0], versions: kept.map((v, i) => (i === 0 ? { ...v, document_yaml: undefined } : v)) });
     renderPanel();
 
-    expect(await screen.findByText('Versions before 3 were removed by the contract history setting.')).toBeInTheDocument();
+    expect(await screen.findByText('Versions before 3 were removed by the data contract history setting.')).toBeInTheDocument();
   });
 
   it('says nothing about removed versions when the history starts at version 1', async () => {
@@ -254,32 +254,32 @@ describe('NodeContractPanel', () => {
     renderPanel();
 
     await screen.findByRole('region', { name: 'Version history' });
-    expect(screen.queryByText(/removed by the contract history setting/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/removed by the data contract history setting/)).not.toBeInTheDocument();
   });
 
-  it('shows a failed read as an error and not as a missing contract', async () => {
+  it('shows a failed read as an error and not as a missing data contract', async () => {
     mockFetch.mockImplementation(() => jsonResp({ error: 'catalog down' }, 500));
     renderPanel();
 
-    expect(await screen.findByText(/Could not read this node's contract/)).toBeInTheDocument();
-    expect(screen.queryByText(/^This node has no contract/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/Could not read this node's data contract/)).toBeInTheDocument();
+    expect(screen.queryByText(/^This node has no data contract/)).not.toBeInTheDocument();
   });
 
   it('reads the contract of the node it now shows when the node changes', async () => {
-    const other = '/api/nodes/py-service/analytics/py_other/contract';
+    const other = '/api/nodes/py-service/analytics/py_other/data-contract';
     mockFetch.mockImplementation((input: RequestInfo | URL) =>
       String(input) === CONTRACT_URL ? jsonResp(designHistory) : jsonResp({ contract: null, versions: [] }));
     const { rerender } = renderPanel();
-    await screen.findByRole('region', { name: 'Current contract' });
+    await screen.findByRole('region', { name: 'Current data contract' });
 
     rerender(
       <MemoryRouter>
-        <NodeContractPanel project="py-service" schema="analytics" table="py_other" />
+        <NodeDataContractPanel project="py-service" schema="analytics" table="py_other" />
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('This node has no contract. A dbt test and an unknown-external table have none.')).toBeInTheDocument();
+    expect(await screen.findByText('This node has no data contract. A dbt test and an unknown-external table have none.')).toBeInTheDocument();
     expect(mockFetch).toHaveBeenCalledWith(other, expect.anything());
-    expect(screen.queryByRole('region', { name: 'Current contract' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Current data contract' })).not.toBeInTheDocument();
   });
 });

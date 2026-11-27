@@ -131,27 +131,27 @@ func TestTaskReads_ReturnTheOperationAndPlanReason(t *testing.T) {
 	assert.Empty(t, tasks[byID[plain]].PlanReason)
 }
 
-// storeFindings stores f as the seed preflight findings of the attempt, in the
+// storeFindings stores f as the dependents check findings of the attempt, in the
 // JSON a report carries.
-func storeFindings(t *testing.T, db *sqlx.DB, taskID uuid.UUID, attempt int, f pkgevents.SeedPreflightFindings) {
+func storeFindings(t *testing.T, db *sqlx.DB, taskID uuid.UUID, attempt int, f pkgevents.DependentsCheckFindings) {
 	t.Helper()
 	b, err := json.Marshal(f)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE task_attempts SET seed_preflight_findings = $3::jsonb WHERE task_id = $1 AND attempt = $2`,
+	_, err = db.Exec(`UPDATE task_attempts SET dependents_check_findings = $3::jsonb WHERE task_id = $1 AND attempt = $2`,
 		taskID, attempt, string(b))
 	require.NoError(t, err)
 }
 
-// An attempt that ran a preflight carries its findings; one that ran none
+// An attempt that ran a dependents check carries its findings; one that ran none
 // carries nil.
-func TestTaskAttemptReadRepository_ReturnsTheSeedPreflightFindings(t *testing.T) {
+func TestTaskAttemptReadRepository_ReturnsTheDependentsCheckFindings(t *testing.T) {
 	db := newTestDB(t)
 	runID, tasks := newRunWithTasks(t, db, 1)
 	insertAttemptRow(t, db, storedAttempt{TaskID: tasks[0], Attempt: 0, Status: "failed"})
 	insertAttemptRow(t, db, storedAttempt{TaskID: tasks[0], Attempt: 1, Status: "succeeded"})
-	storeFindings(t, db, tasks[0], 0, pkgevents.SeedPreflightFindings{
+	storeFindings(t, db, tasks[0], 0, pkgevents.DependentsCheckFindings{
 		DropSemantics: "cascade", Completeness: "complete", Checked: true,
-		Dependents: []pkgevents.PreflightDependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi_owner", Depth: 1, Allowed: false}},
+		Dependents: []pkgevents.DependentObject{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi_owner", Depth: 1, Allowed: false}},
 		Probes:     []pkgevents.ViewProbe{{Schema: "bi", Name: "fx_rates_report", OK: false, Error: "relation does not exist"}},
 	})
 
@@ -159,25 +159,25 @@ func TestTaskAttemptReadRepository_ReturnsTheSeedPreflightFindings(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 
-	require.NotNil(t, rows[0].SeedPreflight)
+	require.NotNil(t, rows[0].DependentsCheck)
 	assert.Equal(t, &seedreload.Findings{
 		DropSemantics: "cascade", Completeness: "complete", Checked: true,
 		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi_owner", Depth: 1}},
 		Probes:     []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", Error: "relation does not exist"}},
-	}, rows[0].SeedPreflight)
-	assert.Nil(t, rows[1].SeedPreflight)
+	}, rows[0].DependentsCheck)
+	assert.Nil(t, rows[1].DependentsCheck)
 }
 
 // A seed task whose latest attempt failed unowned_dependents names the
-// dependents its preflight did not allow; a task that failed for another reason,
+// dependents its dependents check did not allow; a task that failed for another reason,
 // or whose latest attempt did not fail so, names none even when an earlier
 // attempt's findings blocked.
 func TestNodeRunRepository_List_NamesTheBlockingObjectsOfAnUnownedDependentsFailure(t *testing.T) {
 	db := newTestDB(t)
 	svc, sch := "svc-bo-"+uuid.NewString()[:8], "sch"
-	blocked := pkgevents.SeedPreflightFindings{
+	blocked := pkgevents.DependentsCheckFindings{
 		Checked: true,
-		Dependents: []pkgevents.PreflightDependent{
+		Dependents: []pkgevents.DependentObject{
 			{Schema: "bi", Name: "fx_rates_report", Kind: "view", Allowed: false},
 			{Schema: "analytics", Name: "fx_rates_latest_eur", Kind: "view", Allowed: true},
 			{Schema: "BI", Name: "Daily_Totals", Kind: "view", Allowed: false},

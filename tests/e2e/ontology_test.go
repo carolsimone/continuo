@@ -126,7 +126,7 @@ var pyFixtureNodes = []string{pyProbeUniqueID, pyCsvUniqueID, pyAPIUniqueID, pyB
 //     says the switch is on and no ontology is released, as a warning;
 //  4. the ontology project releases ontology.yaml: nothing is validated, the
 //     bundle names the ontology, every py-probe contract gets a new version
-//     that names it, `continuo node contract` and the live folder show the
+//     that names it, `continuo node data-contract` and the live folder show the
 //     contract's domain and its absolute ontology links;
 //  5. an ontology that breaks a binding of the py-probe project is rejected
 //     invalid_contract on the node it breaks, sends no remediation trigger,
@@ -261,16 +261,16 @@ func TestE2E_Ontology(t *testing.T) {
 			IsCurrent bool   `json:"is_current"`
 		} `json:"versions"`
 	}
-	runCLI(t, ctx, bin, env, &history, "node", "contract-history", pyProbeUniqueID)
-	require.NotEmpty(t, history.Versions, "contract-history lists the versions of %s", pyProbeUniqueID)
+	runCLI(t, ctx, bin, env, &history, "node", "data-contract-history", pyProbeUniqueID)
+	require.NotEmpty(t, history.Versions, "data-contract-history lists the versions of %s", pyProbeUniqueID)
 	assert.Equal(t, ontologyID, history.Versions[0].ReleaseID, "the newest version is the ontology release's")
 	assert.True(t, history.Versions[0].IsCurrent)
 	assert.Greater(t, history.Versions[0].Version, beforeOntology[pyProbeUniqueID].GetVersion())
 
 	probe := showNodeContract(t, ctx, bin, env, pyProbeUniqueID)
 	resolved := publishedOntologyOf(t, probe.DocumentYAML)
-	assert.Equal(t, "e2e", resolved.Domain, "node contract prints the domain the ontology gives the project")
-	assert.Contains(t, resolved.objectLinks(), ontologyBaseURL+"/ProbeRow", "node contract prints the link to the thing as an absolute URL")
+	assert.Equal(t, "e2e", resolved.Domain, "node data-contract prints the domain the ontology gives the project")
+	assert.Contains(t, resolved.objectLinks(), ontologyBaseURL+"/ProbeRow", "node data-contract prints the link to the thing as an absolute URL")
 	requireLiveContract(t, ctx, clients, ontologyID, probe)
 	live := getS3ObjectIfPresent(t, ctx, clients, liveFolderKey(pyProbeUniqueID+".odcs.yaml"))
 	require.NotNil(t, live, "the live folder holds %s", pyProbeUniqueID)
@@ -409,7 +409,7 @@ func latestContractVersion(t *testing.T, ctx context.Context, clients *testClien
 	t.Helper()
 	var latest *catalogv1.ContractVersionView
 	pollUntil(t, ctx, ontologyContractsBudget, time.Second, func() (bool, error) {
-		resp, err := clients.catalogClient.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: uniqueID})
+		resp, err := clients.catalogClient.ListNodeDataContractVersions(ctx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: uniqueID})
 		if err != nil {
 			return false, nil
 		}

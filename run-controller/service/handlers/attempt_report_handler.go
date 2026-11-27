@@ -160,7 +160,7 @@ func (h *AttemptReportHandler) closeOutage(ctx context.Context, u uow.UnitOfWork
 // outage for each view of r rebuilt after it, at the clock's now, in the state
 // the install's warehouse family leaves such a view in.
 func (h *AttemptReportHandler) openRebuildOutages(ctx context.Context, u uow.UnitOfWork, r *run.Run, task run.Task) error {
-	if task.SeedPreflight == nil {
+	if task.DependentsCheck == nil {
 		return nil
 	}
 	seed := task.NodeKey
@@ -175,12 +175,12 @@ func (h *AttemptReportHandler) openRebuildOutages(ctx context.Context, u uow.Uni
 }
 
 // countReload counts, once the transaction commits, the end of a task of a
-// seed reload: a seed load (a task with a seed preflight) counts its action
+// seed reload: a seed load (a task with a dependents check) counts its action
 // and outcome, and a seed load or a view's rebuild that a seed rule stopped
 // counts its reason and is logged at WARN with the objects outside the run
-// its preflight found. Any other task counts nothing.
+// its dependents check found. Any other task counts nothing.
 func (h *AttemptReportHandler) countReload(u uow.UnitOfWork, r *run.Run, task run.Task, rep run.AttemptReport, ended run.TaskStatus) {
-	seedLoad := task.SeedPreflight != nil
+	seedLoad := task.DependentsCheck != nil
 	if !seedLoad && task.RebuildOf == "" {
 		return
 	}
@@ -197,8 +197,8 @@ func (h *AttemptReportHandler) countReload(u uow.UnitOfWork, r *run.Run, task ru
 		return
 	}
 	var outside []string
-	if rep.SeedPreflight != nil {
-		for _, d := range rep.SeedPreflight.Outside() {
+	if rep.DependentsCheck != nil {
+		for _, d := range rep.DependentsCheck.Outside() {
 			outside = append(outside, d.Object())
 		}
 	}
@@ -225,7 +225,7 @@ func reloadAction(op model.Operation) string {
 }
 
 // seedLoadOutcome is the outcome of a seed load whose task ended, failed with
-// reason or succeeded: loaded on success; stopped when its preflight stopped
+// reason or succeeded: loaded on success; stopped when its dependents check stopped
 // it; refused when no command can apply it; failed otherwise.
 func seedLoadOutcome(ended run.TaskStatus, reason model.FailureReason) string {
 	if ended == run.TaskStatusSucceeded {

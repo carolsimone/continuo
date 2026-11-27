@@ -47,9 +47,9 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(NewDiffCommand(defaultCatalogFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewUpstreamChangesCommand(defaultCatalogFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewCodeUnitsCommand(defaultCatalogFactory, cfg, stdout, stderr))
-	cmd.AddCommand(NewContractCommand(defaultCatalogFactory, cfg, stdout, stderr))
-	cmd.AddCommand(NewContractHistoryCommand(defaultCatalogFactory, cfg, stdout, stderr))
-	cmd.AddCommand(NewContractDiffCommand(defaultCatalogFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewDataContractCommand(defaultCatalogFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewDataContractHistoryCommand(defaultCatalogFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewDataContractDiffCommand(defaultCatalogFactory, cfg, stdout, stderr))
 	return cmd
 }
 

@@ -19,7 +19,7 @@ import (
 // fingerprint of each seed a release stores and each load records, and the
 // seed reload's columns: each node's materialization, full_refresh setting and
 // resolved relation, a release's bootstrap flag, a task's plan reason, seed
-// preflight and rebuild seed, an attempt's preflight findings, and the
+// dependents check and rebuild seed, an attempt's dependents check findings, and the
 // view_outages table. A migration
 // applies whole, so a column also stands for what else its migration adds:
 // task_attempts.stop_requested_at for the cancelling, stopping and stopped
@@ -39,8 +39,8 @@ var RequiredColumns = []string{"task_attempts.attempt", "tasks.attempt", "topolo
 	"topology_nodes.seed_columns_hash", "node_materializations.seed_columns_hash",
 	"topology_nodes.materialized", "topology_nodes.full_refresh", "topology_nodes.resolved_relation_id",
 	"topology_releases.bootstrap",
-	"tasks.plan_reason", "tasks.seed_preflight", "tasks.rebuild_seed_key",
-	"task_attempts.seed_preflight_findings",
+	"tasks.plan_reason", "tasks.dependents_check", "tasks.rebuild_seed_key",
+	"task_attempts.dependents_check_findings",
 	"view_outages.tenant_id", "view_outages.node_key", "view_outages.state", "view_outages.since",
 	"view_outages.seed_key", "view_outages.run_id"}
 

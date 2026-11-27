@@ -8,9 +8,9 @@ import "time"
 // waited for its rebuild.
 type SeedReloadMetrics interface {
 	// SeedReloadEnded counts one seed load that drops its table (a seed task
-	// with a preflight) and ended, or one the planner refused: action is load
+	// with a dependents check) and ended, or one the planner refused: action is load
 	// or full_refresh, the operation the seed's task applied, and outcome is
-	// loaded, stopped (its preflight stopped it), refused (no command can
+	// loaded, stopped (its dependents check stopped it), refused (no command can
 	// apply it, so it never started a container) or failed.
 	SeedReloadEnded(action, outcome string)
 

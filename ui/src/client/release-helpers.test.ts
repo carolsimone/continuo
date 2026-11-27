@@ -56,8 +56,8 @@ describe('reasonLabel', () => {
     expect(reasonLabel('duplicate_table')).toBe('Duplicate table');
   });
 
-  it('says an unchanged upstream could not be copied from production', () => {
-    expect(reasonLabel('upstream_clone_failed')).toBe('Could not copy an upstream from production');
+  it('says an unchanged upstream could not be built from production', () => {
+    expect(reasonLabel('upstream_build_from_prod_failed')).toBe('Could not build an upstream from production');
   });
 
   it('falls back to the raw token for an unrecognized reason', () => {

@@ -70,21 +70,21 @@ func TestParseTaskStatusReport_AFailureCarriesItsReasonAndFacts(t *testing.T) {
 	assert.Equal(t, time.Date(2026, 10, 20, 23, 1, 24, 105000000, time.UTC), r.StartedAt.UTC())
 }
 
-// The seed preflight findings a report carries reach the attempt; a report
+// The dependents check findings a report carries reach the attempt; a report
 // without them carries none.
-func TestParseTaskStatusReport_MapsTheSeedPreflightFindings(t *testing.T) {
-	got, err := ParseTaskStatusReport(reportEntry(t, "preflight"))
+func TestParseTaskStatusReport_MapsTheDependentsCheckFindings(t *testing.T) {
+	got, err := ParseTaskStatusReport(reportEntry(t, "dependents_check"))
 	require.NoError(t, err)
 	assert.Equal(t, model.FailureReasonUnownedDependents, got.Report.FailureReason)
 	assert.Equal(t, &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
 		Dependents: []seedreload.Dependent{
 			{Schema: "analytics", Name: "fx_rates_current", Kind: "view", Owner: "dbt", Depth: 1, Allowed: true},
 			{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1},
-		}}, got.Report.SeedPreflight)
+		}}, got.Report.DependentsCheck)
 
 	plain, err := ParseTaskStatusReport(reportEntry(t, "failed"))
 	require.NoError(t, err)
-	assert.Nil(t, plain.Report.SeedPreflight)
+	assert.Nil(t, plain.Report.DependentsCheck)
 }
 
 func TestParseTaskStatusReport_AnEntryItCannotTrustIsPermanent(t *testing.T) {

@@ -219,8 +219,8 @@ func emitAggregateIfComplete(
 		if fc := r.FailedContainer(); fc != "" { // omitempty: only the compile leg ever sets this
 			node["failed_container"] = fc
 		}
-		if f := pkgevents.SeedPreflightFindingsOf(r.Facts().SeedPreflight); f != nil { // omitempty: only a seed whose pod ran a preflight
-			node["seed_preflight"] = f
+		if f := pkgevents.DependentsCheckFindingsOf(r.Facts().DependentsCheck); f != nil { // omitempty: only a seed whose pod ran a dependents check
+			node["dependents_check"] = f
 		}
 		if took, ok := r.RunDuration(); ok { // omitempty: absent for a node whose Job never started
 			node["duration_ms"] = took.Milliseconds()

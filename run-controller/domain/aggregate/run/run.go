@@ -424,7 +424,7 @@ func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
 //
 // Each planned task gets the id TaskIDFor derives for r's tenant, r and its node,
 // its node's Job name, the node's image and the planned task's operation (r's
-// when it names none), plan reason, seed preflight and the seed it rebuilds
+// when it names none), plan reason, dependents check and the seed it rebuilds
 // after. A pending task gets status pending and the retry budget of d; an
 // inherited task gets status succeeded, no retry budget and the task it
 // inherits from, and is never dispatched.
@@ -512,21 +512,21 @@ func (r *Run) Start(
 			return nil, fmt.Errorf("name the job of %s: %w", p.Key, err)
 		}
 		t := Task{
-			TaskID:        TaskIDFor(r.tenantID, r.runID, p.Key),
-			ScheduleID:    r.runID,
-			CreatedAt:     now,
-			ProjectName:   n.ProjectName,
-			SchemaName:    n.SchemaName,
-			TableName:     n.TableName,
-			NodeKey:       p.Key,
-			JobName:       jobName,
-			Status:        TaskStatusPending,
-			MaxRetries:    int(d.MaxRetries),
-			ImageTag:      n.ImageTag,
-			Operation:     r.operation,
-			PlanReason:    p.Reason,
-			SeedPreflight: p.Preflight,
-			RebuildOf:     p.RebuildOf,
+			TaskID:          TaskIDFor(r.tenantID, r.runID, p.Key),
+			ScheduleID:      r.runID,
+			CreatedAt:       now,
+			ProjectName:     n.ProjectName,
+			SchemaName:      n.SchemaName,
+			TableName:       n.TableName,
+			NodeKey:         p.Key,
+			JobName:         jobName,
+			Status:          TaskStatusPending,
+			MaxRetries:      int(d.MaxRetries),
+			ImageTag:        n.ImageTag,
+			Operation:       r.operation,
+			PlanReason:      p.Reason,
+			DependentsCheck: p.DependentsCheck,
+			RebuildOf:       p.RebuildOf,
 		}
 		if p.Operation != nil {
 			t.Operation = *p.Operation
@@ -832,18 +832,18 @@ func firstAttempt(taskID uuid.UUID, jobName string, at *time.Time) Attempt {
 // declares none).
 func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobName string, spec DispatchSpec, d TaskDefaults) TaskDispatched {
 	return TaskDispatched{
-		ID:           r.runID,
-		TenantID:     r.tenantID,
-		ScheduleName: r.scheduleName,
-		TaskID:       taskID,
-		Attempt:      n,
-		KnownStatus:  AttemptDispatched,
-		Node:         node,
-		JobName:      jobName,
-		Operation:    spec.Operation,
-		Reason:       spec.Reason,
-		Preflight:    spec.Preflight,
-		Timeout:      TaskTimeout(node, d),
+		ID:              r.runID,
+		TenantID:        r.tenantID,
+		ScheduleName:    r.scheduleName,
+		TaskID:          taskID,
+		Attempt:         n,
+		KnownStatus:     AttemptDispatched,
+		Node:            node,
+		JobName:         jobName,
+		Operation:       spec.Operation,
+		Reason:          spec.Reason,
+		DependentsCheck: spec.DependentsCheck,
+		Timeout:         TaskTimeout(node, d),
 	}
 }
 

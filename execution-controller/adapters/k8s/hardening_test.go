@@ -58,7 +58,7 @@ func TestBuildSeedBuildPodSpecHardening(t *testing.T) {
 
 func TestBuildValidationPodSpecHardening(t *testing.T) {
 	p := validationParams()
-	p.ValidationOp = string(pkg_model.ValidationOpCloneFromProd)
+	p.ValidationOp = string(pkg_model.ValidationOpBuildFromProd)
 	spec, err := buildValidationPodSpec(p)
 	require.NoError(t, err)
 	assertPodHardening(t, spec)

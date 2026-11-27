@@ -28,7 +28,7 @@ func TestValidationCommand_Snapshot(t *testing.T) {
 
 // TestValidationCommand_Seed verifies that seed nodes run the same validation
 // entrypoint as models and snapshots. The operation (build_from_sql vs
-// clone_from_prod) is selected by the VALIDATION_OP env var, not by a distinct
+// build_from_prod) is selected by the VALIDATION_OP env var, not by a distinct
 // seed command.
 func TestValidationCommand_Seed(t *testing.T) {
 	got := model.ValidationCommand(pkg_model.NodeTypeDbtSeed, "customers")

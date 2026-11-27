@@ -106,7 +106,7 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 		}, []string{"state"}),
 		seedReloads: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_seed_reloads_total",
-			Help: "Seed loads that drop the seed's table (a seed task with a preflight) that ended, and seed loads the planner refused, by action (load, or full_refresh when the seed's task fully refreshed it) and outcome: loaded, stopped (its preflight found an object the load would destroy, so nothing was dropped), refused (no command can apply the load, so it never started a container) or failed. A seed load that drops nothing is not counted.",
+			Help: "Seed loads that drop the seed's table (a seed task with a dependents check) that ended, and seed loads the planner refused, by action (load, or full_refresh when the seed's task fully refreshed it) and outcome: loaded, stopped (its dependents check found an object the load would destroy, so nothing was dropped), refused (no command can apply the load, so it never started a container) or failed. A seed load that drops nothing is not counted.",
 		}, []string{"action", "outcome"}),
 		seedReloadStops: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_seed_reload_stops_total",

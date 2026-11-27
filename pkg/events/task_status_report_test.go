@@ -18,7 +18,7 @@ var taskStatusReportFixtures = []string{
 	"testdata/task_status_updated_v1_running.json",
 	"testdata/task_status_updated_v1_succeeded.json",
 	"testdata/task_status_updated_v1_failed.json",
-	"testdata/task_status_updated_v1_preflight.json",
+	"testdata/task_status_updated_v1_dependents_check.json",
 }
 
 type taskStatusReportFixture struct {
@@ -149,22 +149,22 @@ func reportFields(extra string) map[string]string {
 	return fields
 }
 
-func TestTaskStatusReport_DecodesTheSeedPreflightFindings(t *testing.T) {
-	fx := loadTaskStatusReportFixture(t, "testdata/task_status_updated_v1_preflight.json")
+func TestTaskStatusReport_DecodesTheDependentsCheckFindings(t *testing.T) {
+	fx := loadTaskStatusReportFixture(t, "testdata/task_status_updated_v1_dependents_check.json")
 	_, p, err := events.DecodeTaskStatusReport(fixtureFields(t, fx.Fields))
 	require.NoError(t, err)
 	assert.Equal(t, model.AttemptStatusFailed, p.Status)
 	assert.Equal(t, "invalid", p.FailureClass)
 	assert.Equal(t, "unowned_dependents", p.FailureReason)
-	assert.Equal(t, &events.SeedPreflightFindings{
+	assert.Equal(t, &events.DependentsCheckFindings{
 		DropSemantics: "cascade", Completeness: "exact", Checked: true,
-		Dependents: []events.PreflightDependent{
+		Dependents: []events.DependentObject{
 			{Schema: "analytics", Name: "fx_rates_current", Kind: "view", Owner: "dbt", Depth: 1, Allowed: true},
 			{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1},
 		},
-	}, p.SeedPreflight)
+	}, p.DependentsCheck)
 
 	_, plain, err := events.DecodeTaskStatusReport(fixtureFields(t, loadTaskStatusReportFixture(t, "testdata/task_status_updated_v1_failed.json").Fields))
 	require.NoError(t, err)
-	assert.Nil(t, plain.SeedPreflight)
+	assert.Nil(t, plain.DependentsCheck)
 }

@@ -170,8 +170,8 @@ type ValidationJobParams struct {
 
 	// ValidationOp selects the runner operation, a value of the validation_op
 	// vocabulary (pkg/domain/model.ValidationOp): build_from_sql,
-	// build_from_columns, check_binds or clone_from_prod. ProdSchema is the
-	// source schema for clone_from_prod. Both are set per node by
+	// build_from_columns, check_binds or build_from_prod. ProdSchema is the
+	// source schema for build_from_prod. Both are set per node by
 	// release-controller; an empty op runs build_from_sql.
 	ValidationOp string
 	ProdSchema   string
@@ -196,10 +196,10 @@ type ValidationJobParams struct {
 	// a fix's release check.
 	SourceOverlayURI string
 
-	// SeedPreflight is the check a seed-build pod runs against the seed's
+	// DependentsCheck is the check a seed-build pod runs against the seed's
 	// production table in an init container after every other one; the pod
 	// always runs it in report mode. Populated only for mode=seed_build.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 
 	// ActiveDeadlineSeconds is how long Kubernetes lets the leg's Job run,
 	// counted from the Job's start.
@@ -282,7 +282,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 //
 // build_from_sql nodes receive CANDIDATE_SQL_URI + S3 credentials directly on the
 // single main container; the runner fetches the compiled SQL from S3 itself. There
-// is no init container and no shared emptyDir for this path. clone_from_prod nodes
+// is no init container and no shared emptyDir for this path. build_from_prod nodes
 // have no candidate SQL and never touch S3, so they remain single-container with no
 // emptyDir and no S3 credentials. build_from_columns (python-nodes) receive
 // CANDIDATE_SPEC_URI + S3 credentials instead: the runner fetches the published
@@ -337,7 +337,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	mainContainer.SecurityContext = continuoImageSecurityContext()
 
 	switch op {
-	case pkg_model.ValidationOpCloneFromProd:
+	case pkg_model.ValidationOpBuildFromProd:
 		// No candidate SQL, no S3, single container.
 		return corev1.PodSpec{
 			RestartPolicy:   corev1.RestartPolicyNever,
@@ -351,7 +351,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		// check — only EXPLAINs the SQL and creates nothing. Either way there is no
 		// sidecar and no shared emptyDir, and CandidateArtifactURI must be set:
 		// changed models, snapshots, and tests always carry one; nodes without
-		// candidate SQL (unchanged upstreams, seeds) use clone_from_prod.
+		// candidate SQL (unchanged upstreams, seeds) use build_from_prod.
 		if p.CandidateArtifactURI == "" {
 			return corev1.PodSpec{}, fmt.Errorf("%w: candidate_artifact_uri missing from %s validation job params for node %s",
 				events.ErrPermanent, op, p.NodeID)
@@ -469,7 +469,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // parseCacheInitContainer); partialParsePath is the project's resolved
 // partial_parse.msgpack path, used only to derive the team container's mount
 // directory.
-// When p.SeedPreflight is set, the "seed-preflight" initContainer runs last,
+// When p.DependentsCheck is set, the "dependents-check" initContainer runs last,
 // against the seed's production relation, in report mode whatever mode the
 // request names: the leg's result never depends on it, so the container runs
 // through a shell that always exits 0.
@@ -554,14 +554,14 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, teamMount)
 	}
 
-	if p.SeedPreflight != nil {
-		report := *p.SeedPreflight
-		report.Mode = seedreload.PreflightReport
-		preflight, err := seedPreflightInitContainer(report, p.NodeID)
+	if p.DependentsCheck != nil {
+		report := *p.DependentsCheck
+		report.Mode = seedreload.ReportMode
+		dependentsCheck, err := dependentsCheckInitContainer(report, p.NodeID)
 		if err != nil {
 			return corev1.PodSpec{}, err
 		}
-		spec.InitContainers = append(spec.InitContainers, preflight)
+		spec.InitContainers = append(spec.InitContainers, dependentsCheck)
 	}
 
 	return spec, nil
@@ -936,8 +936,8 @@ func extrasProjectDirWord(compileArgv []string) string {
 // that pre-seeds the prod-context partial-parse artifact (see
 // parseCacheInitContainer); partialParsePath is the project's resolved
 // partial_parse.msgpack path, used only to derive the team container's mount
-// directory. When params carries a SeedPreflight, its init container (see
-// seedPreflightInitContainer) runs last, after the hydrate.
+// directory. When params carries a DependentsCheck, its init container (see
+// dependentsCheckInitContainer) runs last, after the hydrate.
 func buildPodSpec(params JobParams, command []string, partialParsePath string) (corev1.PodSpec, error) {
 	if params.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for project %s",
@@ -988,14 +988,14 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 		spec.Containers[0].VolumeMounts = []corev1.VolumeMount{teamMount}
 	}
 
-	// The seed preflight runs after every other init container, so the gap
+	// The dependents check runs after every other init container, so the gap
 	// between the check and dbt's drop of the seed's table stays short.
-	if params.SeedPreflight != nil {
-		preflight, err := seedPreflightInitContainer(*params.SeedPreflight, strings.ToLower(params.SchemaName+"."+params.TableName))
+	if params.DependentsCheck != nil {
+		dependentsCheck, err := dependentsCheckInitContainer(*params.DependentsCheck, strings.ToLower(params.SchemaName+"."+params.TableName))
 		if err != nil {
 			return corev1.PodSpec{}, err
 		}
-		spec.InitContainers = append(spec.InitContainers, preflight)
+		spec.InitContainers = append(spec.InitContainers, dependentsCheck)
 	}
 
 	return spec, nil

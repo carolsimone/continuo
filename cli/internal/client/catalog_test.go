@@ -13,29 +13,29 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-// recordingCatalogServer answers the contract reads and keeps the last request
+// recordingCatalogServer answers the data contract reads and keeps the last request
 // of each, so a test sees what the client put on the wire.
 type recordingCatalogServer struct {
 	catalogv1.UnimplementedCatalogQueryServer
 
-	contractReq *catalogv1.GetNodeContractRequest
-	versionsReq *catalogv1.ListNodeContractVersionsRequest
-	diffReq     *catalogv1.GetNodeContractDiffRequest
+	contractReq *catalogv1.GetNodeDataContractRequest
+	versionsReq *catalogv1.ListNodeDataContractVersionsRequest
+	diffReq     *catalogv1.GetNodeDataContractDiffRequest
 }
 
-func (s *recordingCatalogServer) GetNodeContract(_ context.Context, req *catalogv1.GetNodeContractRequest) (*catalogv1.GetNodeContractResponse, error) {
+func (s *recordingCatalogServer) GetNodeDataContract(_ context.Context, req *catalogv1.GetNodeDataContractRequest) (*catalogv1.GetNodeDataContractResponse, error) {
 	s.contractReq = req
-	return &catalogv1.GetNodeContractResponse{Contract: &catalogv1.ContractVersionView{UniqueId: req.GetUniqueId(), Version: 4}}, nil
+	return &catalogv1.GetNodeDataContractResponse{Contract: &catalogv1.ContractVersionView{UniqueId: req.GetUniqueId(), Version: 4}}, nil
 }
 
-func (s *recordingCatalogServer) ListNodeContractVersions(_ context.Context, req *catalogv1.ListNodeContractVersionsRequest) (*catalogv1.ListNodeContractVersionsResponse, error) {
+func (s *recordingCatalogServer) ListNodeDataContractVersions(_ context.Context, req *catalogv1.ListNodeDataContractVersionsRequest) (*catalogv1.ListNodeDataContractVersionsResponse, error) {
 	s.versionsReq = req
-	return &catalogv1.ListNodeContractVersionsResponse{Versions: []*catalogv1.ContractVersionView{{UniqueId: req.GetUniqueId(), Version: 2}}}, nil
+	return &catalogv1.ListNodeDataContractVersionsResponse{Versions: []*catalogv1.ContractVersionView{{UniqueId: req.GetUniqueId(), Version: 2}}}, nil
 }
 
-func (s *recordingCatalogServer) GetNodeContractDiff(_ context.Context, req *catalogv1.GetNodeContractDiffRequest) (*catalogv1.GetNodeContractDiffResponse, error) {
+func (s *recordingCatalogServer) GetNodeDataContractDiff(_ context.Context, req *catalogv1.GetNodeDataContractDiffRequest) (*catalogv1.GetNodeDataContractDiffResponse, error) {
 	s.diffReq = req
-	return &catalogv1.GetNodeContractDiffResponse{Changes: []*catalogv1.ContractFieldChange{{Path: "description.purpose"}}}, nil
+	return &catalogv1.GetNodeDataContractDiffResponse{Changes: []*catalogv1.ContractFieldChange{{Path: "description.purpose"}}}, nil
 }
 
 func dialRecordingCatalog(t *testing.T, srv *recordingCatalogServer) CatalogClient {
@@ -59,19 +59,19 @@ func TestCatalogClient_ContractReadsPutEveryArgumentOnTheWire(t *testing.T) {
 	c := dialRecordingCatalog(t, srv)
 	t.Cleanup(func() { _ = c.Close() })
 
-	contract, err := c.GetNodeContract(context.Background(), "analytics.orders", true)
+	contract, err := c.GetNodeDataContract(context.Background(), "analytics.orders", true)
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), contract.GetContract().GetVersion())
 	assert.Equal(t, "analytics.orders", srv.contractReq.GetUniqueId())
 	assert.True(t, srv.contractReq.GetIncludeDocument())
 
-	versions, err := c.ListNodeContractVersions(context.Background(), "analytics.orders", 7)
+	versions, err := c.ListNodeDataContractVersions(context.Background(), "analytics.orders", 7)
 	require.NoError(t, err)
 	require.Len(t, versions.GetVersions(), 1)
 	assert.Equal(t, "analytics.orders", srv.versionsReq.GetUniqueId())
 	assert.Equal(t, int32(7), srv.versionsReq.GetLimit())
 
-	diff, err := c.GetNodeContractDiff(context.Background(), "analytics.orders", 1, 3)
+	diff, err := c.GetNodeDataContractDiff(context.Background(), "analytics.orders", 1, 3)
 	require.NoError(t, err)
 	require.Len(t, diff.GetChanges(), 1)
 	assert.Equal(t, "analytics.orders", srv.diffReq.GetUniqueId())

@@ -207,10 +207,10 @@ describe('RunNodeTable', () => {
     expect(screen.getByText('plain').closest('td')!.querySelector('.task-reason')).toBeNull();
   });
 
-  it('lists the findings of a failed seed preflight in the expanded attempt', () => {
+  it('lists the findings of a failed dependents check in the expanded attempt', () => {
     const attempts = groupAttemptsByTask([attempt('seed_table_1', 0, {
       failure_class: 'invalid', failure_reason: 'unowned_dependents',
-      seed_preflight: {
+      dependents_check: {
         drop_semantics: 'cascade', completeness: 'complete', checked: true,
         dependents: [
           { schema: 'bi', name: 'fx_rates_report', kind: 'view', owner: 'bi', depth: 1, allowed: false },
@@ -234,10 +234,10 @@ describe('RunNodeTable', () => {
     expect(screen.queryByText(/fine_view/)).toBeNull();
   });
 
-  it('adds no findings row when the preflight found nothing outside the allowed set', () => {
+  it('adds no findings row when the dependents check found nothing outside the allowed set', () => {
     const attempts = groupAttemptsByTask([attempt('seed_table_1', 0, {
       status: 'succeeded',
-      seed_preflight: {
+      dependents_check: {
         drop_semantics: 'cascade', completeness: 'complete', checked: true,
         dependents: [{ schema: 'e2e_schema', name: 'v', kind: 'view', owner: 'core', depth: 1, allowed: true }],
         probes: [],

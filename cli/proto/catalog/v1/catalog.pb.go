@@ -1743,7 +1743,7 @@ func (x *ContractVersionView) GetOntologyVersion() string {
 	return ""
 }
 
-type GetNodeContractRequest struct {
+type GetNodeDataContractRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	UniqueId        string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
 	IncludeDocument bool                   `protobuf:"varint,2,opt,name=include_document,json=includeDocument,proto3" json:"include_document,omitempty"`
@@ -1751,20 +1751,20 @@ type GetNodeContractRequest struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *GetNodeContractRequest) Reset() {
-	*x = GetNodeContractRequest{}
+func (x *GetNodeDataContractRequest) Reset() {
+	*x = GetNodeDataContractRequest{}
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetNodeContractRequest) String() string {
+func (x *GetNodeDataContractRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetNodeContractRequest) ProtoMessage() {}
+func (*GetNodeDataContractRequest) ProtoMessage() {}
 
-func (x *GetNodeContractRequest) ProtoReflect() protoreflect.Message {
+func (x *GetNodeDataContractRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1776,46 +1776,46 @@ func (x *GetNodeContractRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetNodeContractRequest.ProtoReflect.Descriptor instead.
-func (*GetNodeContractRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetNodeDataContractRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeDataContractRequest) Descriptor() ([]byte, []int) {
 	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{22}
 }
 
-func (x *GetNodeContractRequest) GetUniqueId() string {
+func (x *GetNodeDataContractRequest) GetUniqueId() string {
 	if x != nil {
 		return x.UniqueId
 	}
 	return ""
 }
 
-func (x *GetNodeContractRequest) GetIncludeDocument() bool {
+func (x *GetNodeDataContractRequest) GetIncludeDocument() bool {
 	if x != nil {
 		return x.IncludeDocument
 	}
 	return false
 }
 
-type GetNodeContractResponse struct {
+type GetNodeDataContractResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Contract      *ContractVersionView   `protobuf:"bytes,1,opt,name=contract,proto3" json:"contract,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetNodeContractResponse) Reset() {
-	*x = GetNodeContractResponse{}
+func (x *GetNodeDataContractResponse) Reset() {
+	*x = GetNodeDataContractResponse{}
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetNodeContractResponse) String() string {
+func (x *GetNodeDataContractResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetNodeContractResponse) ProtoMessage() {}
+func (*GetNodeDataContractResponse) ProtoMessage() {}
 
-func (x *GetNodeContractResponse) ProtoReflect() protoreflect.Message {
+func (x *GetNodeDataContractResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1827,19 +1827,19 @@ func (x *GetNodeContractResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetNodeContractResponse.ProtoReflect.Descriptor instead.
-func (*GetNodeContractResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetNodeDataContractResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeDataContractResponse) Descriptor() ([]byte, []int) {
 	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{23}
 }
 
-func (x *GetNodeContractResponse) GetContract() *ContractVersionView {
+func (x *GetNodeDataContractResponse) GetContract() *ContractVersionView {
 	if x != nil {
 		return x.Contract
 	}
 	return nil
 }
 
-type ListNodeContractVersionsRequest struct {
+type ListNodeDataContractVersionsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UniqueId      string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
 	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
@@ -1847,20 +1847,20 @@ type ListNodeContractVersionsRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListNodeContractVersionsRequest) Reset() {
-	*x = ListNodeContractVersionsRequest{}
+func (x *ListNodeDataContractVersionsRequest) Reset() {
+	*x = ListNodeDataContractVersionsRequest{}
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListNodeContractVersionsRequest) String() string {
+func (x *ListNodeDataContractVersionsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListNodeContractVersionsRequest) ProtoMessage() {}
+func (*ListNodeDataContractVersionsRequest) ProtoMessage() {}
 
-func (x *ListNodeContractVersionsRequest) ProtoReflect() protoreflect.Message {
+func (x *ListNodeDataContractVersionsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1872,46 +1872,46 @@ func (x *ListNodeContractVersionsRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListNodeContractVersionsRequest.ProtoReflect.Descriptor instead.
-func (*ListNodeContractVersionsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ListNodeDataContractVersionsRequest.ProtoReflect.Descriptor instead.
+func (*ListNodeDataContractVersionsRequest) Descriptor() ([]byte, []int) {
 	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{24}
 }
 
-func (x *ListNodeContractVersionsRequest) GetUniqueId() string {
+func (x *ListNodeDataContractVersionsRequest) GetUniqueId() string {
 	if x != nil {
 		return x.UniqueId
 	}
 	return ""
 }
 
-func (x *ListNodeContractVersionsRequest) GetLimit() int32 {
+func (x *ListNodeDataContractVersionsRequest) GetLimit() int32 {
 	if x != nil {
 		return x.Limit
 	}
 	return 0
 }
 
-type ListNodeContractVersionsResponse struct {
+type ListNodeDataContractVersionsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Versions      []*ContractVersionView `protobuf:"bytes,1,rep,name=versions,proto3" json:"versions,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListNodeContractVersionsResponse) Reset() {
-	*x = ListNodeContractVersionsResponse{}
+func (x *ListNodeDataContractVersionsResponse) Reset() {
+	*x = ListNodeDataContractVersionsResponse{}
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListNodeContractVersionsResponse) String() string {
+func (x *ListNodeDataContractVersionsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListNodeContractVersionsResponse) ProtoMessage() {}
+func (*ListNodeDataContractVersionsResponse) ProtoMessage() {}
 
-func (x *ListNodeContractVersionsResponse) ProtoReflect() protoreflect.Message {
+func (x *ListNodeDataContractVersionsResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1923,12 +1923,12 @@ func (x *ListNodeContractVersionsResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListNodeContractVersionsResponse.ProtoReflect.Descriptor instead.
-func (*ListNodeContractVersionsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ListNodeDataContractVersionsResponse.ProtoReflect.Descriptor instead.
+func (*ListNodeDataContractVersionsResponse) Descriptor() ([]byte, []int) {
 	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{25}
 }
 
-func (x *ListNodeContractVersionsResponse) GetVersions() []*ContractVersionView {
+func (x *ListNodeDataContractVersionsResponse) GetVersions() []*ContractVersionView {
 	if x != nil {
 		return x.Versions
 	}
@@ -1995,7 +1995,7 @@ func (x *ContractFieldChange) GetAfterJson() string {
 	return ""
 }
 
-type GetNodeContractDiffRequest struct {
+type GetNodeDataContractDiffRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UniqueId      string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
 	FromVersion   int64                  `protobuf:"varint,2,opt,name=from_version,json=fromVersion,proto3" json:"from_version,omitempty"`
@@ -2004,20 +2004,20 @@ type GetNodeContractDiffRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetNodeContractDiffRequest) Reset() {
-	*x = GetNodeContractDiffRequest{}
+func (x *GetNodeDataContractDiffRequest) Reset() {
+	*x = GetNodeDataContractDiffRequest{}
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetNodeContractDiffRequest) String() string {
+func (x *GetNodeDataContractDiffRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetNodeContractDiffRequest) ProtoMessage() {}
+func (*GetNodeDataContractDiffRequest) ProtoMessage() {}
 
-func (x *GetNodeContractDiffRequest) ProtoReflect() protoreflect.Message {
+func (x *GetNodeDataContractDiffRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2029,53 +2029,53 @@ func (x *GetNodeContractDiffRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetNodeContractDiffRequest.ProtoReflect.Descriptor instead.
-func (*GetNodeContractDiffRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetNodeDataContractDiffRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeDataContractDiffRequest) Descriptor() ([]byte, []int) {
 	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{27}
 }
 
-func (x *GetNodeContractDiffRequest) GetUniqueId() string {
+func (x *GetNodeDataContractDiffRequest) GetUniqueId() string {
 	if x != nil {
 		return x.UniqueId
 	}
 	return ""
 }
 
-func (x *GetNodeContractDiffRequest) GetFromVersion() int64 {
+func (x *GetNodeDataContractDiffRequest) GetFromVersion() int64 {
 	if x != nil {
 		return x.FromVersion
 	}
 	return 0
 }
 
-func (x *GetNodeContractDiffRequest) GetToVersion() int64 {
+func (x *GetNodeDataContractDiffRequest) GetToVersion() int64 {
 	if x != nil {
 		return x.ToVersion
 	}
 	return 0
 }
 
-type GetNodeContractDiffResponse struct {
+type GetNodeDataContractDiffResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Changes       []*ContractFieldChange `protobuf:"bytes,1,rep,name=changes,proto3" json:"changes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetNodeContractDiffResponse) Reset() {
-	*x = GetNodeContractDiffResponse{}
+func (x *GetNodeDataContractDiffResponse) Reset() {
+	*x = GetNodeDataContractDiffResponse{}
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetNodeContractDiffResponse) String() string {
+func (x *GetNodeDataContractDiffResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetNodeContractDiffResponse) ProtoMessage() {}
+func (*GetNodeDataContractDiffResponse) ProtoMessage() {}
 
-func (x *GetNodeContractDiffResponse) ProtoReflect() protoreflect.Message {
+func (x *GetNodeDataContractDiffResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2087,12 +2087,12 @@ func (x *GetNodeContractDiffResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetNodeContractDiffResponse.ProtoReflect.Descriptor instead.
-func (*GetNodeContractDiffResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetNodeDataContractDiffResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeDataContractDiffResponse) Descriptor() ([]byte, []int) {
 	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{28}
 }
 
-func (x *GetNodeContractDiffResponse) GetChanges() []*ContractFieldChange {
+func (x *GetNodeDataContractDiffResponse) GetChanges() []*ContractFieldChange {
 	if x != nil {
 		return x.Changes
 	}
@@ -2260,30 +2260,30 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\x0fsame_as_version\x18\t \x01(\x03R\rsameAsVersion\x12-\n" +
 	"\x12continuo_contracts\x18\n" +
 	" \x01(\tR\x11continuoContracts\x12)\n" +
-	"\x10ontology_version\x18\v \x01(\tR\x0fontologyVersion\"`\n" +
-	"\x16GetNodeContractRequest\x12\x1b\n" +
+	"\x10ontology_version\x18\v \x01(\tR\x0fontologyVersion\"d\n" +
+	"\x1aGetNodeDataContractRequest\x12\x1b\n" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12)\n" +
-	"\x10include_document\x18\x02 \x01(\bR\x0fincludeDocument\"V\n" +
-	"\x17GetNodeContractResponse\x12;\n" +
-	"\bcontract\x18\x01 \x01(\v2\x1f.catalog.v1.ContractVersionViewR\bcontract\"T\n" +
-	"\x1fListNodeContractVersionsRequest\x12\x1b\n" +
+	"\x10include_document\x18\x02 \x01(\bR\x0fincludeDocument\"Z\n" +
+	"\x1bGetNodeDataContractResponse\x12;\n" +
+	"\bcontract\x18\x01 \x01(\v2\x1f.catalog.v1.ContractVersionViewR\bcontract\"X\n" +
+	"#ListNodeDataContractVersionsRequest\x12\x1b\n" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\"_\n" +
-	" ListNodeContractVersionsResponse\x12;\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"c\n" +
+	"$ListNodeDataContractVersionsResponse\x12;\n" +
 	"\bversions\x18\x01 \x03(\v2\x1f.catalog.v1.ContractVersionViewR\bversions\"i\n" +
 	"\x13ContractFieldChange\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vbefore_json\x18\x02 \x01(\tR\n" +
 	"beforeJson\x12\x1d\n" +
 	"\n" +
-	"after_json\x18\x03 \x01(\tR\tafterJson\"{\n" +
-	"\x1aGetNodeContractDiffRequest\x12\x1b\n" +
+	"after_json\x18\x03 \x01(\tR\tafterJson\"\x7f\n" +
+	"\x1eGetNodeDataContractDiffRequest\x12\x1b\n" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12!\n" +
 	"\ffrom_version\x18\x02 \x01(\x03R\vfromVersion\x12\x1d\n" +
 	"\n" +
-	"to_version\x18\x03 \x01(\x03R\ttoVersion\"X\n" +
-	"\x1bGetNodeContractDiffResponse\x129\n" +
-	"\achanges\x18\x01 \x03(\v2\x1f.catalog.v1.ContractFieldChangeR\achanges2\xcd\a\n" +
+	"to_version\x18\x03 \x01(\x03R\ttoVersion\"\\\n" +
+	"\x1fGetNodeDataContractDiffResponse\x129\n" +
+	"\achanges\x18\x01 \x03(\v2\x1f.catalog.v1.ContractFieldChangeR\achanges2\xf2\a\n" +
 	"\fCatalogQuery\x12B\n" +
 	"\aGetNode\x12\x1a.catalog.v1.GetNodeRequest\x1a\x1b.catalog.v1.GetNodeResponse\x12Z\n" +
 	"\x0fGetNodeLocation\x12\".catalog.v1.GetNodeLocationRequest\x1a#.catalog.v1.GetNodeLocationResponse\x12Z\n" +
@@ -2291,10 +2291,10 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\x12GetNodeVersionDiff\x12%.catalog.v1.GetNodeVersionDiffRequest\x1a&.catalog.v1.GetNodeVersionDiffResponse\x12c\n" +
 	"\x12GetUpstreamChanges\x12%.catalog.v1.GetUpstreamChangesRequest\x1a&.catalog.v1.GetUpstreamChangesResponse\x12f\n" +
 	"\x13GetCodeUnitVersions\x12&.catalog.v1.GetCodeUnitVersionsRequest\x1a'.catalog.v1.GetCodeUnitVersionsResponse\x12T\n" +
-	"\rGetPrecedents\x12 .catalog.v1.GetPrecedentsRequest\x1a!.catalog.v1.GetPrecedentsResponse\x12Z\n" +
-	"\x0fGetNodeContract\x12\".catalog.v1.GetNodeContractRequest\x1a#.catalog.v1.GetNodeContractResponse\x12u\n" +
-	"\x18ListNodeContractVersions\x12+.catalog.v1.ListNodeContractVersionsRequest\x1a,.catalog.v1.ListNodeContractVersionsResponse\x12f\n" +
-	"\x13GetNodeContractDiff\x12&.catalog.v1.GetNodeContractDiffRequest\x1a'.catalog.v1.GetNodeContractDiffResponseBBZ@github.com/carolsimone/continuo/catalog/api/catalog/v1;catalogv1b\x06proto3"
+	"\rGetPrecedents\x12 .catalog.v1.GetPrecedentsRequest\x1a!.catalog.v1.GetPrecedentsResponse\x12f\n" +
+	"\x13GetNodeDataContract\x12&.catalog.v1.GetNodeDataContractRequest\x1a'.catalog.v1.GetNodeDataContractResponse\x12\x81\x01\n" +
+	"\x1cListNodeDataContractVersions\x12/.catalog.v1.ListNodeDataContractVersionsRequest\x1a0.catalog.v1.ListNodeDataContractVersionsResponse\x12r\n" +
+	"\x17GetNodeDataContractDiff\x12*.catalog.v1.GetNodeDataContractDiffRequest\x1a+.catalog.v1.GetNodeDataContractDiffResponseBBZ@github.com/carolsimone/continuo/catalog/api/catalog/v1;catalogv1b\x06proto3"
 
 var (
 	file_proto_catalog_v1_catalog_proto_rawDescOnce sync.Once
@@ -2310,35 +2310,35 @@ func file_proto_catalog_v1_catalog_proto_rawDescGZIP() []byte {
 
 var file_proto_catalog_v1_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_proto_catalog_v1_catalog_proto_goTypes = []any{
-	(*GetNodeRequest)(nil),                   // 0: catalog.v1.GetNodeRequest
-	(*GetNodeResponse)(nil),                  // 1: catalog.v1.GetNodeResponse
-	(*GetNodeLocationRequest)(nil),           // 2: catalog.v1.GetNodeLocationRequest
-	(*GetNodeLocationResponse)(nil),          // 3: catalog.v1.GetNodeLocationResponse
-	(*VersionView)(nil),                      // 4: catalog.v1.VersionView
-	(*VersionDiff)(nil),                      // 5: catalog.v1.VersionDiff
-	(*UpstreamChange)(nil),                   // 6: catalog.v1.UpstreamChange
-	(*UnitVersionView)(nil),                  // 7: catalog.v1.UnitVersionView
-	(*GetNodeVersionsRequest)(nil),           // 8: catalog.v1.GetNodeVersionsRequest
-	(*GetNodeVersionsResponse)(nil),          // 9: catalog.v1.GetNodeVersionsResponse
-	(*GetNodeVersionDiffRequest)(nil),        // 10: catalog.v1.GetNodeVersionDiffRequest
-	(*GetNodeVersionDiffResponse)(nil),       // 11: catalog.v1.GetNodeVersionDiffResponse
-	(*GetUpstreamChangesRequest)(nil),        // 12: catalog.v1.GetUpstreamChangesRequest
-	(*GetUpstreamChangesResponse)(nil),       // 13: catalog.v1.GetUpstreamChangesResponse
-	(*GetCodeUnitVersionsRequest)(nil),       // 14: catalog.v1.GetCodeUnitVersionsRequest
-	(*GetCodeUnitVersionsResponse)(nil),      // 15: catalog.v1.GetCodeUnitVersionsResponse
-	(*GetPrecedentsRequest)(nil),             // 16: catalog.v1.GetPrecedentsRequest
-	(*PrecedentFix)(nil),                     // 17: catalog.v1.PrecedentFix
-	(*PrecedentEdit)(nil),                    // 18: catalog.v1.PrecedentEdit
-	(*Precedent)(nil),                        // 19: catalog.v1.Precedent
-	(*GetPrecedentsResponse)(nil),            // 20: catalog.v1.GetPrecedentsResponse
-	(*ContractVersionView)(nil),              // 21: catalog.v1.ContractVersionView
-	(*GetNodeContractRequest)(nil),           // 22: catalog.v1.GetNodeContractRequest
-	(*GetNodeContractResponse)(nil),          // 23: catalog.v1.GetNodeContractResponse
-	(*ListNodeContractVersionsRequest)(nil),  // 24: catalog.v1.ListNodeContractVersionsRequest
-	(*ListNodeContractVersionsResponse)(nil), // 25: catalog.v1.ListNodeContractVersionsResponse
-	(*ContractFieldChange)(nil),              // 26: catalog.v1.ContractFieldChange
-	(*GetNodeContractDiffRequest)(nil),       // 27: catalog.v1.GetNodeContractDiffRequest
-	(*GetNodeContractDiffResponse)(nil),      // 28: catalog.v1.GetNodeContractDiffResponse
+	(*GetNodeRequest)(nil),                       // 0: catalog.v1.GetNodeRequest
+	(*GetNodeResponse)(nil),                      // 1: catalog.v1.GetNodeResponse
+	(*GetNodeLocationRequest)(nil),               // 2: catalog.v1.GetNodeLocationRequest
+	(*GetNodeLocationResponse)(nil),              // 3: catalog.v1.GetNodeLocationResponse
+	(*VersionView)(nil),                          // 4: catalog.v1.VersionView
+	(*VersionDiff)(nil),                          // 5: catalog.v1.VersionDiff
+	(*UpstreamChange)(nil),                       // 6: catalog.v1.UpstreamChange
+	(*UnitVersionView)(nil),                      // 7: catalog.v1.UnitVersionView
+	(*GetNodeVersionsRequest)(nil),               // 8: catalog.v1.GetNodeVersionsRequest
+	(*GetNodeVersionsResponse)(nil),              // 9: catalog.v1.GetNodeVersionsResponse
+	(*GetNodeVersionDiffRequest)(nil),            // 10: catalog.v1.GetNodeVersionDiffRequest
+	(*GetNodeVersionDiffResponse)(nil),           // 11: catalog.v1.GetNodeVersionDiffResponse
+	(*GetUpstreamChangesRequest)(nil),            // 12: catalog.v1.GetUpstreamChangesRequest
+	(*GetUpstreamChangesResponse)(nil),           // 13: catalog.v1.GetUpstreamChangesResponse
+	(*GetCodeUnitVersionsRequest)(nil),           // 14: catalog.v1.GetCodeUnitVersionsRequest
+	(*GetCodeUnitVersionsResponse)(nil),          // 15: catalog.v1.GetCodeUnitVersionsResponse
+	(*GetPrecedentsRequest)(nil),                 // 16: catalog.v1.GetPrecedentsRequest
+	(*PrecedentFix)(nil),                         // 17: catalog.v1.PrecedentFix
+	(*PrecedentEdit)(nil),                        // 18: catalog.v1.PrecedentEdit
+	(*Precedent)(nil),                            // 19: catalog.v1.Precedent
+	(*GetPrecedentsResponse)(nil),                // 20: catalog.v1.GetPrecedentsResponse
+	(*ContractVersionView)(nil),                  // 21: catalog.v1.ContractVersionView
+	(*GetNodeDataContractRequest)(nil),           // 22: catalog.v1.GetNodeDataContractRequest
+	(*GetNodeDataContractResponse)(nil),          // 23: catalog.v1.GetNodeDataContractResponse
+	(*ListNodeDataContractVersionsRequest)(nil),  // 24: catalog.v1.ListNodeDataContractVersionsRequest
+	(*ListNodeDataContractVersionsResponse)(nil), // 25: catalog.v1.ListNodeDataContractVersionsResponse
+	(*ContractFieldChange)(nil),                  // 26: catalog.v1.ContractFieldChange
+	(*GetNodeDataContractDiffRequest)(nil),       // 27: catalog.v1.GetNodeDataContractDiffRequest
+	(*GetNodeDataContractDiffResponse)(nil),      // 28: catalog.v1.GetNodeDataContractDiffResponse
 }
 var file_proto_catalog_v1_catalog_proto_depIdxs = []int32{
 	4,  // 0: catalog.v1.VersionDiff.from:type_name -> catalog.v1.VersionView
@@ -2352,9 +2352,9 @@ var file_proto_catalog_v1_catalog_proto_depIdxs = []int32{
 	17, // 8: catalog.v1.Precedent.fixes:type_name -> catalog.v1.PrecedentFix
 	18, // 9: catalog.v1.Precedent.edited:type_name -> catalog.v1.PrecedentEdit
 	19, // 10: catalog.v1.GetPrecedentsResponse.precedents:type_name -> catalog.v1.Precedent
-	21, // 11: catalog.v1.GetNodeContractResponse.contract:type_name -> catalog.v1.ContractVersionView
-	21, // 12: catalog.v1.ListNodeContractVersionsResponse.versions:type_name -> catalog.v1.ContractVersionView
-	26, // 13: catalog.v1.GetNodeContractDiffResponse.changes:type_name -> catalog.v1.ContractFieldChange
+	21, // 11: catalog.v1.GetNodeDataContractResponse.contract:type_name -> catalog.v1.ContractVersionView
+	21, // 12: catalog.v1.ListNodeDataContractVersionsResponse.versions:type_name -> catalog.v1.ContractVersionView
+	26, // 13: catalog.v1.GetNodeDataContractDiffResponse.changes:type_name -> catalog.v1.ContractFieldChange
 	0,  // 14: catalog.v1.CatalogQuery.GetNode:input_type -> catalog.v1.GetNodeRequest
 	2,  // 15: catalog.v1.CatalogQuery.GetNodeLocation:input_type -> catalog.v1.GetNodeLocationRequest
 	8,  // 16: catalog.v1.CatalogQuery.GetNodeVersions:input_type -> catalog.v1.GetNodeVersionsRequest
@@ -2362,9 +2362,9 @@ var file_proto_catalog_v1_catalog_proto_depIdxs = []int32{
 	12, // 18: catalog.v1.CatalogQuery.GetUpstreamChanges:input_type -> catalog.v1.GetUpstreamChangesRequest
 	14, // 19: catalog.v1.CatalogQuery.GetCodeUnitVersions:input_type -> catalog.v1.GetCodeUnitVersionsRequest
 	16, // 20: catalog.v1.CatalogQuery.GetPrecedents:input_type -> catalog.v1.GetPrecedentsRequest
-	22, // 21: catalog.v1.CatalogQuery.GetNodeContract:input_type -> catalog.v1.GetNodeContractRequest
-	24, // 22: catalog.v1.CatalogQuery.ListNodeContractVersions:input_type -> catalog.v1.ListNodeContractVersionsRequest
-	27, // 23: catalog.v1.CatalogQuery.GetNodeContractDiff:input_type -> catalog.v1.GetNodeContractDiffRequest
+	22, // 21: catalog.v1.CatalogQuery.GetNodeDataContract:input_type -> catalog.v1.GetNodeDataContractRequest
+	24, // 22: catalog.v1.CatalogQuery.ListNodeDataContractVersions:input_type -> catalog.v1.ListNodeDataContractVersionsRequest
+	27, // 23: catalog.v1.CatalogQuery.GetNodeDataContractDiff:input_type -> catalog.v1.GetNodeDataContractDiffRequest
 	1,  // 24: catalog.v1.CatalogQuery.GetNode:output_type -> catalog.v1.GetNodeResponse
 	3,  // 25: catalog.v1.CatalogQuery.GetNodeLocation:output_type -> catalog.v1.GetNodeLocationResponse
 	9,  // 26: catalog.v1.CatalogQuery.GetNodeVersions:output_type -> catalog.v1.GetNodeVersionsResponse
@@ -2372,9 +2372,9 @@ var file_proto_catalog_v1_catalog_proto_depIdxs = []int32{
 	13, // 28: catalog.v1.CatalogQuery.GetUpstreamChanges:output_type -> catalog.v1.GetUpstreamChangesResponse
 	15, // 29: catalog.v1.CatalogQuery.GetCodeUnitVersions:output_type -> catalog.v1.GetCodeUnitVersionsResponse
 	20, // 30: catalog.v1.CatalogQuery.GetPrecedents:output_type -> catalog.v1.GetPrecedentsResponse
-	23, // 31: catalog.v1.CatalogQuery.GetNodeContract:output_type -> catalog.v1.GetNodeContractResponse
-	25, // 32: catalog.v1.CatalogQuery.ListNodeContractVersions:output_type -> catalog.v1.ListNodeContractVersionsResponse
-	28, // 33: catalog.v1.CatalogQuery.GetNodeContractDiff:output_type -> catalog.v1.GetNodeContractDiffResponse
+	23, // 31: catalog.v1.CatalogQuery.GetNodeDataContract:output_type -> catalog.v1.GetNodeDataContractResponse
+	25, // 32: catalog.v1.CatalogQuery.ListNodeDataContractVersions:output_type -> catalog.v1.ListNodeDataContractVersionsResponse
+	28, // 33: catalog.v1.CatalogQuery.GetNodeDataContractDiff:output_type -> catalog.v1.GetNodeDataContractDiffResponse
 	24, // [24:34] is the sub-list for method output_type
 	14, // [14:24] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name

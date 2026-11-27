@@ -96,7 +96,7 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 			NodeID:      n.UniqueID,
 			ProjectName: n.ProjectName,
 			SchemaName:  n.SchemaName,
-			// The validation Job builds or clones the relation dbt writes,
+			// The validation Job builds the relation dbt writes, from code or from production,
 			// while the seed-build Job and production tasks keep
 			// `dbt --select <table_name>`.
 			TableName:            cmp.Or(n.RelationName, n.TableName),

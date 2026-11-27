@@ -65,9 +65,9 @@ type TaskRow struct {
 	WaitReason          *string        `json:"wait_reason,omitempty" db:"wait_reason"`
 	LeaseWaitSince      *time.Time     `json:"lease_wait_since,omitempty" db:"lease_wait_since"`
 	PlanReason          string         `json:"plan_reason" db:"plan_reason"`
-	// SeedPreflight is the jsonb of seed_preflight as text; nil when NULL.
-	SeedPreflight  *string `json:"seed_preflight,omitempty" db:"seed_preflight"`
-	RebuildSeedKey string  `json:"rebuild_seed_key" db:"rebuild_seed_key"`
+	// DependentsCheck is the jsonb of dependents_check as text; nil when NULL.
+	DependentsCheck *string `json:"dependents_check,omitempty" db:"dependents_check"`
+	RebuildSeedKey  string  `json:"rebuild_seed_key" db:"rebuild_seed_key"`
 	// WaitingOnRunID is not a column: it is the run whose task holds the node
 	// lease this task waits for, read by the task reads (GetByID,
 	// GetByRunAndNode, ListByRunID); nil when the task waits for no
@@ -85,22 +85,22 @@ type TaskRow struct {
 // AttemptRepository.MarkQuestioned counts each question about the attempt in
 // checks_sent and moves next_check_at to the next window.
 type taskAttemptRow struct {
-	TaskID           uuid.UUID  `db:"task_id"`
-	Attempt          int32      `db:"attempt"`
-	JobName          string     `db:"job_name"`
-	Status           string     `db:"status"`
-	FailureClass     *string    `db:"failure_class"`
-	FailureReason    *string    `db:"failure_reason"`
-	DispatchedAt     time.Time  `db:"dispatched_at"`
-	QueuedAt         *time.Time `db:"queued_at"`
-	StartedAt        *time.Time `db:"started_at"`
-	FinishedAt       *time.Time `db:"finished_at"`
-	ExecutionSeconds *float64   `db:"execution_seconds"`
-	ExitCode         *int32     `db:"exit_code"`
-	ErrorMessage     *string    `db:"error_message"`
-	LogS3Key         *string    `db:"log_s3_key"`
-	RunResultsURI    *string    `db:"run_results_uri"`
-	ParseCache       *string    `db:"parse_cache"`
-	ParseCacheReason *string    `db:"parse_cache_reason"`
-	SeedFindings     *string    `db:"seed_preflight_findings"`
+	TaskID                  uuid.UUID  `db:"task_id"`
+	Attempt                 int32      `db:"attempt"`
+	JobName                 string     `db:"job_name"`
+	Status                  string     `db:"status"`
+	FailureClass            *string    `db:"failure_class"`
+	FailureReason           *string    `db:"failure_reason"`
+	DispatchedAt            time.Time  `db:"dispatched_at"`
+	QueuedAt                *time.Time `db:"queued_at"`
+	StartedAt               *time.Time `db:"started_at"`
+	FinishedAt              *time.Time `db:"finished_at"`
+	ExecutionSeconds        *float64   `db:"execution_seconds"`
+	ExitCode                *int32     `db:"exit_code"`
+	ErrorMessage            *string    `db:"error_message"`
+	LogS3Key                *string    `db:"log_s3_key"`
+	RunResultsURI           *string    `db:"run_results_uri"`
+	ParseCache              *string    `db:"parse_cache"`
+	ParseCacheReason        *string    `db:"parse_cache_reason"`
+	DependentsCheckFindings *string    `db:"dependents_check_findings"`
 }

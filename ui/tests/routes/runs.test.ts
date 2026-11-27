@@ -306,7 +306,7 @@ describe('routes/runs: GET /:id/attempts', () => {
         execution_seconds: 19.5, error_message: 'boom',
         log_s3_key: 'logs/task-attempts/svc/sc/tbl/task-1-1.log',
         run_results_uri: 'run-results/task-attempts/svc/sc/tbl/task-1-1.json',
-        seed_preflight: null,
+        dependents_check: null,
       },
       {
         // Empty strings and a zero run time are run-controller's "not set": they cross
@@ -315,7 +315,7 @@ describe('routes/runs: GET /:id/attempts', () => {
         failure_class: null, failure_reason: null,
         dispatched_at: '2026-01-01T10:00:00.000Z', queued_at: null, started_at: null, finished_at: null,
         execution_seconds: null, error_message: null, log_s3_key: null, run_results_uri: null,
-        seed_preflight: null,
+        dependents_check: null,
       },
     ]);
   });
@@ -897,7 +897,7 @@ describe('routes/runs: GET /api/runs?release_id=', () => {
   });
 });
 
-describe('routes/runs: task operations, plan reasons and seed preflight findings', () => {
+describe('routes/runs: task operations, plan reasons and dependents check findings', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('carries each task operation and plan reason, null for an empty reason', async () => {
@@ -926,27 +926,27 @@ describe('routes/runs: task operations, plan reasons and seed preflight findings
     expect(res.body.nodes[1]).toMatchObject({ operation: 'run', plan_reason: null });
   });
 
-  it("carries an attempt's seed preflight findings field by field, null when it ran none", async () => {
+  it("carries an attempt's dependents check findings field by field, null when it ran none", async () => {
     mockListRunAttempts.mockImplementation((_req: any, cb: any) => cb(null, {
       attempts: [
         {
           task_id: 't1', attempt: 0, status: 'failed',
-          seed_preflight: {
+          dependents_check: {
             drop_semantics: 'blocks', completeness: 'complete', checked: true, extra: 'x',
             dependents: [{ schema: 'e2e_bi', name: 'seed_reader', kind: 'view', owner: 'bi', depth: 1, allowed: false, extra: 1 }],
             probes: [{ schema: 'analytics', name: 'v_users', ok: false, error: 'relation does not exist' }],
           },
         },
-        { task_id: 't2', attempt: 0, status: 'succeeded', seed_preflight: null },
+        { task_id: 't2', attempt: 0, status: 'succeeded', dependents_check: null },
       ],
       total_count: 2,
     }));
     const res = await request(app).get('/api/runs/r/attempts');
-    expect(res.body.attempts[0].seed_preflight).toEqual({
+    expect(res.body.attempts[0].dependents_check).toEqual({
       drop_semantics: 'blocks', completeness: 'complete', checked: true,
       dependents: [{ schema: 'e2e_bi', name: 'seed_reader', kind: 'view', owner: 'bi', depth: 1, allowed: false }],
       probes: [{ schema: 'analytics', name: 'v_users', ok: false, error: 'relation does not exist' }],
     });
-    expect(res.body.attempts[1].seed_preflight).toBeNull();
+    expect(res.body.attempts[1].dependents_check).toBeNull();
   });
 });

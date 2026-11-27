@@ -99,7 +99,7 @@ func (r *nodeRunRepository) List(
 			SELECT DISTINCT ON (a.task_id)
 			       a.task_id, a.started_at, a.finished_at AS completed_at,
 			       a.error_message, a.log_s3_key, a.run_results_uri,
-			       a.failure_class, a.failure_reason, a.seed_preflight_findings
+			       a.failure_class, a.failure_reason, a.dependents_check_findings
 			FROM task_attempts a
 			JOIN target_tasks tt ON a.tenant_id = $6 AND tt.task_id = a.task_id
 			ORDER BY a.task_id, a.attempt DESC
@@ -120,7 +120,7 @@ func (r *nodeRunRepository) List(
 		       le.run_results_uri   AS run_results_uri,
 		       le.failure_class     AS failure_class,
 		       le.failure_reason    AS failure_reason,
-		       le.seed_preflight_findings AS seed_preflight_findings,
+		       le.dependents_check_findings AS dependents_check_findings,
 		       tt.operation         AS operation,
 		       COALESCE(n.content_hash, '') AS content_hash,
 		       COALESCE(tt.wait_reason, '') AS wait_reason,
@@ -163,37 +163,37 @@ func (r *nodeRunRepository) List(
 // query. The db column tags live here, keeping projection.NodeRun free of
 // storage concerns.
 type nodeRunRow struct {
-	ScheduleID     uuid.UUID      `db:"run_id"`
-	ScheduleName   string         `db:"schedule_name"`
-	Kind           string         `db:"kind"`
-	TerminalStatus string         `db:"terminal_status"`
-	TaskID         uuid.UUID      `db:"task_id"`
-	TaskStatus     run.TaskStatus `db:"task_status"`
-	Attempt        int            `db:"attempt"`
-	ImageTag       string         `db:"image_tag"`
-	CreatedAt      time.Time      `db:"created_at"`
-	StartedAt      *time.Time     `db:"started_at"`
-	CompletedAt    *time.Time     `db:"completed_at"`
-	ErrorMessage   *string        `db:"error_message"`
-	LogS3Key       *string        `db:"log_s3_key"`
-	RunResultsURI  *string        `db:"run_results_uri"`
-	FailureClass   *string        `db:"failure_class"`
-	FailureReason  *string        `db:"failure_reason"`
-	SeedFindings   *string        `db:"seed_preflight_findings"`
-	Operation      string         `db:"operation"`
-	ContentHash    string         `db:"content_hash"`
-	WaitReason     string         `db:"wait_reason"`
-	WaitingSince   *time.Time     `db:"waiting_since"`
-	WaitingOnRunID *uuid.UUID     `db:"waiting_on_run_id"`
+	ScheduleID              uuid.UUID      `db:"run_id"`
+	ScheduleName            string         `db:"schedule_name"`
+	Kind                    string         `db:"kind"`
+	TerminalStatus          string         `db:"terminal_status"`
+	TaskID                  uuid.UUID      `db:"task_id"`
+	TaskStatus              run.TaskStatus `db:"task_status"`
+	Attempt                 int            `db:"attempt"`
+	ImageTag                string         `db:"image_tag"`
+	CreatedAt               time.Time      `db:"created_at"`
+	StartedAt               *time.Time     `db:"started_at"`
+	CompletedAt             *time.Time     `db:"completed_at"`
+	ErrorMessage            *string        `db:"error_message"`
+	LogS3Key                *string        `db:"log_s3_key"`
+	RunResultsURI           *string        `db:"run_results_uri"`
+	FailureClass            *string        `db:"failure_class"`
+	FailureReason           *string        `db:"failure_reason"`
+	DependentsCheckFindings *string        `db:"dependents_check_findings"`
+	Operation               string         `db:"operation"`
+	ContentHash             string         `db:"content_hash"`
+	WaitReason              string         `db:"wait_reason"`
+	WaitingSince            *time.Time     `db:"waiting_since"`
+	WaitingOnRunID          *uuid.UUID     `db:"waiting_on_run_id"`
 }
 
 // toNodeRun maps a scanned row. A seed task whose latest attempt failed
-// unowned_dependents lists the dependents the attempt's preflight found and did
+// unowned_dependents lists the dependents the attempt's dependents check found and did
 // not allow as its blocking objects.
 func toNodeRun(row nodeRunRow) (*projection.NodeRun, error) {
 	var blocking []string
 	if row.FailureReason != nil && *row.FailureReason == string(model.FailureReasonUnownedDependents) {
-		findings, err := seedPreflightFindingsFromColumn(row.SeedFindings)
+		findings, err := dependentsCheckFindingsFromColumn(row.DependentsCheckFindings)
 		if err != nil {
 			return nil, fmt.Errorf("task %s: %w", row.TaskID, err)
 		}
