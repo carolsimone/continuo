@@ -31,12 +31,12 @@ type fakeNodeRunController struct {
 	gotOperation string
 	gotLimit     int32
 
-	trigResp         *runv1.StartSingleNodeRunResponse
-	trigErr          error
-	gotActor         string
-	gotRequestIDs    []string
-	gotTrigProject   string
-	gotTrigSourceRun string
+	runResp         *runv1.StartSingleNodeRunResponse
+	runErr          error
+	gotActor        string
+	gotRequestIDs   []string
+	gotRunProject   string
+	gotRunSourceRun string
 
 	testResp         *runv1.StartSingleNodeRunResponse
 	testErr          error
@@ -85,8 +85,8 @@ func (f *fakeNodeRunController) ListNodeRuns(_ context.Context, project, schema,
 
 func (f *fakeNodeRunController) StartNodeRun(_ context.Context, requestID, project, _, _, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
-	f.gotTrigProject, f.gotTrigSourceRun, f.gotActor = project, sourceRunID, actor
-	return f.trigResp, f.trigErr
+	f.gotRunProject, f.gotRunSourceRun, f.gotActor = project, sourceRunID, actor
+	return f.runResp, f.runErr
 }
 
 func (f *fakeNodeRunController) StartNodeTest(_ context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.StartSingleNodeRunResponse, error) {

@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func runScheduleRun(t *testing.T, fake client.RunClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
+func runNodeRun(t *testing.T, fake client.RunClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cmd := NewRunCommand(func(context.Context, string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
@@ -39,10 +39,10 @@ func runScheduleRun(t *testing.T, fake client.RunClient, cfg *config.Config, arg
 }
 
 func TestNodeRun_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
+	fake := &fakeNodeRunController{runResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	stdout, stderr, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	stdout, stderr, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
@@ -50,24 +50,24 @@ func TestNodeRun_SuccessEmitsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	assert.Equal(t, "run_9", payload["run_id"])
 	assert.Equal(t, "single-node-run-abcd1234", payload["schedule_name"])
-	assert.Equal(t, "finance", fake.gotTrigProject)
+	assert.Equal(t, "finance", fake.gotRunProject)
 }
 
 func TestNodeRun_ForwardsActorFromConfig(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{runResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"}
 
-	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, "agent-chat-llm", fake.gotActor)
 }
 
 func TestNodeRun_EmptyActorWhenUnset(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{runResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, _ = runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, _ = runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, "", fake.gotActor)
 }
@@ -76,7 +76,7 @@ func TestNodeRun_WrongArgCountExits2(t *testing.T) {
 	fake := &fakeNodeRunController{}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	stdout, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics"})
+	stdout, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics"})
 
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -85,28 +85,28 @@ func TestNodeRun_WrongArgCountExits2(t *testing.T) {
 }
 
 func TestNodeRun_InvalidArgumentExits2(t *testing.T) {
-	fake := &fakeNodeRunController{trigErr: status.Error(codes.InvalidArgument, "project_name required")}
+	fake := &fakeNodeRunController{runErr: status.Error(codes.InvalidArgument, "project_name required")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 2, exit)
 }
 
 func TestNodeRun_UnavailableExits5(t *testing.T) {
-	fake := &fakeNodeRunController{trigErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeNodeRunController{runErr: status.Error(codes.Unavailable, "server down")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 5, exit)
 }
 
 func TestNodeRun_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{runResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
 
-	stdout, stderr, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	stdout, stderr, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
@@ -117,52 +117,52 @@ func TestNodeRun_HumanModeUsesStderr(t *testing.T) {
 const snapshotSourceRun = "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
 
 func TestNodeRun_ThreeArgsSelectLatestMetadata(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{runResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
+	_, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
-	assert.Equal(t, "", fake.gotTrigSourceRun)
+	assert.Equal(t, "", fake.gotRunSourceRun)
 }
 
 func TestNodeRun_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
-	fake := &fakeNodeRunController{trigResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{runResp: &runv1.StartSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+	_, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
 
 	assert.Equal(t, 0, exit)
-	assert.Equal(t, snapshotSourceRun, fake.gotTrigSourceRun)
+	assert.Equal(t, snapshotSourceRun, fake.gotRunSourceRun)
 }
 
 func TestNodeRun_FiveArgsExits2(t *testing.T) {
 	fake := &fakeNodeRunController{}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	stdout, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun, "extra"})
+	stdout, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun, "extra"})
 
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
 	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 	assert.Equal(t, output.CodeUsage, env["error"].Code)
-	assert.Equal(t, "", fake.gotTrigSourceRun)
+	assert.Equal(t, "", fake.gotRunSourceRun)
 }
 
 func TestNodeRun_SourceRunNotFoundExits3(t *testing.T) {
-	fake := &fakeNodeRunController{trigErr: status.Error(codes.NotFound, "source run not found")}
+	fake := &fakeNodeRunController{runErr: status.Error(codes.NotFound, "source run not found")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+	_, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
 
 	assert.Equal(t, 3, exit)
 }
 
 func TestNodeRun_SourceRunNotTerminalExits4(t *testing.T) {
-	fake := &fakeNodeRunController{trigErr: status.Error(codes.FailedPrecondition, "source run is not terminal")}
+	fake := &fakeNodeRunController{runErr: status.Error(codes.FailedPrecondition, "source run is not terminal")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
-	_, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+	_, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
 
 	assert.Equal(t, 4, exit)
 }
@@ -175,13 +175,13 @@ func TestNodeRun_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
 		fake := &fakeNodeRunController{}
 		cfg := &config.Config{Timeout: 2 * time.Second}
 
-		stdout, _, exit := runScheduleRun(t, fake, cfg, []string{"finance", "analytics", "orders", empty})
+		stdout, _, exit := runNodeRun(t, fake, cfg, []string{"finance", "analytics", "orders", empty})
 
 		assert.Equal(t, 2, exit, "arg %q", empty)
 		var env map[string]output.CLIError
 		require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 		assert.Equal(t, output.CodeUsage, env["error"].Code)
-		assert.Equal(t, "", fake.gotTrigProject, "run-controller must not be called")
+		assert.Equal(t, "", fake.gotRunProject, "run-controller must not be called")
 	}
 }
 
@@ -197,8 +197,8 @@ func TestNodeRunCommands_SendTheRequestIDOfTheInvocation(t *testing.T) {
 
 	cases := map[string]func(*fakeNodeRunController) int{
 		"run": func(f *fakeNodeRunController) int {
-			f.trigResp = resp
-			_, _, e := runScheduleRun(t, f, cfg, args)
+			f.runResp = resp
+			_, _, e := runNodeRun(t, f, cfg, args)
 			return e
 		},
 		"test":  func(f *fakeNodeRunController) int { f.testResp = resp; _, _, e := runTest(t, f, cfg, args); return e },
