@@ -179,7 +179,7 @@ func TestCLI_ScheduleRunAgainstInProcessServer(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out, &payload))
 	assert.Equal(t, "run_integ_1", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
-	assert.NotEmpty(t, payload["created_at"])
+	assert.NotEmpty(t, payload["requested_at"])
 }
 
 // A schedule run refused UNAVAILABLE is tried again, and every try carries the one
