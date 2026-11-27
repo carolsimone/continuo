@@ -172,11 +172,11 @@ export function projectRelease(rel: Record<string, unknown>, publicUrl?: string)
   };
 }
 
-export function projectLiveRelease(cp: Record<string, unknown>): PublicLiveRelease {
+export function projectLiveRelease(live: Record<string, unknown>): PublicLiveRelease {
   return {
-    live_release_id: str(cp.live_release_id),
-    node_count: typeof cp.node_count === 'number' ? cp.node_count : 0,
-    updated_at: str(cp.updated_at),
+    live_release_id: str(live.live_release_id),
+    node_count: typeof live.node_count === 'number' ? live.node_count : 0,
+    updated_at: str(live.updated_at),
   };
 }
 
@@ -337,14 +337,14 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
   router.get('/live-release', readLimiter, async (req, res) => {
     const d = authorize(principalOf(req)!, { kind: 'live-release.read' });
     if (!d.allow) return fail(res, 403, d.code, d.reason);
-    let cp: unknown;
+    let live: unknown;
     try {
-      cp = await releases.getLiveRelease();
+      live = await releases.getLiveRelease();
     } catch {
       return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
     }
-    if (!isObject(cp)) return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
-    res.json(projectLiveRelease(cp));
+    if (!isObject(live)) return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
+    res.json(projectLiveRelease(live));
   });
 
   router.use((_req, res) => fail(res, 404, 'not_found', 'no such /api/v1 route'));

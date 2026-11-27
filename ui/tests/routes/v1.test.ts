@@ -553,11 +553,11 @@ describe('GET /api/v1/releases/:id', () => {
 });
 
 describe('GET /api/v1/live-release', () => {
-  const cp = () => fakeClient({ getLiveRelease: vi.fn(async () => ({ live_release_id: 'r', node_count: 3, updated_at: 't', extra: 1 })) });
+  const liveClient = () => fakeClient({ getLiveRelease: vi.fn(async () => ({ live_release_id: 'r', node_count: 3, updated_at: 't', extra: 1 })) });
 
   it('a bound CI identity and a viewer read exactly the three fields', async () => {
     for (const p of [ci(), viewer]) {
-      const res = await request(appAs(p, cp())).get('/api/v1/live-release');
+      const res = await request(appAs(p, liveClient())).get('/api/v1/live-release');
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ live_release_id: 'r', node_count: 3, updated_at: 't' });
     }
@@ -574,7 +574,7 @@ describe('GET /api/v1/live-release', () => {
   });
 
   it('a CI identity bound to no project is forbidden', async () => {
-    const client = cp();
+    const client = liveClient();
     const res = await request(appAs(ci({}), client)).get('/api/v1/live-release');
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('forbidden');

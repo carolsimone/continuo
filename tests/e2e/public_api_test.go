@@ -60,8 +60,8 @@ func TestPublicAPI_Authorization(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		var cp map[string]any
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&cp))
-		require.Contains(t, cp, "live_release_id")
+		var live map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&live))
+		require.Contains(t, live, "live_release_id")
 	})
 }

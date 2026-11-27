@@ -156,7 +156,7 @@ func LiveReleaseTopology(ctx context.Context, d *Deps) (release.Topology, error)
 	if live.ReleaseID() == "" && live.Topology().IsZero() {
 		return nil, ErrNoLiveRelease
 	}
-	return loadProdTopology(ctx, d, live)
+	return loadLiveTopology(ctx, d, live)
 }
 
 // reannounce takes the next promotion seq, records it on live, persists live and

@@ -127,11 +127,11 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return AdvanceQueue(ctx, d)
 	}
 	if live != nil && live.ReleaseID() != "" {
-		prod, err := loadProdTopology(ctx, d, live)
+		liveTopology, err := loadLiveTopology(ctx, d, live)
 		if err != nil {
 			return err
 		}
-		if missing := uncoveredProdProjects(prod, pointers, next.ChangedProject()); len(missing) > 0 {
+		if missing := uncoveredLiveProjects(liveTopology, pointers, next.ChangedProject()); len(missing) > 0 {
 			d.Logger.Warn(
 				"release activation blocked: projects of the live release have no production pointer; run seed-production-pointers before accepting releases",
 				"release_id", next.ID(),
@@ -224,20 +224,20 @@ func pointerOf(pointers []*release.ProductionPointer, project string) *release.P
 	return nil
 }
 
-// uncoveredProdProjects returns the sorted set of project names live in the
-// production topology that have no production pointer and are not the
+// uncoveredLiveProjects returns the sorted set of project names in the live
+// release's topology that have no production pointer and are not the
 // release's changed project. A non-empty result means assembling the full
 // topology now would silently drop those projects on promote. An unknown-external node
 // belongs to no project, so it is skipped: no production pointer covers it and
 // promoting without one drops nothing.
-func uncoveredProdProjects(prod release.Topology, pointers []*release.ProductionPointer, changedProject string) []string {
+func uncoveredLiveProjects(liveTopology release.Topology, pointers []*release.ProductionPointer, changedProject string) []string {
 	covered := map[string]struct{}{changedProject: {}}
 	for _, p := range pointers {
 		covered[p.ProjectName()] = struct{}{}
 	}
 
 	missingSet := map[string]struct{}{}
-	for _, n := range prod {
+	for _, n := range liveTopology {
 		if n.IsExternal() {
 			continue
 		}

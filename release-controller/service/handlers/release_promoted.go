@@ -50,11 +50,11 @@ func changedSincePromotion(ctx context.Context, d *Deps, r *releasecheck.Check, 
 	if err != nil {
 		return nil, fmt.Errorf("load candidate topology %s: %w", r.ID(), err)
 	}
-	prod, err := loadProdTopology(ctx, d, live)
+	liveTopology, err := loadLiveTopology(ctx, d, live)
 	if err != nil {
 		return nil, err
 	}
-	changed := release.DerivedChangedNodeIDs(candidate.WithoutTests(), prod)
+	changed := release.DerivedChangedNodeIDs(candidate.WithoutTests(), liveTopology)
 	if changed == nil {
 		changed = []string{}
 	}
