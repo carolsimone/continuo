@@ -291,7 +291,7 @@ names:
   # seed-production-pointers).
   - pattern: '\w*(current_prod|CURRENT_PROD|CurrentProd|currentProd)\w*|(?i)current[ -]prod'
     use: live release (live_release, LiveRelease, live_release_id)
-  - pattern: '\w*(service_prod|SERVICE_PROD|ServiceProd|serviceProd)\w*|(?i)service[ -]prod'
+  - pattern: '\w*(service_prod|SERVICE_PROD|ServiceProd|serviceProd)\w*|seed-service-prod|(?i)service prod'
     use: production pointer (production_pointers, ProductionPointer)
   - pattern: 'reannounce-current|print-current'
     use: announce-topology --reannounce-live, --print-live

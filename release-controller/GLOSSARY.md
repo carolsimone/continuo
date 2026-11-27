@@ -44,4 +44,4 @@ _Avoid_: seed warning, reload alert
 
 **Production pointer**:
 The record, per project, of the code and image production runs now. A new release is assembled from every project's pointer plus the changed project.
-_Avoid_: current prod, service prod, prod ref
+_Avoid_: service prod, prod ref

@@ -62,6 +62,6 @@ func TestIntegration_FailedValidationKeepsLiveReleaseUnchanged(t *testing.T) {
 	assert.Equal(t, "s3://logs/b", bResult.DBTLogURI)
 	assert.Zero(t, bResult.DurationMS)
 
-	cp, _ := deps.NewUoW().LiveReleaseRepo().Get(context.Background())
-	assert.Empty(t, cp.ReleaseID(), "the live release must remain unchanged on validation failure")
+	live, _ := deps.NewUoW().LiveReleaseRepo().Get(context.Background())
+	assert.Empty(t, live.ReleaseID(), "the live release must remain unchanged on validation failure")
 }

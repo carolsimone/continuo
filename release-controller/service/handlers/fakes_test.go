@@ -103,7 +103,7 @@ type fakeStore struct {
 	mu                 sync.Mutex
 	releases           map[string]*releasecheck.Check
 	order              []string // insertion order, oldest first; drives NextQueued FIFO
-	cp                 *release.LiveRelease
+	live               *release.LiveRelease
 	cpUpsertCalls      int
 	lastSeq            int64
 	productionPointers map[string]*release.ProductionPointer
@@ -150,10 +150,10 @@ func (s *fakeStore) SeedRelease(r *releasecheck.Check) {
 
 // SeedLiveRelease installs a live-release snapshot directly, simulating a
 // prior promotion. Used by handler tests to exercise the content_hash diff.
-func (s *fakeStore) SeedLiveRelease(cp *release.LiveRelease) {
+func (s *fakeStore) SeedLiveRelease(live *release.LiveRelease) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cp = cp
+	s.live = live
 }
 
 // GetLiveRelease returns the stored live-release record, or a fresh one if
@@ -161,10 +161,10 @@ func (s *fakeStore) SeedLiveRelease(cp *release.LiveRelease) {
 func (s *fakeStore) GetLiveRelease() *release.LiveRelease {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cp == nil {
+	if s.live == nil {
 		return release.NewLiveRelease()
 	}
-	return s.cp
+	return s.live
 }
 
 // SeedProductionPointer installs a production pointer directly so advance-queue
@@ -362,16 +362,16 @@ type fakeLiveReleaseRepo struct {
 func (f *fakeLiveReleaseRepo) Get(_ context.Context) (*release.LiveRelease, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
-	if f.store.cp == nil {
+	if f.store.live == nil {
 		return release.NewLiveRelease(), nil
 	}
-	return f.store.cp, nil
+	return f.store.live, nil
 }
 
-func (f *fakeLiveReleaseRepo) Upsert(_ context.Context, cp *release.LiveRelease) error {
+func (f *fakeLiveReleaseRepo) Upsert(_ context.Context, live *release.LiveRelease) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
-	f.store.cp = cp
+	f.store.live = live
 	f.store.cpUpsertCalls++
 	return nil
 }
@@ -639,7 +639,7 @@ func seedProd(t *testing.T, deps *handlers.Deps, store *fakeStore, releaseID str
 // writes from prior calls.
 type fakeUoW struct {
 	releases *fakeReleaseCheckRepo
-	cp       *fakeLiveReleaseRepo
+	live     *fakeLiveReleaseRepo
 	pointers *fakeProductionPointerRepo
 	seq      *fakePromotionSequenceRepo
 	outbox   *fakeOutbox
@@ -649,7 +649,7 @@ type fakeUoW struct {
 func newFakeUoW(store *fakeStore) *fakeUoW {
 	return &fakeUoW{
 		releases: &fakeReleaseCheckRepo{store: store},
-		cp:       &fakeLiveReleaseRepo{store: store},
+		live:     &fakeLiveReleaseRepo{store: store},
 		pointers: &fakeProductionPointerRepo{store: store},
 		seq:      &fakePromotionSequenceRepo{store: store},
 		outbox:   &fakeOutbox{store: store},
@@ -657,7 +657,7 @@ func newFakeUoW(store *fakeStore) *fakeUoW {
 }
 
 func (f *fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository           { return f.releases }
-func (f *fakeUoW) LiveReleaseRepo() repository.LiveReleaseRepository             { return f.cp }
+func (f *fakeUoW) LiveReleaseRepo() repository.LiveReleaseRepository             { return f.live }
 func (f *fakeUoW) ProductionPointerRepo() repository.ProductionPointerRepository { return f.pointers }
 func (f *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository {
 	return f.seq

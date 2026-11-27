@@ -818,9 +818,9 @@ func TestHandleParsedManifest_UnknownExternalNodeAloneIsNothingToValidate(t *tes
 	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV1).Payload, &promoted))
 	assert.Empty(t, promoted["changed_node_ids"], "an unknown-external node is never a changed node")
 
-	cp := store.GetLiveRelease()
-	assert.Equal(t, "rA", cp.ReleaseID())
-	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
+	live := store.GetLiveRelease()
+	assert.Equal(t, "rA", live.ReleaseID())
+	prodTopo, err := deps.Topologies.Load(context.Background(), live.Topology())
 	require.NoError(t, err)
 	assert.Equal(t, byID(topo), byID(prodTopo), "the unknown-external node stays in the live release")
 }
@@ -959,8 +959,8 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 		"empty-diff promote-direct path must carry code_bundle_uri")
 	assert.Equal(t, false, payload["bootstrap"], "non-bootstrap release must carry bootstrap=false")
 
-	cp := store.GetLiveRelease()
-	assert.Equal(t, "rA", cp.ReleaseID(), "the live release advanced to this release")
+	live := store.GetLiveRelease()
+	assert.Equal(t, "rA", live.ReleaseID(), "the live release advanced to this release")
 
 	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }

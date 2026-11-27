@@ -65,18 +65,18 @@ func main() {
 	defer func() { _ = db.Close() }()
 
 	liveReleaseRepo := postgres.NewLiveReleaseRepository(db)
-	cp, err := liveReleaseRepo.Get(ctx)
+	live, err := liveReleaseRepo.Get(ctx)
 	if err != nil {
 		logger.Error("read the live release", "error", err)
 		os.Exit(1)
 	}
-	if cp == nil || cp.ReleaseID() == "" {
+	if live == nil || live.ReleaseID() == "" {
 		logger.Error("nothing has been promoted, so there is no live release to seed from")
 		os.Exit(1)
 	}
 
-	if cp.Topology().IsZero() {
-		logger.Error("the live release references no topology artifact", "release_id", cp.ReleaseID())
+	if live.Topology().IsZero() {
+		logger.Error("the live release references no topology artifact", "release_id", live.ReleaseID())
 		os.Exit(1)
 	}
 	s3Cfg, err := loadS3Config()
@@ -89,7 +89,7 @@ func main() {
 		logger.Error("connect to object storage", "error", err)
 		os.Exit(1)
 	}
-	topo, err := s3adapter.NewTopologyArtifactStore(objectStore, s3Cfg.Bucket, 1).Load(ctx, cp.Topology())
+	topo, err := s3adapter.NewTopologyArtifactStore(objectStore, s3Cfg.Bucket, 1).Load(ctx, live.Topology())
 	if err != nil {
 		logger.Error("load the live release's topology", "error", err)
 		os.Exit(1)
@@ -97,14 +97,14 @@ func main() {
 
 	pointerRepo := postgres.NewProductionPointerRepository(db)
 
-	n, err := handlers.SeedProductionPointers(ctx, cp.ReleaseID(), topo, existingKeys, pointerRepo, time.Now().UTC())
+	n, err := handlers.SeedProductionPointers(ctx, live.ReleaseID(), topo, existingKeys, pointerRepo, time.Now().UTC())
 	if err != nil {
 		logger.Error("seed failed", "error", err)
 		os.Exit(1)
 	}
 
-	logger.Info("seed complete", "projects_seeded", n, "release_id", cp.ReleaseID())
-	fmt.Printf("seeded %d project(s) from release %s\n", n, cp.ReleaseID())
+	logger.Info("seed complete", "projects_seeded", n, "release_id", live.ReleaseID())
+	fmt.Printf("seeded %d project(s) from release %s\n", n, live.ReleaseID())
 }
 
 // loadPostgresConfig reads the connection settings from the environment.

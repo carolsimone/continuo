@@ -56,8 +56,8 @@ const (
 // topologyAnnouncer is the part of release-controller the command drives.
 type topologyAnnouncer interface {
 	Announce(ctx context.Context, releaseID string, topo release.Topology) (handlers.AnnounceResult, error)
-	ReannounceCurrent(ctx context.Context) (handlers.AnnounceResult, error)
-	CurrentTopology(ctx context.Context) (release.Topology, error)
+	ReannounceLive(ctx context.Context) (handlers.AnnounceResult, error)
+	LiveTopology(ctx context.Context) (release.Topology, error)
 }
 
 // connectFunc opens the announcer and returns a function that releases it.
@@ -112,16 +112,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	defer closeFn()
 
 	if opts.printLive {
-		current, err := a.CurrentTopology(ctx)
+		live, err := a.LiveTopology(ctx)
 		if err != nil {
 			return failure(logger, "print the live release's topology", err)
 		}
-		return writeJSON(stdout, logger, fromTopology(current))
+		return writeJSON(stdout, logger, fromTopology(live))
 	}
 
 	var res handlers.AnnounceResult
 	if opts.reannounceLive {
-		res, err = a.ReannounceCurrent(ctx)
+		res, err = a.ReannounceLive(ctx)
 	} else {
 		res, err = a.Announce(ctx, opts.releaseID, topo)
 	}
@@ -300,11 +300,11 @@ func (a depsAnnouncer) Announce(ctx context.Context, releaseID string, topo rele
 	return handlers.AnnounceTopology(ctx, a.d, releaseID, topo)
 }
 
-func (a depsAnnouncer) ReannounceCurrent(ctx context.Context) (handlers.AnnounceResult, error) {
+func (a depsAnnouncer) ReannounceLive(ctx context.Context) (handlers.AnnounceResult, error) {
 	return handlers.ReannounceLiveRelease(ctx, a.d)
 }
 
-func (a depsAnnouncer) CurrentTopology(ctx context.Context) (release.Topology, error) {
+func (a depsAnnouncer) LiveTopology(ctx context.Context) (release.Topology, error) {
 	return handlers.LiveReleaseTopology(ctx, a.d)
 }
 

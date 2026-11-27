@@ -247,8 +247,8 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 
-	cp := store.GetLiveRelease()
-	assert.Equal(t, "rA", cp.ReleaseID())
+	live := store.GetLiveRelease()
+	assert.Equal(t, "rA", live.ReleaseID())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 5) // CompileRequested + ReleaseRequested + ValidationRequested + ReleasePromoted + ReleaseCheckFinished
@@ -345,8 +345,8 @@ func TestHandleValidationResult_Fix_StopsAtPassed_NeverPromotes(t *testing.T) {
 
 		assert.Equal(t, 0, store.LiveReleaseUpsertCalls(),
 			"a fix's release check must never call LiveReleaseRepo.Upsert")
-		cp := store.GetLiveRelease()
-		assert.Equal(t, "", cp.ReleaseID(), "the live release must remain untouched by a fix's release check")
+		live := store.GetLiveRelease()
+		assert.Equal(t, "", live.ReleaseID(), "the live release must remain untouched by a fix's release check")
 
 		assert.Nil(t, store.GetProductionPointer("svc-a"),
 			"a fix's release check must never upsert a production pointer")
@@ -372,8 +372,8 @@ func TestHandleValidationResult_Fix_StopsAtPassed_NeverPromotes(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, releasecheck.StatusPromoted, r.Status())
 
-		cp := store.GetLiveRelease()
-		assert.Equal(t, "rCandidateControl", cp.ReleaseID())
+		live := store.GetLiveRelease()
+		assert.Equal(t, "rCandidateControl", live.ReleaseID())
 
 		entries := outboxEntries(store)
 		var sawPromoted bool
@@ -543,8 +543,8 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	assert.Equal(t, []string{"b"}, r.FailingNodes())
 
 	// LiveRelease must remain empty since validation failed.
-	cp := store.GetLiveRelease()
-	assert.Equal(t, "", cp.ReleaseID())
+	live := store.GetLiveRelease()
+	assert.Equal(t, "", live.ReleaseID())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 5) // CompileRequested + ReleaseRequested + ValidationRequested + ReleaseRejected + ReleaseCheckFinished
@@ -882,8 +882,8 @@ func TestHandleValidationResult_Promote_TestNeverChangedButKeptInLiveRelease(t *
 	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
 	assert.Equal(t, []string{"a"}, p.ChangedNodeIDs, "a test is never announced as changed")
 
-	cp := store.GetLiveRelease()
-	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
+	live := store.GetLiveRelease()
+	prodTopo, err := deps.Topologies.Load(context.Background(), live.Topology())
 	require.NoError(t, err)
 	keptIDs := map[string]bool{}
 	for _, n := range prodTopo {
@@ -1140,14 +1140,14 @@ func TestPromoteToProduction_LiveReleaseTakesTheArtifactTopology(t *testing.T) {
 		ReleaseID: "rArt", AggregateStatus: "ok",
 	}))
 
-	cp := store.GetLiveRelease()
-	assert.Equal(t, "rArt", cp.ReleaseID())
-	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
+	live := store.GetLiveRelease()
+	assert.Equal(t, "rArt", live.ReleaseID())
+	prodTopo, err := deps.Topologies.Load(context.Background(), live.Topology())
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b", "test.b"}, nodeIDs(prodTopo), "the live release's artifact keeps the test node")
 
 	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV1))
-	assert.Equal(t, cp.Topology().URI, p.TopologyURI)
+	assert.Equal(t, live.Topology().URI, p.TopologyURI)
 	assert.Equal(t, []string{"b"}, p.ChangedNodeIDs, "no test node is announced; b is new against prod")
 }
 
@@ -1203,10 +1203,10 @@ func TestHandleValidationResult_Promote_PointsLiveReleaseAtTheCandidateArtifact(
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	cp := store.GetLiveRelease()
-	assert.Equal(t, "rA", cp.ReleaseID())
-	assert.Equal(t, r.CandidateTopologyRef(), cp.Topology())
-	assert.Equal(t, int64(1), cp.PromotionSeq())
+	live := store.GetLiveRelease()
+	assert.Equal(t, "rA", live.ReleaseID())
+	assert.Equal(t, r.CandidateTopologyRef(), live.Topology())
+	assert.Equal(t, int64(1), live.PromotionSeq())
 	assert.Equal(t, int64(1), store.LastPromotionSeq())
 }
 

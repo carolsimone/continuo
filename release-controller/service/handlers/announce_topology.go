@@ -74,11 +74,11 @@ func AnnounceTopology(ctx context.Context, d *Deps, releaseID string, topo relea
 	if err != nil {
 		return AnnounceResult{}, fmt.Errorf("get release %s: %w", releaseID, err)
 	}
-	cp, err := u.LiveReleaseRepo().Get(ctx)
+	live, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
 		return AnnounceResult{}, fmt.Errorf("get live release: %w", err)
 	}
-	if check != nil || cp.ReleaseID() == releaseID {
+	if check != nil || live.ReleaseID() == releaseID {
 		return AnnounceResult{}, fmt.Errorf("%w: %s", ErrReleaseIDTaken, releaseID)
 	}
 
@@ -124,59 +124,59 @@ func ReannounceLiveRelease(ctx context.Context, d *Deps) (AnnounceResult, error)
 		return AnnounceResult{}, fmt.Errorf("lock release queue: %w", err)
 	}
 
-	cp, err := u.LiveReleaseRepo().Get(ctx)
+	live, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
 		return AnnounceResult{}, fmt.Errorf("get live release: %w", err)
 	}
-	if cp.ReleaseID() == "" && cp.Topology().IsZero() {
+	if live.ReleaseID() == "" && live.Topology().IsZero() {
 		return AnnounceResult{}, ErrNoLiveRelease
 	}
-	if cp.Topology().IsZero() {
-		return AnnounceResult{}, fmt.Errorf("live release %s references no topology artifact", cp.ReleaseID())
+	if live.Topology().IsZero() {
+		return AnnounceResult{}, fmt.Errorf("live release %s references no topology artifact", live.ReleaseID())
 	}
-	seq, err := reannounce(ctx, u, cp, d.Clock.Now())
+	seq, err := reannounce(ctx, u, live, d.Clock.Now())
 	if err != nil {
 		return AnnounceResult{}, err
 	}
 	if err := u.Commit(); err != nil {
 		return AnnounceResult{}, fmt.Errorf("commit: %w", err)
 	}
-	ref := cp.Topology()
-	d.Logger.Info("live release re-announced", "release_id", cp.ReleaseID(), "promotion_seq", seq)
-	return AnnounceResult{ReleaseID: cp.ReleaseID(), PromotionSeq: seq, TopologyURI: ref.URI, TopologySHA256: ref.SHA256}, nil
+	ref := live.Topology()
+	d.Logger.Info("live release re-announced", "release_id", live.ReleaseID(), "promotion_seq", seq)
+	return AnnounceResult{ReleaseID: live.ReleaseID(), PromotionSeq: seq, TopologyURI: ref.URI, TopologySHA256: ref.SHA256}, nil
 }
 
 // LiveReleaseTopology returns the live release's topology, or
 // ErrNoLiveRelease when nothing has been promoted.
 func LiveReleaseTopology(ctx context.Context, d *Deps) (release.Topology, error) {
-	cp, err := d.NewUoW().LiveReleaseRepo().Get(ctx)
+	live, err := d.NewUoW().LiveReleaseRepo().Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get live release: %w", err)
 	}
-	if cp.ReleaseID() == "" && cp.Topology().IsZero() {
+	if live.ReleaseID() == "" && live.Topology().IsZero() {
 		return nil, ErrNoLiveRelease
 	}
-	return loadProdTopology(ctx, d, cp)
+	return loadProdTopology(ctx, d, live)
 }
 
-// reannounce takes the next promotion seq, records it on cp, persists cp and
-// queues release.promoted:v1 for cp's release and artifact. A re-announcement
+// reannounce takes the next promotion seq, records it on live, persists live and
+// queues release.promoted:v1 for live's release and artifact. A re-announcement
 // changes nothing but the seq, so it names no changed node, no candidate
 // schema and no code bundle.
-func reannounce(ctx context.Context, u uow.UnitOfWork, cp *release.LiveRelease, now time.Time) (int64, error) {
+func reannounce(ctx context.Context, u uow.UnitOfWork, live *release.LiveRelease, now time.Time) (int64, error) {
 	seq, err := u.PromotionSequenceRepo().Next(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("take promotion seq: %w", err)
 	}
-	if err := cp.Reannounce(seq); err != nil {
+	if err := live.Reannounce(seq); err != nil {
 		return 0, fmt.Errorf("re-announce live release: %w", err)
 	}
-	if err := u.LiveReleaseRepo().Upsert(ctx, cp); err != nil {
+	if err := u.LiveReleaseRepo().Upsert(ctx, live); err != nil {
 		return 0, fmt.Errorf("upsert live release: %w", err)
 	}
-	ref := cp.Topology()
+	ref := live.Topology()
 	if err := enqueueReleasePromoted(ctx, u, events.ReleasePromoted{
-		ReleaseID:      cp.ReleaseID(),
+		ReleaseID:      live.ReleaseID(),
 		PromotedAt:     now.UTC(),
 		PromotionSeq:   seq,
 		TopologyURI:    ref.URI,

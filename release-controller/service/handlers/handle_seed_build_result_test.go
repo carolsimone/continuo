@@ -433,8 +433,8 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotesDirect(t *testing.T) {
 	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 
 	// Verify the live release was updated
-	cp := store.GetLiveRelease()
-	assert.Equal(t, releaseID, cp.ReleaseID())
+	live := store.GetLiveRelease()
+	assert.Equal(t, releaseID, live.ReleaseID())
 }
 
 func TestHandleSeedBuildResult_EmptyAfterExclusionPromotePayloadCarriesCandidateSchema(t *testing.T) {

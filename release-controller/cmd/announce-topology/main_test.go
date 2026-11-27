@@ -20,7 +20,7 @@ import (
 type fakeAnnouncer struct {
 	releaseID string
 	topo      release.Topology
-	current   release.Topology
+	live      release.Topology
 	result    handlers.AnnounceResult
 	err       error
 }
@@ -30,12 +30,12 @@ func (f *fakeAnnouncer) Announce(_ context.Context, releaseID string, topo relea
 	return f.result, f.err
 }
 
-func (f *fakeAnnouncer) ReannounceCurrent(context.Context) (handlers.AnnounceResult, error) {
+func (f *fakeAnnouncer) ReannounceLive(context.Context) (handlers.AnnounceResult, error) {
 	return f.result, f.err
 }
 
-func (f *fakeAnnouncer) CurrentTopology(context.Context) (release.Topology, error) {
-	return f.current, f.err
+func (f *fakeAnnouncer) LiveTopology(context.Context) (release.Topology, error) {
+	return f.live, f.err
 }
 
 func runWith(t *testing.T, a *fakeAnnouncer, stdin string, args ...string) (int, string, string) {
@@ -103,8 +103,8 @@ func TestCheck_ErrorExitCodes(t *testing.T) {
 	assert.Empty(t, stdout)
 }
 
-func TestCheck_PrintsTheCurrentTopology(t *testing.T) {
-	a := &fakeAnnouncer{current: release.Topology{
+func TestCheck_PrintsTheLiveTopology(t *testing.T) {
+	a := &fakeAnnouncer{live: release.Topology{
 		{UniqueID: "a", ProjectName: "svc", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{}},
 	}}
 	code, stdout, _ := runWith(t, a, "", "--print-live")

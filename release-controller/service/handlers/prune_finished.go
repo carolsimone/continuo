@@ -16,7 +16,7 @@ func PruneFinishedChecks(ctx context.Context, d *Deps, retentionDays int) (int, 
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	cp, err := u.LiveReleaseRepo().Get(ctx)
+	live, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("get live release: %w", err)
 	}
@@ -28,8 +28,8 @@ func PruneFinishedChecks(ctx context.Context, d *Deps, retentionDays int) (int, 
 
 	// Collect all release IDs that must not be deleted.
 	seen := map[string]struct{}{}
-	if cp != nil && cp.ReleaseID() != "" {
-		seen[cp.ReleaseID()] = struct{}{}
+	if live != nil && live.ReleaseID() != "" {
+		seen[live.ReleaseID()] = struct{}{}
 	}
 	for _, pointer := range pointers {
 		if pointer.ReleaseID() != "" {

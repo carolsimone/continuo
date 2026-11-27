@@ -54,8 +54,8 @@ func (c *LiveReleaseRepository) Get(ctx context.Context) (*release.LiveRelease, 
 
 // Upsert records the live release. The singleton id=1 row is
 // inserted on the first promotion and updated on every later write.
-func (c *LiveReleaseRepository) Upsert(ctx context.Context, cp *release.LiveRelease) error {
-	ref := cp.Topology()
+func (c *LiveReleaseRepository) Upsert(ctx context.Context, live *release.LiveRelease) error {
+	ref := live.Topology()
 	_, err := c.q.ExecContext(ctx,
 		`INSERT INTO live_release (id, release_id, topology_uri, topology_sha256, node_count, promotion_seq, updated_at)
 		 VALUES (1, $1, $2, $3, $4, $5, $6)
@@ -66,12 +66,12 @@ func (c *LiveReleaseRepository) Upsert(ctx context.Context, cp *release.LiveRele
 		   node_count = EXCLUDED.node_count,
 		   promotion_seq = EXCLUDED.promotion_seq,
 		   updated_at = EXCLUDED.updated_at`,
-		cp.ReleaseID(),
+		live.ReleaseID(),
 		sql.NullString{String: ref.URI, Valid: ref.URI != ""},
 		sql.NullString{String: ref.SHA256, Valid: ref.SHA256 != ""},
 		sql.NullInt64{Int64: int64(ref.NodeCount), Valid: !ref.IsZero()},
-		cp.PromotionSeq(),
-		cp.UpdatedAt())
+		live.PromotionSeq(),
+		live.UpdatedAt())
 	if err != nil {
 		return fmt.Errorf("upsert live_release: %w", err)
 	}

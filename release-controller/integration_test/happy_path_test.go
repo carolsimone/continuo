@@ -124,9 +124,9 @@ func TestIntegration_HappyPath(t *testing.T) {
 	w = httptest.NewRecorder()
 	srv.Routes().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	var cp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cp))
-	assert.Equal(t, "rA", cp["live_release_id"])
+	var live map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &live))
+	assert.Equal(t, "rA", live["live_release_id"])
 
 	// 6. service-1 has a production pointer.
 	var pointerCount int

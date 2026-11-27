@@ -16,11 +16,11 @@ import (
 func TestLiveReleaseRepository_GetEmptyReturnsZeroValue(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewLiveReleaseRepository(db)
-	cp, err := repo.Get(context.Background())
+	live, err := repo.Get(context.Background())
 	require.NoError(t, err)
-	assert.Empty(t, cp.ReleaseID())
-	assert.True(t, cp.Topology().IsZero())
-	assert.Equal(t, int64(0), cp.PromotionSeq())
+	assert.Empty(t, live.ReleaseID())
+	assert.True(t, live.Topology().IsZero())
+	assert.Equal(t, int64(0), live.PromotionSeq())
 }
 
 func TestLiveReleaseRepository_UpsertAndGet(t *testing.T) {

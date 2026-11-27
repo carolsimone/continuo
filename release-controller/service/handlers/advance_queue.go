@@ -98,7 +98,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	// A fresh install (nothing promoted, so no live release) is unaffected:
 	// there are no live projects to drop, so the first bootstrap release
 	// proceeds normally.
-	cp, err := u.LiveReleaseRepo().Get(ctx)
+	live, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get live release: %w", err)
 	}
@@ -126,8 +126,8 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		}
 		return AdvanceQueue(ctx, d)
 	}
-	if cp != nil && cp.ReleaseID() != "" {
-		prod, err := loadProdTopology(ctx, d, cp)
+	if live != nil && live.ReleaseID() != "" {
+		prod, err := loadProdTopology(ctx, d, live)
 		if err != nil {
 			return err
 		}

@@ -124,13 +124,13 @@ This release adds three values keys, `agentRemediation.workflows.files`, `contra
   - release-controller's internal API: a fix's release check is posted to `POST /release-checks` and read at `GET /release-checks/{id}` and `GET /release-checks?verifies=<release_id>` (`{"checks": [...]}`), and the release check in flight at `GET /release-queue`. Each names the check with `check_id`, and `GET /release-queue` its kind with `check_kind`.
   - agent-remediation's gRPC `Proposal` carries `release_check_id` and `release_checks` (messages `ReleaseCheck`). The ui's API answers at `/api/release-checks/:id`, `/api/releases/:id/release-checks` and `/api/release-queue`, and a fix's release check has its page at `/release-checks/<id>`.
   - The release database keeps every release check in `release_checks` (`check_id`, `check_kind`), and agent-remediation's attempt rows carry `release_check_id` and `release_checks`. The install starts with empty databases (see above).
-
-### Added
-
 - **The release the install runs on is its live release, and each project's record of what production runs is its production pointer.** TL;DR: the public API serves the live release at `GET /api/v1/live-release`, naming it `live_release_id`. A CI script that reads the earlier route gets a 404 until it reads this one. Nothing reads the old names.
   - The public API: `GET /api/v1/live-release` answers `{"live_release_id", "node_count", "updated_at"}`. The ui's own API serves it at `GET /api/releases/live-release`, and release-controller's internal API at `GET /live-release`.
   - The release database keeps the live release in `live_release` and each project's production pointer in `production_pointers`. The install starts with empty databases (see above).
   - Tools in the release-controller image: `seed-production-pointers` writes the production pointers of an install whose live release has none, and `announce-topology --reannounce-live` and `--print-live` act on the live release's topology.
+
+### Added
+
 - **A runner system failure is dead-lettered, and a redrive resumes it.** TL;DR: a system failure also dead-letters the remediation's heal trigger on `consumer.dead_letter:v1`, and the attempt row's reason says so. Fix the cause, then redrive the dead letter with `continuo dlq`: the same remediation goes on from the try and step it stopped at, and a step that already finished does not run again. A redrive of a round that "Try again" already replaced starts nothing.
 - **The release page says why a node was handed to a human.** TL;DR: each failing node remediation does not fix carries a reason code, and the FIX cell says what it means and what to do, with the node's own message behind `more`.
   - The codes are `tries_spent`, `unverifiable_edits`, `preflight_rounds_spent`, `declined`, `no_type`, `no_repository`, `classifier_infra` and `classifier_unhealable_parse`. Each node outcome that agent-remediation's `remediation.v1.RemediationProposals` returns carries its code as `code`.

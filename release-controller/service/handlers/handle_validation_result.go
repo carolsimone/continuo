@@ -170,12 +170,12 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		return fmt.Errorf("lock release queue: %w", err)
 	}
 
-	cp, err := u.LiveReleaseRepo().Get(ctx)
+	live, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get live release: %w", err)
 	}
-	// Computed against the production topology BEFORE cp.Update replaces it.
-	changed, err := changedSincePromotion(ctx, d, r, cp)
+	// Computed against the production topology BEFORE live.Update replaces it.
+	changed, err := changedSincePromotion(ctx, d, r, live)
 	if err != nil {
 		return err
 	}
@@ -184,10 +184,10 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	if err != nil {
 		return fmt.Errorf("take promotion seq: %w", err)
 	}
-	if err := cp.Update(releaseID, ref, seq, now); err != nil {
+	if err := live.Update(releaseID, ref, seq, now); err != nil {
 		return fmt.Errorf("move live release: %w", err)
 	}
-	if err := u.LiveReleaseRepo().Upsert(ctx, cp); err != nil {
+	if err := u.LiveReleaseRepo().Upsert(ctx, live); err != nil {
 		return fmt.Errorf("upsert live release: %w", err)
 	}
 
