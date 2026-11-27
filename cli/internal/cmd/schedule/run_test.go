@@ -42,9 +42,21 @@ type fakeRunController struct {
 	buildErr             error
 	gotBuildScheduleName string
 	gotBuildActor        string
+
+	// delay holds every start command for that long after it is received,
+	// and calledAt is when the last one was received.
+	delay    time.Duration
+	calledAt time.Time
+}
+
+// received records when a start command arrived and holds it for f.delay.
+func (f *fakeRunController) received() {
+	f.calledAt = time.Now()
+	time.Sleep(f.delay)
 }
 
 func (f *fakeRunController) StartScheduleRun(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+	f.received()
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotScheduleName = name
 	f.gotStartActor = actor
@@ -52,6 +64,7 @@ func (f *fakeRunController) StartScheduleRun(_ context.Context, requestID, name,
 }
 
 func (f *fakeRunController) StartScheduleTest(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+	f.received()
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTestScheduleName = name
 	f.gotTestActor = actor
@@ -59,6 +72,7 @@ func (f *fakeRunController) StartScheduleTest(_ context.Context, requestID, name
 }
 
 func (f *fakeRunController) StartScheduleBuild(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+	f.received()
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotBuildScheduleName = name
 	f.gotBuildActor = actor
@@ -139,6 +153,30 @@ func TestScheduleRun_SuccessEmitsJSON(t *testing.T) {
 	_, err := time.Parse(time.RFC3339, payload["requested_at"])
 	assert.NoError(t, err, "requested_at must be RFC3339")
 	assert.Equal(t, "daily_ingest", fake.gotScheduleName)
+}
+
+// requested_at is when the command asked for the run: a run-controller that
+// takes longer than a second to answer does not move it past the moment the
+// command was sent.
+func TestScheduleStartCommands_RequestedAtIsWhenTheCommandAsked(t *testing.T) {
+	ok := &runv1.StartRunResponse{RunId: "r1"}
+	for name, start := range map[string]func(t *testing.T, fake client.RunClient, args []string, human bool) (string, string, int){
+		"run":   run,
+		"test":  runTest,
+		"build": runBuild,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeRunController{resp: ok, testResp: ok, buildResp: ok, delay: 1100 * time.Millisecond}
+			stdout, _, exit := start(t, fake, []string{"daily_ingest"}, false)
+			require.Equal(t, 0, exit)
+			var payload map[string]string
+			require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+			requestedAt, err := time.Parse(time.RFC3339, payload["requested_at"])
+			require.NoError(t, err)
+			assert.False(t, requestedAt.After(fake.calledAt.Truncate(time.Second)),
+				"requested_at %s is after the command reached run-controller at %s", requestedAt, fake.calledAt)
+		})
+	}
 }
 
 func TestScheduleRun_NotFoundExits3(t *testing.T) {

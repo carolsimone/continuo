@@ -65,6 +65,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
+			requestedAt := time.Now().UTC()
 			resp, err := c.StartScheduleRun(ctx, client.RequestID(), scheduleName, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
@@ -76,7 +77,7 @@ Errors:
 			payload := map[string]string{
 				"run_id":        resp.GetRunId(),
 				"schedule_name": scheduleName,
-				"requested_at":  time.Now().UTC().Format(time.RFC3339),
+				"requested_at":  requestedAt.Format(time.RFC3339),
 			}
 			return output.EmitSuccess(stdout, payload)
 		},
