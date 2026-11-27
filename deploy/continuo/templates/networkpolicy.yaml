@@ -252,7 +252,7 @@ spec:
         - port: 8088
 ---
 # release-controller reaches agent-remediation's gRPC server (port 50054) to
-# read remediation attempts before starting a retry round (RetryRemediation →
+# read the tries of a remediation before starting a retry round (RetryRemediation →
 # ListFixes). allow-ui-upstreams admits only ui to this port, so without
 # this edge a "try again" on a rejected release fails with
 # fix_reader_unavailable.

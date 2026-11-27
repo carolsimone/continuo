@@ -67,10 +67,10 @@ const (
 //	POST /releases (service-2; ftable_e and ftable_k are both new)
 //	→ validation fails on both nodes → release "rejected"
 //	→ ONE heal.triggered:v1 carrying both nodes, each with no changed ancestor
-//	→ ONE fix row for the release (attempt 1) holding TWO file edits,
+//	→ ONE fix row for the release (try 1) holding TWO file edits,
 //	  each naming the node whose source it repairs
 //	→ ONE dbt release check (both edits belong to service-2) that passes
-//	→ the runner's gate poller reads the verdict and the attempt moves
+//	→ the runner's gate poller reads the verdict and the try moves
 //	  verifying → proposed
 //	→ ONE fix.proposed:v1
 //	→ ONE pull request, titled for the two nodes it fixes
@@ -160,7 +160,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 
 	// 4. ONE trigger for the release, carrying BOTH failing nodes. This is the
 	//    batching contract at its source: the classifier emits per release, not
-	//    per node, so a second message here would mean two attempts, two
+	//    per node, so a second message here would mean two tries, two
 	//    fixes and two pull requests downstream.
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID,
 		[]string{ftableEUniqueID, ftableKUniqueID}, batchTriggerBudget)
@@ -186,16 +186,16 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	//    the lowest resolved id, so the row is addressed by ftable_e.
 	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
 	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID),
-		"one release yields one attempt, not one per failing node")
+		"one release yields one try, not one per failing node")
 
 	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
 	require.Equal(t, []string{ftableEUniqueID, ftableKUniqueID}, resolved,
-		"the attempt must address the release's whole failing set")
+		"the try must address the release's whole failing set")
 
 	outcomes := decodeNodeOutcomes(t, row.NodeOutcomes)
 	for _, nodeID := range resolved {
 		require.Equal(t, "proposed", outcomes[nodeID].Status,
-			"every node the verified attempt resolved must end 'proposed'; node_outcomes=%s", row.NodeOutcomes)
+			"every node the verified try resolved must end 'proposed'; node_outcomes=%s", row.NodeOutcomes)
 	}
 
 	// 6. Two edits, one per broken model, each naming the node it repairs. The
@@ -214,11 +214,11 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	}, targetsByPath, "each edit must name the node whose source it changes")
 
 	// 7. Both edits belong to service-2, so ONE release check verified the
-	//    whole attempt — and it really ran: the release queue names it while it is
+	//    whole try — and it really ran: the release queue names it while it is
 	//    active, it reaches 'passed', and it is never readable as a release.
 	releaseChecks := decodeReleaseChecks(t, row.ReleaseChecks)
 	require.Len(t, releaseChecks, 1,
-		"both files belong to service-2, so one release check judged the attempt; got %+v", releaseChecks)
+		"both files belong to service-2, so one release check judged the try; got %+v", releaseChecks)
 	require.Equal(t, "dbt", releaseChecks[0].Kind, "a dbt model's fix is verified under a dbt manifest")
 	require.Equal(t, changedProject, releaseChecks[0].Project, "release check project")
 	require.NotEmpty(t, releaseChecks[0].CheckID, "a release check entry must name the check that judged it")
@@ -230,7 +230,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	// 8. ONE announcement, carrying the same batched view as the row.
 	proposed := waitForBatchProposedEvent(t, ctx, proposedTap, releaseID, batchEventBudget)
 	require.Len(t, proposedEventsForRelease(t, proposedTap, releaseID), 1,
-		"one verified attempt announces itself once")
+		"one verified try announces itself once")
 	require.Equal(t, []string{ftableEUniqueID, ftableKUniqueID}, proposed.ResolvedNodeIDs,
 		"%s must announce the whole resolved set", streams.FixProposedV1)
 	require.Len(t, proposed.Edits, 2, "the announcement must carry both file edits; got %+v", proposed.Edits)
@@ -248,10 +248,10 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 		"a batched pull request must name how many nodes it fixes and the project it was opened for")
 	t.Logf("✅ one pull request #%d: %q", pr.Number, pr.Title)
 
-	// 10. Opening the pull request must not have minted a second attempt: the
+	// 10. Opening the pull request must not have minted a second try: the
 	//     release is still one fix, reviewed once.
 	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID),
-		"no second fix row may appear for a release whose single attempt was accepted")
+		"no second fix row may appear for a release whose single try was accepted")
 }
 
 // TestE2E_BatchedRemediation_SharedUpstreamFixedOnce proves that failures with
@@ -399,11 +399,11 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	//    node that never appeared in the failing set.
 	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
 	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID),
-		"one release yields one attempt")
+		"one release yields one try")
 
 	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
 	require.Equal(t, []string{ftableVUniqueID, ftableWUniqueID}, resolved,
-		"the attempt resolves the failing descendants, not the ancestor it edits")
+		"the try resolves the failing descendants, not the ancestor it edits")
 
 	outcomes := decodeNodeOutcomes(t, row.NodeOutcomes)
 	for _, nodeID := range resolved {
@@ -497,7 +497,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 		MATCH (p:Fix {tenant_id: 'default', fix_id: $fix_id})-[e:EDITED]->(t:Node {tenant_id: 'default'})
 		RETURN t.unique_id AS unique_id, e.amended AS amended`,
 		map[string]any{"fix_id": row.ID})
-	require.Len(t, editRows, 1, "the shared-upstream attempt drew one EDITED edge, to the ancestor it repaired; got %+v", editRows)
+	require.Len(t, editRows, 1, "the shared-upstream try drew one EDITED edge, to the ancestor it repaired; got %+v", editRows)
 	require.Equal(t, ftableUUniqueID, editRows[0]["unique_id"], "EDITED must target the changed ancestor, not either failing descendant")
 	require.Equal(t, false, editRows[0]["amended"], "an as-proposed merge's EDITED edge must carry amended=false")
 	t.Logf("✅ provenance confirmed: 2 RESOLVED_BY edges (amended=false), EDITED -> %s (amended=false), pr_state=merged",
@@ -521,7 +521,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 //	POST /releases (service-2; ftable_e and ftable_g both held back from the live release)
 //	→ validation fails on both nodes → release "rejected"
 //	→ ONE heal.triggered:v1 carrying both nodes
-//	→ ONE fix row (attempt 1) holding TWO file edits, one per project
+//	→ ONE fix row (try 1) holding TWO file edits, one per project
 //	→ TWO dbt release checks (one per edited project) that both pass
 //	→ ONE fix.proposed:v1
 //	→ POST /fixes/:id/pull-request opens TWO pull requests, distinct
@@ -629,11 +629,11 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	// 5. ONE fix for the release, TWO independent edits.
 	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
 	require.Equal(t, 1, countFixesForRelease(t, ctx, clients, releaseID),
-		"one release yields one attempt, even split across two projects")
+		"one release yields one try, even split across two projects")
 
 	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
 	require.Equal(t, []string{ftableEUniqueID, ftableGUniqueID}, resolved,
-		"the attempt must address the release's whole cross-project failing set")
+		"the try must address the release's whole cross-project failing set")
 
 	edits := decodeFileEdits(t, row.FileEdits)
 	require.Len(t, edits, 2, "two independent cross-project failures are repaired in two files; got %+v", edits)
@@ -817,7 +817,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 
 	row := waitForBatchFix(t, ctx, clients, releaseID, 1, "proposed", batchFixBudget)
 	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
-	require.Equal(t, []string{ftableEUniqueID}, resolved, "the attempt must resolve exactly ftable_e")
+	require.Equal(t, []string{ftableEUniqueID}, resolved, "the try must resolve exactly ftable_e")
 
 	edits := decodeFileEdits(t, row.FileEdits)
 	require.Len(t, edits, 1, "one failure is repaired by one edit; got %+v", edits)
@@ -888,16 +888,16 @@ FROM e2e_schema.ftable_c c`
 	t.Logf("✅ amended-merge provenance confirmed: rb.amended=true, ed.amended=true, pr_state=merged")
 }
 
-// batchFixRow is the batched view of a fix row: the set the attempt
+// batchFixRow is the batched view of a fix row: the set the try
 // addressed, each node's outcome, every file it changed, and every
 // release check that judged it. The single-node projection is fixRow;
-// a batched attempt cannot be read through that one, because its scalar
+// a batched try cannot be read through that one, because its scalar
 // node_id and file_path columns hold only a representative.
 type batchFixRow struct {
 	ID              string `db:"id"`
 	NodeID          string `db:"node_id"`
 	Status          string `db:"status"`
-	Attempt         int    `db:"attempt"`
+	Try         int    `db:"try"`
 	Repo            string `db:"repo"`
 	VerifyError     string `db:"verify_error"`
 	ResolvedNodeIDs []byte `db:"resolved_node_ids"`
@@ -907,41 +907,41 @@ type batchFixRow struct {
 }
 
 // waitForBatchFix polls the agent-remediation's fix table until the
-// release's given attempt reaches want, and returns the row. It is addressed by
-// (release, attempt) rather than by node, because one attempt now covers a whole
+// release's given try reaches want, and returns the row. It is addressed by
+// (release, try) rather than by node, because one try now covers a whole
 // failing set and no single node identifies it. Every status change is logged,
-// so an attempt that stalls in 'generating' or 'verifying' is distinguishable
+// so a try that stalls in 'generating' or 'verifying' is distinguishable
 // from one that was never created — pollUntil's message is built before any
 // polling and cannot carry that.
 func waitForBatchFix(
 	t *testing.T, ctx context.Context, clients *testClients,
-	releaseID string, attempt int, want string, timeout time.Duration,
+	releaseID string, try int, want string, timeout time.Duration,
 ) batchFixRow {
 	t.Helper()
 	var row batchFixRow
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row, `
-			SELECT id, node_id, status, attempt, repo, verify_error,
+			SELECT id, node_id, status, try, repo, verify_error,
 			       resolved_node_ids, node_outcomes, file_edits, release_checks
 			  FROM fix
-			 WHERE release_id = $1 AND attempt = $2`,
-			releaseID, attempt)
+			 WHERE release_id = $1 AND try = $2`,
+			releaseID, try)
 		if err != nil {
 			return false, nil
 		}
 		if row.Status != last {
-			t.Logf("fix %s attempt %d: status=%s node_id=%s", releaseID, attempt, row.Status, row.NodeID)
+			t.Logf("fix %s try %d: status=%s node_id=%s", releaseID, try, row.Status, row.NodeID)
 			last = row.Status
 		}
 		return row.Status == want, nil
-	}, fmt.Sprintf("timeout waiting for release %s attempt %d to reach %q (see the logged status changes above)",
-		releaseID, attempt, want))
+	}, fmt.Sprintf("timeout waiting for release %s try %d to reach %q (see the logged status changes above)",
+		releaseID, try, want))
 	return row
 }
 
 // countFixesForRelease returns how many fix rows exist for a release.
-// A batched release is one attempt: this is what proves the failing set was not
+// A batched release is one try: this is what proves the failing set was not
 // silently fanned back out into one fix — and one pull request — per node.
 func countFixesForRelease(t *testing.T, ctx context.Context, clients *testClients, releaseID string) int {
 	t.Helper()
@@ -952,7 +952,7 @@ func countFixesForRelease(t *testing.T, ctx context.Context, clients *testClient
 }
 
 // nodeOutcomeEntry mirrors one value of the fix's node_outcomes column:
-// how the attempt ended for one of the nodes it addressed.
+// how the try ended for one of the nodes it addressed.
 type nodeOutcomeEntry struct {
 	Status string `json:"status"`
 	Reason string `json:"reason"`
@@ -1039,14 +1039,14 @@ type proposedEdit struct {
 }
 
 // batchProposedPayload is the batched projection of fix.proposed:v1:
-// the whole set the attempt resolved and every file it changed. The single-node
+// the whole set the try resolved and every file it changed. The single-node
 // projection of the same event is fixProposedPayload, which does not
 // decode the edits array.
 type batchProposedPayload struct {
 	ReleaseID       string         `json:"release_id"`
 	NodeID          string         `json:"node_id"`
 	ResolvedNodeIDs []string       `json:"resolved_node_ids"`
-	Attempt         int            `json:"attempt"`
+	Try         int            `json:"try"`
 	Edits           []proposedEdit `json:"edits"`
 }
 

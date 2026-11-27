@@ -38,7 +38,7 @@ const makeFix = (overrides: Partial<FixDTO> = {}): FixDTO => ({
   release_id: 'rel-abc',
   node_id: 'svc.schema.my_model',
   error_signature: 'syntax error',
-  attempt: 1,
+  try: 1,
   status: 'proposed',
   confidence: 'high',
   rationale: 'The fix addresses the syntax issue.',

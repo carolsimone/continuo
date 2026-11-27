@@ -362,7 +362,7 @@ describe('ReleaseDetailPage — verify chip: queued vs running', () => {
     expect(screen.queryByText('Queued for its release check')).not.toBeInTheDocument();
   });
 
-  it('falls back to "Checking the fix…" when the attempt carries no recorded release check phase', async () => {
+  it('falls back to "Checking the fix…" when the try carries no recorded release check phase', async () => {
     vi.useFakeTimers();
     const fixes = { current: [{ release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'verifying' }] };
     vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, fixes));

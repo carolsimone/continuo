@@ -27,10 +27,10 @@ export function releasePillClass(status: string): string {
   return 'pill--pending';
 }
 
-// fixPillClass maps a remediation attempt's lifecycle status to a pill
-// variant. The attempt vocabulary (proposed/verifying/generating/failed/
+// fixPillClass maps a remediation try's lifecycle status to a pill
+// variant. The try vocabulary (proposed/verifying/generating/failed/
 // escalated/skipped) is distinct from the release one, so each status is
-// mapped on purpose: a proposed fix is the good outcome (green), an attempt
+// mapped on purpose: a proposed fix is the good outcome (green), a try
 // still being verified is in progress (the running hue), one still being
 // generated is waiting (grey), and both failed and escalated are dead ends
 // that need a human (red). Anything else falls back to releasePillClass.
@@ -119,28 +119,28 @@ export function fixKey(stage: string, nodeId: string): string {
   return `${stage}|${nodeId}`;
 }
 
-// fixNodeIds lists every failing node one remediation attempt addresses.
-// A batched attempt carries resolved_node_ids; a legacy single-node fix
+// fixNodeIds lists every failing node one remediation try addresses.
+// A batched try carries resolved_node_ids; a legacy single-node fix
 // (or one from before batching existed) has none, so its representative
 // node_id is the sole member.
 export function fixNodeIds(p: FixDTO): string[] {
   return p.resolved_node_ids && p.resolved_node_ids.length > 0 ? p.resolved_node_ids : [p.node_id];
 }
 
-// fixStatusForNode reads how a batched attempt ended for one specific
+// fixStatusForNode reads how a batched try ended for one specific
 // node, falling back to the fix's overall status for a legacy row or a
-// node the attempt did not record a separate outcome for.
+// node the try did not record a separate outcome for.
 export function fixStatusForNode(p: FixDTO, nodeId: string): string {
   return p.node_outcomes?.[nodeId]?.status ?? p.status;
 }
 
-// fixReasonForNode reads why a batched attempt ended that way for one
+// fixReasonForNode reads why a batched try ended that way for one
 // specific node, falling back to the fix's overall rationale.
 export function fixReasonForNode(p: FixDTO, nodeId: string): string {
   return p.node_outcomes?.[nodeId]?.reason ?? p.rationale;
 }
 
-// fixCodeForNode reads the handover_reason a batched attempt handed one
+// fixCodeForNode reads the handover_reason a batched try handed one
 // specific node over for. It reads only that node's own outcome: a fix
 // describes several nodes, so no fix-level value stands in for it. An
 // absent or empty code, and a value that is not a known reason, read as
@@ -150,9 +150,9 @@ export function fixCodeForNode(p: FixDTO, nodeId: string): HandoverReason | unde
   return code && (HANDOVER_REASONS as readonly string[]).includes(code) ? code : undefined;
 }
 
-// fixApproverForNode reads who must approve what a batched attempt did
-// with one specific node. It reads only that node's own entry: an attempt row
-// with no remediation id records none, and a node the attempt recorded no
+// fixApproverForNode reads who must approve what a batched try did
+// with one specific node. It reads only that node's own entry: a try row
+// with no remediation id records none, and a node the try recorded no
 // approver for has none either, which says the owner was not recorded, not that
 // the node has no owner (an entry with an empty owner says that).
 export function fixApproverForNode(p: FixDTO, nodeId: string): ApproverDTO | undefined {
@@ -210,12 +210,12 @@ export function releaseCheckPhase(status: string): 'queued' | 'running' | 'passe
   }
 }
 
-// attemptReleaseCheckPhase decides whether the release check of an attempt
+// tryReleaseCheckPhase decides whether the release check of a try
 // in 'verifying' is running now or still waiting its turn, from the phases
 // agent-remediation recorded on its release checks. Running wins. Queued needs positive
 // evidence. Anything else (no phase recorded yet, or only verdicts) is
 // undefined so the chip keeps its flat wording rather than claiming a wait.
-export function attemptReleaseCheckPhase(p: FixDTO): 'queued' | 'running' | undefined {
+export function tryReleaseCheckPhase(p: FixDTO): 'queued' | 'running' | undefined {
   let sawQueued = false;
   for (const v of p.release_checks ?? []) {
     if (v.phase === 'running') return 'running';
@@ -233,22 +233,48 @@ export function effectiveRound(p: FixDTO): number {
   return p.remediation_round && p.remediation_round > 0 ? p.remediation_round : 1;
 }
 
-// FixGroup aggregates every remediation attempt for one (release, round):
-// the attempts newest first, the union of the projects they touch and the
-// nodes they resolve, the newest attempt's status, and the newest attempt
+// HAND_OVER_TRY is the try number of a round's hand-over row: the escalated
+// row written once the round's tries are spent, which is no try of its own.
+export const HAND_OVER_TRY = 0;
+
+// tryLabel names a try by its round and its number in that round,
+// "round 2, try 1". A round of 0 or none reads as round 1 (effectiveRound),
+// and the round's hand-over row reads "round 2, hand-over".
+export function tryLabel(round: number | undefined, tryNumber: number): string {
+  const r = round && round > 0 ? round : 1;
+  return tryNumber === HAND_OVER_TRY ? `round ${r}, hand-over` : `round ${r}, try ${tryNumber}`;
+}
+
+// tryBefore reports whether try a was made before try b: an earlier round, or
+// an earlier try of the same round, the round's hand-over row coming after
+// every try of its round.
+export function tryBefore(
+  a: { remediation_round?: number; try: number },
+  b: { remediation_round?: number; try: number },
+): boolean {
+  const ra = a.remediation_round && a.remediation_round > 0 ? a.remediation_round : 1;
+  const rb = b.remediation_round && b.remediation_round > 0 ? b.remediation_round : 1;
+  if (ra !== rb) return ra < rb;
+  const rank = (t: number) => (t === HAND_OVER_TRY ? Number.POSITIVE_INFINITY : t);
+  return rank(a.try) < rank(b.try);
+}
+
+// FixGroup aggregates every remediation try for one (release, round):
+// the tries newest first, the union of the projects they touch and the
+// nodes they resolve, the newest try's status, and the newest try
 // that carries a pull request.
 export interface FixGroup {
   key: string;
   releaseId: string;
   round: number;
-  attempts: FixDTO[];       // newest first
-  latest: FixDTO;           // attempts[0]
+  tries: FixDTO[];               // newest first
+  latest: FixDTO;                // tries[0]
   projects: string[];            // see fixProjects; union, sorted
   nodeIds: string[];             // resolved-node union, sorted
   latestPrFix: FixDTO | null;
 }
 
-// fixProjects lists the projects one attempt touched, as recorded by
+// fixProjects lists the projects one try touched, as recorded by
 // agent-remediation on the fix itself: the failing nodes' projects plus
 // the edited ones — the same set the server's `project` list filter matches
 // a fix on, so the Projects column and the filter agree. A remediation
@@ -264,10 +290,10 @@ export function fixProjects(p: FixDTO): string[] {
 }
 
 // groupFixes buckets fixes by (release_id, remediation round), newest
-// group first by its latest attempt. Within a group the attempts are newest
-// first (created_at, then attempt number). `projects` unions each attempt's
+// group first by its latest try. Within a group the tries are newest
+// first (created_at, then tryBefore). `projects` unions each try's
 // fixProjects; `nodeIds` unions their resolved nodes; `latestPrFix`
-// is the newest attempt that has opened a pull request, or null when none
+// is the newest try that has opened a pull request, or null when none
 // has.
 export function groupFixes(fixes: FixDTO[]): FixGroup[] {
   const buckets = new Map<string, FixDTO[]>();
@@ -279,27 +305,27 @@ export function groupFixes(fixes: FixDTO[]): FixGroup[] {
   }
 
   const groups: FixGroup[] = [];
-  for (const [key, attempts] of buckets) {
-    attempts.sort((a, b) => {
+  for (const [key, tries] of buckets) {
+    tries.sort((a, b) => {
       if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
-      return b.attempt - a.attempt;
+      return tryBefore(a, b) ? 1 : tryBefore(b, a) ? -1 : 0;
     });
-    const latest = attempts[0];
+    const latest = tries[0];
 
     const projectSet = new Set<string>();
-    for (const p of attempts) for (const s of fixProjects(p)) projectSet.add(s);
+    for (const p of tries) for (const s of fixProjects(p)) projectSet.add(s);
     const nodeSet = new Set<string>();
-    for (const p of attempts) for (const n of fixNodeIds(p)) nodeSet.add(n);
+    for (const p of tries) for (const n of fixNodeIds(p)) nodeSet.add(n);
 
     groups.push({
       key,
       releaseId: latest.release_id,
       round: effectiveRound(latest),
-      attempts,
+      tries,
       latest,
       projects: Array.from(projectSet).sort(),
       nodeIds: Array.from(nodeSet).sort(),
-      latestPrFix: attempts.find(p => fixPullRequests(p).some(pr => pr.pr_state)) ?? null,
+      latestPrFix: tries.find(p => fixPullRequests(p).some(pr => pr.pr_state)) ?? null,
     });
   }
 

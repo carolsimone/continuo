@@ -19,8 +19,8 @@ import (
 // first round's fix failed directly in the agent's table — the outcome the
 // model reaches when it cannot fix the failure — so the test controls the state
 // without a second LLM fixture. Round 2 then reaches the model again: a new
-// trigger carries remediation_round=2 and the fix continues the attempt
-// numbering. A retry while that fix is open is refused with the link.
+// trigger carries remediation_round=2 and the round numbers its fix try 1.
+// A retry while that fix is open is refused with the link.
 //
 // Each round's fix reaches 'proposed' only after its own release check
 // has compiled and validated the proposed source, so both round waits below
@@ -98,7 +98,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	var round1 retryFixRow
 	pollUntil(t, ctx, 12*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &round1,
-			`SELECT source, release_id, node_id, status, attempt, remediation_round FROM fix
+			`SELECT source, release_id, node_id, status, try, remediation_round FROM fix
 			  WHERE release_id=$1 AND node_id=$2 AND status='proposed'`, releaseID, ftableEUniqueID)
 		return err == nil, nil
 	}, "round-1 fix")
@@ -109,7 +109,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	require.Equal(t, http.StatusConflict, st, "body=%v", body)
 	require.Equal(t, "fix_open", body["error"])
 
-	// 4. Make the release a dead end: the round-1 attempt ends failed.
+	// 4. Make the release a dead end: the round-1 try ends failed.
 	_, err := clients.agentRemediationDB.ExecContext(ctx,
 		`UPDATE fix SET status='failed', rationale='e2e: forced dead end' WHERE release_id=$1`, releaseID)
 	require.NoError(t, err)
@@ -125,16 +125,17 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	require.Equal(t, http.StatusConflict, st, "body=%v", body)
 	require.Equal(t, "retry_in_progress", body["error"])
 
-	// 7. A round-2 trigger reaches the agent and a new fix continues the
-	//    attempt numbering, once its own release check has passed.
+	// 7. A round-2 trigger reaches the agent and a new fix, try 1 of round 2,
+	//    is proposed once its own release check has passed.
 	var round2 retryFixRow
 	pollUntil(t, ctx, 12*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &round2,
-			`SELECT source, release_id, node_id, status, attempt, remediation_round FROM fix
+			`SELECT source, release_id, node_id, status, try, remediation_round FROM fix
 			  WHERE release_id=$1 AND node_id=$2 AND remediation_round=2 AND status='proposed'`, releaseID, ftableEUniqueID)
 		return err == nil, nil
 	}, "round-2 fix")
-	require.Equal(t, round1.Attempt+1, round2.Attempt, "attempt numbering continues across rounds")
+	require.Equal(t, 1, round1.Try, "round 1's first try is try 1")
+	require.Equal(t, 1, round2.Try, "a round numbers its tries from 1")
 
 	var decisions int
 	require.NoError(t, clients.remediationDB.GetContext(ctx, &decisions,
@@ -158,7 +159,7 @@ type retryFixRow struct {
 	ReleaseID        string `db:"release_id"`
 	NodeID           string `db:"node_id"`
 	Status           string `db:"status"`
-	Attempt          int    `db:"attempt"`
+	Try          int    `db:"try"`
 	RemediationRound int    `db:"remediation_round"`
 }
 

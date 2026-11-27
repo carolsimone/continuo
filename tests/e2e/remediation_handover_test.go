@@ -63,13 +63,13 @@ const (
 //	  {reason: classifier_infra, detail: the failure's key error line}
 //	→ catalog records the message and no :Rejection for the node
 //	→ agent-remediation's runner settles the remediation with no step but the
-//	  hand-over: ONE skipped attempt whose node carries code classifier_infra,
+//	  hand-over: ONE skipped try whose node carries code classifier_infra,
 //	  and ONE remediation.handed_over:v1 naming the node with that reason and
 //	  the error line as its message
-//	→ POST /releases/{id}/retry-remediation answers 202: a skipped attempt ends
+//	→ POST /releases/{id}/retry-remediation answers 202: a skipped try ends
 //	  the round, so the retry is not refused as in progress
-//	→ round 2 is classified and handed over the same way, its attempt
-//	  continuing the release's attempt numbering
+//	→ round 2 is classified and handed over the same way, its skipped try
+//	  numbered try 1 of round 2
 func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -153,8 +153,8 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	// 4. The classifier recorded the drop.
 	assertDecision(t, ctx, clients, releaseID, 1)
 
-	// 5. ONE attempt, skipped, whose node carries the classifier's code.
-	assertSkippedAttempt(t, ctx, clients, releaseID, 1, 1, detail)
+	// 5. ONE try, skipped, whose node carries the classifier's code.
+	assertSkippedTry(t, ctx, clients, releaseID, 1, 1, detail)
 
 	// 6. ONE hand-over naming the node with that reason, from a remediation
 	//    that ran no step but the hand-over: no model call, no release check.
@@ -178,13 +178,13 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	require.Empty(t, rejections, "an unfixable node is no precedent, so catalog records no :Rejection for it")
 	t.Log("✅ catalog processed the trigger and recorded no :Rejection for the unfixable node")
 
-	// 8. "Try again" is accepted: the skipped attempt ended round 1.
+	// 8. "Try again" is accepted: the skipped try ended round 1.
 	st, body := postRetry(t, clients, releaseID)
 	require.Equal(t, http.StatusAccepted, st, "body=%v", body)
 	require.EqualValues(t, 2, body["remediation_round"])
 
-	// 9. Round 2 is classified and handed over the same way, and its attempt
-	//    continues the release's attempt numbering.
+	// 9. Round 2 is classified and handed over the same way, and its skipped
+	//    try is try 1 of round 2.
 	var round2 tappedTrigger
 	pollUntil(t, ctx, handoverStageBudget, 2*time.Second, func() (bool, error) {
 		for _, p := range triggersForRelease(t, requestedTap, releaseID) {
@@ -202,7 +202,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	requireErrorLine(t, again.Unfixable.Detail)
 
 	assertDecision(t, ctx, clients, releaseID, 2)
-	assertSkippedAttempt(t, ctx, clients, releaseID, 2, 2, again.Unfixable.Detail)
+	assertSkippedTry(t, ctx, clients, releaseID, 2, 1, again.Unfixable.Detail)
 	assertHandOver(t, ctx, clients, waitForHandOver(t, ctx, handedOverTap, releaseID, 2), releaseID, 2, again.Unfixable.Detail)
 	require.EqualValues(t, 2, getReleaseDetail(t, clients, releaseID)["remediation_round"])
 	t.Logf("✅ release %s: every round hands the unfixable node over, and Try again starts the next", releaseID)
@@ -238,13 +238,13 @@ func assertDecision(t *testing.T, ctx context.Context, clients *testClients, rel
 	require.Equal(t, connectionRefusedRule, decision.Reason)
 }
 
-// assertSkippedAttempt waits for the release's fix of round on the
+// assertSkippedTry waits for the release's fix of round on the
 // agent-remediation fixes API, the surface release-controller and the UI
-// read, and checks that it is the round's one attempt, numbered attempt and
-// skipped: the fixture skipped with the classifier's code and detail as its
+// read, and checks that it is the round's one try, numbered try in its round,
+// and skipped: the fixture skipped with the classifier's code and detail as its
 // reason, no edit, no model and no release check. It also checks the
 // release holds exactly round fixes, one per round.
-func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClients, releaseID string, round, attempt int, detail string) {
+func assertSkippedTry(t *testing.T, ctx context.Context, clients *testClients, releaseID string, round, try int, detail string) {
 	t.Helper()
 	var found *remediationv1.Fix
 	var last string
@@ -255,24 +255,24 @@ func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClient
 		}
 		last = ""
 		for _, p := range resp.GetFixes() {
-			last += fmt.Sprintf("[round %d attempt %d %s] ", p.GetRemediationRound(), p.GetAttempt(), p.GetStatus())
+			last += fmt.Sprintf("[round %d try %d %s] ", p.GetRemediationRound(), p.GetTry(), p.GetStatus())
 			if int(p.GetRemediationRound()) == round && p.GetStatus() == "skipped" {
 				found = p
 			}
 		}
 		return found != nil, nil
 	}, func() string {
-		return fmt.Sprintf("timeout waiting for the skipped round-%d attempt of release %s; fixes: %s", round, releaseID, last)
+		return fmt.Sprintf("timeout waiting for the skipped round-%d try of release %s; fixes: %s", round, releaseID, last)
 	})
 
 	resp, err := clients.agentRemediationClient.ListFixes(ctx, &remediationv1.ListFixesRequest{ReleaseId: releaseID})
 	require.NoError(t, err)
-	require.Len(t, resp.GetFixes(), round, "one attempt per round; got %s", last)
+	require.Len(t, resp.GetFixes(), round, "one try per round; got %s", last)
 
-	require.EqualValues(t, attempt, found.GetAttempt(), "the attempt continues the release's numbering")
+	require.EqualValues(t, try, found.GetTry(), "the try is numbered in its round")
 	require.Equal(t, []string{unfixableInfraUniqueID}, found.GetResolvedNodeIds())
 	outcome := found.GetNodeOutcomes()[unfixableInfraUniqueID]
-	require.NotNil(t, outcome, "the attempt records the fixture's outcome: %v", found.GetNodeOutcomes())
+	require.NotNil(t, outcome, "the try records the fixture's outcome: %v", found.GetNodeOutcomes())
 	require.Equal(t, "skipped", outcome.GetStatus())
 	require.Equal(t, string(model.HandoverReasonClassifierInfra), outcome.GetCode())
 	require.Equal(t, detail, outcome.GetReason(), "the outcome's reason is the trigger's detail")
@@ -281,7 +281,7 @@ func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClient
 	require.Empty(t, found.GetModel(), "an unfixable node costs no model call")
 	require.Empty(t, found.GetReleaseCheckId(), "an unfixable node starts no release check")
 	require.Empty(t, found.GetReleaseChecks(), "an unfixable node starts no release check")
-	t.Logf("✅ round %d: attempt %d skipped, %s handed over with code %s", round, attempt, unfixableInfraUniqueID, outcome.GetCode())
+	t.Logf("✅ round %d: try %d skipped, %s handed over with code %s", round, try, unfixableInfraUniqueID, outcome.GetCode())
 }
 
 // waitForHandOver waits for the remediation.handed_over:v1 entry of the

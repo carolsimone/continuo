@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   groupByStage, stageLabel, reasonLabel, fixKey,
   fixNodeIds, fixStatusForNode, fixReasonForNode, fixCodeForNode,
-  releasePillClass, attemptReleaseCheckPhase, releaseCheckPhase,
+  releasePillClass, tryReleaseCheckPhase, releaseCheckPhase,
   effectiveRound, groupFixes, fixPillClass, upcomingStages,
+  tryLabel, tryBefore, HAND_OVER_TRY,
 } from './release-helpers';
 import { HANDOVER_TEXT } from './handover-text';
 import { HANDOVER_REASONS } from '../server/generated/vocabulary.gen';
@@ -96,7 +97,7 @@ describe('fixKey', () => {
 });
 
 const base = {
-  id: 'p', source: 'validation', release_id: 'r', node_id: 's.a', error_signature: 's', attempt: 1,
+  id: 'p', source: 'validation', release_id: 'r', node_id: 's.a', error_signature: 's', try: 1,
   status: 'verifying', confidence: 'high', rationale: 'overall', proposed_sql_uri: '', diff_uri: '', candidate_fix_sql_uri: '',
   candidate_fix_diff_uri: '', source_resolved: true, repo: '', commit_sha: '', file_path: '', model: '', created_at: '',
   pr_url: '', pr_number: 0, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '', release_check_id: '', verify_error: '',
@@ -154,21 +155,21 @@ describe('HANDOVER_TEXT', () => {
   });
 });
 
-describe('attemptReleaseCheckPhase', () => {
+describe('tryReleaseCheckPhase', () => {
   const p = (phases: string[]): FixDTO => ({
     ...base, status: 'verifying',
     release_checks: phases.map((phase, i) => ({ project: `s${i}`, kind: 'dbt', check_id: `verify-${i}`, phase, activated_at: '', error: '' } as any)),
   });
   it('is running when any release check is running', () => {
-    expect(attemptReleaseCheckPhase(p(['queued', 'running']))).toBe('running');
+    expect(tryReleaseCheckPhase(p(['queued', 'running']))).toBe('running');
   });
   it('is queued when every known phase is queued', () => {
-    expect(attemptReleaseCheckPhase(p(['queued', 'queued']))).toBe('queued');
+    expect(tryReleaseCheckPhase(p(['queued', 'queued']))).toBe('queued');
   });
   it('is undefined without positive evidence', () => {
-    expect(attemptReleaseCheckPhase(p(['', '']))).toBeUndefined();
-    expect(attemptReleaseCheckPhase(p(['passed', 'failed']))).toBeUndefined();
-    expect(attemptReleaseCheckPhase({ ...base, release_checks: [] })).toBeUndefined();
+    expect(tryReleaseCheckPhase(p(['', '']))).toBeUndefined();
+    expect(tryReleaseCheckPhase(p(['passed', 'failed']))).toBeUndefined();
+    expect(tryReleaseCheckPhase({ ...base, release_checks: [] })).toBeUndefined();
   });
 });
 
@@ -203,7 +204,7 @@ describe('groupFixes', () => {
     release_id: o.release_id ?? 'rel-1',
     remediation_round: o.remediation_round,
     created_at: o.created_at ?? '2026-09-03T10:00:00Z',
-    attempt: o.attempt ?? 1,
+    try: o.try ?? 1,
     status: o.status ?? 'failed',
     node_id: o.node_id ?? 'n0',
     resolved_node_ids: o.resolved_node_ids,
@@ -222,11 +223,11 @@ describe('groupFixes', () => {
     ]);
     expect(groups).toHaveLength(2);
     const round1 = groups.find(g => g.round === 1)!;
-    expect(round1.attempts.map(a => a.id)).toEqual(['b', 'a']); // newest first
+    expect(round1.tries.map(a => a.id)).toEqual(['b', 'a']); // newest first
     expect(round1.latest.id).toBe('b');
   });
 
-  it('orders groups newest first by their latest attempt', () => {
+  it('orders groups newest first by their latest try', () => {
     const groups = groupFixes([
       mk({ id: 'old', release_id: 'r1', remediation_round: 1, created_at: '2026-09-01T10:00:00Z' }),
       mk({ id: 'new', release_id: 'r2', remediation_round: 1, created_at: '2026-09-05T10:00:00Z' }),
@@ -234,15 +235,24 @@ describe('groupFixes', () => {
     expect(groups.map(g => g.releaseId)).toEqual(['r2', 'r1']);
   });
 
-  it('tie-breaks same created_at by higher attempt number for the latest', () => {
+  it('tie-breaks same created_at by higher try number for the latest', () => {
     const groups = groupFixes([
-      mk({ id: 'a1', release_id: 'r1', remediation_round: 1, attempt: 1, created_at: '2026-09-03T10:00:00Z' }),
-      mk({ id: 'a2', release_id: 'r1', remediation_round: 1, attempt: 2, created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'a1', release_id: 'r1', remediation_round: 1, try: 1, created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'a2', release_id: 'r1', remediation_round: 1, try: 2, created_at: '2026-09-03T10:00:00Z' }),
     ]);
     expect(groups[0].latest.id).toBe('a2');
   });
 
-  it('unions the projects each attempt carries, sorted and de-duplicated', () => {
+  it('tie-breaks same created_at with the round\'s hand-over row after its tries', () => {
+    const groups = groupFixes([
+      mk({ id: 'h', release_id: 'r1', remediation_round: 1, try: HAND_OVER_TRY, status: 'escalated', created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 't3', release_id: 'r1', remediation_round: 1, try: 3, created_at: '2026-09-03T10:00:00Z' }),
+    ]);
+    expect(groups[0].latest.id).toBe('h');
+    expect(groups[0].tries.map(t => t.id)).toEqual(['h', 't3']);
+  });
+
+  it('unions the projects each try carries, sorted and de-duplicated', () => {
     const groups = groupFixes([
       mk({ id: 'a', projects: ['ledger', 'analytics'] }),
       mk({ id: 'b', projects: ['analytics'] }),
@@ -257,7 +267,7 @@ describe('groupFixes', () => {
     expect(groups[0].projects).toEqual(['service-1']);
   });
 
-  it('falls back to the non-empty pr_projects of an attempt that carries no projects', () => {
+  it('falls back to the non-empty pr_projects of a try that carries no projects', () => {
     // A fix served by an agent-remediation that predates the projects
     // field arrives with it absent; the owning projects its pull requests
     // split into are the nearest thing it does carry.
@@ -268,12 +278,12 @@ describe('groupFixes', () => {
     expect(groups[0].projects).toEqual(['analytics', 'shared']);
   });
 
-  it('yields no projects for a legacy attempt carrying neither projects nor split pull requests', () => {
+  it('yields no projects for a legacy try carrying neither projects nor split pull requests', () => {
     const groups = groupFixes([mk({ id: 'a', node_id: 'core_schema.t', pr_projects: [''] })]);
     expect(groups[0].projects).toEqual([]);
   });
 
-  it('unions resolved node ids across attempts, sorted', () => {
+  it('unions resolved node ids across tries, sorted', () => {
     const groups = groupFixes([
       mk({ id: 'a', resolved_node_ids: ['svc.b', 'svc.a'] }),
       mk({ id: 'b', resolved_node_ids: ['svc.c', 'svc.a'] }),
@@ -281,7 +291,7 @@ describe('groupFixes', () => {
     expect(groups[0].nodeIds).toEqual(['svc.a', 'svc.b', 'svc.c']);
   });
 
-  it('picks the newest attempt that has a pull request as latestPrFix', () => {
+  it('picks the newest try that has a pull request as latestPrFix', () => {
     const groups = groupFixes([
       mk({ id: 'older', created_at: '2026-09-03T10:00:00Z', pr_state: 'merged' }),
       mk({ id: 'newer', created_at: '2026-09-03T12:00:00Z' }), // no PR
@@ -289,7 +299,7 @@ describe('groupFixes', () => {
     expect(groups[0].latestPrFix?.id).toBe('older');
   });
 
-  it('sets latestPrFix to null when no attempt has a pull request', () => {
+  it('sets latestPrFix to null when no try has a pull request', () => {
     const groups = groupFixes([mk({ id: 'a' }), mk({ id: 'b' })]);
     expect(groups[0].latestPrFix).toBeNull();
   });
@@ -303,7 +313,7 @@ describe('fixPillClass', () => {
     ['failed',     'pill--failed'],
     ['escalated',  'pill--failed'],
     ['skipped',    'pill--skipped'],
-  ])('maps the %s attempt status to %s', (status, cls) => {
+  ])('maps the %s try status to %s', (status, cls) => {
     expect(fixPillClass(status)).toBe(cls);
   });
 
@@ -346,4 +356,28 @@ describe('upcomingStages', () => {
     expect(upcomingStages(reached('received', 'promoted'), { manifestKind: 'ontology' })).toEqual([]);
     expect(upcomingStages([], { manifestKind: 'ontology' })).toEqual([]);
   });
+});
+
+describe('tryLabel', () => {
+  it('names a try by its round and number', () => expect(tryLabel(2, 1)).toBe('round 2, try 1'));
+  it('reads a round of 0 or none as round 1', () => {
+    expect(tryLabel(0, 3)).toBe('round 1, try 3');
+    expect(tryLabel(undefined, 3)).toBe('round 1, try 3');
+  });
+  it('names the round\'s hand-over row, which is no try', () =>
+    expect(tryLabel(2, HAND_OVER_TRY)).toBe('round 2, hand-over'));
+});
+
+describe('tryBefore', () => {
+  const t = (remediation_round: number, tryNumber: number) => ({ remediation_round, try: tryNumber });
+  it.each([
+    ['an earlier try of the round', t(1, 1), t(1, 2)],
+    ['an earlier round\'s last try', t(1, 3), t(2, 1)],
+    ['a try before its round\'s hand-over row', t(1, 3), t(1, HAND_OVER_TRY)],
+    ['a round\'s hand-over row before the next round', t(1, HAND_OVER_TRY), t(2, 1)],
+  ])('orders %s first', (_name, a, b) => {
+    expect(tryBefore(a, b)).toBe(true);
+    expect(tryBefore(b, a)).toBe(false);
+  });
+  it('does not order a try before itself', () => expect(tryBefore(t(2, 1), t(2, 1))).toBe(false));
 });

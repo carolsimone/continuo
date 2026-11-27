@@ -306,3 +306,19 @@ names:
     use: fix (fix, fixes, fix_id, Fix)
   - pattern: '\w*remediation[._-](proposed|pr_opened|pr_closed)\w*|\w*[rR]emediation(Proposed|PrOpened|PrClosed)\w*|REMEDIATION_(PROPOSED|PR_OPENED|PR_CLOSED)\w*'
     use: fix.proposed:v1, fix.pr_opened:v1, fix.pr_closed:v1
+  # Try group: in agent-remediation, one go at fixing every failing node of a
+  # remediation is a try, named by its round and number ("round 2, try 1"),
+  # and a try that did no work is a skipped try. attempt stays the word for a
+  # task's attempt in a run, so the name is retired only in agent-remediation
+  # and the ui's remediation and release pages. The patterns leave the verb
+  # (attempted) and the outbox's next_attempt_at alone.
+  - pattern: 'attempts?|Attempts?|attempt_\w+|[aA]ttempt[A-Z]\w*|\w+Attempts?'
+    use: try (round and try number, skipped try)
+    paths:
+      - agent-remediation
+      - "ui/src/client/Remediation*"
+      - "ui/src/client/Release*"
+      - "ui/src/client/release-helpers*"
+      - ui/src/server/routes/remediation.ts
+      - ui/tests/routes/remediation.test.ts
+      - ui/tests/client/release-detail-page.test.tsx

@@ -135,7 +135,7 @@ describe('NodesPanel project grouping', () => {
     expect(row.querySelector('.remediation-chevron')).toBeNull();
     fireEvent.click(row);
     expect(onNodeSelect).toHaveBeenCalledWith('svc-b.sch.m1');
-    expect(container.querySelector('.remediation-attempts')).toBeNull();
+    expect(container.querySelector('.run-attempts')).toBeNull();
   });
 
   it('orders same-status rows by completed_at descending (last finished first)', () => {

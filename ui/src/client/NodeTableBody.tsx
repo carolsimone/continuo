@@ -244,7 +244,7 @@ export default function NodeTableBody({
                     {isOpen && (
                       <tr className="remediation-group__body nodes-row--static">
                         <td colSpan={7}>
-                          <div className="remediation-attempts">
+                          <div className="run-attempts">
                             <AttemptRows attempts={attempts} />
                           </div>
                         </td>
@@ -282,7 +282,7 @@ function LogLink({ attempt, label }: { attempt: TaskAttempt; label: string }) {
 // task row's expansion block.
 function AttemptRows({ attempts }: { attempts: TaskAttempt[] }) {
   return (
-    <table className="nodes-table remediation-attempts__table">
+    <table className="nodes-table run-attempts__table">
       <thead>
         <tr>
           <th>#</th>

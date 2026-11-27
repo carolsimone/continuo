@@ -139,11 +139,11 @@ describe('RunNodeTable', () => {
     // Collapsed by default: no attempts block until the row is opened.
     const row = screen.getByText('bad_node').closest('tr')!;
     expect(row.getAttribute('aria-expanded')).toBe('false');
-    expect(container.querySelector('.remediation-attempts')).toBeNull();
+    expect(container.querySelector('.run-attempts')).toBeNull();
 
     fireEvent.click(row);
     expect(row.getAttribute('aria-expanded')).toBe('true');
-    const block = container.querySelector('.remediation-attempts') as HTMLElement;
+    const block = container.querySelector('.run-attempts') as HTMLElement;
     expect(block).toBeTruthy();
     expect(block.closest('td')?.getAttribute('colspan')).toBe('7');
     const headers = within(block).getAllByRole('columnheader').map((th) => th.textContent);
@@ -160,7 +160,7 @@ describe('RunNodeTable', () => {
 
     // Enter on the row closes it again (Grouped table rows keyboard contract).
     fireEvent.keyDown(row, { key: 'Enter' });
-    expect(container.querySelector('.remediation-attempts')).toBeNull();
+    expect(container.querySelector('.run-attempts')).toBeNull();
   });
 
   it('a task without attempts has no expander', () => {
@@ -174,12 +174,12 @@ describe('RunNodeTable', () => {
     expect(okRow.getAttribute('role')).toBeNull();
     expect(okRow.querySelector('.remediation-chevron')).toBeNull();
     fireEvent.click(okRow);
-    expect(container.querySelector('.remediation-attempts')).toBeNull();
+    expect(container.querySelector('.run-attempts')).toBeNull();
 
     const badRow = screen.getByText('bad_node').closest('tr')!;
     expect(badRow.querySelector('.remediation-chevron')).toBeTruthy();
     fireEvent.click(badRow);
-    const block = container.querySelector('.remediation-attempts') as HTMLElement;
+    const block = container.querySelector('.run-attempts') as HTMLElement;
     const cells = Array.from(within(block).getAllByRole('row')[1].querySelectorAll('td'), (td) => td.textContent);
     // A dispatched attempt has no class, no wait, no run time and no log yet.
     expect(cells).toEqual(['1', 'dispatched', '—', '—', '—', '—']);

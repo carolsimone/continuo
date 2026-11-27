@@ -26,7 +26,7 @@ const makeFix = (overrides: Partial<FixDTO> = {}): FixDTO => ({
   release_id: 'rel-abc',
   node_id: 'svc.schema.my_model',
   error_signature: 'syntax error',
-  attempt: 1,
+  try: 1,
   status: 'proposed',
   confidence: 'high',
   rationale: 'The fix addresses the syntax issue in the model.',
@@ -76,9 +76,9 @@ function renderPanelAsOperator() {
 // (non-actionable) group open.
 const expandGroupByNodes = (nodesText: string) => fireEvent.click(screen.getByText(nodesText));
 
-// Confidence is rendered only in an attempt row, never the group row, so it is
-// an unambiguous handle for opening a single non-actionable attempt.
-const openAttemptByConfidence = (confidence = 'high') => fireEvent.click(screen.getByText(confidence));
+// Confidence is rendered only in a try row, never the group row, so it is
+// an unambiguous handle for opening a single non-actionable try.
+const openTryByConfidence = (confidence = 'high') => fireEvent.click(screen.getByText(confidence));
 
 // mockFetch answers DiffView's GET against /api/logs?key=<uri> with
 // body whenever the requested url matches pattern, and an empty 200
@@ -119,20 +119,43 @@ describe('RemediationPanel — group list', () => {
     expect(releaseCells).toEqual(['rel-2', 'rel-1']);
   });
 
-  it('collapses several attempts of one (release, round) into a single group row', async () => {
+  it('collapses several tries of one (release, round) into a single group row', async () => {
     const fixes = [
-      makeFix({ id: 'a1', release_id: 'rel-x', remediation_round: 1, attempt: 1, status: 'failed', created_at: '2026-06-24T10:00:00Z' }),
-      makeFix({ id: 'a2', release_id: 'rel-x', remediation_round: 1, attempt: 2, status: 'skipped', created_at: '2026-06-24T11:00:00Z' }),
+      makeFix({ id: 'a1', release_id: 'rel-x', remediation_round: 1, try: 1, status: 'failed', created_at: '2026-06-24T10:00:00Z' }),
+      makeFix({ id: 'a2', release_id: 'rel-x', remediation_round: 1, try: 2, status: 'skipped', created_at: '2026-06-24T11:00:00Z' }),
     ];
     mockFetchFixes.mockResolvedValue(fixes);
 
     renderPanel();
 
-    // One group row, and its Attempts cell reads 2.
+    // One group row, and its Tries cell reads 2.
     await waitFor(() => screen.getByText('rel-x'));
     expect(screen.getAllByText('rel-x')).toHaveLength(1);
     const groupRow = screen.getByText('rel-x').closest('tr')!;
-    expect(groupRow).toHaveTextContent('2'); // attempts count
+    expect(groupRow).toHaveTextContent('2'); // tries count
+  });
+
+  it('names each try by its round and number, the hand-over row as such, and opens a skipped try on its reason', async () => {
+    mockFetchFixes.mockResolvedValue([
+      makeFix({ id: 't1', release_id: 'rel-x', remediation_round: 2, try: 1, status: 'failed', confidence: 'low', created_at: '2026-06-24T10:00:00Z' }),
+      makeFix({
+        id: 't2', release_id: 'rel-x', remediation_round: 2, try: 2, status: 'skipped', confidence: '',
+        rationale: 'maintenance mode is on', created_at: '2026-06-24T11:00:00Z',
+      }),
+      makeFix({ id: 'h', release_id: 'rel-x', remediation_round: 2, try: 0, status: 'escalated', confidence: '', created_at: '2026-06-24T11:00:00Z' }),
+    ]);
+    renderPanel();
+    await waitFor(() => screen.getByText('rel-x'));
+    expect(screen.getByText('rel-x').closest('tr')).toHaveTextContent('2'); // the hand-over row is no try
+    expandGroupByNodes('svc.schema.my_model');
+
+    expect(screen.getByRole('columnheader', { name: 'Try' })).toBeInTheDocument();
+    expect(screen.getByText('round 2, try 1')).toBeInTheDocument();
+    expect(screen.getByText('round 2, try 2')).toBeInTheDocument();
+    expect(screen.getByText('round 2, hand-over')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('round 2, try 2'));
+    expect(screen.getByText('maintenance mode is on')).toBeInTheDocument();
+    expect(screen.queryByText(/#\d/)).toBeNull();
   });
 
   it('shows the union of projects and nodes for a group', async () => {
@@ -154,7 +177,7 @@ describe('RemediationPanel — group list', () => {
   it('reads the Projects column from the projects the fix carries, never from its node ids', async () => {
     // A remediation node id is "<schema>.<table>" — it names no project —
     // so the column shows the projects agent-remediation recorded for the
-    // attempt (the same set the Project filter matches on), and a schema
+    // try (the same set the Project filter matches on), and a schema
     // never leaks into it.
     const fix = makeFix({
       status: 'skipped',
@@ -215,7 +238,7 @@ describe('RemediationPanel — status pills', () => {
     ['skipped',    'pill-sm--skipped'],
     ['generating', 'pill-sm--pending'],
   ])('renders the %s status as a %s pill in the Latest status column', async (status, cls) => {
-    // source_resolved=false keeps a 'proposed' attempt from auto-expanding,
+    // source_resolved=false keeps a 'proposed' try from auto-expanding,
     // so the only status text on screen is the group row's.
     mockFetchFixes.mockResolvedValue([makeFix({ status, source_resolved: false })]);
     renderPanel();
@@ -223,44 +246,44 @@ describe('RemediationPanel — status pills', () => {
     expect(pill).toHaveClass('pill-sm', cls);
   });
 
-  it('renders the attempt row status as the same pill once the group is open', async () => {
+  it('renders the try row status as the same pill once the group is open', async () => {
     mockFetchFixes.mockResolvedValue([makeFix({ status: 'failed' })]);
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
 
     const pills = screen.getAllByText('failed');
-    expect(pills).toHaveLength(2); // group row + attempt row
+    expect(pills).toHaveLength(2); // group row + try row
     for (const pill of pills) expect(pill).toHaveClass('pill-sm', 'pill-sm--failed');
   });
 });
 
-describe('RemediationPanel — attempts are nested inside their group', () => {
+describe('RemediationPanel — tries are nested inside their group', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchNodeProjects.mockResolvedValue([]);
   });
 
-  it('renders the attempt rows and their column labels inside the group\'s contained block, not as a peer table', async () => {
+  it('renders the try rows and their column labels inside the group\'s contained block, not as a peer table', async () => {
     mockFetchFixes.mockResolvedValue([makeFix({ status: 'skipped' })]);
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
 
-    // The attempt row and the inner column labels both live inside the
-    // .remediation-attempts block hosted by the group's expansion row…
-    const block = screen.getByText('high').closest('.remediation-attempts');
+    // The try row and the inner column labels both live inside the
+    // .remediation-tries block hosted by the group's expansion row…
+    const block = screen.getByText('high').closest('.remediation-tries');
     expect(block).not.toBeNull();
-    expect(screen.getByText('Confidence').closest('.remediation-attempts')).toBe(block);
+    expect(screen.getByText('Confidence').closest('.remediation-tries')).toBe(block);
     expect(block!.closest('tr')).toHaveClass('remediation-group__body');
     // …while the outer header is not inside any such block.
-    expect(screen.getByText('Latest status').closest('.remediation-attempts')).toBeNull();
+    expect(screen.getByText('Latest status').closest('.remediation-tries')).toBeNull();
   });
 
   it('reads the source column as resolved / unresolved rather than yes / no', async () => {
     mockFetchFixes.mockResolvedValue([
-      makeFix({ id: 'a', status: 'skipped', source_resolved: true, attempt: 1 }),
-      makeFix({ id: 'b', status: 'skipped', source_resolved: false, attempt: 2, created_at: '2026-06-24T11:00:00Z' }),
+      makeFix({ id: 'a', status: 'skipped', source_resolved: true, try: 1 }),
+      makeFix({ id: 'b', status: 'skipped', source_resolved: false, try: 2, created_at: '2026-06-24T11:00:00Z' }),
     ]);
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
@@ -273,29 +296,29 @@ describe('RemediationPanel — attempts are nested inside their group', () => {
   });
 });
 
-describe('RemediationPanel — expanding a group and its attempts', () => {
+describe('RemediationPanel — expanding a group and its tries', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchNodeProjects.mockResolvedValue([]);
   });
 
-  it('reveals attempt rows on group click, then the rationale on attempt click', async () => {
+  it('reveals try rows on group click, then the rationale on try click', async () => {
     const fix = makeFix({ status: 'skipped', rationale: 'Fixes the JOIN clause that was missing a condition.' });
     mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    // Nothing from the attempt is visible until the group is opened.
+    // Nothing from the try is visible until the group is opened.
     expect(screen.queryByText('high')).toBeNull();
     expect(screen.queryByText('Fixes the JOIN clause that was missing a condition.')).toBeNull();
 
     expandGroupByNodes('svc.schema.my_model');
-    // Attempt row now visible (confidence cell).
+    // Try row now visible (confidence cell).
     expect(screen.getByText('high')).toBeInTheDocument();
-    // Card still requires an attempt click.
+    // Card still requires a try click.
     expect(screen.queryByText('Fixes the JOIN clause that was missing a condition.')).toBeNull();
 
-    openAttemptByConfidence();
+    openTryByConfidence();
     expect(screen.getByText('Fixes the JOIN clause that was missing a condition.')).toBeInTheDocument();
   });
 
@@ -312,26 +335,26 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
 
     fireEvent.keyDown(groupRow, { key: 'Enter' });
     expect(groupRow).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('high')).toBeInTheDocument(); // attempt row shown
+    expect(screen.getByText('high')).toBeInTheDocument(); // try row shown
 
     fireEvent.keyDown(groupRow, { key: ' ' });
     expect(groupRow).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('high')).toBeNull();
   });
 
-  it('shows the source warning in the attempt card', async () => {
+  it('shows the source warning in the try card', async () => {
     const fix = makeFix({ status: 'skipped', source_resolved: false });
     mockFetchFixes.mockResolvedValue([fix]);
 
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
 
     expect(screen.getByText(/No real-source fix — a PR cannot be opened for this fix/)).toBeInTheDocument();
   });
 
-  it('shows the diff view/hide toggle in the attempt card, open by default', async () => {
+  it('shows the diff view/hide toggle in the try card, open by default', async () => {
     mockFetch(/\/api\/logs/, '');
     const fix = makeFix({ status: 'skipped', diff_uri: 's3://bucket/my.patch' });
     mockFetchFixes.mockResolvedValue([fix]);
@@ -339,7 +362,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
 
     expect(screen.getByRole('link', { name: /open full ↗/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^hide$/i })).toBeInTheDocument();
@@ -363,7 +386,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
 
     expect(screen.getByText('contracts/a.yml')).toBeInTheDocument();
     expect(screen.getByText('scripts/a.py')).toBeInTheDocument();
@@ -386,7 +409,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
 
     const links = screen.getAllByRole('link', { name: /open full ↗/i });
     expect(links).toHaveLength(1);
@@ -408,7 +431,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
 
     const firstDiff = await screen.findByText(/\+select amount_eur/);
     const rationale = screen.getByText(/Model's note: read amount_eur/);
@@ -424,14 +447,14 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
 
     const el = screen.getByText(/Failed: `x`/);
     expect(el.tagName).toBe('PRE');
     expect(el.textContent).toContain('\nEdited: `p`');
   });
 
-  it('the attempt row within an expanded group carries the button role, the group row above it too', async () => {
+  it('the try row within an expanded group carries the button role, the group row above it too', async () => {
     const fix = makeFix({ status: 'skipped' });
     mockFetchFixes.mockResolvedValue([fix]);
 
@@ -439,9 +462,9 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
 
-    const attemptRow = screen.getByText('high').closest('tr')!;
-    expect(attemptRow).toHaveAttribute('role', 'button');
-    expect(attemptRow).toHaveAttribute('tabIndex', '0');
+    const tryRow = screen.getByText('high').closest('tr')!;
+    expect(tryRow).toHaveAttribute('role', 'button');
+    expect(tryRow).toHaveAttribute('tabIndex', '0');
   });
 });
 
@@ -503,11 +526,11 @@ describe('RemediationPanel — an actionable fix', () => {
 
     renderPanelAsOperator();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    // Not actionable: nothing from the attempt is shown until the group opens.
+    // Not actionable: nothing from the try is shown until the group opens.
     expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
 
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
     expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
@@ -524,18 +547,18 @@ describe('RemediationPanel — an actionable fix', () => {
     expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
 
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
     expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
   });
 });
 
-describe('RemediationPanel — release checks on an attempt', () => {
+describe('RemediationPanel — release checks on a try', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchNodeProjects.mockResolvedValue([]);
   });
 
-  it('lists each release check beneath its attempt with a link to its page', async () => {
+  it('lists each release check beneath its try with a link to its page', async () => {
     const fix = makeFix({
       status: 'verifying',
       resolved_node_ids: ['s.a', 's.b'],
@@ -556,9 +579,9 @@ describe('RemediationPanel — release checks on an attempt', () => {
     expect(screen.getByText(/ops · python · Queued for its release check$/)).toBeInTheDocument();
     expect(screen.getByText(/ops · python · Queued for its release check/).closest('.remediation-subrow__line')!
       .querySelector('a')).toHaveAttribute('href', '/release-checks/verify-rel-1-ops-a1');
-    // Both release checks sit in the attempt's release-check sub-row, inside the group's block.
+    // Both release checks sit in the try's release-check sub-row, inside the group's block.
     expect(screen.getByText(/core · dbt · Checking the fix/).closest('.remediation-subrow')).not.toBeNull();
-    expect(screen.getByText(/core · dbt · Checking the fix/).closest('.remediation-attempts')).not.toBeNull();
+    expect(screen.getByText(/core · dbt · Checking the fix/).closest('.remediation-tries')).not.toBeNull();
   });
 
   it('falls back to the single release_check_id link when release_checks is empty', async () => {
@@ -575,7 +598,7 @@ describe('RemediationPanel — release checks on an attempt', () => {
     expect(link).toHaveAttribute('href', '/release-checks/verify-rel-abc-a1');
   });
 
-  it('shows why the release check failed in the attempt card', async () => {
+  it('shows why the release check failed in the try card', async () => {
     const fix = makeFix({
       status: 'failed',
       release_check_id: 'verify-rel-abc-a1',
@@ -586,7 +609,7 @@ describe('RemediationPanel — release checks on an attempt', () => {
     renderPanel();
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
-    openAttemptByConfidence();
+    openTryByConfidence();
 
     expect(await screen.findByText(/column "revenue_total" does not exist/)).toHaveTextContent('Release check failed: column "revenue_total" does not exist');
   });

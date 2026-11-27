@@ -217,27 +217,27 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	var row parseFixRow
 	var last string
 	pollUntil(t, ctx, 20*time.Minute, 3*time.Second, func() (bool, error) {
-		// ORDER BY attempt DESC: a failed attempt is retried under a higher
-		// attempt number in the same row set, so reading without an explicit
-		// order risks returning an earlier, already-superseded attempt while a
+		// ORDER BY try DESC: a failed try is retried under a higher
+		// try number in the same row set, so reading without an explicit
+		// order risks returning an earlier, already-superseded try while a
 		// later one is still running.
 		err := clients.agentRemediationDB.GetContext(ctx, &row,
-			`SELECT source, release_id, node_id, status, file_path, source_resolved, attempt, verify_error, release_checks
+			`SELECT source, release_id, node_id, status, file_path, source_resolved, try, verify_error, release_checks
 			   FROM fix WHERE release_id = $1 AND node_id = $2
-			  ORDER BY attempt DESC LIMIT 1`, releaseID, ftableEUniqueID)
+			  ORDER BY try DESC LIMIT 1`, releaseID, ftableEUniqueID)
 		if err != nil {
 			return false, nil
 		}
 		if row.Status != last {
-			t.Logf("fix %s/%s: attempt=%d status=%s", releaseID, ftableEUniqueID, row.Attempt, row.Status)
+			t.Logf("fix %s/%s: try=%d status=%s", releaseID, ftableEUniqueID, row.Try, row.Status)
 			last = row.Status
 		}
 		return row.Status == "proposed" || row.Status == "failed" || row.Status == "skipped" || row.Status == "escalated", nil
 	}, fmt.Sprintf("timeout waiting for a parse fix for release %s", releaseID))
 	require.Equal(t, "parse", row.Source)
 	require.Equal(t, "proposed", row.Status,
-		"the verified fix must be offered (latest attempt=%d, verify_error=%q, release_checks=%s)",
-		row.Attempt, row.VerifyError, row.ReleaseChecks)
+		"the verified fix must be offered (latest try=%d, verify_error=%q, release_checks=%s)",
+		row.Try, row.VerifyError, row.ReleaseChecks)
 	require.True(t, strings.HasSuffix(row.FilePath, filePath), "fix file_path %q must end with %q", row.FilePath, filePath)
 	require.True(t, row.SourceResolved)
 	waitForFixProposed(t, ctx, proposedTap, releaseID, ftableEUniqueID, 2*time.Minute)
@@ -324,7 +324,7 @@ func ensureParseFixClonedProdRelations(t *testing.T, ctx context.Context, client
 }
 
 // parseFixRow captures the fix fields asserted for a parse-stage
-// fix, plus the release check diagnostics (attempt, verify_error,
+// fix, plus the release check diagnostics (try, verify_error,
 // release_checks) needed to explain a non-"proposed" terminal status from the
 // test log alone.
 type parseFixRow struct {
@@ -334,7 +334,7 @@ type parseFixRow struct {
 	Status         string `db:"status"`
 	FilePath       string `db:"file_path"`
 	SourceResolved bool   `db:"source_resolved"`
-	Attempt        int    `db:"attempt"`
+	Try        int    `db:"try"`
 	VerifyError    string `db:"verify_error"`
 	ReleaseChecks  []byte `db:"release_checks"`
 }

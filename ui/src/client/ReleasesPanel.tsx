@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { ReleaseListItem, ReleasesListResponse, LiveRelease, ReleaseQueueResponse } from './types';
-import { releasePillClass, reasonLabel } from './release-helpers';
+import { releasePillClass, reasonLabel, tryLabel } from './release-helpers';
 
 const STATUS_FILTERS = ['', 'promoted', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
 
@@ -67,7 +67,7 @@ export default function ReleasesPanel() {
               In flight · a fix's release check{' '}
               <Link to={`/release-checks/${releaseQueue.active.check_id}`}><strong>{releaseQueue.active.check_id}</strong></Link>
               {' '}for <Link to={`/releases/${releaseQueue.active.verifies_release_id}`}>{releaseQueue.active.verifies_release_id}</Link>
-              {' '}(attempt {releaseQueue.active.attempt}, project {releaseQueue.active.project}) · {releaseQueue.active.status}
+              {' '}({tryLabel(releaseQueue.active.remediation_round, releaseQueue.active.try ?? 0)}, project {releaseQueue.active.project}) · {releaseQueue.active.status}
             </>
           ) : (
             <>

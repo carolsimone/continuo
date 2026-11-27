@@ -1114,10 +1114,10 @@ Rules:
   accent dot, service name, count pill (`.dag-service-vertex-*`), with the
   vertex fill/border painted by rolled-up status.
 
-### Nested attempt rows
+### Nested child rows
 
 When a group row expands into rows that are its *children* — the
-remediation attempts of one (release, round) — the children render inside
+remediation tries of one (release, round) — the children render inside
 one contained block hosted by the group's expansion row, never as a second
 full-width table whose header competes with the group table's:
 
@@ -1131,18 +1131,18 @@ full-width table whose header competes with the group table's:
 </tr>
 <tr className="remediation-group__body nodes-row--static">
   <td colSpan={8}>
-    <div className="remediation-attempts">
-      <table className="nodes-table remediation-attempts__table">…</table>
+    <div className="remediation-tries">
+      <table className="nodes-table remediation-tries__table">…</table>
     </div>
   </td>
 </tr>
 ```
 
 ```css
-.remediation-attempts { background: #f8fafc; border-left: 3px solid #c7d2fe;
-                        border-radius: 0 8px 8px 0; padding: 2px 4px 6px; }
-.remediation-attempts__table thead th { position: static; background: transparent;
-                                        font-size: 10px; color: #a8b3c2; }
+.remediation-tries, .run-attempts { background: #f8fafc; border-left: 3px solid #c7d2fe;
+                                     border-radius: 0 8px 8px 0; padding: 2px 4px 6px; }
+.remediation-tries__table thead th, .run-attempts__table thead th { position: static; background: transparent;
+                                                                    font-size: 10px; color: #a8b3c2; }
 ```
 
 Rules:
@@ -1167,14 +1167,16 @@ Rules:
   service via `.pr-chip-labeled` (11px muted `__service` + chip, never split
   across lines) and laid out in one wrapping `.remediation-prs` row — a
   fix split across many services stays one compact cell.
-- Status pills for remediation attempts come from `fixPillClass`
+- A try's row names it by its round and number (`round 2, try 1`, from
+  `tryLabel`), a round's hand-over row `round 2, hand-over`.
+- Status pills for remediation tries come from `fixPillClass`
   (`release-helpers.ts`), not `releasePillClass`: `proposed` → succeeded,
   `verifying` → running, `generating` → pending, `failed`/`escalated` →
   failed, `skipped` → skipped. Do not map a new lifecycle vocabulary through
   the release fallback and let everything land on grey.
 
-The run page's node table uses the same block for the attempts of one
-task. Its node row is the parent, and the expansion row spans the node
+The run page's node table uses the same block, as `.run-attempts`, for the
+attempts of one task. Its node row is the parent, and the expansion row spans the node
 table's seven columns:
 
 ```jsx
@@ -1192,8 +1194,8 @@ table's seven columns:
 </tr>
 <tr className="remediation-group__body nodes-row--static">
   <td colSpan={7}>
-    <div className="remediation-attempts">
-      <table className="nodes-table remediation-attempts__table">
+    <div className="run-attempts">
+      <table className="nodes-table run-attempts__table">
         {/* # · Status · Class · reason · Wait · Run time · Log */}
       </table>
     </div>
@@ -1623,7 +1625,7 @@ Content rules:
 One line directly under the header of a detail page saying what the page
 is about, before any strip or section. Used on the release page
 (`Changes core · acme/demo @ c2d1add ↗`) and the release-check page
-(`Release check for release rel-1 · attempt 2 · project core · dbt`).
+(`Release check for release rel-1 · round 1, try 2 · project core · dbt`).
 
 ```jsx
 <p className="page-sub">
