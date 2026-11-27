@@ -180,7 +180,6 @@ func newTry(id uuid.UUID, n int, status remediation.TryStatus, deadline time.Tim
 	return remediation.Try{
 		RemediationID: id,
 		Try:           n,
-		Attempt:       n,
 		Status:        status,
 		FileRevisions: map[string]string{"models/a.sql": "rev1"},
 		DeadlineAt:    deadline,
@@ -956,7 +955,7 @@ func TestRemediationRepository_LoadInsideAUnitOfWorkReadsItsOwnWrites(t *testing
 
 // insertRunnerFix stores an in-flight fix that belongs to a
 // remediation and returns its id.
-func insertRunnerFix(t *testing.T, env contractEnv, release string, attempt int, remediationID uuid.UUID) string {
+func insertRunnerFix(t *testing.T, env contractEnv, release string, try int, remediationID uuid.UUID) string {
 	t.Helper()
 	before := env.fixIDs(t)
 	require.NoError(t, env.fixes.InsertGenerating(context.Background(), fix.Fix{
@@ -964,7 +963,7 @@ func insertRunnerFix(t *testing.T, env contractEnv, release string, attempt int,
 		ReleaseID:     release,
 		RemediationID: remediationID.String(),
 		NodeID:        "model.a",
-		Attempt:       attempt,
+		Try:           try,
 		Status:        fix.StatusGenerating,
 		CreatedAt:     contractBase,
 	}))
@@ -986,13 +985,13 @@ func TestFixRepository_UpsertAndInsertGeneratingRecordTheRemediation(t *testing.
 		require.Equal(t, r.ID.String(), env.fixRemediation(t, id))
 
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
-			Source: "validation", ReleaseID: "rel-rid", NodeID: "model.a", Attempt: 1, Status: fix.StatusProposed,
+			Source: "validation", ReleaseID: "rel-rid", NodeID: "model.a", Try: 1, Status: fix.StatusProposed,
 			CreatedAt: contractBase,
 		}))
 		require.Equal(t, r.ID.String(), env.fixRemediation(t, id), "finalizing without a remediation keeps it")
 
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
-			Source: "validation", ReleaseID: "rel-plain", NodeID: "model.b", Attempt: 1, Status: fix.StatusFailed,
+			Source: "validation", ReleaseID: "rel-plain", NodeID: "model.b", Try: 1, Status: fix.StatusFailed,
 			CreatedAt: contractBase,
 		}))
 		for _, got := range env.fixIDs(t) {
@@ -1003,7 +1002,7 @@ func TestFixRepository_UpsertAndInsertGeneratingRecordTheRemediation(t *testing.
 
 		err := env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-unknown", RemediationID: uuid.NewString(), NodeID: "model.c",
-			Attempt: 1, Status: fix.StatusFailed, CreatedAt: contractBase,
+			Try: 1, Status: fix.StatusFailed, CreatedAt: contractBase,
 		})
 		require.Error(t, err, "a fix names a remediation that exists")
 	})
@@ -1015,7 +1014,7 @@ func TestFixRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 		r := mustCreate(t, env, newRemediation("rel-fix", 1, contractBase))
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-fix", RemediationID: r.ID.String(), NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, Status: fix.StatusVerifying,
+			ResolvedNodeIDs: []string{"model.a"}, Try: 1, Status: fix.StatusVerifying,
 			NodeOutcomes:  map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusVerifying}},
 			ReleaseChecks: []fix.ReleaseCheck{{Project: "svc", Kind: "dbt", CheckID: "run-1"}},
 			CreatedAt:     contractBase,
@@ -1085,9 +1084,7 @@ func TestRemediationRepository_SaveStepStoresJSONHoldingANUL(t *testing.T) {
 func savedTry(t *testing.T, env contractEnv, r *remediation.Remediation, n int, node string) {
 	t.Helper()
 	ctx := context.Background()
-	try := newTry(r.ID, n, remediation.TryFailed, contractBase.Add(time.Hour))
-	try.Attempt = 10*r.Round + n
-	require.NoError(t, env.remediations.SaveTry(ctx, try))
+	require.NoError(t, env.remediations.SaveTry(ctx, newTry(r.ID, n, remediation.TryFailed, contractBase.Add(time.Hour))))
 	require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 		RemediationID: r.ID, Try: n, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: node,
 		Members: []string{node}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 1,
@@ -1121,9 +1118,9 @@ func requireTriesOfRelease(t *testing.T, env contractEnv) {
 	require.NoError(t, err)
 
 	type seen struct {
-		round, try, attempt int
-		node                string
-		steps               []string
+		round, try int
+		node       string
+		steps      []string
 	}
 	var got []seen
 	for _, s := range snaps {
@@ -1136,13 +1133,13 @@ func requireTriesOfRelease(t *testing.T, env contractEnv) {
 			require.Equal(t, s.Remediation.ID, st.RemediationID)
 			steps = append(steps, fmt.Sprintf("%d/%s/%d", st.Cluster, st.Step, st.Round))
 		}
-		got = append(got, seen{s.Remediation.Round, s.Try.Try, s.Try.Attempt, s.Clusters[0].TargetNodeID, steps})
+		got = append(got, seen{s.Remediation.Round, s.Try.Try, s.Clusters[0].TargetNodeID, steps})
 	}
 	only := []string{"1/preflight/1", "0/no_path_edited_twice/1"}
 	require.Equal(t, []seen{
-		{1, 1, 11, "model.a", only},
-		{1, 2, 12, "model.b", only},
-		{2, 1, 21, "model.c", only},
+		{1, 1, "model.a", only},
+		{1, 2, "model.b", only},
+		{2, 1, "model.c", only},
 	}, got, "every try of the tenant's release, by round then try, with its done pre-flight and flow-level check rows in id order")
 	require.JSONEq(t, `{"draft":{}}`, string(snaps[0].Steps[0].Output))
 	require.Equal(t, "default", snaps[0].Remediation.TenantID)
@@ -1201,17 +1198,17 @@ func TestFixRepository_ListNamesTheRemediationOfEachRow(t *testing.T) {
 		r := mustCreate(t, env, newRemediation("rel-named", 1, contractBase))
 		insertRunnerFix(t, env, "rel-named", 2, r.ID)
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
-			Source: "validation", ReleaseID: "rel-named", NodeID: "model.a", Attempt: 1, Status: fix.StatusFailed,
+			Source: "validation", ReleaseID: "rel-named", NodeID: "model.a", Try: 1, Status: fix.StatusFailed,
 			CreatedAt: contractBase,
 		}))
 
 		views, err := env.fixes.List(ctx, repository.FixFilter{ReleaseID: "rel-named"})
 		require.NoError(t, err)
-		byAttempt := map[int]string{}
+		byTry := map[int]string{}
 		for _, v := range views {
-			byAttempt[v.Attempt] = v.RemediationID
+			byTry[v.Try] = v.RemediationID
 		}
-		require.Equal(t, map[int]string{1: "", 2: r.ID.String()}, byAttempt)
+		require.Equal(t, map[int]string{1: "", 2: r.ID.String()}, byTry)
 	})
 }
 
@@ -1327,9 +1324,7 @@ func TestRemediationRepository_ListContextOfEarlierTriesReadsTheContextRowsOfThe
 		other := mustCreate(t, env, newRemediation("rel-earlier", 2, contractBase.Add(time.Minute)))
 		for _, rem := range []remediation.Remediation{r, other} {
 			for n := 1; n <= 3; n++ {
-				try := newTry(rem.ID, n, remediation.TryFailed, contractBase.Add(time.Hour))
-				try.Attempt = n
-				require.NoError(t, env.remediations.SaveTry(ctx, try))
+				require.NoError(t, env.remediations.SaveTry(ctx, newTry(rem.ID, n, remediation.TryFailed, contractBase.Add(time.Hour))))
 			}
 		}
 		cluster := func(rem remediation.Remediation, try, n int, members ...string) {
@@ -1366,7 +1361,7 @@ func TestRemediationRepository_ListContextOfEarlierTriesReadsTheContextRowsOfThe
 		var got []string
 		for _, s := range snaps {
 			require.NotNil(t, s.Try)
-			line := fmt.Sprintf("try %d (attempt %d):", s.Try.Try, s.Try.Attempt)
+			line := fmt.Sprintf("try %d:", s.Try.Try)
 			for _, c := range s.Clusters {
 				require.Equal(t, r.ID, c.RemediationID)
 				line += fmt.Sprintf(" cluster %d %v", c.Cluster, c.Members)
@@ -1379,8 +1374,8 @@ func TestRemediationRepository_ListContextOfEarlierTriesReadsTheContextRowsOfThe
 			got = append(got, line)
 		}
 		require.Equal(t, []string{
-			"try 2 (attempt 2): cluster 1 [model.a] cluster 2 [model.b model.c] row 2/contract_file",
-			"try 1 (attempt 1): cluster 1 [model.a] row 1/contract_file row 1/image_packages",
+			"try 2: cluster 1 [model.a] cluster 2 [model.b model.c] row 2/contract_file",
+			"try 1: cluster 1 [model.a] row 1/contract_file row 1/image_packages",
 		}, got, "the tries before try 3, newest first, with the clusters holding a node and their done context rows in id order")
 		require.JSONEq(t, `{"evidence":{}}`, string(snaps[1].Steps[0].Output))
 

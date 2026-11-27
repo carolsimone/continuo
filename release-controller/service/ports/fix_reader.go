@@ -12,12 +12,15 @@ type FixPR struct {
 }
 
 // FixSummary is the slice of a fix row the retry decision needs: one
-// remediation attempt at a node of the release.
+// remediation try at a node of the release, named by its round and its number
+// within the round.
 type FixSummary struct {
-	ID      string
-	NodeID  string
-	Attempt int
-	Status  string // generating | verifying | proposed | skipped | failed | escalated
+	ID     string
+	NodeID string
+	// Try is the try's number within its round, counting from 1. 0 is the
+	// round's hand-over row, written after the round's last try.
+	Try    int
+	Status string // generating | verifying | proposed | skipped | failed | escalated
 	// PullRequests is one entry per owning project whose pull request has
 	// been claimed, in project order. Empty for a fix that never entered the
 	// pull-request lifecycle.
@@ -25,8 +28,8 @@ type FixSummary struct {
 	// PRProjects is the owning-project groups the fix splits into; the empty
 	// string names the group of a fix that is not split by project.
 	PRProjects []string
-	// RemediationRound is the release's remediation round this attempt belongs
-	// to. 0 on an attempt that names no round, which the retry decision treats
+	// RemediationRound is the release's remediation round this try belongs
+	// to. 0 on a try that names no round, which the retry decision treats
 	// the same as round 1.
 	RemediationRound int
 }

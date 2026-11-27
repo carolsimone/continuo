@@ -27,7 +27,7 @@ const (
 
 // requireHandOverTextClean expects that no credential and no email address is
 // in any message the remediation handed a node over with: not on a coded
-// outcome of any attempt row of the release, in flight or ended, and not in a
+// outcome of any fix row of the release, in flight or ended, and not in a
 // remediation.handed_over:v1 event.
 func (h *harness) requireHandOverTextClean() {
 	h.t.Helper()
@@ -36,7 +36,7 @@ func (h *harness) requireHandOverTextClean() {
 			if o.Code == "" {
 				continue
 			}
-			requireClean(h.t, o.Reason, fmt.Sprintf("the %s outcome of %s on the row of attempt %d (%s)", o.Code, node, p.Fix.Attempt, p.Fix.Status))
+			requireClean(h.t, o.Reason, fmt.Sprintf("the %s outcome of %s on the row of try %d (%s)", o.Code, node, p.Fix.Try, p.Fix.Status))
 		}
 	}
 	for _, e := range h.handedOverEvents() {
@@ -54,7 +54,7 @@ func requireClean(t *testing.T, text, what string) {
 
 // A node escalated once the tries are spent is handed over with the last try's
 // verify error, and a node the classifier marked unfixable with its key error
-// line: neither the attempt's row nor the event holds a credential or an email
+// line: neither the try's row nor the event holds a credential or an email
 // address, each replaced by its fixed marker.
 func TestRunner_HandOverMessagesAreCleaned(t *testing.T) {
 	h := newHarness(t)
@@ -74,7 +74,7 @@ func TestRunner_HandOverMessagesAreCleaned(t *testing.T) {
 		Code:   model.HandoverReasonTriesSpent,
 	}
 	classifier := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: cleanDetail, Code: model.HandoverReasonClassifierInfra}
-	escalated := h.attempt(4).Fix
+	escalated := h.fixRow(fix.HandOverTry).Fix
 	assert.Equal(t, fix.StatusEscalated, escalated.Status)
 	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent, "svc-c": classifier}, escalated.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 1, 3,
@@ -97,7 +97,7 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 		require.NoError(t, h.runner.Drive(ctx, id))
 
 		assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-		assert.Equal(t, cleanDetail, h.attempt(1).Fix.NodeOutcomes["svc-c"].Reason)
+		assert.Equal(t, cleanDetail, h.fixRow(1).Fix.NodeOutcomes["svc-c"].Reason)
 		assert.Equal(t, cleanDetail, h.handedOverEvent().Nodes[0].Message)
 		h.requireHandOverTextClean()
 	})
@@ -107,7 +107,7 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		assert.Equal(t, cleanDetail, h.attempt(1).Fix.NodeOutcomes["svc-c"].Reason)
+		assert.Equal(t, cleanDetail, h.fixRow(1).Fix.NodeOutcomes["svc-c"].Reason)
 		assert.Equal(t, cleanDetail, h.handedOverEvent().Nodes[0].Message)
 		h.requireHandOverTextClean()
 	})
@@ -119,7 +119,7 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		assert.Equal(t, cleanDetail, h.attempt(1).Fix.NodeOutcomes["svc-c"].Reason)
+		assert.Equal(t, cleanDetail, h.fixRow(1).Fix.NodeOutcomes["svc-c"].Reason)
 		h.requireHandOverTextClean()
 	})
 	t.Run("a verified fix", func(t *testing.T) {
@@ -131,8 +131,8 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 
 		require.NoError(t, h.poll(id))
 
-		assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
-		assert.Equal(t, cleanDetail, h.attempt(1).Fix.NodeOutcomes["svc-c"].Reason)
+		assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
+		assert.Equal(t, cleanDetail, h.fixRow(1).Fix.NodeOutcomes["svc-c"].Reason)
 		assert.Equal(t, cleanDetail, h.handedOverEvent().Nodes[0].Message)
 		h.requireHandOverTextClean()
 	})
@@ -151,10 +151,10 @@ func TestRunner_EveryEndCleansTheMessagesItHandsOver(t *testing.T) {
 	})
 }
 
-// A system failure of a verifying try reopens its attempt row from the
+// A system failure of a verifying try reopens its fix row from the
 // outcomes its clusters hold: the message of a node settled before the try is
 // cleaned in the row, as it was when the row was first written.
-func TestRunner_AReopenedAttemptRowHoldsCleanMessages(t *testing.T) {
+func TestRunner_AReopenedFixRowHoldsCleanMessages(t *testing.T) {
 	h := newHarness(t)
 	id := h.accept(trigger("compile",
 		compileNode("svc-a"),
@@ -172,7 +172,7 @@ func TestRunner_AReopenedAttemptRowHoldsCleanMessages(t *testing.T) {
 
 	h.redrive(dls[0], "2-0")
 
-	reopened := h.attempt(1).Fix
+	reopened := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusVerifying, reopened.Status)
 	assert.Equal(t, cleanDetail, reopened.NodeOutcomes["svc-c"].Reason)
 	h.requireHandOverTextClean()

@@ -183,7 +183,7 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 // no retry makes it renderable.
 func TestRender_ProposedRowStoresItsTenant(t *testing.T) {
 	p := &agentRemediationOutboxPublisher{}
-	const body = `{"release_id":"r1","attempt":1}`
+	const body = `{"release_id":"r1","try":1}`
 
 	t.Run("renders the wrapped payload beside the stored tenant", func(t *testing.T) {
 		stored, err := pkgoutbox.WrapTenant("acme", []byte(body))

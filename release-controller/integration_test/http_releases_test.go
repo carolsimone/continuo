@@ -150,7 +150,7 @@ func TestIntegration_ReleaseCheckExposedOnItsOwnRoutesOnly(t *testing.T) {
 
 	require.NoError(t, handlers.ReceiveFix(ctx, deps, handlers.ReceiveFixInput{
 		CheckID: "verify-rv1", Project: "service-1", ImageTag: "t", Kind: "dbt",
-		VerifiesReleaseID: "rv1", Attempt: 1,
+		VerifiesReleaseID: "rv1", Round: 1, Try: 1,
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/release-checks/verify-rv1", nil)

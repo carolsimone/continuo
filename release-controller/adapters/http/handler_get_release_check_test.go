@@ -17,7 +17,7 @@ import (
 func TestHandleGetReleaseCheck_ReceivedShapeHasEmptyActivatedAt(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	releases.releases["verify-1"] = releasecheck.NewFix("verify-1", "core", "img:1", "rel-1", 2, "s3://b/o.tar.gz", release.ManifestKindDbt, now)
+	releases.releases["verify-1"] = releasecheck.NewFix("verify-1", "core", "img:1", "rel-1", 3, 2, "s3://b/o.tar.gz", release.ManifestKindDbt, now)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/release-checks/verify-1", nil)
@@ -30,7 +30,8 @@ func TestHandleGetReleaseCheck_ReceivedShapeHasEmptyActivatedAt(t *testing.T) {
 	assert.Equal(t, "received", body["status"])
 	assert.Equal(t, "core", body["changed_project"])
 	assert.Equal(t, "rel-1", body["verifies_release_id"])
-	assert.EqualValues(t, 2, body["attempt"])
+	assert.EqualValues(t, 3, body["remediation_round"])
+	assert.EqualValues(t, 2, body["try"])
 	assert.Equal(t, "dbt", body["manifest_kind"])
 	assert.NotEmpty(t, body["created_at"])
 	assert.Equal(t, "", body["activated_at"], "a check still in received has no activated_at")

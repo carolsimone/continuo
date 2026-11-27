@@ -22,7 +22,7 @@ func candidate(t *testing.T) *releasecheck.Check {
 
 func fix(t *testing.T) *releasecheck.Check {
 	t.Helper()
-	return releasecheck.NewFix("verify-rel-1-core-a1", "core", "img:1", "rel-1", 1, "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz", release.ManifestKindDbt, t0)
+	return releasecheck.NewFix("verify-rel-1-core-r2-t1", "core", "img:1", "rel-1", 2, 1, "s3://b/core/verify-rel-1-core-r2-t1/source-overlay.tar.gz", release.ManifestKindDbt, t0)
 }
 
 // validating drives r from received to validating with an empty topology, the
@@ -41,7 +41,7 @@ func TestNewCandidate_HasNoFixFacts(t *testing.T) {
 	assert.Equal(t, "org/repo", r.Repo())
 	assert.Equal(t, 1, r.RemediationRound())
 	assert.Equal(t, "", r.VerifiesReleaseID())
-	assert.Equal(t, 0, r.Attempt())
+	assert.Equal(t, 0, r.Try())
 	assert.Equal(t, "", r.SourceOverlayURI())
 }
 
@@ -51,7 +51,8 @@ func TestNewFix_HasNoCandidateFacts(t *testing.T) {
 	require.NotNil(t, r.Fix())
 	assert.Nil(t, r.Candidate())
 	assert.Equal(t, "rel-1", r.VerifiesReleaseID())
-	assert.Equal(t, 1, r.Attempt())
+	assert.Equal(t, 2, r.RemediationRound(), "a fix's round is the round of the try it proves")
+	assert.Equal(t, 1, r.Try())
 	assert.Equal(t, "", r.Repo())
 	assert.False(t, r.IsBootstrap())
 	assert.Nil(t, r.RejectionPayload())
@@ -144,11 +145,12 @@ func TestRehydrate_BuildsTheRightKind(t *testing.T) {
 		ID: "verify-x", Kind: releasecheck.KindFix, Status: releasecheck.StatusPassed,
 		ImageTags: map[string]string{"core": "img"}, ChangedProject: "core",
 		CreatedAt: t0, ManifestKind: release.ManifestKindDbt,
-		VerifiesReleaseID: "rel-1", Attempt: 2, SourceOverlayURI: "s3://o",
+		VerifiesReleaseID: "rel-1", RemediationRound: 3, Try: 2, SourceOverlayURI: "s3://o",
 	})
 	require.NotNil(t, v.Fix())
 	assert.Nil(t, v.Candidate())
-	assert.Equal(t, 2, v.Attempt())
+	assert.Equal(t, 2, v.Try())
+	assert.Equal(t, 3, v.RemediationRound(), "a fix's round rehydrates from the remediation round column")
 
 	c := releasecheck.Rehydrate(releasecheck.RehydrateInput{
 		ID: "rel-1", Kind: releasecheck.KindCandidate, Status: releasecheck.StatusRejected,

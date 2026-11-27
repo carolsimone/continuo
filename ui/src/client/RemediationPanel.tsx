@@ -6,7 +6,7 @@ import { fetchNodeProjects } from './node-api';
 import type { CreatePullRequestResponse } from './remediation-api';
 import {
   fixNodeIds, fixPrProjects, fixPullRequests, fixPillClass,
-  effectiveRound, groupFixes, FixGroup,
+  effectiveRound, groupFixes, FixGroup, tryLabel, HAND_OVER_TRY,
 } from './release-helpers';
 import { useCurrentUser } from './auth/AuthContext';
 import CreatePrModal from './CreatePrModal';
@@ -51,7 +51,7 @@ function DiffView({ uri, defaultOpen = false }: { uri: string; defaultOpen?: boo
   );
 }
 
-// sourceLabel says whether the attempt found the real source file it needed
+// sourceLabel says whether the try found the real source file it needed
 // to change: only a resolved source can become a pull request.
 function sourceLabel(resolved: boolean): string {
   return resolved ? 'resolved' : 'unresolved';
@@ -72,7 +72,7 @@ function releaseCheckPhaseLabel(phase: string): string {
   }
 }
 
-// StatusPill renders an attempt's lifecycle status in the same small pill the
+// StatusPill renders a try's lifecycle status in the same small pill the
 // Releases list uses for a release status, coloured by fixPillClass so
 // the two surfaces share one vocabulary. A status still in flight (a fix
 // being generated or verified) is marked busy for assistive tech.
@@ -88,11 +88,11 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-// ReleaseChecks lists one attempt's release checks — one per edited
+// ReleaseChecks lists one try's release checks — one per edited
 // project — as compact labelled lines, "<project> · <kind> · <phase> · since
 // <activated_at>", each linking to that release check's page. A legacy
-// attempt with only the singular release_check_id shows the one link; an
-// attempt judged without a release check renders nothing.
+// try with only the singular release_check_id shows the one link; a
+// try judged without a release check renders nothing.
 function ReleaseChecks({ fix }: { fix: FixDTO }) {
   const checks = fix.release_checks && fix.release_checks.length > 0
     ? fix.release_checks.map((c) => ({
@@ -268,45 +268,45 @@ function FixDetailCard({
   );
 }
 
-// AttemptRows renders one group's remediation attempts, newest first, inside
-// the group's contained block: each a compact row (attempt · confidence ·
+// TryRows renders one group's remediation tries, newest first, inside
+// the group's contained block: each a compact row (try · confidence ·
 // source · status pill), its release checks as a labelled sub-row
-// beneath, and — for the actionable attempt (auto) or a manually selected
+// beneath, and — for the actionable try (auto) or a manually selected
 // one — its full detail card with diffs and Create PR. The column labels
 // are a muted sub-label of the block, not a peer of the group table's
 // header.
-function AttemptRows({
+function TryRows({
   group,
   isOperator,
   selectedId,
-  onToggleAttempt,
+  onToggleTry,
   onCreatePr,
   detailRef,
 }: {
   group: FixGroup;
   isOperator: boolean;
   selectedId: string | null;
-  onToggleAttempt: (p: FixDTO) => void;
+  onToggleTry: (p: FixDTO) => void;
   onCreatePr: (p: FixDTO) => void;
   detailRef: (el: HTMLTableRowElement | null) => void;
 }) {
   return (
-    <table className="nodes-table remediation-attempts__table">
+    <table className="nodes-table remediation-tries__table">
       <thead>
         <tr>
-          <th>Attempt</th>
+          <th>Try</th>
           <th>Confidence</th>
           <th>Source</th>
           <th>Status</th>
         </tr>
       </thead>
       <tbody>
-        {group.attempts.map((p) => {
+        {group.tries.map((p) => {
           const autoExpanded = isActionable(p);
           const isSelected = !autoExpanded && selectedId === p.id;
           const showCard = autoExpanded || isSelected;
           const showRuns = hasReleaseChecks(p);
-          const toggle = () => onToggleAttempt(p);
+          const toggle = () => onToggleTry(p);
           const compactRowClass = [
             autoExpanded ? 'nodes-row--static' : '',
             isSelected ? 'nodes-row--selected' : '',
@@ -328,7 +328,7 @@ function AttemptRows({
                   }
                 }}
               >
-                <td className="nodes-attempt">#{p.attempt}</td>
+                <td className="nodes-try">{tryLabel(p.remediation_round, p.try)}</td>
                 <td>{p.confidence}</td>
                 <td className="nodes-reason">{sourceLabel(p.source_resolved)}</td>
                 <td><div className="remediation-prs"><StatusPill status={p.status} />{prStateChips(p)}</div></td>
@@ -407,7 +407,7 @@ export default function RemediationPanel() {
     fetchNodeProjects().then(setProjects).catch(() => setProjects([]));
   }, []);
 
-  // Scroll a manually-opened attempt card into view — an auto-expanded card
+  // Scroll a manually-opened try card into view — an auto-expanded card
   // needs no scroll, it is already in place at its row.
   useEffect(() => {
     if (selected) {
@@ -425,7 +425,7 @@ export default function RemediationPanel() {
     return next;
   });
 
-  const toggleAttempt = (p: FixDTO) => setSelected(prev => (prev?.id === p.id ? null : p));
+  const toggleTry = (p: FixDTO) => setSelected(prev => (prev?.id === p.id ? null : p));
 
   return (
     <>
@@ -470,13 +470,13 @@ export default function RemediationPanel() {
               <th>Projects</th>
               <th>Nodes</th>
               <th>Latest status</th>
-              <th>Attempts</th>
+              <th>Tries</th>
               <th>PR</th>
             </tr>
           </thead>
           <tbody>
             {groups.map(g => {
-              const autoExpanded = g.attempts.some(isActionable);
+              const autoExpanded = g.tries.some(isActionable);
               const isOpen = autoExpanded || openGroups.has(g.key);
               const toggle = () => toggleGroup(g.key);
               const rowClass = [
@@ -510,7 +510,7 @@ export default function RemediationPanel() {
                     </td>
                     <td className="remediation-group__nodes">{g.nodeIds.join(', ')}</td>
                     <td><StatusPill status={g.latest.status} /></td>
-                    <td><span className="remediation-group__count">{g.attempts.length}</span></td>
+                    <td><span className="remediation-group__count">{g.tries.filter(p => p.try !== HAND_OVER_TRY).length}</span></td>
                     <td className="remediation-group__prs">
                       {g.latestPrFix
                         ? <div className="remediation-prs">{prStateChips(g.latestPrFix)}</div>
@@ -520,12 +520,12 @@ export default function RemediationPanel() {
                   {isOpen && (
                     <tr className="remediation-group__body nodes-row--static">
                       <td colSpan={8}>
-                        <div className="remediation-attempts">
-                          <AttemptRows
+                        <div className="remediation-tries">
+                          <TryRows
                             group={g}
                             isOperator={currentUser?.role === 'operator'}
                             selectedId={selected?.id ?? null}
-                            onToggleAttempt={toggleAttempt}
+                            onToggleTry={toggleTry}
                             onCreatePr={(p) => setCreatePrFixId(p.id)}
                             detailRef={(el) => { detailRef.current = el; }}
                           />
@@ -586,7 +586,7 @@ export default function RemediationPanel() {
             // The fix may have just left the retryable-claim state
             // (isActionable goes false when every project settled), so its
             // group might no longer auto-expand. Pin the group open and
-            // select the attempt so its row stays open and shows the new
+            // select the try so its row stays open and shows the new
             // link(s) instead of collapsing.
             setOpenGroups(prev => new Set(prev).add(`${updated.release_id} ${effectiveRound(updated)}`));
             setSelected(updated);

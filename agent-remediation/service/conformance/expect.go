@@ -59,46 +59,52 @@ func (e *expectation) ended() {
 	}
 }
 
-// attempts expects the release's attempts, in attempt order, to have these
-// statuses, and returns them.
-func (e *expectation) attempts(want ...fix.Status) []Attempt {
-	got := e.sr.w.Attempts()
+// fixRows expects the release's fix rows, in the order they were written, to
+// have these statuses, and returns them. The tries are numbered from 1, and a
+// hand-over row, which only an escalated row is, comes last as
+// fix.HandOverTry.
+func (e *expectation) fixRows(want ...fix.Status) []FixRow {
+	got := e.sr.w.FixRows()
 	statuses := make([]fix.Status, 0, len(got))
 	numbered := true
 	for i, a := range got {
 		statuses = append(statuses, a.Fix.Status)
-		numbered = numbered && a.Fix.Attempt == i+1
-		e.that(a.Fix.RemediationID == e.sr.id.String(), "attempt %d carries remediation %q", a.Fix.Attempt, a.Fix.RemediationID)
+		if a.Fix.Status == fix.StatusEscalated {
+			numbered = numbered && a.Fix.Try == fix.HandOverTry && i == len(got)-1
+		} else {
+			numbered = numbered && a.Fix.Try == i+1
+		}
+		e.that(a.Fix.RemediationID == e.sr.id.String(), "try %d carries remediation %q", a.Fix.Try, a.Fix.RemediationID)
 	}
-	e.that(numbered, "the attempts are numbered %v", attemptNumbers(got))
-	e.that(slices.Equal(statuses, want), "the attempts are %v, want %v", statuses, want)
+	e.that(numbered, "the tries are numbered %v", tryNumbers(got))
+	e.that(slices.Equal(statuses, want), "the tries are %v, want %v", statuses, want)
 	return got
 }
 
-// nodes expects every failing node of the trigger to have ended attempt a
+// nodes expects every failing node of the trigger to have ended try a
 // with status.
-func (e *expectation) nodes(a Attempt, status fix.Status) {
+func (e *expectation) nodes(a FixRow, status fix.Status) {
 	e.members(a, e.trigger.NodeIDs(), status)
 }
 
-// members expects each named node to have ended attempt a with status.
-func (e *expectation) members(a Attempt, nodeIDs []string, status fix.Status) {
+// members expects each named node to have ended try a with status.
+func (e *expectation) members(a FixRow, nodeIDs []string, status fix.Status) {
 	for _, id := range nodeIDs {
 		o, ok := a.Fix.NodeOutcomes[id]
-		e.that(ok && o.Status == status, "node %s ended attempt %d as %q (%s), want %q", id, a.Fix.Attempt, o.Status, o.Reason, status)
+		e.that(ok && o.Status == status, "node %s ended try %d as %q (%s), want %q", id, a.Fix.Try, o.Status, o.Reason, status)
 	}
 }
 
-// checksPerEditedProject expects one release check per project attempt a
+// checksPerEditedProject expects one release check per project try a
 // edits, and no other run.
-func (e *expectation) checksPerEditedProject(a Attempt, projectRepoPaths map[string]string) {
+func (e *expectation) checksPerEditedProject(a FixRow, projectRepoPaths map[string]string) {
 	edited := map[string]bool{}
 	for _, ed := range a.Fix.Edits {
 		project, _, ok := fix.ProjectForPath(projectRepoPaths, ed.Path)
-		e.that(ok, "attempt %d edits %s, which belongs to no project", a.Fix.Attempt, ed.Path)
+		e.that(ok, "try %d edits %s, which belongs to no project", a.Fix.Try, ed.Path)
 		edited[project] = true
 	}
-	e.that(len(edited) > 0, "attempt %d has no edit", a.Fix.Attempt)
+	e.that(len(edited) > 0, "try %d has no edit", a.Fix.Try)
 	runs := map[string]int{}
 	for _, r := range e.sr.w.Checks() {
 		runs[r.Project]++
@@ -175,16 +181,16 @@ func codes(code model.HandoverReason, nodeIDs ...string) map[string]model.Handov
 	return out
 }
 
-// handedOver expects the nodes of want to have ended attempt a, the
+// handedOver expects the nodes of want to have ended try a, the
 // remediation's last, with the code want names for them, and the remediation
 // to have enqueued exactly one remediation.handed_over event, under the
 // remediation's tenant, that carries the remediation's identity and the tries
 // it made and names exactly the nodes of want, in node id order, each with its
-// code and the message its outcome on attempt a carries, which is never empty.
-func (e *expectation) handedOver(a Attempt, tries int, want map[string]model.HandoverReason) {
+// code and the message its outcome on try a carries, which is never empty.
+func (e *expectation) handedOver(a FixRow, tries int, want map[string]model.HandoverReason) {
 	for _, id := range sortedKeys(want) {
 		o := a.Fix.NodeOutcomes[id]
-		e.that(o.Code == want[id], "node %s ended attempt %d with the code %q (%s), want %q", id, a.Fix.Attempt, o.Code, o.Reason, want[id])
+		e.that(o.Code == want[id], "node %s ended try %d with the code %q (%s), want %q", id, a.Fix.Try, o.Code, o.Reason, want[id])
 	}
 	got := e.handedOverEvents()
 	if len(got) != 1 {
@@ -229,8 +235,8 @@ func (e *expectation) noLaterTry() {
 }
 
 // handedOverInFirstTry expects the remediation to have ended in its first try
-// with the nodes of want handed over in attempt a (handedOver).
-func (e *expectation) handedOverInFirstTry(a Attempt, want map[string]model.HandoverReason) {
+// with the nodes of want handed over in try a (handedOver).
+func (e *expectation) handedOverInFirstTry(a FixRow, want map[string]model.HandoverReason) {
 	e.noLaterTry()
 	e.handedOver(a, firstTry, want)
 }
@@ -282,10 +288,10 @@ func (e *expectation) distinctModelRequests() {
 	}
 }
 
-// proposed expects one attempt, proposed for every failing node, with one
+// proposed expects one try, proposed for every failing node, with one
 // release check per project it edits and one fix.proposed event.
 func (e *expectation) proposed(f Fixture) {
-	if as := e.attempts(fix.StatusProposed); len(as) == 1 {
+	if as := e.fixRows(fix.StatusProposed); len(as) == 1 {
 		e.nodes(as[0], fix.StatusProposed)
 		e.checksPerEditedProject(as[0], f.ProjectRepoPaths)
 	}
@@ -345,7 +351,7 @@ func (e *expectation) fellBackToMembers(c remediation.Cluster) {
 // back, each member's own cluster to have taken a single-cluster type and
 // started fresh: its context steps run in its round 1, its draft passed in
 // round 1, and the model was called about it once for each of the member's
-// scripted answers. The attempt is proposed for every failing node.
+// scripted answers. The try is proposed for every failing node.
 func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Cluster) {
 	e.fellBackToMembers(c)
 	for _, m := range e.clustersOfTry1() {
@@ -362,18 +368,18 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 		e.contextOnlyInRound1(m, typ)
 		e.clusterCalls(m, len(e.sr.script.MemberAnswers[m.TargetNodeID]))
 	}
-	if as := e.attempts(fix.StatusProposed); len(as) == 1 {
+	if as := e.fixRows(fix.StatusProposed); len(as) == 1 {
 		e.nodes(as[0], fix.StatusProposed)
 	}
 	e.noHandedOver()
 }
 
 // membersSkipped expects the cross-project cluster c to have fallen back with
-// every member skipped in attempt a and handed over with code, the cause of
+// every member skipped in try a and handed over with code, the cause of
 // the fall back, in the remediation's first and only try, and no release check
 // run. The code is declined when a step declined the upstream fix and
 // preflight_rounds_spent when pre-flight refused every round of it.
-func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt, code model.HandoverReason) {
+func (e *expectation) membersSkipped(c remediation.Cluster, a FixRow, code model.HandoverReason) {
 	e.that(c.Status == remediation.ClusterFellBack, "cluster %d is %s, not fell_back", c.Cluster, c.Status)
 	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
 	e.members(a, c.Members, fix.StatusSkipped)
@@ -516,21 +522,21 @@ func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type,
 		e.modelCalls(0)
 	}
 	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
-	if as := e.attempts(want); len(as) == 1 {
+	if as := e.fixRows(want); len(as) == 1 {
 		e.nodes(as[0], want)
 		e.handedOverInFirstTry(as[0], codes(code, e.trigger.NodeIDs()...))
 	}
 	e.checks(0)
 }
 
-// verifyError expects attempt a failed by its release check, with every gate
+// verifyError expects try a failed by its release check, with every gate
 // error the fixture scripts in its verify error.
-func (e *expectation) verifyError(a Attempt, gateErrors map[string]string) {
-	e.that(a.VerifyError != "", "attempt %d carries no verify error", a.Fix.Attempt)
+func (e *expectation) verifyError(a FixRow, gateErrors map[string]string) {
+	e.that(a.VerifyError != "", "try %d carries no verify error", a.Fix.Try)
 	for _, node := range sortedKeys(gateErrors) {
 		msg := gateErrors[node]
-		e.that(strings.Contains(a.VerifyError, msg), "attempt %d's verify error %q does not name %s's error %q",
-			a.Fix.Attempt, a.VerifyError, node, msg)
+		e.that(strings.Contains(a.VerifyError, msg), "try %d's verify error %q does not name %s's error %q",
+			a.Fix.Try, a.VerifyError, node, msg)
 	}
 }
 
@@ -540,10 +546,10 @@ func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
 }
 
-func attemptNumbers(as []Attempt) []int {
+func tryNumbers(as []FixRow) []int {
 	out := make([]int, 0, len(as))
 	for _, a := range as {
-		out = append(out, a.Fix.Attempt)
+		out = append(out, a.Fix.Try)
 	}
 	return out
 }

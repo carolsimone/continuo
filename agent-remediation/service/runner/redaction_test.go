@@ -80,7 +80,7 @@ func TestRunner_RestoresRedactedValuesInTheDraft(t *testing.T) {
 	require.NotNil(t, rec.LastRequest)
 	assert.Contains(t, rec.LastRequest.Request().User, "[redacted:email:1]", "the prompt row keeps the request as sent")
 	assert.Equal(t, "select '[redacted:email:1]' as owner, 2", rec.Draft.Edits[0].Content, "the prompt row keeps the answer as received")
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
 }
 
 func TestRunner_AnUnknownPlaceholderIsAFinding(t *testing.T) {
@@ -345,7 +345,7 @@ func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 	assert.Equal(t, "kept ops@acme.com; the log said [redacted:secret:1]", h.preflightDraft(id, 1).Rationale,
 		"no finding: a marker in the rationale is harmless")
 	assert.Empty(t, h.roundRows(id, 1, "preflight")[1].Findings)
-	p := h.attempt(1).Fix
+	p := h.fixRow(1).Fix
 	require.Equal(t, fix.StatusProposed, p.Status)
 	assert.Contains(t, fmt.Sprint(p), "the log said [redacted:secret:1]", "the pull request shows the marker")
 	require.Len(t, h.proposedEvents(), 1)

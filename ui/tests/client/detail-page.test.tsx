@@ -1399,7 +1399,7 @@ describe('DetailPage — historical run attempts', () => {
       expect(screen.queryByText('orders')).toBeNull();
 
       fireEvent.click(row);
-      const block = container.querySelector('.remediation-attempts') as HTMLElement;
+      const block = container.querySelector('.run-attempts') as HTMLElement;
       expect(block).toBeTruthy();
       const rows = within(block).getAllByRole('row').slice(1);
       expect(rows.map(r => r.querySelector('td')?.textContent)).toEqual(['1', '2']);

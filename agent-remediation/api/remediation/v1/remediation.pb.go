@@ -30,10 +30,12 @@ type Fix struct {
 	ReleaseId      string                 `protobuf:"bytes,3,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
 	NodeId         string                 `protobuf:"bytes,4,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	ErrorSignature string                 `protobuf:"bytes,5,opt,name=error_signature,json=errorSignature,proto3" json:"error_signature,omitempty"`
-	Attempt        int32                  `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	Status         string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
-	Confidence     string                 `protobuf:"bytes,8,opt,name=confidence,proto3" json:"confidence,omitempty"`
-	Rationale      string                 `protobuf:"bytes,9,opt,name=rationale,proto3" json:"rationale,omitempty"`
+	// try is the try's number in its round, from 1; 0 is the round's hand-over
+	// row, written once the round's tries are spent.
+	Try        int32  `protobuf:"varint,6,opt,name=try,proto3" json:"try,omitempty"`
+	Status     string `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
+	Confidence string `protobuf:"bytes,8,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	Rationale  string `protobuf:"bytes,9,opt,name=rationale,proto3" json:"rationale,omitempty"`
 	// single-file view of the fix: edits[0]'s content_uri when edits is
 	// non-empty, otherwise the candidate-only fix artifact
 	ProposedSqlUri string `protobuf:"bytes,10,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
@@ -61,20 +63,20 @@ type Fix struct {
 	// reaches a terminal outcome (pr_state 'merged' or 'rejected').
 	PrClosedAt string      `protobuf:"bytes,25,opt,name=pr_closed_at,json=prClosedAt,proto3" json:"pr_closed_at,omitempty"`
 	Edits      []*FileEdit `protobuf:"bytes,26,rep,name=edits,proto3" json:"edits,omitempty"`
-	// release_check_id names the release check that verified this attempt's
-	// fix — the first of `release_checks`. Set while the attempt is 'verifying'
-	// and kept on the row it became. Empty on an attempt judged without one.
+	// release_check_id names the release check that verified this try's
+	// fix — the first of `release_checks`. Set while the try is 'verifying'
+	// and kept on the row it became. Empty on a try judged without one.
 	ReleaseCheckId string `protobuf:"bytes,27,opt,name=release_check_id,json=releaseCheckId,proto3" json:"release_check_id,omitempty"`
 	// verify_error is why that release check rejected the fix — the reason a python
-	// contract attempt reached 'failed', and the evidence the next attempt is
+	// contract try reached 'failed', and the evidence the next try is
 	// shown. Empty unless the release check failed.
 	VerifyError string `protobuf:"bytes,28,opt,name=verify_error,json=verifyError,proto3" json:"verify_error,omitempty"`
-	// remediation_round is the release's remediation round this attempt belongs to.
+	// remediation_round is the release's remediation round this try belongs to.
 	RemediationRound int32 `protobuf:"varint,29,opt,name=remediation_round,json=remediationRound,proto3" json:"remediation_round,omitempty"`
-	// resolved_node_ids is the failing nodes this attempt addresses, sorted;
+	// resolved_node_ids is the failing nodes this try addresses, sorted;
 	// node_id is their representative.
 	ResolvedNodeIds []string `protobuf:"bytes,30,rep,name=resolved_node_ids,json=resolvedNodeIds,proto3" json:"resolved_node_ids,omitempty"`
-	// node_outcomes is, per failing node, how this attempt ended for it — a
+	// node_outcomes is, per failing node, how this try ended for it — a
 	// cluster that was skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]*NodeOutcome `protobuf:"bytes,31,rep,name=node_outcomes,json=nodeOutcomes,proto3" json:"node_outcomes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -89,13 +91,13 @@ type Fix struct {
 	// pr_projects is the sorted owning-project groups this fix's pull
 	// requests split into; [""] for a legacy (unsplit) fix.
 	PrProjects []string `protobuf:"bytes,34,rep,name=pr_projects,json=prProjects,proto3" json:"pr_projects,omitempty"`
-	// projects is every project this attempt touched — the failing nodes'
+	// projects is every project this try touched — the failing nodes'
 	// projects plus the edited ones, sorted — the same set the
 	// ListFixesRequest.project filter matches a fix on.
 	Projects []string `protobuf:"bytes,35,rep,name=projects,proto3" json:"projects,omitempty"`
-	// approvers is who must approve what this attempt did with each node a
+	// approvers is who must approve what this try did with each node a
 	// remediation settled at its end, the fixed nodes and the handed-over ones,
-	// one entry per node sorted by node_id. Empty on an attempt row with no
+	// one entry per node sorted by node_id. Empty on a try's row with no
 	// remediation id and on one with no approvers recorded.
 	Approvers     []*Approver `protobuf:"bytes,36,rep,name=approvers,proto3" json:"approvers,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -167,9 +169,9 @@ func (x *Fix) GetErrorSignature() string {
 	return ""
 }
 
-func (x *Fix) GetAttempt() int32 {
+func (x *Fix) GetTry() int32 {
 	if x != nil {
-		return x.Attempt
+		return x.Try
 	}
 	return 0
 }
@@ -618,10 +620,11 @@ type BeginPullRequestResponse struct {
 	ProposedSqlUri string `protobuf:"bytes,5,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
 	// single-file view of the fix: edits[0]'s diff_uri when edits is
 	// non-empty, otherwise the diff of the candidate-only fix artifact
-	DiffUri    string `protobuf:"bytes,6,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
-	ReleaseId  string `protobuf:"bytes,7,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
-	NodeId     string `protobuf:"bytes,8,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Attempt    int32  `protobuf:"varint,9,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	DiffUri   string `protobuf:"bytes,6,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
+	ReleaseId string `protobuf:"bytes,7,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	NodeId    string `protobuf:"bytes,8,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	// try is the claimed fix's try number in its round (remediation_round).
+	Try        int32  `protobuf:"varint,9,opt,name=try,proto3" json:"try,omitempty"`
 	Rationale  string `protobuf:"bytes,10,opt,name=rationale,proto3" json:"rationale,omitempty"`
 	Confidence string `protobuf:"bytes,11,opt,name=confidence,proto3" json:"confidence,omitempty"`
 	Model      string `protobuf:"bytes,12,opt,name=model,proto3" json:"model,omitempty"`
@@ -633,7 +636,7 @@ type BeginPullRequestResponse struct {
 	// never a fresher one taken by someone else since.
 	ClaimedAt string      `protobuf:"bytes,14,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
 	Edits     []*FileEdit `protobuf:"bytes,15,rep,name=edits,proto3" json:"edits,omitempty"`
-	// resolved_node_ids is the failing nodes this attempt addresses, sorted;
+	// resolved_node_ids is the failing nodes this try addresses, sorted;
 	// node_id is their representative.
 	ResolvedNodeIds []string `protobuf:"bytes,16,rep,name=resolved_node_ids,json=resolvedNodeIds,proto3" json:"resolved_node_ids,omitempty"`
 	// project is the owning-project group this claim covers, echoing the
@@ -642,9 +645,11 @@ type BeginPullRequestResponse struct {
 	// approvers is who must approve the claim's fix: the fix's approvers of
 	// the nodes in resolved_node_ids, sorted by node_id. A node the fix
 	// records no approver for has no entry.
-	Approvers     []*Approver `protobuf:"bytes,18,rep,name=approvers,proto3" json:"approvers,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Approvers []*Approver `protobuf:"bytes,18,rep,name=approvers,proto3" json:"approvers,omitempty"`
+	// remediation_round is the round of the claimed fix's try.
+	RemediationRound int32 `protobuf:"varint,19,opt,name=remediation_round,json=remediationRound,proto3" json:"remediation_round,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *BeginPullRequestResponse) Reset() {
@@ -733,9 +738,9 @@ func (x *BeginPullRequestResponse) GetNodeId() string {
 	return ""
 }
 
-func (x *BeginPullRequestResponse) GetAttempt() int32 {
+func (x *BeginPullRequestResponse) GetTry() int32 {
 	if x != nil {
-		return x.Attempt
+		return x.Try
 	}
 	return 0
 }
@@ -801,6 +806,13 @@ func (x *BeginPullRequestResponse) GetApprovers() []*Approver {
 		return x.Approvers
 	}
 	return nil
+}
+
+func (x *BeginPullRequestResponse) GetRemediationRound() int32 {
+	if x != nil {
+		return x.RemediationRound
+	}
+	return 0
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -918,7 +930,7 @@ func (*RecordPullRequestResponse) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{7}
 }
 
-// FailPullRequestRequest identifies the fix whose PR attempt failed.
+// FailPullRequestRequest identifies the claim whose pull request could not be opened.
 type FailPullRequestRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1116,7 +1128,7 @@ func (x *FileEdit) GetRenamedFrom() string {
 	return ""
 }
 
-// NodeOutcome is how one failing node's attempt ended: verifying, proposed,
+// NodeOutcome is how one failing node's try ended: verifying, proposed,
 // failed, skipped, or escalated, with the reason for that outcome. code is the
 // handover_reason vocabulary value that says why the node was handed over when
 // its outcome is not part of a verified fix, and is empty otherwise.
@@ -1180,7 +1192,7 @@ func (x *NodeOutcome) GetCode() string {
 	return ""
 }
 
-// Approver is who must approve what an attempt did with one node: the node's
+// Approver is who must approve what a try did with one node: the node's
 // owner, as source says where it was read from. source is "bundle" (the owner
 // the release's code bundle records for the node), "contract_file" (the team of
 // the node's contract file in the repository) or "none" (no owner was found),
@@ -1455,15 +1467,15 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x8a\v\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x82\v\n" +
 	"\x03Fix\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
 	"\n" +
 	"release_id\x18\x03 \x01(\tR\treleaseId\x12\x17\n" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x12'\n" +
-	"\x0ferror_signature\x18\x05 \x01(\tR\x0eerrorSignature\x12\x18\n" +
-	"\aattempt\x18\x06 \x01(\x05R\aattempt\x12\x16\n" +
+	"\x0ferror_signature\x18\x05 \x01(\tR\x0eerrorSignature\x12\x10\n" +
+	"\x03try\x18\x06 \x01(\x05R\x03try\x12\x16\n" +
 	"\x06status\x18\a \x01(\tR\x06status\x12\x1e\n" +
 	"\n" +
 	"confidence\x18\b \x01(\tR\n" +
@@ -1519,7 +1531,7 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"C\n" +
 	"\x17BeginPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
-	"\aproject\x18\x02 \x01(\tR\aproject\"\xd1\x04\n" +
+	"\aproject\x18\x02 \x01(\tR\aproject\"\xf6\x04\n" +
 	"\x18BeginPullRequestResponse\x12\x15\n" +
 	"\x06fix_id\x18\x01 \x01(\tR\x05fixId\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x1d\n" +
@@ -1530,8 +1542,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\bdiff_uri\x18\x06 \x01(\tR\adiffUri\x12\x1d\n" +
 	"\n" +
 	"release_id\x18\a \x01(\tR\treleaseId\x12\x17\n" +
-	"\anode_id\x18\b \x01(\tR\x06nodeId\x12\x18\n" +
-	"\aattempt\x18\t \x01(\x05R\aattempt\x12\x1c\n" +
+	"\anode_id\x18\b \x01(\tR\x06nodeId\x12\x10\n" +
+	"\x03try\x18\t \x01(\x05R\x03try\x12\x1c\n" +
 	"\trationale\x18\n" +
 	" \x01(\tR\trationale\x12\x1e\n" +
 	"\n" +
@@ -1544,7 +1556,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x05edits\x18\x0f \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12*\n" +
 	"\x11resolved_node_ids\x18\x10 \x03(\tR\x0fresolvedNodeIds\x12\x18\n" +
 	"\aproject\x18\x11 \x01(\tR\aproject\x126\n" +
-	"\tapprovers\x18\x12 \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\"\x95\x01\n" +
+	"\tapprovers\x18\x12 \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\x12+\n" +
+	"\x11remediation_round\x18\x13 \x01(\x05R\x10remediationRound\"\x95\x01\n" +
 	"\x18RecordPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +

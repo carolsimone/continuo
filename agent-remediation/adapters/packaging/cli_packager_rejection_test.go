@@ -38,10 +38,10 @@ func stubPackager(t *testing.T, script string) *CLIPackager {
 // and refused it. Retrying cannot change that answer — and the model call that
 // produced the contract is served from the idempotency cache on a redelivery,
 // so the same refused input would be rebuilt every time until the stream's
-// poison limit dropped the message and left the attempt in flight forever. The
+// poison limit dropped the message and left the try in flight forever. The
 // error therefore carries ErrContractRejected, which tells the caller to record
 // a terminal failure instead, and it carries the CLI's own stderr, which is the
-// evidence the next attempt is shown.
+// evidence the next try is shown.
 func TestPack_ARejectedContractIsDeterministic(t *testing.T) {
 	p := stubPackager(t, "#!/bin/sh\necho 'contracts/x.odcs.yaml: schema[0].properties is required' >&2\nexit 1\n")
 
@@ -53,7 +53,7 @@ func TestPack_ARejectedContractIsDeterministic(t *testing.T) {
 		t.Errorf("error = %v, want it to wrap ports.ErrContractRejected so the caller records a terminal failure", err)
 	}
 	if !strings.Contains(err.Error(), "schema[0].properties is required") {
-		t.Errorf("error = %v, want it to carry the CLI's stderr as evidence for the next attempt", err)
+		t.Errorf("error = %v, want it to carry the CLI's stderr as evidence for the next try", err)
 	}
 }
 

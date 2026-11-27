@@ -100,8 +100,8 @@ func TestDBTCompile_BuildsItsRequestAndOneEditDraft(t *testing.T) {
 			Original:     "select 1",
 			Content:      "select 2",
 			TargetNodeID: "svc",
-			ContentKey:   "proposed-fix/rel-1/svc/attempt-2.source.sql",
-			DiffKey:      "proposed-fix/rel-1/svc/attempt-2.source.diff",
+			ContentKey:   "proposed-fix/rel-1/svc/round-1/try-2.source.sql",
+			DiffKey:      "proposed-fix/rel-1/svc/round-1/try-2.source.diff",
 		}},
 		NamedTarget:    "models/x.sql",
 		TargetShown:    true,
@@ -160,7 +160,7 @@ func TestDBTParse_BuildsItsRequest(t *testing.T) {
 	want := prompt.AssembleParseFix(shownAll(shownFiles), "parse error near from", "svc", "model.svc.x", precedents)
 	assert.Equal(t, want, m.reqs[0])
 	require.Len(t, out.Draft.Edits, 1)
-	assert.Equal(t, "proposed-fix/rel-1/model.svc.x/attempt-2.source.sql", out.Draft.Edits[0].ContentKey)
+	assert.Equal(t, "proposed-fix/rel-1/model.svc.x/round-1/try-2.source.sql", out.Draft.Edits[0].ContentKey)
 	assert.Equal(t, "model.svc.x", out.Draft.Edits[0].TargetNodeID)
 	assert.Equal(t, "model.svc.root", out.Draft.SuspectedRoot)
 }
@@ -182,8 +182,8 @@ func TestSeed_BuildsItsRequestAndAlwaysTargetsTheCSV(t *testing.T) {
 		assert.Equal(t, "services/svc/seeds/a.csv", e.Path)
 		assert.Equal(t, "a,b\n1", e.Original)
 		assert.Equal(t, "a,b\n1,2", e.Content)
-		assert.Equal(t, "proposed-fix/rel-1/seed.svc.a/attempt-2.source.sql", e.ContentKey)
-		assert.Equal(t, "proposed-fix/rel-1/seed.svc.a/attempt-2.source.diff", e.DiffKey)
+		assert.Equal(t, "proposed-fix/rel-1/seed.svc.a/round-1/try-2.source.sql", e.ContentKey)
+		assert.Equal(t, "proposed-fix/rel-1/seed.svc.a/round-1/try-2.source.diff", e.DiffKey)
 		assert.Empty(t, out.Draft.SuspectedRoot, "the seed prompt reads no suspected root")
 	}
 }
@@ -294,7 +294,7 @@ func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *te
 
 func TestPrompts_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
 	tries := []remediation.TryRecord{{
-		Round: 1, Try: 1, Attempt: 1,
+		Round: 1, Try: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"svc"}, Edits: []remediation.EditRecord{{Path: sqlPath, Diff: "<-select 1\n+select 3>"}}}},
 		Gate:     []remediation.Finding{{Code: "release_check_failed", Message: "<svc: still broken>"}},
 	}}
@@ -306,5 +306,5 @@ func TestPrompts_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
 
 	want := prompt.AssembleCompileFix(shownAll(shownFiles), "the dbt log", "svc", precedents)
 	assert.Equal(t, step.WithPreviousTries(want, ev), m.reqs[0])
-	assert.Contains(t, m.reqs[0].User, "### Try 1 (round 1)")
+	assert.Contains(t, m.reqs[0].User, "### Round 1, try 1")
 }

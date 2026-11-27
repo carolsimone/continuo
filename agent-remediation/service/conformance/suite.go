@@ -38,7 +38,7 @@ const (
 	PreflightRoundsSpent Scenario = "preflight_rounds_spent"
 	// GateFailsNextTryLearns: the first try's release check fails, the next
 	// try's first request shows why, and its release check passes. In a flow
-	// of one try there is no next try: the failed attempt is handed over.
+	// of one try there is no next try: the failed try is handed over.
 	GateFailsNextTryLearns Scenario = "gate_fails_next_try_learns"
 	// TriesSpent: every try's release check fails until the flow's tries are
 	// spent. The failing set is handed over as tries_spent, in one
@@ -71,9 +71,9 @@ func TypeScenarios() []Scenario {
 		TriesSpent, DeclinesBeforeModel, ModelDeclines, Redelivery}
 }
 
-// everyAttemptFails is the script's failed attempts when no release check
+// everyTryFails is the script's failed tries when no release check
 // may pass.
-const everyAttemptFails = 1 << 20
+const everyTryFails = 1 << 20
 
 // Result is how one type, or one flow, did in one scenario. Err is nil when
 // the scenario held.
@@ -372,10 +372,10 @@ func typeScript(f Fixture, typ workflow.Type, tries int, sc Scenario) (typePlan,
 		rounds = refusedThenPassed(typ, declines)
 	case GateFailsNextTryLearns:
 		rounds, repeat = []answerKind{passes}, min(2, tries)
-		plan.script.FailedAttempts = 1
+		plan.script.FailedTries = 1
 	case TriesSpent:
 		rounds, repeat = []answerKind{passes}, tries
-		plan.script.FailedAttempts = everyAttemptFails
+		plan.script.FailedTries = everyTryFails
 	case DeclinesBeforeModel:
 		// The cluster declines before its model is called, so no call of it
 		// is scripted and any call fails.
@@ -526,7 +526,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 			e.triesSpent(f, plan)
 			break
 		}
-		if as := e.attempts(fix.StatusFailed, fix.StatusProposed); len(as) == 2 {
+		if as := e.fixRows(fix.StatusFailed, fix.StatusProposed); len(as) == 2 {
 			e.verifyError(as[0], f.GateErrors)
 			e.nodes(as[1], fix.StatusProposed)
 		}
@@ -541,7 +541,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 			e.membersRanTheirTypes(files, first)
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
 		case workflow.ClusterCrossProject:
-			if as := e.attempts(fix.StatusSkipped); len(as) == 1 {
+			if as := e.fixRows(fix.StatusSkipped); len(as) == 1 {
 				e.membersSkipped(first, as[0], model.HandoverReasonDeclined)
 			}
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
@@ -566,7 +566,7 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 	case workflow.ClusterSharedUpstream:
 		e.membersRanTheirTypes(files, first)
 	case workflow.ClusterCrossProject:
-		if as := e.attempts(fix.StatusSkipped); len(as) == 1 {
+		if as := e.fixRows(fix.StatusSkipped); len(as) == 1 {
 			e.membersSkipped(first, as[0], model.HandoverReasonPreflightRoundsSpent)
 		}
 		finding, ok := e.firstFinding(first, typ)
@@ -585,7 +585,7 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 // event that counts the tries, and no fix.
 func (e *expectation) triesSpent(f Fixture, plan typePlan) {
 	failed := slices.Repeat([]fix.Status{fix.StatusFailed}, plan.tries)
-	as := e.attempts(append(failed, fix.StatusEscalated)...)
+	as := e.fixRows(append(failed, fix.StatusEscalated)...)
 	for _, a := range as[:min(plan.tries, len(as))] {
 		e.verifyError(a, f.GateErrors)
 	}

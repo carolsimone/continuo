@@ -22,7 +22,7 @@ func TestFileEditsRoundTripCarryTargetNode(t *testing.T) {
 }
 
 // TestNodeOutcomesAndReleaseChecksRoundTrip verifies the codecs for the two
-// new batched-attempt columns: node_outcomes (one outcome per failing node)
+// new batched-try columns: node_outcomes (one outcome per failing node)
 // and release_checks (one release check of the fix per edited project), and
 // that an empty release_checks array decodes to nil rather than an empty non-nil slice.
 func TestNodeOutcomesAndReleaseChecksRoundTrip(t *testing.T) {

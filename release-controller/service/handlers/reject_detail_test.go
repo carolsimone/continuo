@@ -113,7 +113,7 @@ func TestHandleValidationResult_Rejected_DetailSaysSoWhenOnlyTheAggregateFailed(
 func TestHandleValidationResult_FixFails_DetailNamesTheFailingNodes(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, store := newDeps(now)
-	r := releasecheck.NewFix("verify-rel-1-core-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
+	r := releasecheck.NewFix("verify-rel-1-core-r1-t1", "core", "img", "rel-1", 1, 1, "", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToParsing(now))
 	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ProjectName: "core"}}), []string{"model.core.orders"}, now))
 	r.UpsertStageResult("validation", releasecheck.NodeValidationResult{NodeID: "model.core.orders", Status: "failed"})

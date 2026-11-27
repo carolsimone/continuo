@@ -103,7 +103,7 @@ func (p *CLIPackager) Pack(ctx context.Context, contractDir, repoRoot, project, 
 // A normal nonzero exit status is the CLI having read the contract and refused
 // it: deterministic on that input, so it is wrapped as ports.ErrContractRejected
 // and carries the CLI's stderr, which is both the explanation and the evidence
-// the next attempt is shown. Everything else is left plain and stays retryable:
+// the next try is shown. Everything else is left plain and stays retryable:
 // a cancelled or expired context (which kills the subprocess and surfaces as
 // the same nonzero-exit shape, so it is checked first), a process killed by a
 // signal (no exit status of its own — ExitCode reports -1), and every failure

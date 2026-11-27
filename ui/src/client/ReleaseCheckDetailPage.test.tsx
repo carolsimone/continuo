@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import ReleaseCheckDetailPage from './ReleaseCheckDetailPage';
 
 const check = {
-  check_id: 'verify-rel-1-core-a2', status: 'failed', changed_project: 'core', verifies_release_id: 'rel-1', attempt: 2,
+  check_id: 'verify-rel-1-core-r1-t2', status: 'failed', changed_project: 'core', verifies_release_id: 'rel-1', remediation_round: 1, try: 2,
   created_at: '2026-09-02T10:00:00Z', activated_at: '2026-09-02T10:01:00Z', finished_at: '2026-09-02T10:09:00Z',
   transitions: [{ to: 'received', at: '2026-09-02T10:00:00Z' }, { to: 'failed', at: '2026-09-02T10:09:00Z' }],
   validation_node_ids: ['model.core.orders'], failing_nodes: ['model.core.orders'],
@@ -24,7 +24,7 @@ function renderAt(id: string) {
 
 beforeEach(() => {
   global.fetch = vi.fn((url: string) => {
-    if (String(url) === '/api/release-checks/verify-rel-1-core-a2') {
+    if (String(url) === '/api/release-checks/verify-rel-1-core-r1-t2') {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(check) });
     }
     return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) });
@@ -33,11 +33,11 @@ beforeEach(() => {
 
 describe('ReleaseCheckDetailPage', () => {
   it('names the release check, what it verifies, and its per-node results', async () => {
-    renderAt('verify-rel-1-core-a2');
-    expect(await screen.findByText('verify-rel-1-core-a2')).toBeInTheDocument();
+    renderAt('verify-rel-1-core-r1-t2');
+    expect(await screen.findByText('verify-rel-1-core-r1-t2')).toBeInTheDocument();
     expect(document.querySelector('header .pill')?.textContent).toBe('failed');
     expect(screen.getByRole('link', { name: 'rel-1' })).toHaveAttribute('href', '/releases/rel-1');
-    expect(screen.getByText(/attempt 2/)).toBeInTheDocument();
+    expect(screen.getByText(/round 1, try 2/)).toBeInTheDocument();
     expect(screen.getByText(/project core/)).toBeInTheDocument();
     // 'Validation' appears twice: the failure-reason strip (reasonLabel) and
     // the per-node results section header (stageLabel) for the same stage.
@@ -48,7 +48,7 @@ describe('ReleaseCheckDetailPage', () => {
   });
 
   it('shows the failure reason strip', async () => {
-    renderAt('verify-rel-1-core-a2');
+    renderAt('verify-rel-1-core-r1-t2');
     await screen.findAllByText('Validation');
     expect(document.querySelector('.info-strip--error')?.textContent).toContain('Validation');
   });
@@ -73,23 +73,23 @@ describe('ReleaseCheckDetailPage — parse timings', () => {
 
   it('shows how long the parse and the contract generation took, as a release page does', async () => {
     serve(parsed);
-    renderAt('verify-rel-1-core-a2');
-    await screen.findByText('verify-rel-1-core-a2');
+    renderAt('verify-rel-1-core-r1-t2');
+    await screen.findByText('verify-rel-1-core-r1-t2');
     expect(lines()).toEqual(['parsing 4.2 s', 'generating contracts 1.3 s · 5\u00a0contracts (dbt 3, python 2)']);
   });
 
   it('shows no line for a release check whose parse reported nothing', async () => {
     serve({ ...parsed, parse_ms: undefined, contracts_ms: undefined, contracts_by_family: undefined });
-    renderAt('verify-rel-1-core-a2');
-    await screen.findByText('verify-rel-1-core-a2');
+    renderAt('verify-rel-1-core-r1-t2');
+    await screen.findByText('verify-rel-1-core-r1-t2');
     expect(lines()).toEqual([]);
   });
 });
 
 describe('ReleaseCheckDetailPage — brand header', () => {
   it('starts the header with the brand, before the back link', async () => {
-    renderAt('verify-rel-1-core-a2');
-    await screen.findByText('verify-rel-1-core-a2');
+    renderAt('verify-rel-1-core-r1-t2');
+    await screen.findByText('verify-rel-1-core-r1-t2');
 
     const header = document.querySelector('.page-header')!;
     const brand = header.querySelector('a.brand');
@@ -101,8 +101,8 @@ describe('ReleaseCheckDetailPage — brand header', () => {
 
 describe('ReleaseCheckDetailPage — projects and timeline', () => {
   it('renders the release check\'s images as project tiles and its transitions as a timeline', async () => {
-    renderAt('verify-rel-1-core-a2');
-    await screen.findByText('verify-rel-1-core-a2');
+    renderAt('verify-rel-1-core-r1-t2');
+    await screen.findByText('verify-rel-1-core-r1-t2');
     const tile = document.querySelector('.project-tile--changed')!;
     expect(tile.querySelector('.project-tile__name')?.textContent).toBe('core');
     expect(tile.querySelector('.project-tile__tag')?.textContent).toBe('img:1');

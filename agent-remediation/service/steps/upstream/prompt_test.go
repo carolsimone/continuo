@@ -130,8 +130,8 @@ func TestPrompt_TheDraftIsOneEditOfTheAncestor(t *testing.T) {
 			Original:     targetSource,
 			Content:      fixedSource,
 			TargetNodeID: targetID,
-			ContentKey:   "proposed-fix/rel-1/model.up-svc.up/attempt-2.source.sql",
-			DiffKey:      "proposed-fix/rel-1/model.up-svc.up/attempt-2.source.diff",
+			ContentKey:   "proposed-fix/rel-1/model.up-svc.up/round-1/try-2.source.sql",
+			DiffKey:      "proposed-fix/rel-1/model.up-svc.up/round-1/try-2.source.diff",
 		}},
 		Rationale:      "kept the old column",
 		Confidence:     "medium",
@@ -245,7 +245,7 @@ func TestPrompt_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *tes
 
 func TestPrompt_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
 	tries := []remediation.TryRecord{{
-		Round: 1, Try: 1, Attempt: 1,
+		Round: 1, Try: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"model.up-svc.m1"}, Outcome: "failed (preflight_rounds_spent): the answer repeats the original"}},
 	}}
 	ev := upstreamEvidence().With(remediation.KeyPreviousTries, tries)

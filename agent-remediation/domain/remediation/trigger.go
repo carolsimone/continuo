@@ -1,6 +1,7 @@
 package remediation
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
@@ -130,19 +131,24 @@ func (t Trigger) Projects() []string {
 }
 
 // Failure is one cluster of failing nodes to fix: the trigger it came from, the
-// cluster's shape, the node the fix edits, its member nodes, and the try and
-// attempt it belongs to.
+// cluster's shape, the node the fix edits, its member nodes, and the try it
+// belongs to.
 type Failure struct {
 	Trigger      Trigger
 	Kind         workflow.ClusterKind
 	TargetNodeID string
 	Target       TriggerNode
 	Members      []TriggerNode
-	// Attempt is the number of the try's attempt, which keys its fix row.
-	Attempt int
-	// Try is the try's number within its remediation, whose round is the
-	// trigger's.
+	// Try is the try's number in its round, the trigger's, which keys its fix
+	// row with the release and the round.
 	Try int
+}
+
+// ArtifactPrefix is the object-storage prefix under which the try stores what
+// its draft for nodeID wrote: proposed-fix/<release>/<node>/round-<r>/try-<t>.
+// The round and the try keep every try's artifacts apart.
+func (f Failure) ArtifactPrefix(nodeID string) string {
+	return fmt.Sprintf("proposed-fix/%s/%s/round-%d/try-%d", f.Trigger.ReleaseID, nodeID, f.Trigger.Round, f.Try)
 }
 
 // PrecedentSubject is the node whose failure precedents inform the fix: the

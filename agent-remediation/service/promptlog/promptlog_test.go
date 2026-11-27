@@ -97,13 +97,13 @@ func TestPropose_LogsFullPrompt(t *testing.T) {
 }
 
 // When the runner stamps the failure identity on the context, the prompt log
-// carries it, so a logged prompt can be tied to the release/node/attempt it was
+// carries it, so a logged prompt can be tied to the release/node/try it was
 // built for.
 func TestPropose_LogsFailureCorrelation(t *testing.T) {
 	fake := &fakeProvider{}
 	logger, buf := newBufLogger()
 	ctx := ContextWithFailure(context.Background(), Failure{
-		Source: "compile", ReleaseID: "rel-ebbcc5a-138", NodeID: "service-1", Attempt: 1,
+		Source: "compile", ReleaseID: "rel-ebbcc5a-138", NodeID: "service-1", Try: 1,
 	})
 
 	if _, err := New(fake, logger).Propose(ctx, sampleRequest()); err != nil {
@@ -120,8 +120,8 @@ func TestPropose_LogsFailureCorrelation(t *testing.T) {
 	if rec["source"] != "compile" {
 		t.Fatalf("logged source = %v", rec["source"])
 	}
-	if rec["attempt"].(float64) != 1 {
-		t.Fatalf("logged attempt = %v", rec["attempt"])
+	if rec["try"].(float64) != 1 {
+		t.Fatalf("logged try = %v", rec["try"])
 	}
 }
 

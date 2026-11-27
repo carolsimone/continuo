@@ -121,7 +121,7 @@ func nodeOutcomes(clusters []remediation.Cluster) map[string]fix.NodeOutcome {
 	return out
 }
 
-// settledStatus is the attempt's status when no cluster produced an edit: a
+// settledStatus is the try's status when no cluster produced an edit: a
 // skip when every node was skipped, and a failure as soon as one node was
 // actually attempted and did not yield a change.
 func settledStatus(outcomes map[string]fix.NodeOutcome) fix.Status {
@@ -133,12 +133,12 @@ func settledStatus(outcomes map[string]fix.NodeOutcome) fix.Status {
 	return fix.StatusSkipped
 }
 
-// verifyingAttempt is the attempt's fix row once the gate started its
+// verifyingTry is the try's fix row once the gate started its
 // release checks: every edit of the checked drafts, each naming the members of its
 // cluster, the release checks that verify them, the weakest cluster's confidence, one
 // composed rationale per cluster, the first model that answered, and the
 // repository and commit the edits apply to.
-func verifyingAttempt(run tryRun, checked []checkedCluster, releaseChecks []fix.ReleaseCheck) fix.Fix {
+func verifyingTry(run tryRun, checked []checkedCluster, releaseChecks []fix.ReleaseCheck) fix.Fix {
 	t := run.trigger
 	p := fix.Fix{
 		Status:         fix.StatusVerifying,
@@ -190,7 +190,7 @@ func normalizeConfidence(c string) fix.Confidence {
 	}
 }
 
-// confidenceRank orders the confidence values so an attempt can report the
+// confidenceRank orders the confidence values so a try can report the
 // weakest cluster's: a reviewer judges the whole change at once, so the least
 // confident part of it is what the value has to reflect.
 func confidenceRank(c fix.Confidence) int {

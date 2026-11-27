@@ -22,7 +22,7 @@ func TestGetReleaseQueue_NothingActive(t *testing.T) {
 func TestGetReleaseQueue_ReportsTheActiveFix(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, store := newDeps(now)
-	v := releasecheck.NewFix("verify-rel-1-core-a2", "core", "img", "rel-1", 2, "", release.ManifestKindDbt, now)
+	v := releasecheck.NewFix("verify-rel-1-core-r3-t2", "core", "img", "rel-1", 3, 2, "", release.ManifestKindDbt, now)
 	require.NoError(t, v.TransitionToCompiling(now.Add(time.Minute)))
 	store.SeedRelease(v)
 	store.SeedRelease(releasecheck.NewCandidate("rel-2", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, now.Add(2*time.Minute)))
@@ -30,10 +30,11 @@ func TestGetReleaseQueue_ReportsTheActiveFix(t *testing.T) {
 	got, err := handlers.GetReleaseQueue(context.Background(), deps)
 	require.NoError(t, err)
 	require.NotNil(t, got.Active)
-	assert.Equal(t, "verify-rel-1-core-a2", got.Active.CheckID)
+	assert.Equal(t, "verify-rel-1-core-r3-t2", got.Active.CheckID)
 	assert.Equal(t, releasecheck.KindFix, got.Active.Kind)
 	assert.Equal(t, releasecheck.StatusCompiling, got.Active.Status)
 	assert.Equal(t, now.Add(time.Minute), got.Active.Since)
 	assert.Equal(t, "rel-1", got.Active.VerifiesReleaseID)
-	assert.Equal(t, 2, got.Active.Attempt)
+	assert.Equal(t, 3, got.Active.RemediationRound)
+	assert.Equal(t, 2, got.Active.Try)
 }

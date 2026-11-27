@@ -26,6 +26,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
 
@@ -75,7 +76,7 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 	objects := newObjectStore(f.Objects)
 	cat := catalog{c: f.Catalog}
 	llm := newModel(s.Answers, s.MemberAnswers)
-	pipe := newReleaseChecks(s.FailedAttempts, f.GateErrors, clock)
+	pipe := newReleaseChecks(s.FailedTries, f.GateErrors, clock)
 	w := &World{
 		store:  store,
 		llm:    llm,
@@ -100,7 +101,7 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 		ImagePackages:    imagePackages{r: f.Release},
 		CurrentContracts: cat,
 		Releases:         release{r: f.Release},
-		PriorAttempts:    store.FixRepository(),
+		PriorFixes:       store.FixRepository(),
 		Tries:            store.RemediationRepository(),
 		ReleaseChecks:    pipe,
 		Clock:            clock,
@@ -144,14 +145,18 @@ func (w *World) Clusters(id uuid.UUID) []remediation.Cluster { return w.store.Cl
 // Steps is every journal row of the remediation.
 func (w *World) Steps(id uuid.UUID) []remediation.StepRun { return w.store.Steps(id) }
 
-// Attempts is every fix row the store holds, in attempt order.
-func (w *World) Attempts() []conformance.Attempt {
+// FixRows is every fix row the store holds, in the order they were written:
+// by round, then try, each round's hand-over row after its tries.
+func (w *World) FixRows() []conformance.FixRow {
 	stored := w.store.Fixes()
-	out := make([]conformance.Attempt, 0, len(stored))
+	out := make([]conformance.FixRow, 0, len(stored))
 	for _, p := range stored {
-		out = append(out, conformance.Attempt{Fix: p.Fix, VerifyError: p.VerifyError})
+		out = append(out, conformance.FixRow{Fix: p.Fix, VerifyError: p.VerifyError})
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Fix.Attempt < out[j].Fix.Attempt })
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].Fix, out[j].Fix
+		return pkg_model.TryBefore(a.RemediationRound, a.Try, b.RemediationRound, b.Try)
+	})
 	return out
 }
 

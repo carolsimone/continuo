@@ -89,7 +89,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(shared.NewUpstreamChanges(c.Upstream, c.Logger))
 	r.register(shared.NewContentChanged())
 	r.register(shared.NewConfidenceNotLow())
-	r.register(shared.NewPreviousTries(c.Tries, c.PriorAttempts, c.Evidence, c.Logger))
+	r.register(shared.NewPreviousTries(c.Tries, c.PriorFixes, c.Evidence, c.Logger))
 	r.register(source.NewFailingNodeSource(c.Source, c.Locator, c.ProjectRepoPaths, c.Logger))
 	r.register(source.NewDBTCompile())
 	r.register(source.NewDBTParse())

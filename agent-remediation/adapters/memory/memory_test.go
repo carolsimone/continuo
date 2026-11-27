@@ -23,7 +23,7 @@ var ctx = context.Background()
 
 func TestMemoryUnitOfWork_CommitPublishesAndRollbackDiscards(t *testing.T) {
 	store := memory.NewStore()
-	p := fix.Fix{ReleaseID: "rel", Attempt: 1, NodeID: "n", Status: fix.StatusFailed}
+	p := fix.Fix{ReleaseID: "rel", Try: 1, NodeID: "n", Status: fix.StatusFailed}
 
 	u := memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
@@ -47,7 +47,7 @@ func TestMemoryUnitOfWork_FailNextCommitFailsOnceAndDiscardsTheWrites(t *testing
 			return err
 		}
 		defer func() { _ = u.Rollback() }()
-		if err := u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Attempt: 1, Status: fix.StatusFailed}); err != nil {
+		if err := u.FixRepo().Upsert(ctx, fix.Fix{ReleaseID: "rel", Try: 1, Status: fix.StatusFailed}); err != nil {
 			return err
 		}
 		return u.Commit()
@@ -59,20 +59,20 @@ func TestMemoryUnitOfWork_FailNextCommitFailsOnceAndDiscardsTheWrites(t *testing
 	require.Len(t, store.Fixes(), 1)
 }
 
-func TestMemoryFixRepository_UniqueOnReleaseAndAttemptAndCompareAndSet(t *testing.T) {
+func TestMemoryFixRepository_UniqueOnReleaseAndTryAndCompareAndSet(t *testing.T) {
 	store := memory.NewStore()
 	repo := store.FixRepository()
 	gen := fix.Fix{
-		ReleaseID: "rel", Attempt: 1, NodeID: "n", ResolvedNodeIDs: []string{"n"}, Source: "validation",
+		ReleaseID: "rel", Try: 1, NodeID: "n", ResolvedNodeIDs: []string{"n"}, Source: "validation",
 		NodeOutcomes: map[string]fix.NodeOutcome{"n": {Status: fix.StatusGenerating}},
 	}
 	require.NoError(t, repo.InsertGenerating(ctx, gen))
 	require.NoError(t, repo.InsertGenerating(ctx, gen))
-	require.Len(t, store.Fixes(), 1, "a redelivered attempt collides on (release, attempt)")
+	require.Len(t, store.Fixes(), 1, "a redelivered try collides on (release, try)")
 
-	n, err := repo.CountAttempts(ctx, "rel", 1)
+	n, err := repo.CountTries(ctx, "rel", 1)
 	require.NoError(t, err)
-	require.Zero(t, n, "an in-flight attempt is not counted")
+	require.Zero(t, n, "an in-flight try is not counted")
 
 	verifying := gen
 	verifying.Status = fix.StatusVerifying
@@ -100,7 +100,7 @@ func TestMemoryFixRepository_UniqueOnReleaseAndAttemptAndCompareAndSet(t *testin
 	require.Equal(t, "rejected", view.VerifyError)
 	require.Equal(t, fix.StatusFailed, view.NodeOutcomes["n"].Status)
 
-	n, err = repo.CountAttempts(ctx, "rel", 1)
+	n, err = repo.CountTries(ctx, "rel", 1)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
@@ -109,9 +109,9 @@ func TestMemoryFixRepository_FailGeneratingFailsOnlyInFlightRows(t *testing.T) {
 	store := memory.NewStore()
 	repo := store.FixRepository()
 	require.NoError(t, repo.InsertGenerating(ctx, fix.Fix{
-		ReleaseID: "rel", Attempt: 1, NodeOutcomes: map[string]fix.NodeOutcome{"a": {Status: fix.StatusGenerating}},
+		ReleaseID: "rel", Try: 1, NodeOutcomes: map[string]fix.NodeOutcome{"a": {Status: fix.StatusGenerating}},
 	}))
-	require.NoError(t, repo.Upsert(ctx, fix.Fix{ReleaseID: "rel", Attempt: 2, Status: fix.StatusProposed}))
+	require.NoError(t, repo.Upsert(ctx, fix.Fix{ReleaseID: "rel", Try: 2, Status: fix.StatusProposed}))
 	n, err := repo.FailGenerating(ctx, "rel", "the worker crashed")
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -181,14 +181,14 @@ func TestMemoryOutbox_CreateStampsTheEntryAndRequiresItsMessage(t *testing.T) {
 
 func TestMemoryStore_ARepositoryUsedBeforeBeginIsAnError(t *testing.T) {
 	u := memory.NewUnitOfWork(memory.NewStore())
-	_, err := u.FixRepo().CountAttempts(ctx, "rel", 1)
+	_, err := u.FixRepo().CountTries(ctx, "rel", 1)
 	require.Error(t, err)
 }
 
 func TestMemoryRemediationRepository_AFixNeedsItsRemediationAndMarkFixVerifiedRefusesAZero(t *testing.T) {
 	store := memory.NewStore()
 	repo := store.FixRepository()
-	err := repo.InsertGenerating(ctx, fix.Fix{ReleaseID: "rel", Attempt: 1, RemediationID: uuid.NewString()})
+	err := repo.InsertGenerating(ctx, fix.Fix{ReleaseID: "rel", Try: 1, RemediationID: uuid.NewString()})
 	require.Error(t, err)
 
 	hit, err := repo.MarkFixVerified(ctx, remediation.Verified{})
@@ -207,11 +207,11 @@ func TestMemoryFixRepository_RecordApproversAddsToTheRowsApprovers(t *testing.T)
 	store := memory.NewStore()
 	repo := store.FixRepository()
 	require.NoError(t, repo.Upsert(ctx, fix.Fix{
-		Source: "validation", ReleaseID: "rel", NodeID: "model.a", Attempt: 1, Status: fix.StatusVerifying,
+		Source: "validation", ReleaseID: "rel", NodeID: "model.a", Try: 1, Status: fix.StatusVerifying,
 		Approvers: []fix.Approver{{NodeID: "model.b", Owner: "finance", Source: model.ApproverSourceBundle}},
 	}))
 
-	require.NoError(t, repo.RecordApprovers(ctx, "rel", 1, []fix.Approver{
+	require.NoError(t, repo.RecordApprovers(ctx, "rel", 1, 1, []fix.Approver{
 		{NodeID: "model.c", Source: model.ApproverSourceNone},
 		{NodeID: "model.a", Owner: "sales", Source: model.ApproverSourceBundle},
 		{NodeID: "model.b", Owner: "ops", Source: model.ApproverSourceContractFile},
@@ -227,5 +227,5 @@ func TestMemoryFixRepository_RecordApproversAddsToTheRowsApprovers(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, store.Fixes()[0].Fix.Approvers, view.Approvers)
 
-	require.ErrorIs(t, repo.RecordApprovers(ctx, "rel", 2, []fix.Approver{{NodeID: "model.a"}}), repository.ErrNotFound)
+	require.ErrorIs(t, repo.RecordApprovers(ctx, "rel", 1, 2, []fix.Approver{{NodeID: "model.a"}}), repository.ErrNotFound)
 }

@@ -41,3 +41,11 @@ func TestTrigger_ProjectsAreSortedUniqueAndNonEmpty(t *testing.T) {
 	assert.Equal(t, []string{"finance", "sales"}, tr.Projects())
 	assert.Empty(t, Trigger{}.Projects())
 }
+
+func TestFailure_ArtifactPrefixNamesTheReleaseNodeRoundAndTry(t *testing.T) {
+	f := Failure{Trigger: Trigger{ReleaseID: "rel-1", Round: 2}, Try: 3}
+	assert.Equal(t, "proposed-fix/rel-1/model.a/round-2/try-3", f.ArtifactPrefix("model.a"))
+	other := Failure{Trigger: Trigger{ReleaseID: "rel-1", Round: 1}, Try: 3}
+	assert.NotEqual(t, f.ArtifactPrefix("model.a"), other.ArtifactPrefix("model.a"),
+		"try 3 of two rounds stores its artifacts apart")
+}

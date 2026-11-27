@@ -12,7 +12,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// FailLegacyInFlight fails the attempt rows that nothing drives, since the
+// FailLegacyInFlight fails the fix rows that nothing drives, since the
 // runner stamps a remediation on every row it writes: a row in flight
 // (generating or verifying) with no remediation. A row that was generating takes
 // the reason as its rationale; a row that was verifying takes it as its verify
@@ -31,13 +31,13 @@ import (
 func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
-		const reason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
+		const reason = "continuo changed its remediation engine while this try was in flight; use Try again"
 		r := mustCreate(t, env, newRemediation("rel-legacy-inflight-runner", 1, contractBase))
 		handedOver := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: "no remediation type matches this failure", Code: model.HandoverReasonNoType}
 		settledFailure := fix.NodeOutcome{Status: fix.StatusFailed, Reason: "the model declined"}
-		get := func(release string, attempt int) fix.View {
+		get := func(release string, try int) fix.View {
 			t.Helper()
-			return findAttempt(t, env, release, attempt)
+			return findTry(t, env, release, try)
 		}
 
 		edits := []fix.FileEdit{{Path: "models/a.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "model.a", MemberNodeIDs: []string{"model.a"}}}
@@ -46,7 +46,7 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 		// A row with no remediation in its release check: a fix under check.
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-verifying", NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a", "model.b", "model.c"}, Attempt: 1, Status: fix.StatusVerifying,
+			ResolvedNodeIDs: []string{"model.a", "model.b", "model.c"}, Try: 1, Status: fix.StatusVerifying,
 			NodeOutcomes: map[string]fix.NodeOutcome{
 				"model.a": {Status: fix.StatusVerifying},
 				"model.b": {Status: fix.StatusVerifying},
@@ -57,43 +57,43 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 		// A row with no remediation still generating.
 		require.NoError(t, env.fixes.InsertGenerating(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-generating", NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a", "model.b"}, Attempt: 1,
+			ResolvedNodeIDs: []string{"model.a", "model.b"}, Try: 1,
 			NodeOutcomes: map[string]fix.NodeOutcome{
 				"model.a": {Status: fix.StatusGenerating},
 				"model.b": settledFailure,
 			},
 			CreatedAt: contractBase,
 		}))
-		// An attempt that recorded no per-node outcome at all: its node_outcomes
+		// A try that recorded no per-node outcome at all: its node_outcomes
 		// holds no entries, which aggregates to SQL NULL, not an empty object.
 		require.NoError(t, env.fixes.InsertGenerating(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-no-outcomes", NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, NodeOutcomes: nil, CreatedAt: contractBase,
+			ResolvedNodeIDs: []string{"model.a"}, Try: 1, NodeOutcomes: nil, CreatedAt: contractBase,
 		}))
 		// The runner's rows in flight, which carry their remediation.
 		require.NoError(t, env.fixes.InsertGenerating(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-runner", RemediationID: r.ID.String(), NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1,
+			ResolvedNodeIDs: []string{"model.a"}, Try: 1,
 			NodeOutcomes: map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusGenerating}},
 			CreatedAt:    contractBase,
 		}))
 		runnerVerifying := map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusVerifying}}
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-runner", RemediationID: r.ID.String(), NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a"}, Attempt: 2, Status: fix.StatusVerifying,
+			ResolvedNodeIDs: []string{"model.a"}, Try: 2, Status: fix.StatusVerifying,
 			NodeOutcomes: runnerVerifying, Edits: edits, ReleaseChecks: runs, Rationale: "the runner's fix", SourceResolved: true,
 			CreatedAt: contractBase,
 		}))
 		// Rows with no remediation that ended: nothing to fail.
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-ended", NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, Status: fix.StatusFailed,
+			ResolvedNodeIDs: []string{"model.a"}, Try: 1, Status: fix.StatusFailed,
 			NodeOutcomes: map[string]fix.NodeOutcome{"model.a": settledFailure},
 			Rationale:    "the model declined", CreatedAt: contractBase,
 		}))
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-ended", NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a"}, Attempt: 2, Status: fix.StatusProposed,
+			ResolvedNodeIDs: []string{"model.a"}, Try: 2, Status: fix.StatusProposed,
 			NodeOutcomes: map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusProposed}},
 			Edits:        edits, ReleaseChecks: runs, Rationale: "a verified fix", SourceResolved: true, CreatedAt: contractBase,
 		}))
@@ -151,7 +151,7 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 		require.Equal(t, generating, get("rel-legacy-inflight-generating", 1))
 		require.Equal(t, noOutcomes, get("rel-legacy-inflight-no-outcomes", 1))
 		for i, want := range untouched {
-			require.Equal(t, want, get(want.ReleaseID, want.Attempt), "row %d after the second call", i)
+			require.Equal(t, want, get(want.ReleaseID, want.Try), "row %d after the second call", i)
 		}
 	})
 }

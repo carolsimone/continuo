@@ -44,8 +44,8 @@ func (*HandOver) Meta() step.Meta {
 // in.HandedOver names, in u's transaction, its payload stored under the
 // remediation's tenant. Each node names its owner, taken from the approver in
 // in.Approvers for that node, and none when there is no approver or it found no
-// owner. Tries is how many tries the remediation made. The
-// entry id is derived from the remediation, so a remediation announces its
+// owner. Tries is the number, in its round, of the last try the remediation
+// opened (its current try), 0 when it opened none. The entry id is derived from the remediation, so a remediation announces its
 // hand-over once: a second enqueue collides with the first. With no node
 // handed over, nothing is written. No inbound message drove the write, so the
 // entry carries no message-processing provenance.

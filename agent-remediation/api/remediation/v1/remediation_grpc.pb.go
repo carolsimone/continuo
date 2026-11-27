@@ -44,7 +44,7 @@ type RemediationFixesClient interface {
 	BeginPullRequest(ctx context.Context, in *BeginPullRequestRequest, opts ...grpc.CallOption) (*BeginPullRequestResponse, error)
 	// RecordPullRequest stores the PR URL, number, and opener after a PR is opened.
 	RecordPullRequest(ctx context.Context, in *RecordPullRequestRequest, opts ...grpc.CallOption) (*RecordPullRequestResponse, error)
-	// FailPullRequest marks a fix's PR attempt as failed.
+	// FailPullRequest releases a claim whose pull request could not be opened.
 	FailPullRequest(ctx context.Context, in *FailPullRequestRequest, opts ...grpc.CallOption) (*FailPullRequestResponse, error)
 }
 
@@ -124,7 +124,7 @@ type RemediationFixesServer interface {
 	BeginPullRequest(context.Context, *BeginPullRequestRequest) (*BeginPullRequestResponse, error)
 	// RecordPullRequest stores the PR URL, number, and opener after a PR is opened.
 	RecordPullRequest(context.Context, *RecordPullRequestRequest) (*RecordPullRequestResponse, error)
-	// FailPullRequest marks a fix's PR attempt as failed.
+	// FailPullRequest releases a claim whose pull request could not be opened.
 	FailPullRequest(context.Context, *FailPullRequestRequest) (*FailPullRequestResponse, error)
 	mustEmbedUnimplementedRemediationFixesServer()
 }

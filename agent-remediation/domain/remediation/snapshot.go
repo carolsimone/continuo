@@ -48,10 +48,11 @@ type Remediation struct {
 // Try is the row of one try of a remediation run.
 type Try struct {
 	RemediationID uuid.UUID
-	Try           int
-	// Attempt is the number of the try's attempt, which keys its fix row.
-	Attempt int
-	Status  TryStatus
+	// Try is the try's number in its round, from 1, which keys its fix row
+	// with the release and the round. It counts every try of the round, so a
+	// try recorded with no remediation numbers the runner's next one too.
+	Try    int
+	Status TryStatus
 	// FileRevisions maps each file name to the revision the try read it at.
 	FileRevisions map[string]string
 	DeadlineAt    time.Time

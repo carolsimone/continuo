@@ -164,19 +164,19 @@ func (f *fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 
 var _ ports.EvidenceReader = (*fakeEvidence)(nil)
 
-// fakeAttempts lists the recorded attempts and records every filter.
-type fakeAttempts struct {
+// fakeFixRows lists the recorded tries and records every filter.
+type fakeFixRows struct {
 	views   []fix.View
 	err     error
 	filters []repository.FixFilter
 }
 
-func (f *fakeAttempts) List(_ context.Context, filter repository.FixFilter) ([]fix.View, error) {
+func (f *fakeFixRows) List(_ context.Context, filter repository.FixFilter) ([]fix.View, error) {
 	f.filters = append(f.filters, filter)
 	return f.views, f.err
 }
 
-var _ repository.AttemptLister = (*fakeAttempts)(nil)
+var _ repository.FixLister = (*fakeFixRows)(nil)
 
 // fakeModel records every request and answers with the scripted results in
 // order.
@@ -227,6 +227,7 @@ func failure(mod func(*remediation.Failure)) remediation.Failure {
 		Trigger: remediation.Trigger{
 			Source:        "validation",
 			ReleaseID:     "rel-1",
+			Round:         1,
 			Repo:          repoName,
 			CommitSHA:     commit,
 			CodeBundleURI: "s3://bundle/rel-1",
@@ -239,7 +240,7 @@ func failure(mod func(*remediation.Failure)) remediation.Failure {
 			DBTLogURI:      "s3://logs/rel-1/a.log",
 			Project:        "svc",
 		},
-		Attempt: 2,
+		Try: 2,
 	}
 	if mod != nil {
 		mod(&f)

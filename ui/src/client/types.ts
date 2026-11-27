@@ -480,7 +480,7 @@ export interface FileEditDTO {
   target_node_id?: string;
 }
 
-// How a batched remediation attempt ended for one specific node it resolved.
+// How a batched remediation try ended for one specific node it resolved.
 // code is the handover_reason a node was handed over for when its outcome is
 // not part of a verified fix; the server sends "" when the outcome carries no
 // code. An absent or empty code reads as no code.
@@ -507,7 +507,7 @@ export interface PullRequestDTO {
   pr_closed_at: string;
 }
 
-// One fix's release check a batched attempt ran for one edited project, with
+// One fix's release check a batched try ran for one edited project, with
 // the durable summary agent-remediation keeps of how it went. check_id is the
 // release check's id. phase is '' until the reconciler first reads the
 // release check, then queued | running | passed | failed. activated_at is
@@ -522,7 +522,7 @@ export interface ReleaseCheckDTO {
   error: string;
 }
 
-// Who must approve what an attempt did with one node: the node's owner, as
+// Who must approve what a try did with one node: the node's owner, as
 // source says where it was read from. source is 'bundle' (the owner the
 // release's code bundle records), 'contract_file' (the team of the node's
 // contract file in the repository) or 'none' (no owner was found, and owner is
@@ -539,8 +539,11 @@ export interface FixDTO {
   release_id: string;
   node_id: string;
   error_signature: string;
-  attempt: number;
-  // Lifecycle of the attempt this row records. Two are in flight and carry no reviewable
+  // try is the try's number in its round (remediation_round), from 1; 0 is
+  // the round's hand-over row, written once its tries are spent
+  // (HAND_OVER_TRY).
+  try: number;
+  // Lifecycle of the try this row records. Two are in flight and carry no reviewable
   // fix yet: 'generating' while the fix is being produced, and 'verifying'
   // while a release check judges the produced fix through every stage a
   // release passes. The rest are terminal: 'proposed' (a fix ready for
@@ -565,35 +568,35 @@ export interface FixDTO {
   pr_opened_by: string;
   pr_closed_at: string;
   // release_check_id is the id of the first of release_checks; the
-  // single-check view of them. Set while the attempt is 'verifying' and
+  // single-check view of them. Set while the try is 'verifying' and
   // still set on the 'proposed' or 'failed' row it became, so the release
-  // check that decided an attempt is always reachable from it. Empty on an
-  // attempt judged without one.
+  // check that decided a try is always reachable from it. Empty on a
+  // try judged without one.
   release_check_id: string;
   // verify_error is why that release check rejected the fix — the reason a
-  // python contract attempt reached 'failed'. Empty unless the release check
+  // python contract try reached 'failed'. Empty unless the release check
   // failed.
   verify_error: string;
   // Every file this fix changes. Absent or empty on a fix that has
   // no real repository source to edit — a candidate-only fix — in which case
   // the single-file diff_uri above still points at a previewable diff.
   edits?: FileEditDTO[];
-  // remediation_round is the release's remediation round this attempt
+  // remediation_round is the release's remediation round this try
   // belongs to. Absent on a fix from before rounds existed, which the
   // reader treats the same as round 1.
   remediation_round?: number;
-  // resolved_node_ids lists every failing node this attempt addresses. Absent
+  // resolved_node_ids lists every failing node this try addresses. Absent
   // or empty on a legacy single-node fix (or one from before batching
   // existed), in which case node_id — the representative (first resolved)
-  // node — is the attempt's sole member. See fixNodeIds.
+  // node — is the try's sole member. See fixNodeIds.
   resolved_node_ids?: string[];
-  // node_outcomes carries how this attempt ended for each node it resolved,
+  // node_outcomes carries how this try ended for each node it resolved,
   // keyed by node id. Absent or missing an entry for a legacy row or a node
-  // the attempt did not record separately, in which case the fix's own
+  // the try did not record separately, in which case the fix's own
   // status/rationale describe that node too. See fixStatusForNode /
   // fixReasonForNode.
   node_outcomes?: Record<string, NodeOutcomeDTO>;
-  // release_checks lists the release checks this attempt ran, one per
+  // release_checks lists the release checks this try ran, one per
   // edited project that needed one. Empty on a fix judged without one,
   // or a legacy row that only ever tracked a single release_check_id.
   release_checks?: ReleaseCheckDTO[];
@@ -607,21 +610,21 @@ export interface FixDTO {
   // requests split into; absent, or [''], for a legacy (unsplit) fix.
   // See fixPrProjects.
   pr_projects?: string[];
-  // projects is every project this attempt touched — the failing nodes'
+  // projects is every project this try touched — the failing nodes'
   // projects plus the edited ones, sorted — the same set the server's
   // `project` list filter matches a fix on. Absent from a fix
   // served by an agent-remediation that predates the field. See
   // fixProjects.
   projects?: string[];
-  // approvers is who must approve what this attempt did with each node a
+  // approvers is who must approve what this try did with each node a
   // remediation settled at its end, the fixed and the handed-over nodes, one
-  // entry per node sorted by node_id. Absent or empty on an attempt row with
+  // entry per node sorted by node_id. Absent or empty on a try row with
   // no remediation id, one with no approvers recorded, or one served by an
   // agent-remediation that predates the field.
   approvers?: ApproverDTO[];
 }
 
-// A fix's release check puts a remediation attempt's fix through every stage
+// A fix's release check puts a remediation try's fix through every stage
 // a release passes, without becoming the live release. verifies_release_id names the
 // release whose fix it judges.
 export interface ReleaseCheckDetail {
@@ -629,7 +632,9 @@ export interface ReleaseCheckDetail {
   status: string; // received|compiling|parsing|seed_building|validating|passed|failed
   changed_project: string;
   verifies_release_id: string;
-  attempt: number;
+  // remediation_round and try name the try whose fix the check judges.
+  remediation_round: number;
+  try: number;
   created_at: string;
   activated_at: string;
   finished_at: string;
@@ -654,7 +659,9 @@ export interface ReleaseCheckSummary {
   check_id: string;
   status: string;
   project: string;
-  attempt: number;
+  // remediation_round and try name the try whose fix the check judges.
+  remediation_round: number;
+  try: number;
   created_at: string;
   activated_at: string;
   finished_at: string;
@@ -662,8 +669,8 @@ export interface ReleaseCheckSummary {
 }
 
 // The one release check — a candidate release's or a fix's — that holds the
-// release queue's single slot. verifies_release_id and attempt are present
-// only when check_kind is 'fix'.
+// release queue's single slot. verifies_release_id, remediation_round and try
+// are present only when check_kind is 'fix'.
 export interface ReleaseQueueActive {
   check_id: string;
   check_kind: 'candidate' | 'fix';
@@ -671,7 +678,8 @@ export interface ReleaseQueueActive {
   project: string;
   since: string;
   verifies_release_id?: string;
-  attempt?: number;
+  remediation_round?: number;
+  try?: number;
 }
 
 export interface ReleaseQueueResponse {

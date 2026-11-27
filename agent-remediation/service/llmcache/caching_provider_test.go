@@ -240,7 +240,7 @@ func TestPropose_NoIdempotencyKeyBypassesCache(t *testing.T) {
 
 // Distinct triggers with a byte-identical request must not collide: the second
 // trigger misses the first trigger's cache entry and calls the provider again.
-// This is the legitimate-retry guarantee — a new attempt is never served a prior
+// This is the legitimate-retry guarantee — a new try is never served a prior
 // trigger's cached completion.
 func TestPropose_DistinctTriggersDoNotCollide(t *testing.T) {
 	provider := &fakeProvider{result: sampleResult()}

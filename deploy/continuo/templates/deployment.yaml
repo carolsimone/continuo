@@ -99,7 +99,7 @@ spec:
     type: Recreate
   {{- end }}
   {{- if eq $svc.name "agent-remediation" }}
-  # At every start agent-remediation fails the attempt rows that are in flight
+  # At every start agent-remediation fails the fix rows that are in flight
   # and have no remediation. A pod of the previous release must be gone before
   # the new one starts: it could write such a row after that sweep, and nothing
   # would finish the row, which blocks "Try again" until the next restart.

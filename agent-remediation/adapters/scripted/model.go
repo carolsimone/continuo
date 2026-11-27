@@ -102,7 +102,7 @@ func (c *responseCache) Put(_ context.Context, key string, result ports.ProposeR
 }
 
 // releaseChecks answers the release checks. A check of one of the first failed
-// attempts fails with the fixture's gate errors and every other check passes,
+// tries fails with the fixture's gate errors and every other check passes,
 // both as soon as they are read.
 type releaseChecks struct {
 	mu        sync.Mutex
@@ -114,8 +114,8 @@ type releaseChecks struct {
 
 var _ ports.ReleaseChecks = (*releaseChecks)(nil)
 
-func newReleaseChecks(failedAttempts int, gateErrors map[string]string, clock ports.Clock) *releaseChecks {
-	return &releaseChecks{failed: failedAttempts, errors: gateErrors, clock: clock}
+func newReleaseChecks(failedTries int, gateErrors map[string]string, clock ports.Clock) *releaseChecks {
+	return &releaseChecks{failed: failedTries, errors: gateErrors, clock: clock}
 }
 
 // Submit records the check.
@@ -134,7 +134,7 @@ func (p *releaseChecks) Status(_ context.Context, checkID string) (ports.Release
 		if r.CheckID != checkID {
 			continue
 		}
-		if r.Attempt <= p.failed {
+		if r.Try <= p.failed {
 			nodeErrors := make(map[string]string, len(p.errors))
 			for node, msg := range p.errors {
 				nodeErrors[node] = msg

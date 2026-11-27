@@ -49,14 +49,16 @@ func TestHandleGetReleaseQueue_ActiveCandidate(t *testing.T) {
 	assert.Equal(t, "candidate", active["check_kind"])
 	assert.Equal(t, "compiling", active["status"])
 	assert.Equal(t, "core", active["project"])
-	_, hasVerifies := active["verifies_release_id"]
-	assert.False(t, hasVerifies, "a candidate's active summary carries no verifies_release_id")
+	for _, key := range []string{"verifies_release_id", "remediation_round", "try"} {
+		_, has := active[key]
+		assert.False(t, has, "a candidate's active summary carries no %s", key)
+	}
 }
 
-func TestHandleGetReleaseQueue_ActiveFixCarriesAttemptAndVerifies(t *testing.T) {
+func TestHandleGetReleaseQueue_ActiveFixCarriesRoundTryAndVerifies(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	v := releasecheck.NewFix("verify-1", "core", "img", "rel-1", 2, "", release.ManifestKindDbt, now)
+	v := releasecheck.NewFix("verify-1", "core", "img", "rel-1", 3, 2, "", release.ManifestKindDbt, now)
 	require.NoError(t, v.TransitionToCompiling(now.Add(time.Minute)))
 	releases.releases["verify-1"] = v
 
@@ -72,5 +74,6 @@ func TestHandleGetReleaseQueue_ActiveFixCarriesAttemptAndVerifies(t *testing.T) 
 	assert.Equal(t, "verify-1", active["check_id"])
 	assert.Equal(t, "fix", active["check_kind"])
 	assert.Equal(t, "rel-1", active["verifies_release_id"])
-	assert.EqualValues(t, 2, active["attempt"])
+	assert.EqualValues(t, 3, active["remediation_round"])
+	assert.EqualValues(t, 2, active["try"])
 }

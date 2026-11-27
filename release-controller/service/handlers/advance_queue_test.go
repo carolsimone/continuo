@@ -334,7 +334,7 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 
 func TestAdvanceQueue_CompileRequestedCarriesSourceOverlayURI(t *testing.T) {
 	deps, store := newDeps(time.Now())
-	r := releasecheck.NewFix("r-ov", "svc", "tag", "rel-orig", 1,
+	r := releasecheck.NewFix("r-ov", "svc", "tag", "rel-orig", 1, 1,
 		"s3://b/svc/r-ov/source-overlay.tar.gz", release.ManifestKindDbt, deps.Clock.Now())
 	store.SeedRelease(r)
 
@@ -387,7 +387,7 @@ func TestAdvanceQueue_FixVerifiesTheRejectedReleasesCandidate(t *testing.T) {
 	store.SeedRelease(verifiedOriginal("rO", deps.Clock.Now()))
 	store.SeedProductionPointer(release.NewProductionPointer("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	store.SeedRelease(releasecheck.NewFix("rVerify", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix("rVerify", "svc-b", "img:1", "rO", 1, 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -414,7 +414,7 @@ func TestAdvanceQueue_FixVerifyingAnUnknownRelease_FallsBackToProd(t *testing.T)
 	deps.Bucket = "b"
 	store.SeedProductionPointer(release.NewProductionPointer("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	store.SeedRelease(releasecheck.NewFix("rVerify2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix("rVerify2", "svc-b", "img:1", "rGone", 1, 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -435,7 +435,7 @@ func TestAdvanceQueue_FixVerifyingItsOwnProjectsRelease_ChangesNothing(t *testin
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO2", deps.Clock.Now()))
 
-	store.SeedRelease(releasecheck.NewFix("rVerify3", "svc-a", "img:2", "rO2", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix("rVerify3", "svc-a", "img:2", "rO2", 1, 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)

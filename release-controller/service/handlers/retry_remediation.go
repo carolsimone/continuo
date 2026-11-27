@@ -30,11 +30,11 @@ var (
 	// another round now would race the round already in flight.
 	ErrRetryInProgress = errors.New("a remediation round is in progress")
 	// ErrFixReaderUnavailable wraps a failure of the gRPC read to
-	// agent-remediation, distinct from a legitimate "an attempt is open" answer.
+	// agent-remediation, distinct from a legitimate "a try is open" answer.
 	ErrFixReaderUnavailable = errors.New("could not read remediation fixes")
 )
 
-// ErrFixOpen refuses a retry because an attempt is still in flight or a
+// ErrFixOpen refuses a retry because a try is still in flight or a
 // fix is already proposed; it names what to look at instead.
 type ErrFixOpen struct {
 	FixID string
@@ -67,7 +67,7 @@ type RetryRemediationResult struct {
 // not rejected, when its reason is not healable, when the round cap is
 // reached, when the candidate has no stored rejection, when the current round
 // has not yet produced a fix row (a second click before the first has
-// landed), or when an attempt is still in flight or a fix is already proposed
+// landed), or when a try is still in flight or a fix is already proposed
 // — the caller should look at that instead of retrying. It refuses with
 // maintenance.ErrActive while maintenance mode is on.
 func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryRemediationResult, error) {
@@ -163,6 +163,13 @@ func effectiveRound(p ports.FixSummary) int {
 	return p.RemediationRound
 }
 
+// laterTry reports whether try a comes after try b: a later round, or a later
+// try of the same round. A round's hand-over row (try 0) is written after the
+// round's last try, so it orders after every other try of its round.
+func laterTry(a, b ports.FixSummary) bool {
+	return pkg_model.TryBefore(effectiveRound(b), b.Try, effectiveRound(a), a.Try)
+}
+
 // currentRoundFixes filters ps to the ones belonging to round.
 func currentRoundFixes(ps []ports.FixSummary, round int) []ports.FixSummary {
 	out := make([]ports.FixSummary, 0, len(ps))
@@ -174,7 +181,7 @@ func currentRoundFixes(ps []ports.FixSummary, round int) []ports.FixSummary {
 	return out
 }
 
-// openFix reports the attempt that makes a retry pointless: one from the
+// openFix reports the try that makes a retry pointless: one from the
 // current round still in flight or already proposed, or — checked across
 // every round — one whose PR is being opened, open, or merged. Node id order
 // is sorted before picking so the answer is deterministic when several nodes
@@ -186,19 +193,19 @@ func openFix(current, all []ports.FixSummary) (ErrFixOpen, bool) {
 	return openPRAcrossRounds(all)
 }
 
-// openInCurrentRound reports whether any node's latest attempt in the current
+// openInCurrentRound reports whether any node's latest try in the current
 // round is still generating or verifying, or is proposed with a fix that could
-// still land. A batched attempt opens one pull request per owning project, so
-// the decision weighs all of them: the attempt is a dead end — closed without
+// still land. A batched try opens one pull request per owning project, so
+// the decision weighs all of them: the try is a dead end — closed without
 // landing a fix — only once every owning project's pull request has been
 // rejected. If any owning project has no pull request yet, or one in any
 // non-rejected state, a fix may still land and a new round would duplicate it.
-// Only each node's latest attempt is consulted; an earlier attempt superseded
+// Only each node's latest try is consulted; an earlier try superseded
 // by a later one on the same node does not count.
 func openInCurrentRound(current []ports.FixSummary) (ErrFixOpen, bool) {
 	latest := map[string]ports.FixSummary{}
 	for _, p := range current {
-		if cur, ok := latest[p.NodeID]; !ok || p.Attempt > cur.Attempt {
+		if cur, ok := latest[p.NodeID]; !ok || laterTry(p, cur) {
 			latest[p.NodeID] = p
 		}
 	}
@@ -220,7 +227,7 @@ func openInCurrentRound(current []ports.FixSummary) (ErrFixOpen, bool) {
 // openPRAcrossRounds reports whether any fix from any round — not just the
 // current one — has a pull request that is opening, open, or merged: a fix
 // already out for human review makes a new round redundant regardless of which
-// round proposed it. A batched attempt's per-project pull requests are all
+// round proposed it. A batched try's per-project pull requests are all
 // weighed, so one project's still-open PR blocks even when a sibling project's
 // PR was rejected.
 func openPRAcrossRounds(all []ports.FixSummary) (ErrFixOpen, bool) {
@@ -229,7 +236,7 @@ func openPRAcrossRounds(all []ports.FixSummary) (ErrFixOpen, bool) {
 		if !hasOutstandingPR(p) {
 			continue
 		}
-		if cur, ok := byNode[p.NodeID]; !ok || p.Attempt > cur.Attempt {
+		if cur, ok := byNode[p.NodeID]; !ok || laterTry(p, cur) {
 			byNode[p.NodeID] = p
 		}
 	}
@@ -241,10 +248,10 @@ func openPRAcrossRounds(all []ports.FixSummary) (ErrFixOpen, bool) {
 	return ErrFixOpen{FixID: p.ID, PRURL: representativePRURL(p)}, true
 }
 
-// isDeadEnd reports whether a proposed attempt has run out of road: every
-// owning project's pull request has been rejected, so no fix from this attempt
+// isDeadEnd reports whether a proposed try has run out of road: every
+// owning project's pull request has been rejected, so no fix from this try
 // can still land. An owning project with no pull request yet, or one in any
-// non-rejected state, means the attempt is still live.
+// non-rejected state, means the try is still live.
 func isDeadEnd(p ports.FixSummary) bool {
 	byProject := map[string]ports.FixPR{}
 	for _, pr := range p.PullRequests {
@@ -259,9 +266,9 @@ func isDeadEnd(p ports.FixSummary) bool {
 	return true
 }
 
-// owningProjects names the projects whose fixes an attempt must land before it
+// owningProjects names the projects whose fixes a try must land before it
 // is exhausted: PRProjects, or the one group of a fix not split by project,
-// named by the empty string, when the attempt names none.
+// named by the empty string, when the try names none.
 func owningProjects(p ports.FixSummary) []string {
 	if len(p.PRProjects) > 0 {
 		return p.PRProjects
@@ -269,7 +276,7 @@ func owningProjects(p ports.FixSummary) []string {
 	return []string{""}
 }
 
-// hasOutstandingPR reports whether any of an attempt's pull requests is being
+// hasOutstandingPR reports whether any of a try's pull requests is being
 // opened, open, or merged.
 func hasOutstandingPR(p ports.FixSummary) bool {
 	for _, pr := range p.PullRequests {
@@ -281,10 +288,10 @@ func hasOutstandingPR(p ports.FixSummary) bool {
 	return false
 }
 
-// representativePRURL is the pull request URL to name when an attempt blocks a
+// representativePRURL is the pull request URL to name when a try blocks a
 // retry: the first non-rejected pull request's URL in project order, so a human
 // is pointed at a PR that could still land rather than a closed one; the first
-// pull request's URL when every one was rejected, and "" when the attempt has
+// pull request's URL when every one was rejected, and "" when the try has
 // none.
 func representativePRURL(p ports.FixSummary) string {
 	prs := append([]ports.FixPR(nil), p.PullRequests...)

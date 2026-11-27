@@ -85,7 +85,7 @@ func main() {
 	}
 
 	if cfg.Maintenance {
-		logger.Warn("Maintenance mode is on: fix attempts that come due are recorded skipped")
+		logger.Warn("Maintenance mode is on: fix tries that come due are recorded skipped")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -283,7 +283,7 @@ func main() {
 	}
 
 	// The fix repository is bound to the DB rather than to a transaction:
-	// the gRPC read path, the reconciler, and the steps' prior-attempt reads
+	// the gRPC read path, the reconciler, and the steps' prior-try reads
 	// all use it outside any unit of work.
 	fixRepo := postgres.NewFixRepository(db, cfg.ProjectRepoPaths)
 	contracts := repofs.NewLocator(logger)
@@ -317,7 +317,7 @@ func main() {
 		logger.Error("the remediation files are refused", "error", err)
 		os.Exit(1)
 	}
-	// The runner stamps a remediation on every attempt row it writes, so a row
+	// The runner stamps a remediation on every fix row it writes, so a row
 	// in flight with none is driven by nothing. Until it is failed,
 	// release-controller's retry gate and the release page read its round as
 	// having a fix still open, which keeps "Try again" blocked. The sweep runs
@@ -347,7 +347,7 @@ func main() {
 		logger.Error("Failed to listen for outbox notifications", "error", err)
 		os.Exit(1)
 	}
-	// Closing the listener can wait on a connection attempt in progress, so
+	// Closing the listener can wait on a connection try in progress, so
 	// shutdown stops waiting for it after 5 seconds.
 	defer func() {
 		closeCtx, cancelClose := context.WithTimeout(context.Background(), 5*time.Second)
@@ -509,15 +509,15 @@ func sweepAtStartup(ctx context.Context, repo repository.FixRepository, logger *
 	case err == nil:
 		return false, 0
 	case ctx.Err() != nil:
-		logger.Info("shutdown requested during the startup sweep of attempt rows with no remediation")
+		logger.Info("shutdown requested during the startup sweep of fix rows with no remediation")
 		return true, 0
 	default:
-		logger.Error("failing the attempt rows in flight that belong to no remediation", "error", err)
+		logger.Error("failing the fix rows in flight that belong to no remediation", "error", err)
 		return true, 1
 	}
 }
 
-// failLegacyInFlight fails every attempt row in flight that belongs to no
+// failLegacyInFlight fails every fix row in flight that belongs to no
 // remediation, which nothing drives since the runner stamps a remediation on
 // every row it writes, and logs how many it moved: at Warn when there are any,
 // at Info when there are none. It is idempotent, so every start runs it.
@@ -527,10 +527,10 @@ func failLegacyInFlight(ctx context.Context, repo repository.FixRepository, logg
 		return err
 	}
 	if n == 0 {
-		logger.Info("no attempt row with no remediation was in flight", "count", n)
+		logger.Info("no fix row with no remediation was in flight", "count", n)
 		return nil
 	}
-	logger.Warn("failed in-flight attempt rows that have no remediation", "count", n)
+	logger.Warn("failed in-flight fix rows that have no remediation", "count", n)
 	return nil
 }
 
@@ -645,7 +645,7 @@ type runnerAdapters struct {
 		ports.ReleaseReader
 		ports.ReleaseChecks
 	}
-	fixes repository.AttemptLister
+	fixes repository.FixLister
 	tries repository.TryLister
 }
 
@@ -674,7 +674,7 @@ func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logge
 		ImagePackages:       a.images,
 		CurrentContracts:    a.graph,
 		Releases:            a.release,
-		PriorAttempts:       a.fixes,
+		PriorFixes:          a.fixes,
 		Tries:               a.tries,
 		SQLDialect:          cfg.SQLDialect,
 		ReleaseChecks:       a.release,

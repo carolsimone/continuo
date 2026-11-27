@@ -19,22 +19,18 @@ func WithPreviousTries(req prompt.ProposeRequest, ev remediation.Evidence) promp
 	return prompt.WithPreviousTries(req, previousTries(records))
 }
 
-// previousTries is each record as the prompt shows it. A runner try is labelled
-// by its try and round, an attempt with no remediation (try 0) by its attempt and round. Its
-// diffs are every cluster's edits; its findings are each pre-flight round's
+// previousTries is each record as the prompt shows it, labelled by its round
+// and try ("Round 2, try 1"). Its diffs are every cluster's edits; its findings are each pre-flight round's
 // findings, then how a cluster ended when it ended without a checked draft,
 // then the cross-cluster findings; its gate error is the gate's finding
 // messages joined by "; ".
 func previousTries(records []remediation.TryRecord) []prompt.PreviousTry {
 	out := make([]prompt.PreviousTry, 0, len(records))
 	for _, rec := range records {
-		t := prompt.PreviousTry{Label: fmt.Sprintf("Try %d (round %d)", rec.Try, rec.Round)}
-		if rec.Try == 0 {
-			t.Label = fmt.Sprintf("Attempt %d (round %d)", rec.Attempt, rec.Round)
-		}
+		t := prompt.PreviousTry{Label: fmt.Sprintf("Round %d, try %d", rec.Round, rec.Try)}
 		for _, c := range rec.Clusters {
 			for _, e := range c.Edits {
-				t.Diffs = append(t.Diffs, prompt.AttemptDiff{Path: e.Path, Diff: e.Diff})
+				t.Diffs = append(t.Diffs, prompt.TryDiff{Path: e.Path, Diff: e.Diff})
 			}
 			for i, round := range c.Rounds {
 				for _, line := range FindingLines(round) {

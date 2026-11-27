@@ -35,7 +35,7 @@ func TestLLMResponseCache_PutGetRoundTrip(t *testing.T) {
 		// A multi-file answer (a python node's contract fix) must survive the
 		// round-trip too: a redelivered trigger reuses the cached result
 		// instead of re-paying the model call, so a dropped file list would
-		// turn a redelivery into a failed attempt.
+		// turn a redelivery into a failed try.
 		Files: []ports.ProposedFile{{Path: "contracts/a.yml", Content: "nodes: []\n"}},
 	}
 

@@ -160,9 +160,9 @@ func (p *contractPrompt) request(in step.PromptInput) (prompt.ProposeRequest, er
 }
 
 // editKeys are the keys under which the runner stores the content and the diff
-// of the attempt's i-th edit. The edits of one attempt share a directory and
+// of the try's i-th edit. The edits of one try share a directory and
 // are numbered within it, so two of them never write the same key.
 func editKeys(f remediation.Failure, i int) (contentKey, diffKey string) {
-	base := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d", f.Trigger.ReleaseID, f.Target.NodeID, f.Attempt, i)
+	base := fmt.Sprintf("%s/edit-%d", f.ArtifactPrefix(f.Target.NodeID), i)
 	return base + ".content", base + ".diff"
 }

@@ -32,7 +32,7 @@ import (
 //	→ agent-remediation consumes it and groups its failing set
 //	→ calls stub-llm (propose_fix tool call → deterministic SQL fix)
 //	→ writes proposed SQL and diff to S3
-//	→ inserts fix row (status=verifying, attempt=1) and posts one
+//	→ inserts fix row (status=verifying, try=1) and posts one
 //	  release check per edited project, which lays the proposed source over
 //	  the project's dbt project and runs the real compile and validation legs
 //	→ the release check stops at "passed"
@@ -155,7 +155,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	require.Equal(t, ftableEUniqueID, proposed.NodeID, "proposed node_id")
 	require.Equal(t, releaseID, proposed.ReleaseID, "proposed release_id")
 	require.Equal(t, []string{ftableEUniqueID}, proposed.ResolvedNodeIDs,
-		"ftable_e is the release's only failing node, so the attempt resolves exactly it")
+		"ftable_e is the release's only failing node, so the try resolves exactly it")
 	require.NotEmpty(t, proposed.ProposedSQLURI, "proposed_sql_uri must be non-empty")
 	require.NotEmpty(t, proposed.DiffURI, "diff_uri must be non-empty")
 	require.NotEmpty(t, proposed.Confidence, "confidence must be set")
@@ -175,7 +175,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	var row fixRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row,
-			`SELECT source, release_id, node_id, status, attempt,
+			`SELECT source, release_id, node_id, status, try,
 			        source_resolved, proposed_sql_uri
 			   FROM fix
 			  WHERE release_id = $1 AND node_id = $2
@@ -188,8 +188,8 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	require.Equal(t, releaseID, row.ReleaseID, "fix release_id")
 	require.Equal(t, ftableEUniqueID, row.NodeID, "fix node_id")
 	require.Equal(t, "proposed", row.Status, "fix status must be 'proposed'")
-	require.Equal(t, 1, row.Attempt, "the first attempt must be 1")
-	t.Logf("fix row confirmed: status=%s attempt=%d", row.Status, row.Attempt)
+	require.Equal(t, 1, row.Try, "the first try must be 1")
+	t.Logf("fix row confirmed: status=%s try=%d", row.Status, row.Try)
 
 	// (d) Assert the source-resolved path succeeded: stub-github served the real
 	//     model source and stub-llm (Step-2 branch) returned the corrected source.
@@ -232,7 +232,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//      already terminal — reading it rather than waiting for it.
 	var releaseChecksJSON []byte
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &releaseChecksJSON,
-		`SELECT release_checks FROM fix WHERE release_id = $1 AND node_id = $2 AND attempt = 1`,
+		`SELECT release_checks FROM fix WHERE release_id = $1 AND node_id = $2 AND try = 1`,
 		releaseID, ftableEUniqueID))
 	releaseChecks := decodeReleaseChecks(t, releaseChecksJSON)
 	require.Len(t, releaseChecks, 1,
@@ -251,7 +251,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	var fixID string
 	pollUntil(t, ctx, 10*time.Second, 1*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &fixID,
-			`SELECT id FROM fix WHERE release_id = $1 AND node_id = $2 AND attempt = 1 LIMIT 1`,
+			`SELECT id FROM fix WHERE release_id = $1 AND node_id = $2 AND try = 1 LIMIT 1`,
 			releaseID, ftableEUniqueID)
 		return err == nil && fixID != "", nil
 	}, fmt.Sprintf("timeout fetching fix id for release %s node %s", releaseID, ftableEUniqueID))
@@ -333,7 +333,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//     and flip the (fix, project) child row to the terminal
 	//     pr_state='merged' with pr_closed_at set. repo is still a column on
 	//     the parent fix row — it names the single monorepo every project
-	//     fixture shares, and is written once when the attempt is created,
+	//     fixture shares, and is written once when the try is created,
 	//     independent of the per-project PR split.
 	var repoName string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoName,
@@ -392,7 +392,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	releaseID := "e2e-opening-sweep-" + uuid.NewString()[:8]
 	const nodeID = "model.p.opening_sweep"
 	const repo = "e2e-owner/e2e-opening-sweep-repo"
-	const attempt = 1
+	const try = 1
 
 	// 1. Seed a fix row directly in 'proposed'/source_resolved=true — the
 	//    only precondition the PR-creation path checks — sidestepping the full
@@ -400,12 +400,12 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	var fixID string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &fixID, `
 		INSERT INTO fix
-			(source, release_id, node_id, error_signature, attempt, status,
+			(source, release_id, node_id, error_signature, try, status,
 			 source_resolved, repo, commit_sha, file_path, model, created_at)
 		VALUES ('validation', $1, $2, 'e2e-opening-sweep', $3, 'proposed',
 			true, $4, 'deadbeef', 'models/opening_sweep.sql', 'claude-3-5-sonnet', NOW())
 		RETURNING id`,
-		releaseID, nodeID, attempt, repo))
+		releaseID, nodeID, try, repo))
 	t.Logf("seeded fix id=%s release_id=%s node_id=%s", fixID, releaseID, nodeID)
 
 	// 2. Claim the row for PR creation via the real BeginPullRequest RPC — the
@@ -495,7 +495,7 @@ func TestE2E_AgentRemediation_OpeningSweepFailsClaimWithoutRepo(t *testing.T) {
 
 	releaseID := "e2e-norepo-sweep-" + uuid.NewString()[:8]
 	const nodeID = "model.p.norepo_sweep"
-	const attempt = 1
+	const try = 1
 
 	// 1. A proposed, source-resolved fix with NO repository, and a child
 	//    pull-request row already in 'opening' with a fresh claim time.
@@ -504,16 +504,16 @@ func TestE2E_AgentRemediation_OpeningSweepFailsClaimWithoutRepo(t *testing.T) {
 	var fixID string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &fixID, `
 		INSERT INTO fix
-			(source, release_id, node_id, error_signature, attempt, status,
+			(source, release_id, node_id, error_signature, try, status,
 			 source_resolved, repo, commit_sha, file_path, model, created_at)
 		VALUES ('validation', $1, $2, 'e2e-norepo-sweep', $3, 'proposed',
 			true, '', 'deadbeef', 'models/norepo_sweep.sql', 'claude-3-5-sonnet', NOW())
 		RETURNING id`,
-		releaseID, nodeID, attempt))
+		releaseID, nodeID, try))
 	_, err := clients.agentRemediationDB.ExecContext(ctx, `
 		INSERT INTO fix_pull_request (fix_id, project, repo, branch, pr_state, pr_claimed_at)
 		VALUES ($1, '', '', $2, 'opening', NOW())`,
-		fixID, "remediation/"+releaseID+"/attempt1")
+		fixID, "remediation/"+releaseID+"/round1/try1")
 	require.NoError(t, err)
 	t.Logf("seeded fix id=%s with an opening claim and no repository", fixID)
 
@@ -546,8 +546,8 @@ type fixProposedPayload struct {
 	Source    string `json:"source"`
 	ReleaseID string `json:"release_id"`
 	NodeID    string `json:"node_id"`
-	// ResolvedNodeIDs is every failing node this attempt addressed, sorted.
-	// One attempt now repairs a release's whole failing set, so NodeID is only
+	// ResolvedNodeIDs is every failing node this try addressed, sorted.
+	// One try now repairs a release's whole failing set, so NodeID is only
 	// the representative of this list.
 	ResolvedNodeIDs []string `json:"resolved_node_ids"`
 	ErrorSignature  string   `json:"error_signature"`
@@ -556,7 +556,7 @@ type fixProposedPayload struct {
 	Rationale       string   `json:"rationale"`
 	Confidence      string   `json:"confidence"`
 	Model           string   `json:"model"`
-	Attempt         int      `json:"attempt"`
+	Try             int      `json:"try"`
 	SourceResolved  bool     `json:"source_resolved"`
 	ProposedAt      string   `json:"proposed_at"`
 }
@@ -567,7 +567,7 @@ type fixRow struct {
 	ReleaseID      string `db:"release_id"`
 	NodeID         string `db:"node_id"`
 	Status         string `db:"status"`
-	Attempt        int    `db:"attempt"`
+	Try            int    `db:"try"`
 	SourceResolved bool   `db:"source_resolved"`
 	ProposedSQLURI string `db:"proposed_sql_uri"`
 }
@@ -620,7 +620,7 @@ func pollChildPRState(
 
 // pullRequestResult mirrors one entry of the create-PR route's pull_requests
 // array: a pull request that exists after the request completes, either just
-// opened or already open from an earlier attempt.
+// opened or already open from an earlier try.
 type pullRequestResult struct {
 	Project  string `json:"project"`
 	PRUrl    string `json:"pr_url"`

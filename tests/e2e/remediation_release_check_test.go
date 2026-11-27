@@ -127,7 +127,7 @@ func TestE2E_FixReleaseCheck_FailsConsumerFixThatIgnoresChangedUpstream(t *testi
 	require.Equal(t, "failed", perNode[ybreakDownUniqueID],
 		"the consumer that still reads the dropped column must fail; per-node=%v", perNode)
 
-	// 5. The attempt records the verdict.
+	// 5. The try records the verdict.
 	failed := waitForBatchFix(t, ctx, clients, releaseID, 1, "failed", batchFixBudget)
 	require.Contains(t, failed.VerifyError, "ybreak_down",
 		"the recorded reason must name the node the release check failed; got %q", failed.VerifyError)

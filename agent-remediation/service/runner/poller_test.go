@@ -82,7 +82,7 @@ func TestGatePoller_KeepsTheLeaseThroughAPollThatOutlastsIt(t *testing.T) {
 
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status, "the verdict read after the first lease ended is committed")
 	assert.Equal(t, remediation.TryPassed, h.try(id, 1).Status)
-	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
 	assert.Len(t, h.proposedEvents(), 1)
 	assert.Empty(t, h.remediation(id).LeaseOwner, "the poller lets go of the lease")
 }
@@ -124,7 +124,7 @@ func TestGatePoller_StopsAPollWhoseLeaseAnotherProcessTook(t *testing.T) {
 	assert.Equal(t, "somebody-else", h.remediation(id).LeaseOwner, "the other process keeps its lease")
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
 	assert.Empty(t, h.proposedEvents())
 	assert.Equal(t, gate, h.flowRows(id, 1)["release_check"][0], "the gate's row is as it was")
 }
@@ -186,7 +186,7 @@ func TestRunner_APollThatCannotReachTheGateCountsOnTheGateRow(t *testing.T) {
 		// A try that is verifying and has no gate row.
 		repo := h.store.RemediationRepository()
 		require.NoError(t, repo.SaveTry(ctx, remediation.Try{
-			RemediationID: id, Try: 1, Attempt: 1, Status: remediation.TryVerifying,
+			RemediationID: id, Try: 1, Status: remediation.TryVerifying,
 			DeadlineAt: t0.Add(time.Hour), CreatedAt: t0, UpdatedAt: t0,
 		}))
 		rem := h.remediation(id)

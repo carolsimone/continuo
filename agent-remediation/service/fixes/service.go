@@ -139,9 +139,9 @@ func (s *Service) PRProjects(v fix.View) []string {
 }
 
 // resolvedForProject is the failing-node set a per-project pull request names:
-// for a legacy "" claim it is the attempt's whole fixed set; for a real project
+// for a legacy "" claim it is the try's whole fixed set; for a real project
 // it is the members that project's edits attribute, intersected with the
-// attempt's fixed set (nil fallback, so an edit written before the member codec
+// try's fixed set (nil fallback, so an edit written before the member codec
 // never lets one project claim nodes it did not touch). Both enqueuePROpened
 // and enqueuePRClosed derive the resolved set through here, so pr_opened and
 // pr_closed name the same nodes as the claim the repository handed the caller.
@@ -167,8 +167,8 @@ func resolvedNodesForProject(projectRepoPaths map[string]string, v fix.View, pro
 // owning-project group to claim ("" is the legacy whole-fix group); it must
 // be one of PRProjects(v), else ErrUnknownProject. A fix whose Repo is
 // not owner/name is refused with ErrNoRepository before any write. It builds
-// the deterministic branch remediation/<release_id>/attempt<n>(/<project>
-// when non-empty) before delegating to repo.BeginPR. The returned PRClaim
+// the deterministic branch remediation/<release_id>/round<r>/try<t>
+// (/<project> when non-empty) before delegating to repo.BeginPR. The returned PRClaim
 // carries the computed Branch.
 func (s *Service) Begin(ctx context.Context, id, project string) (fix.PRClaim, error) {
 	v, err := s.repo.Get(ctx, id)
@@ -181,7 +181,7 @@ func (s *Service) Begin(ctx context.Context, id, project string) (fix.PRClaim, e
 	if !strings.Contains(v.Repo, "/") {
 		return fix.PRClaim{}, fmt.Errorf("%w: %q", ErrNoRepository, v.Repo)
 	}
-	branch := BuildBranch(v.ReleaseID, v.Attempt, project)
+	branch := BuildBranch(v.ReleaseID, v.RemediationRound, v.Try, project)
 	claim, err := s.repo.BeginPR(ctx, id, project, branch, s.clock.Now())
 	if err != nil {
 		return fix.PRClaim{}, fmt.Errorf("begin pr: %w", err)
@@ -201,7 +201,7 @@ func (s *Service) Begin(ctx context.Context, id, project string) (fix.PRClaim, e
 // the first to reach the row writes anything or emits the event; the second
 // is a no-op, not an error.
 func (s *Service) Record(ctx context.Context, in RecordInput) error {
-	// Fetch the fix to obtain release_id, node_id, and attempt — required
+	// Fetch the fix to obtain release_id, node_id, and try — required
 	// for deterministic outbox entry id and event payload construction.
 	v, err := s.repo.Get(ctx, in.FixID)
 	if err != nil {
@@ -296,8 +296,8 @@ func (s *Service) RecordOutcome(ctx context.Context, id, project string, outcome
 
 // enqueuePRClosed builds the deterministic fix.pr_closed:v1 outbox
 // entry and creates it on the repository bound to the caller's transaction. It
-// names the nodes the PR actually fixed, not every node the attempt addressed:
-// a node the attempt skipped or failed carries no fix, so the pull request's
+// names the nodes the PR actually fixed, not every node the try addressed:
+// a node the try skipped or failed carries no fix, so the pull request's
 // outcome says nothing about its rejection. The resolved subset the caller
 // passes is used verbatim; an empty one falls back to the per-project set,
 // matching pr_opened exactly.
@@ -306,7 +306,7 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v fix.V
 		resolved = s.resolvedForProject(v, project)
 	}
 	prURL, prNumber := closingProjectPR(v, project)
-	eventID := event.PRClosedEventID(v.ReleaseID, v.Attempt, project)
+	eventID := event.PRClosedEventID(v.ReleaseID, v.RemediationRound, v.Try, project)
 	payload := event.PRClosed{
 		FixID:           v.ID,
 		ReleaseID:       v.ReleaseID,
@@ -356,7 +356,7 @@ func closingProjectPR(v fix.View, project string) (string, int) {
 // call: recovering a stranded PR through the opening sweep resolves it long
 // after GitHub created it.
 func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v fix.View, in RecordInput, openedAt time.Time) error {
-	eventID := event.PROpenedEventID(v.ReleaseID, v.Attempt, in.Project)
+	eventID := event.PROpenedEventID(v.ReleaseID, v.RemediationRound, v.Try, in.Project)
 	payload := event.PROpened{
 		FixID:           in.FixID,
 		ReleaseID:       v.ReleaseID,
@@ -385,15 +385,14 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v fix.V
 }
 
 // BuildBranch returns the deterministic remediation branch name for a
-// fix's release/attempt/project:
-// remediation/<release_id>/attempt<n>, with "/<project>" appended when project
-// is non-empty (a per-project PR of a split fix). The legacy "" project —
-// one PR for the whole fix — carries no project segment, so its branch is
-// exactly the pre-split name. Both Begin (computing the branch to claim) and the
+// fix's release, round, try and project:
+// remediation/<release_id>/round<r>/try<t>, with "/<project>" appended when
+// project is non-empty (a per-project PR of a split fix). The legacy ""
+// project — one PR for the whole fix — carries no project segment. Both Begin (computing the branch to claim) and the
 // reconciler's opening sweep (recomputing the same branch to look a stuck claim
 // up on GitHub) call this so the two never drift apart.
-func BuildBranch(releaseID string, attempt int, project string) string {
-	branch := fmt.Sprintf("remediation/%s/attempt%d", releaseID, attempt)
+func BuildBranch(releaseID string, round, try int, project string) string {
+	branch := fmt.Sprintf("remediation/%s/round%d/try%d", releaseID, round, try)
 	if project != "" {
 		branch += "/" + project
 	}

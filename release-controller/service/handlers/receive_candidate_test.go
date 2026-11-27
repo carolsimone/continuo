@@ -150,7 +150,7 @@ func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 func TestReceiveCandidate_ConflictsWithAFix(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	store.SeedRelease(releasecheck.NewFix("check-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now))
+	store.SeedRelease(releasecheck.NewFix("check-9", "core", "img", "rel-0", 1, 1, "", release.ManifestKindDbt, now))
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "core", ReleaseID: "check-9", ImageTag: "img", Repo: "acme/demo", CommitSHA: "deadbeef",
 	})
@@ -262,7 +262,7 @@ func TestReceiveCandidate_LosingARaceToTheSameCandidateIsANoOp(t *testing.T) {
 func TestReceiveCandidate_LosingARaceToAFixIsAKindConflict(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	store.RaceRelease(releasecheck.NewFix("rel-1", "core", "img:1", "rel-0", 1, "", release.ManifestKindDbt, now))
+	store.RaceRelease(releasecheck.NewFix("rel-1", "core", "img:1", "rel-0", 1, 1, "", release.ManifestKindDbt, now))
 	assert.ErrorIs(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()), handlers.ErrCheckKindConflict)
 }
 

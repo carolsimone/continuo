@@ -682,7 +682,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		},
 		Precedents:          noPrecedents{},
 		Upstream:            noUpstream{},
-		PriorAttempts:       h.store.FixRepository(),
+		PriorFixes:          h.store.FixRepository(),
 		Tries:               h.store.RemediationRepository(),
 		CandidateSource:     h.bundle,
 		Versions:            noVersions{},
@@ -830,11 +830,11 @@ func (h *harness) accept(trig remediation.Trigger) uuid.UUID {
 	return rems[0].ID
 }
 
-// attemptWithNoRemediation records a terminal attempt row that belongs to no
+// tryWithNoRemediation records a terminal fix row that belongs to no
 // remediation, for the release.
-func (h *harness) attemptWithNoRemediation(attempt int, status fix.Status) {
+func (h *harness) tryWithNoRemediation(try int, status fix.Status) {
 	h.t.Helper()
-	h.attemptWithNoRemediationInRound(1, attempt, status)
+	h.tryWithNoRemediationInRound(1, try, status)
 }
 
 // saveStep writes a journal row as it stands.
@@ -846,14 +846,14 @@ func (h *harness) saveStep(row remediation.StepRun) {
 	require.NoError(h.t, u.Commit())
 }
 
-// attemptWithNoRemediationInRound records a terminal attempt row that belongs to
+// tryWithNoRemediationInRound records a terminal fix row that belongs to
 // no remediation, for the release in one round.
-func (h *harness) attemptWithNoRemediationInRound(round, attempt int, status fix.Status) {
+func (h *harness) tryWithNoRemediationInRound(round, try int, status fix.Status) {
 	h.t.Helper()
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(h.t, u.Begin(ctx))
 	require.NoError(h.t, u.FixRepo().Upsert(ctx, fix.Fix{
-		Source: "compile", ReleaseID: releaseID, RemediationRound: round, Attempt: attempt, Status: status,
+		Source: "compile", ReleaseID: releaseID, RemediationRound: round, Try: try, Status: status,
 		ResolvedNodeIDs: []string{"svc-a"}, CreatedAt: t0,
 	}))
 	require.NoError(h.t, u.Commit())
@@ -921,15 +921,22 @@ func (h *harness) poll(id uuid.UUID) error {
 	return h.runner.PollGate(ctx, snap)
 }
 
-// attempt returns the fix row of one attempt of the release.
-func (h *harness) attempt(n int) memory.StoredFix {
+// fixRow returns the fix row of try n of the release's round 1; n is
+// fix.HandOverTry for the round's hand-over row.
+func (h *harness) fixRow(n int) memory.StoredFix {
+	h.t.Helper()
+	return h.fixRowIn(1, n)
+}
+
+// fixRowIn returns the fix row of try n of the release's round.
+func (h *harness) fixRowIn(round, n int) memory.StoredFix {
 	h.t.Helper()
 	for _, p := range h.fixes() {
-		if p.Fix.Attempt == n {
+		if p.Fix.RemediationRound == round && p.Fix.Try == n {
 			return p
 		}
 	}
-	h.t.Fatalf("no fix row for attempt %d", n)
+	h.t.Fatalf("no fix row for round %d, try %d", round, n)
 	return memory.StoredFix{}
 }
 

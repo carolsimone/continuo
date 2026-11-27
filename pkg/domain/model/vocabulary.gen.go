@@ -55,7 +55,7 @@ func (v ParseFailureKind) IsValid() bool {
 }
 
 // Healable reports whether the contract marks v as fixable by a change to the
-// user's source, and therefore worth a remediation attempt.
+// user's source, and therefore worth a fix.
 func (v ParseFailureKind) Healable() bool {
 	switch v {
 	case ParseFailureKindInvalidSQL:
@@ -163,7 +163,7 @@ func (v RejectReason) IsValid() bool {
 }
 
 // Healable reports whether the contract marks v as fixable by a change to the
-// user's source, and therefore worth a remediation attempt.
+// user's source, and therefore worth a fix.
 func (v RejectReason) Healable() bool {
 	switch v {
 	case RejectReasonCompileFailed:

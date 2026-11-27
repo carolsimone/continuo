@@ -87,7 +87,7 @@ func TestRefusalFinding(t *testing.T) {
 		},
 		"mixed": {
 			[]step.ClusterDraft{clusterDraft(1, contract, edit("python/ledger/a.sql", "model.sales.orders"))},
-			"mixed_manifest_kinds", "project ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind",
+			"mixed_manifest_kinds", "project ledger mixes a python contract with dbt edits in one try; a release verifies one manifest kind",
 		},
 	}
 	for name, c := range cases {

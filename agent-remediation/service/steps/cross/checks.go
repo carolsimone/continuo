@@ -63,7 +63,7 @@ func (c *EditsMapToAProject) CheckAll(_ context.Context, in step.CrossInput) (re
 	if !ok {
 		return finish(nameEditsMapToAProject, nil), nil
 	}
-	c.logger.Error("an edit belongs to no configured project; the attempt cannot be verified",
+	c.logger.Error("an edit belongs to no configured project; the try cannot be verified",
 		"release", in.Trigger.ReleaseID, "path", e.Path, "target", e.TargetNodeID)
 	return finish(nameEditsMapToAProject, &remediation.Finding{
 		Code: shared.CodeEditOutsideProjects, Message: shared.UnmappedError(e).Error(), File: e.Path,
@@ -104,7 +104,7 @@ func (c *NoPathEditedTwice) CheckAll(_ context.Context, in step.CrossInput) (rem
 	if !ok {
 		return finish(nameNoPathEditedTwice, nil), nil
 	}
-	c.logger.Error("two of the attempt's edits change the same file; the attempt cannot be verified",
+	c.logger.Error("two of the try's edits change the same file; the try cannot be verified",
 		"release", in.Trigger.ReleaseID, "path", e.Path, "target", e.TargetNodeID)
 	return finish(nameNoPathEditedTwice, &remediation.Finding{
 		Code: shared.CodePathEditedTwice, Message: shared.DuplicateError(e).Error(), File: e.Path,
@@ -148,7 +148,7 @@ func (c *OneManifestKind) CheckAll(_ context.Context, in step.CrossInput) (remed
 	if !ok {
 		return finish(nameOneManifestKind, nil), nil
 	}
-	c.logger.Error("a project's edits span two manifest kinds; the attempt cannot be verified",
+	c.logger.Error("a project's edits span two manifest kinds; the try cannot be verified",
 		"release", in.Trigger.ReleaseID, "project", project, "edit", e.Path, "target", e.TargetNodeID)
 	return finish(nameOneManifestKind, &remediation.Finding{
 		Code: shared.CodeMixedManifestKinds, Message: shared.MixedError(project).Error(), File: e.Path,

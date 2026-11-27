@@ -34,7 +34,7 @@ const makeFix = (overrides: Partial<FixDTO> = {}): FixDTO => ({
   release_id: 'rel-abc',
   node_id: 'svc.schema.my_model',
   error_signature: 'syntax error',
-  attempt: 1,
+  try: 1,
   status: 'proposed',
   confidence: 'high',
   rationale: 'The fix addresses the syntax issue in the model.',
@@ -77,10 +77,10 @@ function renderPanel() {
   );
 }
 
-// attemptStatusCell finds the attempt row's Status cell by its whole text —
+// tryStatusCell finds the try row's Status cell by its whole text —
 // the status pill followed by the pull request's state chip, e.g.
 // "proposed opening" — since the pills split the cell's text across nodes.
-const attemptStatusCell = (text: string) =>
+const tryStatusCell = (text: string) =>
   screen.queryByText((_, el) => el?.tagName === 'TD' && (el.textContent ?? '').replace(/\s+/g, ' ').trim() === text);
 
 describe('CreatePrModal', () => {
@@ -285,7 +285,7 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     fireEvent.click(screen.getByText('svc.schema.my_model')); // expand group
-    fireEvent.click(screen.getByText('high'));                // open attempt card
+    fireEvent.click(screen.getByText('high'));                // open try card
 
     expect(screen.getByText(/No real-source fix/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
@@ -304,7 +304,7 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     fireEvent.click(screen.getByText('svc.schema.my_model')); // expand group
-    fireEvent.click(screen.getByText('high'));                // open attempt card
+    fireEvent.click(screen.getByText('high'));                // open try card
 
     expect(screen.getByRole('link', { name: /open PR ↗/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
@@ -322,7 +322,7 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     fireEvent.click(screen.getByText('svc.schema.my_model')); // expand group
-    fireEvent.click(screen.getByText('high'));                // open attempt card
+    fireEvent.click(screen.getByText('high'));                // open try card
 
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
@@ -400,13 +400,13 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     // Recording the PR against the fix is best-effort server side, so
     // until the refetch resolves the only state the client can honestly
     // claim is 'opening' — the one BeginPullRequest already guaranteed.
-    expect(attemptStatusCell('proposed opening')).toBeInTheDocument();
+    expect(tryStatusCell('proposed opening')).toBeInTheDocument();
 
     // The refetch lands and reports what the server actually recorded.
     resolveRefetch([{ ...fix, pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55, pr_state: 'open' }]);
 
     await waitFor(() => {
-      expect(attemptStatusCell('proposed open')).toBeInTheDocument();
+      expect(tryStatusCell('proposed open')).toBeInTheDocument();
     });
   });
 
@@ -441,8 +441,8 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     // The row never claims 'open' — it truthfully stays at 'opening' both
     // before and after the refetch, since that is what the server reports.
     await waitFor(() => {
-      expect(attemptStatusCell('proposed opening')).toBeInTheDocument();
+      expect(tryStatusCell('proposed opening')).toBeInTheDocument();
     });
-    expect(attemptStatusCell('proposed open')).toBeNull();
+    expect(tryStatusCell('proposed open')).toBeNull();
   });
 });

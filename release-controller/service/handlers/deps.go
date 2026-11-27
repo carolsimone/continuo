@@ -19,7 +19,7 @@ type Deps struct {
 	Telemetry ports.Telemetry
 	Logger    *slog.Logger
 	Bucket    string
-	Fixes     ports.FixReader // lists a release's remediation attempts for the retry decision
+	Fixes     ports.FixReader // lists a release's remediation tries for the retry decision
 
 	// Topologies reads and writes topology artifacts: every handler that needs
 	// a check's candidate topology loads it through here by the check's reference.

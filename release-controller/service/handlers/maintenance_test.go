@@ -31,7 +31,7 @@ func TestRetryRemediation_RefusedDuringMaintenance(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	deps.Maintenance = true
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
-	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Attempt: 1, Status: "failed", RemediationRound: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 1, Status: "failed", RemediationRound: 1}}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.True(t, errors.Is(err, maintenance.ErrActive), "%v", err)
@@ -45,7 +45,7 @@ func TestRetryRemediation_RefusedDuringMaintenance(t *testing.T) {
 func TestRetryRemediation_SkippedRoundIsRetryable(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"release_id":"rel-1","reason":"compile_failed"}`))
-	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Attempt: 1, Status: "skipped", RemediationRound: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 1, Status: "skipped", RemediationRound: 1}}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
@@ -53,14 +53,14 @@ func TestRetryRemediation_SkippedRoundIsRetryable(t *testing.T) {
 }
 
 // During maintenance the queue skips an older candidate and activates the
-// fix's release check of a remediation attempt already in progress.
+// fix's release check of a remediation try already in progress.
 func TestAdvanceQueue_MaintenanceActivatesOnlyFixes(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	deps.Maintenance = true
 	store.SeedProductionPointer(release.NewProductionPointer("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 	store.SeedRelease(releasecheck.NewCandidate("rCand", "svc-a", "tag-c", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
-	store.SeedRelease(releasecheck.NewFix("rVerify", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(releasecheck.NewFix("rVerify", "svc-b", "img:1", "rGone", 1, 1, "", release.ManifestKindPython, deps.Clock.Now()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 

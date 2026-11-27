@@ -288,7 +288,7 @@ func (r *Runner) countRemediationFailure(ctx context.Context, id uuid.UUID, caus
 // load ended the failures in a row, and the next step that commits clears
 // them. A remediation with no try, or whose try failed, keeps its failures
 // until a try opens, so a try that cannot open is never cleared by the load
-// that precedes the next attempt to open it.
+// that precedes the next try to open it.
 func failuresToClear(run tryRun) bool {
 	t := run.snap.Try
 	return run.snap.Remediation.Failures > 0 && t != nil && t.Status != remediation.TryFailed

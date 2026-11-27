@@ -6,10 +6,10 @@
       "Original": "select 1",
       "Content": "select 2",
       "TargetNodeID": "orders.model.orders_daily",
-      "ContentKey": "proposed-fix/rel-1/orders/attempt-3.source.sql",
-      "DiffKey": "proposed-fix/rel-1/orders/attempt-3.source.diff",
-      "ContentURI": "s3://artifacts/proposed-fix/rel-1/orders/attempt-3.source.sql",
-      "DiffURI": "s3://artifacts/proposed-fix/rel-1/orders/attempt-3.source.diff"
+      "ContentKey": "proposed-fix/rel-1/orders/round-1/try-3.source.sql",
+      "DiffKey": "proposed-fix/rel-1/orders/round-1/try-3.source.diff",
+      "ContentURI": "s3://artifacts/proposed-fix/rel-1/orders/round-1/try-3.source.sql",
+      "DiffURI": "s3://artifacts/proposed-fix/rel-1/orders/round-1/try-3.source.diff"
     }
   ],
   "NamedTarget": "models/orders_daily.sql",

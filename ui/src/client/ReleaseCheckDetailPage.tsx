@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
 import { ReleaseCheckDetail } from './types';
-import { reasonLabel, releasePillClass, releaseCheckPhase } from './release-helpers';
+import { reasonLabel, releasePillClass, releaseCheckPhase, tryLabel } from './release-helpers';
 import { NodeResultsTable } from './node-results';
 import ProjectTiles from './ProjectTiles';
 import ReleaseCheckTimeline from './ReleaseCheckTimeline';
@@ -11,7 +11,7 @@ const POLL_INTERVAL_MS = 5000;
 const TERMINAL = new Set(['passed', 'failed']);
 
 // ReleaseCheckDetailPage shows one fix's release check: which release and
-// attempt it verifies, which stage it has reached, and its per-node results
+// try it verifies, which stage it has reached, and its per-node results
 // and logs — the same table a release shows, without the Fix column, because
 // the release check is the fix being judged.
 export default function ReleaseCheckDetailPage() {
@@ -73,7 +73,7 @@ export default function ReleaseCheckDetailPage() {
       <p className="page-sub">
         Release check for release <Link to={`/releases/${check.verifies_release_id}`}>{check.verifies_release_id}</Link>
         <span className="page-sub__sep">·</span>
-        attempt {check.attempt}
+        {tryLabel(check.remediation_round, check.try)}
         <span className="page-sub__sep">·</span>
         project {check.changed_project}
         <span className="page-sub__sep">·</span>

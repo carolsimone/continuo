@@ -52,11 +52,11 @@ type Collaborators struct {
 	CurrentContracts ports.CurrentContractReader
 	// Releases reads the original failing release's node-failure set.
 	Releases ports.ReleaseReader
-	// PriorAttempts reads the release's fix rows, so a later try's prompt
-	// can show the attempts recorded with no remediation.
-	PriorAttempts repository.AttemptLister
+	// PriorFixes reads the release's fix rows, so a later try's prompt
+	// can show the tries recorded with no remediation.
+	PriorFixes repository.FixLister
 	// Tries reads every try the runner made at the release, so a later try's
-	// prompt can show what earlier tries tried and why they were refused.
+	// prompt can show what earlier tries changed and why they were refused.
 	Tries repository.TryLister
 	// SQLDialect is the sqlglot dialect the warehouse this install runs
 	// speaks, resolved from the operator's configured warehouse engine.

@@ -106,7 +106,7 @@ function buildFakeOctokit(opts: {
 const baseInput: CreatePRInput = {
   repo: 'o/continuo-demo',
   baseBranch: 'main',
-  headBranch: 'remediation/r-1/orders_d-attempt1',
+  headBranch: 'remediation/r-1/round1/try1',
   files: [{ path: 'models/orders_d.sql', content: 'SELECT 1' }],
   commitMessage: 'fix: remediation for orders_d',
   title: 'Remediation fix for orders_d',
@@ -122,7 +122,7 @@ describe('makePullRequestCreator', () => {
 
       expect(octokit.git.createRef).toHaveBeenCalledWith(
         expect.objectContaining({
-          ref: 'refs/heads/remediation/r-1/orders_d-attempt1',
+          ref: 'refs/heads/remediation/r-1/round1/try1',
           sha: 'base1',
         })
       );
@@ -208,7 +208,7 @@ describe('makePullRequestCreator', () => {
         }
       }
       expect(octokit.git.createRef).toHaveBeenCalledWith(
-        expect.objectContaining({ ref: 'refs/heads/remediation/r-1/orders_d-attempt1', sha: 'main-head' }),
+        expect.objectContaining({ ref: 'refs/heads/remediation/r-1/round1/try1', sha: 'main-head' }),
       );
       expect(octokit.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({ commit_sha: 'main-head' }));
       expect(octokit.git.createTree).toHaveBeenCalledWith(
@@ -537,7 +537,7 @@ describe('makePullRequestCreator', () => {
       expect(octokit.pulls.list).toHaveBeenCalledWith(
         expect.objectContaining({
           state: 'open',
-          head: 'o:remediation/r-1/orders_d-attempt1',
+          head: 'o:remediation/r-1/round1/try1',
         })
       );
       expect(res).toEqual({ url: 'https://github.com/o/r/pull/7', number: 7 });
@@ -548,7 +548,7 @@ describe('makePullRequestCreator', () => {
       const creator = makePullRequestCreator(octokit);
 
       await expect(creator.create(baseInput)).rejects.toThrow(
-        /422 but no open PR found for head o:remediation\/r-1\/orders_d-attempt1/
+        /422 but no open PR found for head o:remediation\/r-1\/round1\/try1/
       );
     });
   });

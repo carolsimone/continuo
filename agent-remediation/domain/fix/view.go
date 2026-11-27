@@ -38,26 +38,26 @@ type View struct {
 	ID        string
 	Source    string
 	ReleaseID string
-	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
+	// RemediationRound is the release's remediation round this try belongs to; the try cap is counted within a round.
 	RemediationRound int
-	// RemediationID is the id of the runner's remediation the attempt belongs
-	// to, empty for an attempt row that belongs to no remediation or one whose
+	// RemediationID is the id of the runner's remediation the try belongs
+	// to, empty for a fix row that belongs to no remediation or one whose
 	// remediation was deleted.
 	RemediationID string
 	NodeID        string
-	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted;
+	// ResolvedNodeIDs is the failing nodes this try addresses, sorted;
 	// NodeID is their representative.
 	ResolvedNodeIDs []string
 	ErrorSignature  string
-	Attempt         int
+	Try             int
 	Status          Status
-	// NodeOutcomes is, per failing node, how this attempt ended for it — a
+	// NodeOutcomes is, per failing node, how this try ended for it — a
 	// cluster the runner skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
-	// Approvers is who must approve what the attempt did with each node a
+	// Approvers is who must approve what the try did with each node a
 	// remediation settled at its end, fixed or handed over, one entry per node
-	// sorted by node id. It is empty for an attempt row that belongs to no remediation
+	// sorted by node id. It is empty for a fix row that belongs to no remediation
 	// and for one with no approvers recorded.
 	Approvers []Approver
 	// ReleaseChecks holds the fix's release checks, one per edited project;
@@ -65,11 +65,11 @@ type View struct {
 	ReleaseChecks []ReleaseCheck
 	// ReleaseCheckID is the id of the first release check — the
 	// single-check view of ReleaseChecks. Written when Status is (or was)
-	// 'verifying'. It is kept when the attempt is finalized, so a resolved row
-	// still names the check that judged it. Empty for an attempt that never
+	// 'verifying'. It is kept when the try is finalized, so a resolved row
+	// still names the check that judged it. Empty for a try that never
 	// entered its release check.
 	ReleaseCheckID string
-	// Projects is every project this attempt touched: the failing nodes'
+	// Projects is every project this try touched: the failing nodes'
 	// projects plus the edited ones.
 	Projects []string
 	// VerifyError is the release check's failure reason, recorded by
@@ -85,7 +85,7 @@ type View struct {
 	Repo                string
 	CommitSHA           string
 	FilePath            string
-	// Edits is the list of proposed file changes for this attempt: either the
+	// Edits is the list of proposed file changes for this try: either the
 	// value written for this row, or — when the row predates this field and
 	// carries an empty list — one edit synthesized from FilePath,
 	// ProposedSQLURI, and DiffURI.
@@ -105,10 +105,10 @@ type View struct {
 	PullRequests []PullRequest
 }
 
-// FixedNodeIDs is the failing nodes this attempt actually repaired: the
+// FixedNodeIDs is the failing nodes this try actually repaired: the
 // resolved nodes whose own outcome is 'proposed', in the resolved set's order.
 // It is what a pull request may be said to fix, and therefore what the
-// PR-lifecycle events name — an attempt that skipped or failed a node carries
+// PR-lifecycle events name — a try that skipped or failed a node carries
 // no fix for it, so attaching the PR to that node's rejection would report a
 // remediation nobody proposed.
 //
@@ -119,7 +119,7 @@ func (v View) FixedNodeIDs() []string {
 	return FixedNodeIDs(v.ResolvedNodeIDs, v.NodeOutcomes)
 }
 
-// FixedNodeIDs filters a resolved node set to the nodes the attempt repaired,
+// FixedNodeIDs filters a resolved node set to the nodes the try repaired,
 // keeping the resolved set's order. It is the one implementation behind every
 // reader of "which nodes does this pull request fix" — the View helper above
 // and the PR claim the repository hands to the caller that opens the PR.
@@ -146,18 +146,21 @@ type PRClaim struct {
 	FilePath       string
 	ProposedSQLURI string
 	DiffURI        string
-	// Edits is the list of proposed file changes for this attempt, with the
+	// Edits is the list of proposed file changes for this try, with the
 	// same legacy-synthesis fallback as View.Edits.
 	Edits     []FileEdit
 	ReleaseID string
 	NodeID    string
-	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted;
+	// ResolvedNodeIDs is the failing nodes this try addresses, sorted;
 	// NodeID is their representative.
 	ResolvedNodeIDs []string
-	Attempt         int
-	Rationale       string
-	Confidence      Confidence
-	Model           string
+	// RemediationRound and Try name the claimed fix's try: its round, and its
+	// number in that round.
+	RemediationRound int
+	Try              int
+	Rationale        string
+	Confidence       Confidence
+	Model            string
 	// Approvers is who must approve the claim's fix: the row's approvers of the
 	// nodes in ResolvedNodeIDs, sorted by node id. A node the row records no
 	// approver for has no entry.
@@ -193,8 +196,10 @@ type OpenPR struct {
 	PRNumber  int
 	ReleaseID string
 	NodeID    string
-	Attempt   int
-	Project   string
+	// RemediationRound and Try name the fix's try.
+	RemediationRound int
+	Try              int
+	Project          string
 }
 
 // OpeningPR identifies a fix claimed for PR creation (pr_state='opening')
@@ -214,8 +219,10 @@ type OpeningPR struct {
 	Repo      string
 	ReleaseID string
 	NodeID    string
-	Attempt   int
-	ClaimedAt *time.Time
-	CreatedAt time.Time
-	Project   string
+	// RemediationRound and Try name the fix's try.
+	RemediationRound int
+	Try              int
+	ClaimedAt        *time.Time
+	CreatedAt        time.Time
+	Project          string
 }

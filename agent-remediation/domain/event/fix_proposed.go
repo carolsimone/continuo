@@ -14,10 +14,10 @@ const AggregateType = "agent_remediation"
 
 var fixProposedNamespace = uuid.MustParse("d2a7f3c1-8e94-4b6a-9c2d-3f5b7a1e0d8c")
 
-// RemediationEventID maps (releaseID, attempt) to a stable UUID so a
+// RemediationEventID maps (releaseID, round, try) to a stable UUID so a
 // redelivered trigger does not produce a distinct downstream event.
-func RemediationEventID(releaseID string, attempt int) uuid.UUID {
-	return uuid.NewSHA1(fixProposedNamespace, []byte(releaseID+"|"+itoa(attempt)))
+func RemediationEventID(releaseID string, round, try int) uuid.UUID {
+	return uuid.NewSHA1(fixProposedNamespace, []byte(releaseID+"|"+itoa(round)+"|"+itoa(try)))
 }
 
 // AggregateIDForRelease maps a release id to a stable outbox AggregateID.
@@ -55,23 +55,23 @@ type FixProposed struct {
 	EventID   string
 	Source    string
 	ReleaseID string
-	// RemediationRound is the release's remediation round this attempt belongs to.
+	// RemediationRound is the release's remediation round this try belongs to.
 	RemediationRound int
 	NodeID           string
-	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted.
+	// ResolvedNodeIDs is the failing nodes this try addresses, sorted.
 	ResolvedNodeIDs []string
 	ErrorSignature  string
 	ProposedSQLURI  string
 	DiffURI         string
-	// Edits is the full multi-file description of this attempt's proposed
+	// Edits is the full multi-file description of this try's proposed
 	// changes. Each edit names the node whose source it changes, which is what
-	// tells a reader where the fix was made — one attempt repairs a whole
+	// tells a reader where the fix was made — one try repairs a whole
 	// failing set, so no single node can stand for the cause of all of them.
 	Edits          []ProposedEdit
 	Rationale      string
 	Confidence     string
 	Model          string
-	Attempt        int
+	Try            int
 	SourceResolved bool
 	ProposedAt     string
 }

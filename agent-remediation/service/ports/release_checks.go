@@ -8,8 +8,8 @@ import (
 )
 
 // ReleaseCheckRequest is a fix's release check to submit: the edited
-// project's delta, the rejected release the fix answers, and the attempt it
-// belongs to. Kind is the project's manifest kind, ManifestKindDbt or
+// project's delta, the rejected release the fix answers, and the try it
+// belongs to: its round and its number in that round. Kind is the project's manifest kind, ManifestKindDbt or
 // ManifestKindPython — required, never defaulted. SourceOverlayURI is
 // the tarball of proposed source a dbt check lays over the project; a python check
 // is verified by its packaged odcs-bundle.json and carries none.
@@ -19,7 +19,8 @@ type ReleaseCheckRequest struct {
 	ImageTag          string
 	Kind              string
 	VerifiesReleaseID string
-	Attempt           int
+	RemediationRound  int
+	Try               int
 	SourceOverlayURI  string
 }
 
@@ -39,7 +40,7 @@ const ODCSBundleName = "odcs-bundle.json"
 // from the check's status; ActivatedAt is when it left the release queue
 // (zero while queued). NodeErrors and CheckError are set only when Phase is
 // failed: NodeErrors holds one entry per node the failure names, carrying the
-// error text the next attempt is shown, and CheckError is the check's own reason
+// error text the next try is shown, and CheckError is the check's own reason
 // and detail ("reason — detail"), the text of a failure that names no node.
 type ReleaseCheckStatus struct {
 	Phase       fix.Phase

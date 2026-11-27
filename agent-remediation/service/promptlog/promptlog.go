@@ -28,12 +28,12 @@ const logMessage = "llm prompt"
 
 // Failure identifies the failure a prompt was built for. The runner stamps it on
 // the context before calling the model so the logged prompt can be tied back to
-// the release, node, source, and attempt it addresses.
+// the release, node, source, and try it addresses.
 type Failure struct {
 	Source    string
 	ReleaseID string
 	NodeID    string
-	Attempt   int
+	Try       int
 }
 
 // failureCtxKey is the unexported context key under which the runner stores the
@@ -83,7 +83,7 @@ func (p *LoggingLLMProvider) Propose(ctx context.Context, req ports.ProposeReque
 			"source", f.Source,
 			"release", f.ReleaseID,
 			"node", f.NodeID,
-			"attempt", f.Attempt,
+			"try", f.Try,
 		)
 	}
 	// The full prompt goes last so the correlation and size fields stay legible

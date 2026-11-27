@@ -85,7 +85,7 @@ async function safeFailPullRequest(
 }
 
 // A pull request that exists after this request completes — either just
-// opened, or already open from an earlier attempt (FAILED_PRECONDITION).
+// opened, or already open from an earlier try (FAILED_PRECONDITION).
 interface PullRequestResult {
   project: string;
   pr_url: string;
@@ -202,7 +202,7 @@ export function createRemediationRouter(
         // this project already has a pull request (the message embeds its
         // URL), the fix has no real source to change, or the claim raced
         // past 'proposed' (a release check reached a verdict, or the
-        // attempt budget was exhausted) since pr_projects was read. Only the
+        // try budget was exhausted) since pr_projects was read. Only the
         // first is a success — skip creating a duplicate and report the
         // existing PR instead of losing it from the response. The other two
         // carry no URL and are genuine per-project failures, not an
@@ -301,7 +301,7 @@ export function createRemediationRouter(
     }
 
     // Build the PR title and body. A batched fix resolves several
-    // failing nodes under one attempt, so the title names how many rather
+    // failing nodes under one try, so the title names how many rather
     // than picking one; a single-node fix (or a legacy row with no
     // resolved_node_ids) still names that one node exactly as before. A
     // fix split across several owning projects suffixes each project's

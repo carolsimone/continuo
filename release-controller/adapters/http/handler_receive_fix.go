@@ -19,7 +19,8 @@ type ReceiveFixRequest struct {
 	ImageTag          string `json:"image_tag"`
 	Kind              string `json:"kind"`
 	VerifiesReleaseID string `json:"verifies_release_id"`
-	Attempt           int    `json:"attempt"`
+	RemediationRound  int    `json:"remediation_round"`
+	Try               int    `json:"try"`
 	SourceOverlayURI  string `json:"source_overlay_uri"`
 }
 
@@ -30,7 +31,8 @@ func (b ReceiveFixRequest) toInput() handlers.ReceiveFixInput {
 		ImageTag:          b.ImageTag,
 		Kind:              b.Kind,
 		VerifiesReleaseID: b.VerifiesReleaseID,
-		Attempt:           b.Attempt,
+		Round:             b.RemediationRound,
+		Try:               b.Try,
 		SourceOverlayURI:  b.SourceOverlayURI,
 	}
 }

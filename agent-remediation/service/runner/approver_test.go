@@ -163,7 +163,7 @@ func TestRunner_ABundleReadErrorFallsBackAndThePassCommits(t *testing.T) {
 	assert.Zero(t, rem.Failures)
 	assert.Zero(t, h.flowRows(id, 1)["release_check"][0].Failures, "the gate counted no failure")
 	assert.Len(t, h.proposedEvents(), 1)
-	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
 	assert.Equal(t, [][]fix.Approver{{
 		{NodeID: "svc-a", Owner: "", Source: model.ApproverSourceNone},
 	}}, calls.pass, "a node with no contract file falls back to none")
@@ -230,7 +230,7 @@ func TestRunner_APythonNodeWithNoBundleOwnerTakesItsContractOwner(t *testing.T) 
 	}
 }
 
-// The row of the attempt a remediation passed keeps the approvers of the nodes
+// The row of the try a remediation passed keeps the approvers of the nodes
 // it settled: the fixed node, in the transaction that marks the row verified,
 // and the node handed over beside it, which the hand-over event names with its
 // owner.
@@ -242,11 +242,11 @@ func TestRunner_ThePassedRowStoresTheApproversOfItsFixedAndHandedOverNodes(t *te
 	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	h.checks.answer(fix.PhasePassed, nil)
-	require.Empty(t, h.attempt(1).Fix.Approvers, "a row in flight has none yet")
+	require.Empty(t, h.fixRow(1).Fix.Approvers, "a row in flight has none yet")
 
 	require.NoError(t, h.poll(id))
 
-	row := h.attempt(1).Fix
+	row := h.fixRow(1).Fix
 	assert.Equal(t, fix.StatusProposed, row.Status)
 	assert.Equal(t, []fix.Approver{
 		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
@@ -257,10 +257,10 @@ func TestRunner_ThePassedRowStoresTheApproversOfItsFixedAndHandedOverNodes(t *te
 	}, h.handedOverEvent().Nodes)
 }
 
-// The attempt row a remediation records at its end stores the approvers of the
+// The fix row a remediation records at its end stores the approvers of the
 // nodes it hands over, whichever way it ends, and the hand-over event names
 // each node's owner.
-func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
+func TestRunner_AHandedOverFixRowStoresItsNodesApprovers(t *testing.T) {
 	noFile := func(node string) remediation.TriggerNode {
 		n := compileNode(node)
 		n.FilePath = ""
@@ -269,7 +269,7 @@ func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
 	for name, tc := range map[string]struct {
 		setup   func(h *harness)
 		trigger func() remediation.Trigger
-		attempt int
+		try     int
 		status  fix.Status
 		code    model.HandoverReason
 	}{
@@ -279,20 +279,20 @@ func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
 				trig.Repo = ""
 				return trig
 			},
-			attempt: 1, status: fix.StatusFailed, code: model.HandoverReasonNoRepository,
+			try: 1, status: fix.StatusFailed, code: model.HandoverReasonNoRepository,
 		},
 		"the tries are spent": {
 			setup: func(h *harness) {
-				for attempt := 1; attempt <= 3; attempt++ {
-					h.attemptWithNoRemediation(attempt, fix.StatusFailed)
+				for try := 1; try <= 3; try++ {
+					h.tryWithNoRemediation(try, fix.StatusFailed)
 				}
 			},
 			trigger: func() remediation.Trigger { return trigger("compile", compileNode("svc-b"), compileNode("svc-a")) },
-			attempt: 4, status: fix.StatusEscalated, code: model.HandoverReasonTriesSpent,
+			try:     fix.HandOverTry, status: fix.StatusEscalated, code: model.HandoverReasonTriesSpent,
 		},
 		"a try with nothing to verify": {
 			trigger: func() remediation.Trigger { return trigger("compile", noFile("svc-b"), noFile("svc-a")) },
-			attempt: 1, status: fix.StatusSkipped, code: model.HandoverReasonDeclined,
+			try:     1, status: fix.StatusSkipped, code: model.HandoverReasonDeclined,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -306,7 +306,7 @@ func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
 			require.NoError(t, h.drive(id))
 
 			require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-			row := h.attempt(tc.attempt).Fix
+			row := h.fixRow(tc.try).Fix
 			assert.Equal(t, tc.status, row.Status)
 			assert.Equal(t, []fix.Approver{
 				{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
@@ -333,7 +333,7 @@ func TestRunner_ANodeWithNoOwnerIsRecordedWithNone(t *testing.T) {
 
 	require.NoError(t, h.drive(id))
 
-	assert.Equal(t, []fix.Approver{{NodeID: "svc-a", Source: model.ApproverSourceNone}}, h.attempt(1).Fix.Approvers)
+	assert.Equal(t, []fix.Approver{{NodeID: "svc-a", Source: model.ApproverSourceNone}}, h.fixRow(1).Fix.Approvers)
 	assert.Equal(t, []events.HandedOverNode{{
 		NodeID: "svc-a", Reason: string(model.HandoverReasonNoRepository), Message: "the trigger carried no repository for rel-1",
 	}}, h.handedOverEvent().Nodes)
@@ -349,10 +349,10 @@ func TestRunner_AContractOwnerOutlivesTheTryThatReadIt(t *testing.T) {
 	contractOwner := fix.Approver{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}
 	for name, tc := range map[string]struct {
 		failedTries int
-		attempt     int
+		try         int
 	}{
-		"the next try passes": {failedTries: 1, attempt: 2},
-		"the tries are spent": {failedTries: 3, attempt: 4},
+		"the next try passes": {failedTries: 1, try: 2},
+		"the tries are spent": {failedTries: 3, try: fix.HandOverTry},
 	} {
 		t.Run(name, func(t *testing.T) {
 			metrics := &recordedMetrics{}
@@ -385,7 +385,7 @@ func TestRunner_AContractOwnerOutlivesTheTryThatReadIt(t *testing.T) {
 			require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 			require.Len(t, calls.giveUp, 1)
 			assert.Contains(t, calls.giveUp[0], contractOwner, "the hand-over names the contract's owner")
-			assert.Contains(t, h.attempt(tc.attempt).Fix.Approvers, contractOwner, "the attempt row stores it")
+			assert.Contains(t, h.fixRow(tc.try).Fix.Approvers, contractOwner, "the fix row stores it")
 			for _, n := range h.handedOverEvent().Nodes {
 				if n.NodeID == contractNodeID {
 					assert.Equal(t, "sales-team", n.Owner)

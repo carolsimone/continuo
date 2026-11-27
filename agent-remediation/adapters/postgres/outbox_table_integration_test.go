@@ -100,7 +100,7 @@ func TestNoOutboxRowKeepsTheOldAggregateType(t *testing.T) {
 		ReleaseID:      "r-outbox-lane",
 		NodeID:         "model.p.orders",
 		ErrorSignature: "sig",
-		Attempt:        1,
+		Try:            1,
 		Status:         fix.StatusProposed,
 		SourceResolved: true,
 		Repo:           "acme/dbt-repo",
@@ -108,7 +108,7 @@ func TestNoOutboxRowKeepsTheOldAggregateType(t *testing.T) {
 		FilePath:       "models/orders.sql",
 		CreatedAt:      time.Now().UTC(),
 	})
-	_, err := repo.BeginPR(ctx, id, "", "remediation/r-outbox-lane/attempt1", time.Now().UTC())
+	_, err := repo.BeginPR(ctx, id, "", "remediation/r-outbox-lane/try1", time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, svc.Record(ctx, fixes.RecordInput{FixID: id, PrURL: "https://gh/pr/1", PrNumber: 1, OpenedBy: "dev"}))
 	require.NoError(t, svc.RecordOutcome(ctx, id, "", fix.PROutcomeMerged, time.Now().UTC(), nil, nil))

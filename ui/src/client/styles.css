@@ -581,7 +581,8 @@ a.release-author:hover { text-decoration: underline; }
 .nodes-owner { margin-top: 4px; }
 /* A status cell holding more than one pill (a task's status and why it waits). */
 .nodes-pills { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.nodes-attempt    { font-size: 12px; color: #64748b; white-space: nowrap; }
+.nodes-attempt,
+.nodes-try        { font-size: 12px; color: #64748b; white-space: nowrap; }
 .nodes-ts         { font-size: 12px; color: #64748b; white-space: nowrap; }
 .nodes-ts--dim    { color: #d1d5db; }
 .nodes-dash       { color: #d1d5db; font-size: 12px; }
@@ -1659,7 +1660,7 @@ a.release-author:hover { text-decoration: underline; }
 /* ---- Remediation panel ---- */
 /* Group rows: one per (release, remediation round). The first cell is the
    expander — a chevron that turns to point down while the group is open —
-   and an open group tints its row and drops its divider, so the attempts
+   and an open group tints its row and drops its divider, so the tries
    block below reads as the row's continuation rather than a new table. */
 .nodes-table tbody td.remediation-group__toggle { width: 30px; padding-right: 0; }
 .remediation-chevron {
@@ -1693,11 +1694,11 @@ a.release-author:hover { text-decoration: underline; }
 .nodes-node-toggle > .remediation-chevron,
 .nodes-node-toggle__spacer { flex: none; width: 12px; text-align: center; }
 
-/* Attempts block: the group's expansion row hosts one contained block —
+/* Tries block: the group's expansion row hosts one contained block —
    indented under the release id, tinted, with a left accent rail — so the
-   attempts read as belonging to the group row above. */
+   tries read as belonging to the group row above. */
 .nodes-table tbody tr.remediation-group__body > td { padding: 0 14px 12px 34px; }
-.remediation-attempts {
+.remediation-tries, .run-attempts {
   background: #f8fafc;
   border-left: 3px solid #c7d2fe;
   border-radius: 0 8px 8px 0;
@@ -1706,7 +1707,7 @@ a.release-author:hover { text-decoration: underline; }
 /* The inner column labels are a muted sub-label of the block — smaller and
    lighter than the group table's header, never sticky, no background of
    their own — so the hierarchy reads at a glance. */
-.remediation-attempts__table thead th {
+.remediation-tries__table thead th, .run-attempts__table thead th {
   position: static;
   background: transparent;
   font-size: 10px;
@@ -1715,24 +1716,24 @@ a.release-author:hover { text-decoration: underline; }
   border-bottom: 1px solid #e9eef4;
   white-space: nowrap;
 }
-.remediation-attempts__table tbody tr { border-bottom: 1px solid #e9eef4; }
-.remediation-attempts__table tbody tr:last-child { border-bottom: none; }
-.remediation-attempts__table tbody tr:hover { background: #eef2f7; }
-.remediation-attempts__table tbody tr.nodes-row--selected,
-.remediation-attempts__table tbody tr.nodes-row--selected:hover { background: #f5f3ff; }
-.remediation-attempts__table tbody tr.nodes-row--static:hover { background: transparent; }
-.remediation-attempts__table tbody td { padding: 7px 12px; }
-/* Attempt, confidence and source are one word each: keep them shoulder to
+.remediation-tries__table tbody tr, .run-attempts__table tbody tr { border-bottom: 1px solid #e9eef4; }
+.remediation-tries__table tbody tr:last-child, .run-attempts__table tbody tr:last-child { border-bottom: none; }
+.remediation-tries__table tbody tr:hover, .run-attempts__table tbody tr:hover { background: #eef2f7; }
+.remediation-tries__table tbody tr.nodes-row--selected, .run-attempts__table tbody tr.nodes-row--selected,
+.remediation-tries__table tbody tr.nodes-row--selected:hover, .run-attempts__table tbody tr.nodes-row--selected:hover { background: #f5f3ff; }
+.remediation-tries__table tbody tr.nodes-row--static:hover, .run-attempts__table tbody tr.nodes-row--static:hover { background: transparent; }
+.remediation-tries__table tbody td, .run-attempts__table tbody td { padding: 7px 12px; }
+/* The try's name, confidence and source are short: keep them shoulder to
    shoulder on one line and give the status column the remaining width. A
    colspan cell — the release-check sub-row, the detail card — wraps as
    normal text, so a long rationale or file path never widens the table. */
-.remediation-attempts__table td:not([colspan]) { white-space: nowrap; }
-.remediation-attempts__table th:not(:last-child),
-.remediation-attempts__table td:not(:last-child):not([colspan]) { width: 1%; }
+.remediation-tries__table td:not([colspan]), .run-attempts__table td:not([colspan]) { white-space: nowrap; }
+.remediation-tries__table th:not(:last-child), .run-attempts__table th:not(:last-child),
+.remediation-tries__table td:not(:last-child):not([colspan]), .run-attempts__table td:not(:last-child):not([colspan]) { width: 1%; }
 
-/* Sub-row lines: one compact labelled line per entry beneath its row (an
-   attempt's release checks, a seed load's outside objects). */
-.remediation-attempts__table tbody tr.remediation-subrow > td { padding-top: 0; }
+/* Sub-row lines: one compact labelled line per entry beneath its row (a
+   try's release checks, a seed load's outside objects). */
+.remediation-tries__table tbody tr.remediation-subrow > td, .run-attempts__table tbody tr.remediation-subrow > td { padding-top: 0; }
 .remediation-subrow__lines { display: flex; flex-direction: column; gap: 4px; }
 .remediation-subrow__label {
   font-size: 10px;
@@ -1743,7 +1744,7 @@ a.release-author:hover { text-decoration: underline; }
 }
 .remediation-subrow__line { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #64748b; }
 
-/* The fix detail card sits inside the attempts block, white on the
+/* The fix detail card sits inside the tries block, white on the
    block's tint; scoped so other .detail-card usages are unaffected. */
 .remediation-detail { margin: 4px 0 6px; }
 

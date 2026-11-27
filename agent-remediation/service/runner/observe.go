@@ -120,7 +120,7 @@ func clusterResult(c remediation.Cluster, checked string) (string, bool) {
 }
 
 // countOutcomes collects how each node ends with the remediation, from the
-// outcomes of its final attempt: a node a verified fix covers is fixed, and a
+// outcomes of its final try: a node a verified fix covers is fixed, and a
 // node whose outcome carries a code is handed over with that code. A node
 // with neither, such as one skipped because maintenance mode was on, is not
 // counted: it is neither fixed nor left to a human, and the release can be

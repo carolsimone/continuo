@@ -12,8 +12,10 @@ import (
 const RemediationHandedOverSchemaVersion = 1
 
 // RemediationHandedOver is the payload of a remediation.handed_over:v1 entry:
-// a remediation ended with nodes a human must fix. Tries is how many tries the
-// remediation ran, 0 when it handed nodes over before any try.
+// a remediation ended with nodes a human must fix. Tries is the number, in its
+// round, of the last try the remediation opened, 0 when it handed nodes over
+// before it opened one. A try recorded skipped, or failed because the trigger
+// named no repository, opens no try and is not counted.
 type RemediationHandedOver struct {
 	RemediationID    string           `json:"remediation_id"`
 	ReleaseID        string           `json:"release_id"`

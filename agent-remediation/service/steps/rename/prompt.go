@@ -125,6 +125,6 @@ const noPlanReason = "This fix was gathered before continuo planned the rename o
 // editKeys are the keys under which the runner stores the content and diff of
 // the draft's i-th edit.
 func editKeys(f remediation.Failure, i int) (contentKey, diffKey string) {
-	base := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d", f.Trigger.ReleaseID, f.Target.NodeID, f.Attempt, i)
+	base := fmt.Sprintf("%s/edit-%d", f.ArtifactPrefix(f.Target.NodeID), i)
 	return base + ".content", base + ".diff"
 }

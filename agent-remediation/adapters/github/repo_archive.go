@@ -56,7 +56,7 @@ func (g *GitHub) Fetch(ctx context.Context, repo, ref string) (rootDir string, c
 	}
 	if err := extractTarball(resp.Body, dir); err != nil {
 		// Never leave a partially extracted tree behind on a failed fetch: a
-		// temp dir that leaks on every failed remediation attempt is a slow
+		// temp dir that leaks on every failed remediation try is a slow
 		// disk-fill in production.
 		_ = os.RemoveAll(dir)
 		return "", nil, fmt.Errorf("github tarball %s@%s: %w", repo, ref, err)

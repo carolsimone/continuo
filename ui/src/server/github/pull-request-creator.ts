@@ -410,8 +410,8 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
       });
 
       // Step 4: move the head branch onto the new commit. The branch name is
-      // scoped to this attempt, so the only tip force can overwrite
-      // is one left by an earlier run of this same attempt. That is normally a
+      // scoped to this try of the fix, so the only tip force can overwrite
+      // is one left by an earlier run of this same claim. That is normally a
       // discarded commit of the same fix — but not always: if the earlier
       // run opened the pull request and then failed to record it, the claim
       // can be retried while the branch already carries a pull request someone

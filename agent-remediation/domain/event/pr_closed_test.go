@@ -3,34 +3,19 @@ package event
 import (
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
-// TestPRClosedEventID_Deterministic verifies the id is stable for the same
-// (release, attempt, project) and distinct across attempts and from PROpened ids.
-func TestPRClosedEventID_Deterministic(t *testing.T) {
-	a := PRClosedEventID("rel-1", 1, "")
-	b := PRClosedEventID("rel-1", 1, "")
-	require.Equal(t, a, b, "same inputs must produce the same event id")
-	require.NotEqual(t, a, PRClosedEventID("rel-1", 2, ""))
-	require.NotEqual(t, a, PROpenedEventID("rel-1", 1, ""),
+// TestPRClosedEventID_KeyedOnReleaseRoundTryAndProject verifies the id is
+// stable for the same (release, round, try, project), distinct when any of
+// them changes, and never the PROpened id of the same PR.
+func TestPRClosedEventID_KeyedOnReleaseRoundTryAndProject(t *testing.T) {
+	first := PRClosedEventID("rel-1", 1, 1, "")
+	require.Equal(t, first, PRClosedEventID("rel-1", 1, 1, ""), "same inputs must produce the same event id")
+	require.NotEqual(t, first, PRClosedEventID("rel-1", 1, 2, ""), "another try must differ")
+	require.NotEqual(t, first, PRClosedEventID("rel-1", 2, 1, ""), "try 1 of another round must differ")
+	require.NotEqual(t, PRClosedEventID("rel-1", 1, 1, "core"), PRClosedEventID("rel-1", 1, 1, "finance"))
+	require.NotEqual(t, first, PRClosedEventID("rel-1", 1, 1, "core"))
+	require.NotEqual(t, first, PROpenedEventID("rel-1", 1, 1, ""),
 		"pr_closed and pr_opened ids must not collide for the same PR")
-}
-
-// TestPRClosedEventID_LegacyProjectMatchesPreChangeValue pins the legacy ""
-// project to the exact id the original two-argument PRClosedEventID(releaseID,
-// attempt) signature produced, before the per-project split added the project
-// argument.
-func TestPRClosedEventID_LegacyProjectMatchesPreChangeValue(t *testing.T) {
-	legacy := uuid.NewSHA1(prClosedNamespace, []byte("rel-1"+"|"+itoa(1)))
-	require.Equal(t, legacy, PRClosedEventID("rel-1", 1, ""),
-		"project \"\" must reproduce the pre-change id byte-for-byte")
-}
-
-// TestPRClosedEventID_PerProjectDistinct verifies two owning-project PRs of the
-// same (release, attempt) get distinct ids.
-func TestPRClosedEventID_PerProjectDistinct(t *testing.T) {
-	require.NotEqual(t, PRClosedEventID("rel-1", 1, "core"), PRClosedEventID("rel-1", 1, "finance"))
-	require.NotEqual(t, PRClosedEventID("rel-1", 1, ""), PRClosedEventID("rel-1", 1, "core"))
 }

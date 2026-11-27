@@ -127,7 +127,7 @@ CREATE TABLE fix (
     release_id text NOT NULL,
     node_id text NOT NULL,
     error_signature text NOT NULL,
-    attempt integer NOT NULL,
+    try integer NOT NULL,
     status text NOT NULL,
     confidence text DEFAULT '' NOT NULL,
     rationale text DEFAULT '' NOT NULL,
@@ -160,7 +160,8 @@ CREATE TABLE fix (
     remediation_id uuid,
     approvers jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT fix_pkey PRIMARY KEY (id),
-    CONSTRAINT fix_uniq UNIQUE (release_id, attempt),
+    CONSTRAINT fix_uniq UNIQUE (release_id, remediation_round, try),
+    CONSTRAINT fix_try_check CHECK ((try >= 0)),
     CONSTRAINT fix_status_check CHECK ((status IN ('generating', 'verifying', 'proposed', 'skipped', 'failed', 'escalated'))),
     CONSTRAINT fix_remediation_id_fkey FOREIGN KEY (remediation_id) REFERENCES remediation(id) ON DELETE SET NULL
 );
@@ -180,7 +181,6 @@ CREATE TRIGGER fix_stamp_pr_claimed_at BEFORE UPDATE ON fix FOR EACH ROW EXECUTE
 CREATE TABLE remediation_try (
     remediation_id uuid NOT NULL,
     try integer NOT NULL,
-    attempt integer NOT NULL,
     status text NOT NULL,
     file_revisions jsonb NOT NULL,
     deadline_at timestamptz NOT NULL,

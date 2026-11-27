@@ -207,7 +207,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 		Source:    run.trigger.Source,
 		ReleaseID: run.trigger.ReleaseID,
 		NodeID:    c.TargetNodeID,
-		Attempt:   run.snap.Try.Attempt,
+		Try:       run.snap.Try.Try,
 	}, r.tokenCounter(run.snap.Remediation.Flow, c.TypeName))
 	out, err := p.Propose(ctx, in, m)
 	row.Model, row.PromptVersion = m.lastModel, m.promptVersion
@@ -560,11 +560,10 @@ func lookup[T any](reg *Registry, name workflow.StepName, kind step.Kind) (T, er
 }
 
 // failureFor is the cluster as its steps read it: the trigger, the cluster's
-// shape, the node the fix edits, its member nodes, and the try with its
-// attempt. An upstream cluster's target is a changed ancestor the trigger may
+// shape, the node the fix edits, its member nodes, and the try. An upstream cluster's target is a changed ancestor the trigger may
 // not carry as a failing node; it is then named by its id alone.
 func failureFor(t remediation.Trigger, c remediation.Cluster, try remediation.Try) remediation.Failure {
-	f := remediation.Failure{Trigger: t, Kind: c.Kind, TargetNodeID: c.TargetNodeID, Attempt: try.Attempt, Try: try.Try}
+	f := remediation.Failure{Trigger: t, Kind: c.Kind, TargetNodeID: c.TargetNodeID, Try: try.Try}
 	if n, ok := nodeByID(t, c.TargetNodeID); ok {
 		f.Target = n
 	} else {

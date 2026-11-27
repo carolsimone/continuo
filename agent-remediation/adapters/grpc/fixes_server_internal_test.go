@@ -48,7 +48,7 @@ func TestViewToProto_PrProjectsPassesThroughVerbatim(t *testing.T) {
 }
 
 // TestViewToProto_ProjectsPassesThroughVerbatim verifies that the row's
-// projects — every project the attempt touched, the set ListFixes'
+// projects — every project the try touched, the set ListFixes'
 // project filter matches on — reach the wire unchanged, so a listing can
 // show the same projects the filter selected by.
 func TestViewToProto_ProjectsPassesThroughVerbatim(t *testing.T) {
@@ -96,7 +96,7 @@ func TestViewToProto_ReleaseCheckFields(t *testing.T) {
 	require.Equal(t, "verify-rel-abc1234-1-analytics.py_kpis-a1", p.ReleaseCheckId)
 	require.Equal(t, `column "revenue_total" does not exist`, p.VerifyError)
 
-	// An attempt judged synchronously carries neither.
+	// A try judged synchronously carries neither.
 	p = viewToProto(fix.View{ID: "p2", Status: fix.StatusProposed}, nil)
 	require.Equal(t, "", p.ReleaseCheckId)
 	require.Equal(t, "", p.VerifyError)

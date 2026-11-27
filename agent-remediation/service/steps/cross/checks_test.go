@@ -131,7 +131,7 @@ func TestOneManifestKind(t *testing.T) {
 		clusterDraft(2, nil, edit("python/ledger/models/m.sql", "model.sales.orders")))
 	require.Len(t, mixed.Findings, 1)
 	assert.Equal(t, "mixed_manifest_kinds", mixed.Findings[0].Code)
-	assert.Equal(t, "project ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind", mixed.Findings[0].Message)
+	assert.Equal(t, "project ledger mixes a python contract with dbt edits in one try; a release verifies one manifest kind", mixed.Findings[0].Message)
 	assert.Equal(t, "one_manifest_kind", mixed.Check)
 
 	// An edit whose target the trigger does not name is not a python contract.

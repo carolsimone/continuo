@@ -6,7 +6,7 @@ import {
   releasePillClass, fixKey, reasonLabel,
   fixNodeIds, fixStatusForNode, fixReasonForNode, fixCodeForNode, fixApproverForNode,
   fixPullRequests, fixPrProjects, fixPrStateForProject,
-  attemptReleaseCheckPhase, releaseCheckPhase, effectiveRound, shortSha,
+  tryReleaseCheckPhase, releaseCheckPhase, effectiveRound, shortSha, tryBefore, tryLabel,
 } from './release-helpers';
 import ErrorCell from './ErrorCell';
 import { HANDOVER_TEXT } from './handover-text';
@@ -17,7 +17,7 @@ import ReleaseCheckTimeline from './ReleaseCheckTimeline';
 import SeedReloadNotices from './SeedReloadNotices';
 import ReleaseRunsPanel from './ReleaseRunsPanel';
 
-// A remediation round is capped at this many attempts; the release-controller
+// A release gets at most this many remediation rounds; the release-controller
 // enforces the same limit and answers 409 rounds_exhausted past it.
 const MAX_REMEDIATION_ROUNDS = 3;
 
@@ -54,7 +54,7 @@ const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'rejected', 'superseded']
 // What the FIX cell can say about a failed node, ordered by how far its fix has
 // progressed: still being written, then being run through a release check to
 // see whether it holds, then ready for a human to review. A node can carry
-// several attempts at once — a later one can supersede an earlier in-flight
+// several tries at once — a later one can supersede an earlier in-flight
 // one — so the cell shows the furthest-along of them. Every other fix
 // status is terminal-but-blank (skipped/failed/escalated) and leaves the cell
 // empty.
@@ -66,13 +66,13 @@ function isFixState(status: string): status is FixState {
   return status in FIX_STATE_RANK;
 }
 
-// Per-node statuses that mean an attempt has nothing left to report: a
+// Per-node statuses that mean a try has nothing left to report: a
 // fix ready for review, or one of the terminal-but-blank outcomes rendered
 // as a fixNote (see refresh() below). 'generating'/'verifying' are the only
 // non-terminal statuses a node can carry.
 const TERMINAL_NODE_STATUSES = new Set(['proposed', 'skipped', 'failed', 'escalated']);
 
-// fixIsDeadEnd mirrors release-controller's isDeadEnd: a batched attempt
+// fixIsDeadEnd mirrors release-controller's isDeadEnd: a batched try
 // opens one pull request per owning project, so it is a dead end only once
 // every owning project's pull request has been rejected. An owning project
 // with no pull request yet, or one in any non-rejected state, means a fix
@@ -87,11 +87,11 @@ function fixIsDeadEnd(p: FixDTO): boolean {
 // FixCell uses, restricted to whatever list is passed in (all fixes, or
 // only the current remediation round's), so the dead-end check below can be
 // scoped to a single round without disturbing how the table renders. A
-// 'proposed' attempt every one of whose owning-project PRs was closed
-// without merging is excluded: that attempt is a dead end for every node it
+// 'proposed' try every one of whose owning-project PRs was closed
+// without merging is excluded: that try is a dead end for every node it
 // resolves, not just its representative one, so it must not keep those nodes
 // counted as having an active fix. A single owning project still open (or not
-// yet PR'd) keeps the whole attempt counted as active.
+// yet PR'd) keeps the whole try counted as active.
 function hasActiveFix(list: FixDTO[], failedKeys: string[]): boolean {
   const byKey = new Map<string, FixState>();
   for (const p of list) {
@@ -110,7 +110,7 @@ function hasActiveFix(list: FixDTO[], failedKeys: string[]): boolean {
 // anyOpenPR reports whether any fix in the list has a pull request out
 // for review — checked across every round, not just the current one, since a
 // fix from an earlier round is still the thing to look at instead of
-// retrying. A batched attempt's pull requests are weighed per owning project
+// retrying. A batched try's pull requests are weighed per owning project
 // (fixPullRequests), so one project's still-open PR counts even when a
 // sibling project's PR was rejected; a legacy (unsplit) fix falls back
 // to its singular pr_state, so behavior for those is unchanged.
@@ -151,12 +151,12 @@ function OwnerNote({ approver }: { approver: ApproverDTO }) {
 
 // FixCell renders one node's remediation state: a link to the fix once a
 // fix is ready to review, a non-actionable chip while one is still being
-// produced or verified, and — when no attempt is in flight — a note
-// explaining why the latest attempt stopped (skipped/failed/escalated), so a
+// produced or verified, and — when no try is in flight — a note
+// explaining why the latest try stopped (skipped/failed/escalated), so a
 // node whose fix dead-ended says why instead of showing an empty cell. For a
 // fix being verified, verifyPhase splits the chip into queued vs running (see
 // verifyLabel). A fix ready to review and a node handed to a human also show
-// the node's owner when the attempt recorded one.
+// the node's owner when the try recorded one.
 function FixCell({ state, verifyPhase, note, owner }: {
   state?: FixState;
   verifyPhase?: 'queued' | 'running';
@@ -192,6 +192,13 @@ function FixCell({ state, verifyPhase, note, owner }: {
   return null;
 }
 
+// withFullStop ends a sentence with a full stop unless it already ends with
+// one, so a reason joined to the advice after it reads as two sentences.
+function withFullStop(text: string): string {
+  const t = text.trimEnd();
+  return /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
 export default function ReleaseDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -205,13 +212,13 @@ export default function ReleaseDetailPage() {
   // fixes — see FixState. Nodes with only terminal-but-blank outcomes
   // (skipped/failed/escalated) or none carry no entry and render nothing here.
   const [fixState, setFixState] = useState<Map<string, FixState>>(new Map());
-  // Per (stage, node_id) explanation for a node whose latest attempt landed on
+  // Per (stage, node_id) explanation for a node whose latest try landed on
   // a terminal-but-blank status, so the FIX cell says why instead of leaving
   // that cell empty. Only ever read where fixState has no entry for the key.
   const [fixNote, setFixNote] = useState<Map<string, FixNote>>(new Map());
   // Per (stage, node_id) owner of a node whose fix is ready to review or that
-  // was handed to a human, as the attempt that decides the cell recorded it.
-  // A node has no entry when that attempt recorded no approver for it (a row
+  // was handed to a human, as the try that decides the cell recorded it.
+  // A node has no entry when that try recorded no approver for it (a row
   // with no remediation id records none), so the cell then says nothing about
   // owners.
   const [fixOwner, setFixOwner] = useState<Map<string, ApproverDTO>>(new Map());
@@ -221,7 +228,7 @@ export default function ReleaseDetailPage() {
   const [fixes, setFixes] = useState<FixDTO[]>([]);
   // Per (stage, node_id) release check phase for a node currently shown as
   // 'verifying', read off the fix's own release check summary
-  // (attemptReleaseCheckPhase) — whether the release check judging its fix
+  // (tryReleaseCheckPhase) — whether the release check judging its fix
   // is still queued behind the global one-at-a-time release queue or already
   // running. Populated
   // only for verifying nodes; empty for every other node.
@@ -298,7 +305,7 @@ export default function ReleaseDetailPage() {
   const isRejected = rel?.status === 'rejected';
 
   // This remediation round's fixes — a fix with no remediation_round
-  // (older rows, or a round-1 attempt) counts as round 1. Scoping the
+  // (older rows, or a round-1 try) counts as round 1. Scoping the
   // in-flight check to this set is what keeps a freshly-bumped round from
   // reading as a dead end off the *previous* round's now-terminal fixes.
   const currentRoundFixes = fixes.filter(p => effectiveRound(p) === rel?.remediation_round);
@@ -323,7 +330,7 @@ export default function ReleaseDetailPage() {
   // (which never produce a ready fix) do not poll forever. The cap is
   // suspended while any failed node's fix is 'verifying': that verdict comes
   // from a whole release the backend runs behind a global queue, which routinely
-  // outlasts the cap, and it always arrives — the backend ends the attempt
+  // outlasts the cap, and it always arrives — the backend ends the try
   // itself if the release never answers. Errors are swallowed so a transient
   // failure never breaks the page; the next tick retries.
   useEffect(() => {
@@ -342,7 +349,7 @@ export default function ReleaseDetailPage() {
     // Whether the last applied response showed a fix a release check is
     // still judging. Such a verdict is coming — the backend runs every stage
     // a release passes to produce it, behind a global queue, and ends
-    // the attempt itself if it never arrives — so the cap below, which exists
+    // the try itself if it never arrives — so the cap below, which exists
     // for failures that will never be healed at all, must not apply while one
     // is outstanding. Otherwise a healthy transition to 'proposed' lands
     // after polling stopped and the page sits on "Checking the fix…" until
@@ -373,18 +380,18 @@ export default function ReleaseDetailPage() {
             .then(d => { if (!cancelled) setReleaseChecks(d.checks ?? []); })
             .catch(() => {});
           // Bucket each failed node by its fixes, keeping the furthest-along
-          // state any of its attempts reached; terminal-but-blank statuses
+          // state any of its tries reached; terminal-but-blank statuses
           // (skipped/failed/escalated) leave the node without an entry here —
           // see fixNote below for those. A batched fix is unpacked into
           // every node it resolves, each read against its own per-node
           // outcome rather than the fix's overall status.
           const byKey = new Map<string, FixState>();
-          // Latest attempt per node (fix + which resolved node it was),
+          // Latest try per node (fix + which resolved node it was),
           // so fixNote explains why remediation stopped for that node rather
-          // than why an earlier attempt, or a different node in the same
-          // batched attempt, did.
+          // than why an earlier try, or a different node in the same
+          // batched try, did.
           const latestByKey = new Map<string, { fix: FixDTO; nodeId: string }>();
-          // Latest attempt that proposed a fix for each node, whose approver
+          // Latest try that proposed a fix for each node, whose approver
           // is the owner the cell shows beside the link to that fix.
           const proposedByKey = new Map<string, { fix: FixDTO; nodeId: string }>();
           for (const p of releaseFixes) {
@@ -397,22 +404,22 @@ export default function ReleaseDetailPage() {
               }
               if (status === 'proposed') {
                 const proposed = proposedByKey.get(k);
-                if (!proposed || p.attempt > proposed.fix.attempt) proposedByKey.set(k, { fix: p, nodeId: nid });
+                if (!proposed || tryBefore(proposed.fix, p)) proposedByKey.set(k, { fix: p, nodeId: nid });
               }
               const latest = latestByKey.get(k);
-              if (!latest || p.attempt > latest.fix.attempt) latestByKey.set(k, { fix: p, nodeId: nid });
+              if (!latest || tryBefore(latest.fix, p)) latestByKey.set(k, { fix: p, nodeId: nid });
             }
           }
           setFixState(byKey);
           // Release check phase for each node whose furthest-along state is
           // 'verifying', read off the fix's own release check summary
-          // (attemptReleaseCheckPhase) rather than a separate poll — so the verify
+          // (tryReleaseCheckPhase) rather than a separate poll — so the verify
           // chip can split queued-vs-running. A node settled on any other
-          // state carries no entry. When more than one attempt for a node is
+          // state carries no entry. When more than one try for a node is
           // still verifying, 'running' wins over 'queued'.
           const phaseByKey = new Map<string, 'queued' | 'running'>();
           for (const p of releaseFixes) {
-            const phase = attemptReleaseCheckPhase(p);
+            const phase = tryReleaseCheckPhase(p);
             if (!phase) continue;
             for (const nid of fixNodeIds(p)) {
               const k = fixKey(p.source, nid);
@@ -431,13 +438,13 @@ export default function ReleaseDetailPage() {
             // A node outcome with a handover code says why the node went to a
             // human: the code's text, and the node's own message beneath it.
             // It reads the outcome's own reason, never the fix's
-            // rationale, which on a batched attempt describes other nodes'
+            // rationale, which on a batched try describes other nodes'
             // fixes.
             const code = fixCodeForNode(p, nid);
             if (code) {
               const message = p.node_outcomes?.[nid]?.reason?.trim();
               noteByKey.set(k, { text: HANDOVER_TEXT[code], message: message || undefined });
-              // A node still being written or verified by another attempt
+              // A node still being written or verified by another try
               // shows that chip instead, with no owner beside it.
               const approver = fixApproverForNode(p, nid);
               if (approver && !byKey.has(k)) ownerByKey.set(k, approver);
@@ -445,22 +452,22 @@ export default function ReleaseDetailPage() {
             }
             const status = fixStatusForNode(p, nid);
             const reason = fixReasonForNode(p, nid);
-            if (status === 'escalated') noteByKey.set(k, { text: 'Attempt budget spent.' });
+            if (status === 'escalated') noteByKey.set(k, { text: "The round's tries are spent." });
             else if (status === 'failed') noteByKey.set(k, { text: reason || 'The model could not produce a safe fix.' });
-            else if (status === 'skipped') noteByKey.set(k, { text: `${reason || 'No source to fix at this commit.'} Fix it in the repository.` });
+            else if (status === 'skipped') noteByKey.set(k, { text: `Skipped try: ${withFullStop(reason || 'No source to fix at this commit.')} Fix it in the repository.` });
           }
           setFixNote(noteByKey);
           setFixOwner(ownerByKey);
           verifying = failed.some(k => byKey.get(k) === 'verifying');
           // Stop once every failed node has settled *for the release's current
-          // remediation round*: its latest current-round attempt landed on
+          // remediation round*: its latest current-round try landed on
           // 'proposed', or on a terminal-but-blank outcome ('skipped'/
           // 'failed'/'escalated'). A node still 'generating'/'verifying', or
           // with no current-round fix at all yet, is not settled and
           // keeps the poll alive (up to the cap below, suspended by
           // `verifying`). Scoping to the current round (rather than reusing
           // byKey/noteByKey above, which intentionally span every round so
-          // the FIX cell keeps showing the furthest-along attempt) matters
+          // the FIX cell keeps showing the furthest-along try) matters
           // right after "Try again": the round bumps before its first
           // fix is written, and the previous round's now-stale terminal
           // outcome must not read as settled during that gap — otherwise
@@ -474,7 +481,7 @@ export default function ReleaseDetailPage() {
             for (const nid of fixNodeIds(p)) {
               const k = fixKey(p.source, nid);
               const latest = latestCurrentRoundByKey.get(k);
-              if (!latest || p.attempt > latest.fix.attempt) latestCurrentRoundByKey.set(k, { fix: p, nodeId: nid });
+              if (!latest || tryBefore(latest.fix, p)) latestCurrentRoundByKey.set(k, { fix: p, nodeId: nid });
             }
           }
           const settled = (k: string) => {
@@ -592,7 +599,7 @@ export default function ReleaseDetailPage() {
           <div className="action-banner__body">
             <div className="action-banner__title">No fix was produced for this release</div>
             <div className="action-banner__sub">
-              The last remediation attempt couldn’t open a pull request. Run another round to try again.
+              The last try couldn’t open a pull request. Run another round to try again.
             </div>
           </div>
           <button type="button" className="btn btn--cta" disabled={retrying} onClick={retry}>
@@ -661,14 +668,14 @@ export default function ReleaseDetailPage() {
               </div>
             </div>
             <table className="nodes-table">
-              <thead><tr><th>Release check</th><th>Attempt</th><th>Project</th><th>Status</th><th>Started</th></tr></thead>
+              <thead><tr><th>Release check</th><th>Try</th><th>Project</th><th>Status</th><th>Started</th></tr></thead>
               <tbody>
                 {releaseChecks.map(c => {
                   const phase = releaseCheckPhase(c.status);
                   return (
                     <tr key={c.check_id}>
                       <td><Link className="nodes-node-name" to={`/release-checks/${c.check_id}`}>{c.check_id}</Link></td>
-                      <td>{c.attempt}</td>
+                      <td>{tryLabel(c.remediation_round, c.try)}</td>
                       <td>{c.project}</td>
                       <td><span className={`pill-sm ${releasePillClass(phase).replace('pill--', 'pill-sm--')}`}>{phase}</span></td>
                       <td className="nodes-ts">{c.activated_at ? c.activated_at.slice(0, 19).replace('T', ' ') : '—'}</td>

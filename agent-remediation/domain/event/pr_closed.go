@@ -8,13 +8,12 @@ const PRClosedEventType = "fix_pr_closed"
 
 var prClosedNamespace = uuid.MustParse("9c4f6a2d-1e8b-4c53-a7f9-2b6d8e0c4a17")
 
-// PRClosedEventID derives a stable id from (releaseID, attempt, project) so a
-// re-emission of the same PR-outcome fact dedups to one downstream event. Each
-// owning-project PR of a split fix gets its own id; the unsplit group's
-// empty project (a whole-fix PR) keys its id on (releaseID, attempt)
-// alone.
-func PRClosedEventID(releaseID string, attempt int, project string) uuid.UUID {
-	name := releaseID + "|" + itoa(attempt)
+// PRClosedEventID derives a stable id from (releaseID, round, try, project) so
+// a re-emission of the same PR-outcome fact dedups to one downstream event.
+// Each owning-project PR of a split fix gets its own id; the unsplit group's
+// empty project (a whole-fix PR) keys its id on (releaseID, round, try) alone.
+func PRClosedEventID(releaseID string, round, try int, project string) uuid.UUID {
+	name := releaseID + "|" + itoa(round) + "|" + itoa(try)
 	if project != "" {
 		name += "|" + project
 	}
@@ -41,7 +40,7 @@ type PRClosed struct {
 	ReleaseID string
 	NodeID    string
 	// ResolvedNodeIDs is the failing nodes this PR fixes, sorted — the subset
-	// of the attempt's fixed nodes this owning project's edits address.
+	// of the try's fixed nodes this owning project's edits address.
 	ResolvedNodeIDs []string
 	// Project is the owning-project group this PR covers; omitted (its DTO field
 	// is omitempty) for a PR that covers the whole fix.

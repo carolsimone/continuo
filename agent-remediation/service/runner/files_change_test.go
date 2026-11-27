@@ -106,7 +106,7 @@ func TestRunner_ACheckingTryFinishesUnderFilesThatAddAContextStep(t *testing.T) 
 
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status, "the try's drafts reach the gate")
 	assert.Len(t, h.checks.requests(), 1)
-	assert.Equal(t, fix.StatusVerifying, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusVerifying, h.fixRow(1).Fix.Status)
 	assert.Empty(t, h.stepRows(id, 1, 1)["previous_tries"], "a checked cluster runs no context step")
 	h.assertNoFailure(id)
 }
@@ -120,7 +120,7 @@ func TestRunner_AVerifyingTryReadsItsVerdictUnderFilesThatAddAContextStep(t *tes
 
 	require.NoError(t, h.pollWith(h.runnerOver(filesWith(h.files, flowContext("previous_tries"))), id))
 
-	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
 	assert.Equal(t, remediation.TryPassed, h.try(id, 1).Status)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Len(t, h.proposedEvents(), 1)
@@ -139,7 +139,7 @@ func TestRunner_ACheckedClusterIsReadFromTheChecksThatRanUnderFilesThatAddACheck
 	added := filesWith(h.files, compilePreflight("target_file_was_shown", "content_changed", "confidence_not_low"))
 	require.NoError(t, h.pollWith(h.runnerOver(added), id))
 
-	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	h.assertNoFailure(id)
 }
@@ -153,7 +153,7 @@ func TestRunner_ACheckedClusterOfATypeTheFilesNoLongerDefineIsStillVerified(t *t
 	removed := filesWith(h.files, func(s workflow.Set) { delete(s.Types, "dbt-compile") })
 	require.NoError(t, h.pollWith(h.runnerOver(removed), id))
 
-	assert.Equal(t, fix.StatusProposed, h.attempt(1).Fix.Status)
+	assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
 	h.assertNoFailure(id)
 }
 

@@ -99,7 +99,7 @@ CREATE TABLE release_checks (
     source_overlay_uri text DEFAULT '' NOT NULL,
     verifies_release_id text DEFAULT '' NOT NULL,
     check_kind text NOT NULL,
-    attempt integer DEFAULT 0 NOT NULL,
+    try integer DEFAULT 0 NOT NULL,
     candidate_topology_uri text,
     candidate_topology_sha256 text,
     candidate_node_count integer,

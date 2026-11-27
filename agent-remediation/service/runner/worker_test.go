@@ -102,7 +102,7 @@ func TestWorker_TwoWorkersNeverDriveOneRemediation(t *testing.T) {
 
 	assert.Equal(t, 1, h.llm.calls(), "one model call: one worker wrote each step")
 	assert.Len(t, h.checks.requests(), 1, "one release check")
-	assert.Len(t, h.fixes(), 1, "one attempt row")
+	assert.Len(t, h.fixes(), 1, "one fix row")
 	assert.Len(t, h.store.Tries(id), 1)
 	rows := h.stepRows(id, 1, 1)
 	require.NotEmpty(t, rows)
@@ -185,7 +185,7 @@ func TestWorker_EndsARemediationWhoseStepKeepsFailing(t *testing.T) {
 	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status, "the try is left for a redrive to resume")
 	assert.Len(t, h.deadLetters(), 1, "the trigger is dead-lettered")
 	require.Len(t, h.fixes(), 1)
-	assert.Equal(t, fix.StatusFailed, h.fixes()[0].Fix.Status, "the in-flight attempt row is failed with the reason")
+	assert.Equal(t, fix.StatusFailed, h.fixes()[0].Fix.Status, "the in-flight fix row is failed with the reason")
 	assert.Equal(t, 5, h.llm.calls(), "the model was called once for each failure")
 }
 
@@ -269,8 +269,8 @@ func TestRunner_ACancelledDriveIsNotAStepFailure(t *testing.T) {
 	}
 }
 
-// An attempt row left generating with no remediation, by a process that stopped
-// after it recorded the attempt, holds the attempt number. The remediation the
+// A fix row left generating with no remediation, by a process that stopped
+// after it recorded the try, holds the try number. The remediation the
 // runner starts for the same trigger finds the number taken, and its own row
 // takes over: no row of the release is left generating.
 func TestRunner_ARowWithNoRemediationLeftGeneratingIsTakenOver(t *testing.T) {
@@ -278,7 +278,7 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsTakenOver(t *testing.T) {
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.FixRepo().InsertGenerating(ctx, fix.Fix{
-		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Attempt: 1,
+		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Try: 1,
 		Status: fix.StatusGenerating, ResolvedNodeIDs: []string{"svc-a"},
 		NodeOutcomes: map[string]fix.NodeOutcome{"svc-a": {Status: fix.StatusGenerating}},
 		CreatedAt:    t0,
@@ -290,7 +290,7 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsTakenOver(t *testing.T) {
 	h.checks.answer(fix.PhasePassed, nil)
 	require.NoError(t, h.poll(id))
 
-	require.Len(t, h.fixes(), 1, "one row for the attempt")
+	require.Len(t, h.fixes(), 1, "one row for the try")
 	p := h.fixes()[0].Fix
 	assert.Equal(t, fix.StatusProposed, p.Status)
 	assert.Equal(t, id.String(), p.RemediationID, "the runner's row took over the row with no remediation")
@@ -300,14 +300,14 @@ func TestRunner_ARowWithNoRemediationLeftGeneratingIsTakenOver(t *testing.T) {
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
 
-// The same, when the runner's attempt ends without a gate: the row with no
+// The same, when the runner's try ends without a gate: the row with no
 // remediation is settled by the runner's row too.
-func TestRunner_ARowWithNoRemediationLeftGeneratingIsSettledWhenTheAttemptFails(t *testing.T) {
+func TestRunner_ARowWithNoRemediationLeftGeneratingIsSettledWhenTheTryFails(t *testing.T) {
 	h := newHarness(t)
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.FixRepo().InsertGenerating(ctx, fix.Fix{
-		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Attempt: 1,
+		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Try: 1,
 		Status: fix.StatusGenerating, ResolvedNodeIDs: []string{"svc-a"},
 		NodeOutcomes: map[string]fix.NodeOutcome{"svc-a": {Status: fix.StatusGenerating}},
 		CreatedAt:    t0,

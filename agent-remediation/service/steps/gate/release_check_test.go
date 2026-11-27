@@ -145,6 +145,7 @@ func (r *rig) build() {
 func triggerOf() remediation.Trigger {
 	return remediation.Trigger{
 		ReleaseID: "rel-1",
+		Round:     1,
 		Nodes: []remediation.TriggerNode{
 			{NodeID: "model.sales.orders", NodeType: "dbt-model", Project: "sales"},
 			{NodeID: "model.sales.margins", NodeType: "dbt-model", Project: "sales"},
@@ -178,7 +179,7 @@ func pythonCluster() step.ClusterDraft {
 
 func gateInput(drafts ...step.ClusterDraft) step.GateInput {
 	return step.GateInput{
-		Try:         remediation.Try{Try: 1, Attempt: 2, CreatedAt: t0},
+		Try:         remediation.Try{Try: 2, CreatedAt: t0},
 		Trigger:     triggerOf(),
 		Drafts:      drafts,
 		SubmittedAt: t0,
@@ -217,24 +218,25 @@ func TestSubmit_DbtProjectSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 	res, err := r.step.Submit(context.Background(), gateInput(dbtCluster()))
 	require.NoError(t, err)
 
-	assert.Equal(t, remediation.CheckResult{Check: "release_check", Waiting: true, CheckIDs: []string{"verify-rel-1-sales-a2"}}, res.Result)
+	assert.Equal(t, remediation.CheckResult{Check: "release_check", Waiting: true, CheckIDs: []string{"verify-rel-1-sales-r1-t2"}}, res.Result)
 	assert.Equal(t, []fix.ReleaseCheck{
-		{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a2", Phase: fix.PhaseQueued},
+		{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-r1-t2", Phase: fix.PhaseQueued},
 	}, res.ReleaseChecks, "the runner records the checks with the fix as submitReleaseChecks returned them")
 	require.Len(t, r.checks.submitted, 1)
 	assert.Equal(t, ports.ReleaseCheckRequest{
-		CheckID:           "verify-rel-1-sales-a2",
+		CheckID:           "verify-rel-1-sales-r1-t2",
 		Project:           "sales",
 		ImageTag:          "tag-rel-1-sales",
 		Kind:              "dbt",
 		VerifiesReleaseID: "rel-1",
-		Attempt:           2,
-		SourceOverlayURI:  "s3://artifacts/sales/verify-rel-1-sales-a2/source-overlay.tar.gz",
+		RemediationRound:  1,
+		Try:               2,
+		SourceOverlayURI:  "s3://artifacts/sales/verify-rel-1-sales-r1-t2/source-overlay.tar.gz",
 	}, r.checks.submitted[0])
 
 	require.Len(t, r.artifacts.writes, 1)
 	w := r.artifacts.writes[0]
-	assert.Equal(t, "sales/verify-rel-1-sales-a2/source-overlay.tar.gz", w.key)
+	assert.Equal(t, "sales/verify-rel-1-sales-r1-t2/source-overlay.tar.gz", w.key)
 	assert.Equal(t, "application/gzip", w.contentType)
 	// The overlay holds each edit's content as the artifact stored it, at its
 	// path within the project's directory.
@@ -278,21 +280,22 @@ func TestReleaseCheck_UploadsAnODCSBundle(t *testing.T) {
 	res, err := r.step.Submit(context.Background(), gateInput(pythonCluster()))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"verify-rel-1-ledger-a2"}, res.Result.CheckIDs)
+	assert.Equal(t, []string{"verify-rel-1-ledger-r1-t2"}, res.Result.CheckIDs)
 	assert.True(t, res.Result.Waiting)
 	assert.Equal(t, []fix.ReleaseCheck{
-		{Project: "ledger", Kind: "python", CheckID: "verify-rel-1-ledger-a2", Phase: fix.PhaseQueued},
+		{Project: "ledger", Kind: "python", CheckID: "verify-rel-1-ledger-r1-t2", Phase: fix.PhaseQueued},
 	}, res.ReleaseChecks)
 	assert.Equal(t, []ports.ReleaseCheckRequest{{
-		CheckID:           "verify-rel-1-ledger-a2",
+		CheckID:           "verify-rel-1-ledger-r1-t2",
 		Project:           "ledger",
 		ImageTag:          "tag-rel-1-ledger",
 		Kind:              "python",
 		VerifiesReleaseID: "rel-1",
-		Attempt:           2,
+		RemediationRound:  1,
+		Try:               2,
 	}}, r.checks.submitted)
 	assert.Equal(t, []write{{
-		key: "ledger/verify-rel-1-ledger-a2/odcs-bundle.json", body: pythonContract, contentType: "application/json",
+		key: "ledger/verify-rel-1-ledger-r1-t2/odcs-bundle.json", body: pythonContract, contentType: "application/json",
 	}}, r.artifacts.writes)
 }
 
@@ -317,7 +320,7 @@ func TestReleaseCheck_VerifiesAnODCSBundleAsKindPython(t *testing.T) {
 			require.Len(t, res.ReleaseChecks, 1)
 			assert.Equal(t, "python", res.ReleaseChecks[0].Kind)
 			assert.Equal(t, []write{{
-				key: "ledger/verify-rel-1-ledger-a2/odcs-bundle.json", body: contract, contentType: "application/json",
+				key: "ledger/verify-rel-1-ledger-r1-t2/odcs-bundle.json", body: contract, contentType: "application/json",
 			}}, r.artifacts.writes)
 		})
 	}
@@ -389,10 +392,10 @@ func TestSubmit_TwoProjectsSubmitOneRunEachInProjectOrder(t *testing.T) {
 	r := newRig()
 	res, err := r.step.Submit(context.Background(), gateInput(dbtCluster(), pythonCluster()))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"verify-rel-1-ledger-a2", "verify-rel-1-sales-a2"}, res.Result.CheckIDs)
+	assert.Equal(t, []string{"verify-rel-1-ledger-r1-t2", "verify-rel-1-sales-r1-t2"}, res.Result.CheckIDs)
 	assert.Equal(t, []fix.ReleaseCheck{
-		{Project: "ledger", Kind: "python", CheckID: "verify-rel-1-ledger-a2", Phase: fix.PhaseQueued},
-		{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a2", Phase: fix.PhaseQueued},
+		{Project: "ledger", Kind: "python", CheckID: "verify-rel-1-ledger-r1-t2", Phase: fix.PhaseQueued},
+		{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-r1-t2", Phase: fix.PhaseQueued},
 	}, res.ReleaseChecks)
 	require.Len(t, r.checks.submitted, 2)
 	assert.Equal(t, "python", r.checks.submitted[0].Kind)
@@ -414,7 +417,7 @@ func TestSubmit_RefusesWhatNoRunCouldJudgeBeforeWritingAnything(t *testing.T) {
 		"unmapped":  {gateInput(dbtCluster(), outside), "edit_outside_projects", "edit belongs to no configured project: docs/x.md"},
 		"duplicate": {gateInput(twice), "path_edited_twice", "two edits change the same file: dbt/projects/sales/models/orders.sql"},
 		"mixed": {gateInput(dbtCluster(), mixed), "mixed_manifest_kinds",
-			"project ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind"},
+			"project ledger mixes a python contract with dbt edits in one try; a release verifies one manifest kind"},
 	}
 	for name, c := range cases {
 		v, err := r.step.Submit(context.Background(), c.in)
@@ -499,8 +502,8 @@ func poll(t *testing.T, r *rig, in step.GateInput) step.GateVerdict {
 }
 
 const (
-	salesCheck  = "verify-rel-1-sales-a2"
-	ledgerCheck = "verify-rel-1-ledger-a2"
+	salesCheck  = "verify-rel-1-sales-r1-t2"
+	ledgerCheck = "verify-rel-1-ledger-r1-t2"
 )
 
 func TestPoll_QueuedAndRunningRunsKeepTheGateWaiting(t *testing.T) {

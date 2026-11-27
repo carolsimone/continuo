@@ -22,9 +22,9 @@ var repoPaths = map[string]string{"svc": "services/svc"}
 
 func failure(src string, n remediation.TriggerNode) remediation.Failure {
 	return remediation.Failure{
-		Trigger: remediation.Trigger{Source: src, ReleaseID: "rel-1", Repo: "org/repo", CommitSHA: "abc123"},
+		Trigger: remediation.Trigger{Source: src, ReleaseID: "rel-1", Round: 1, Repo: "org/repo", CommitSHA: "abc123"},
 		Target:  n,
-		Attempt: 2,
+		Try:     2,
 	}
 }
 

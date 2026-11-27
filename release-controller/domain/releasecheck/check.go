@@ -119,12 +119,14 @@ type Candidate struct {
 }
 
 // Fix holds the facts only a fix's release check has: which
-// rejected release it verifies a fix for, which attempt of that release's
-// remediation it belongs to, and the overlay of proposed source its compile
-// and seed-build Jobs lay over the project's source.
+// rejected release it verifies a fix for, the try of that release's
+// remediation it proves (named by its round and its number within the round),
+// and the overlay of proposed source its compile and seed-build Jobs lay over
+// the project's source.
 type Fix struct {
 	VerifiesReleaseID string
-	Attempt           int
+	Round             int
+	Try               int
 	SourceOverlayURI  string
 }
 
@@ -181,11 +183,12 @@ func NewCandidate(id, project, imageTag string, bootstrap, rebaseline bool, repo
 
 // NewFix creates a fix's release check: the same single-project
 // delta shape as a candidate, but carrying the rejected release it verifies,
-// the attempt it belongs to, and (for a dbt project) the overlay of proposed
-// source. It has no repository provenance and never bootstraps.
-func NewFix(id, project, imageTag, verifiesReleaseID string, attempt int, sourceOverlayURI string, kind release.ManifestKind, now time.Time) *Check {
+// the round and number of the try it proves, and (for a dbt project) the
+// overlay of proposed source. It has no repository provenance and never
+// bootstraps.
+func NewFix(id, project, imageTag, verifiesReleaseID string, round, try int, sourceOverlayURI string, kind release.ManifestKind, now time.Time) *Check {
 	r := newCheck(id, KindFix, project, imageTag, kind, now)
-	r.fix = &Fix{VerifiesReleaseID: verifiesReleaseID, Attempt: attempt, SourceOverlayURI: sourceOverlayURI}
+	r.fix = &Fix{VerifiesReleaseID: verifiesReleaseID, Round: round, Try: try, SourceOverlayURI: sourceOverlayURI}
 	return r
 }
 
@@ -252,11 +255,18 @@ func (r *Check) CommitSHA() string {
 	}
 	return r.candidate.CommitSHA
 }
+
+// RemediationRound is a candidate's current remediation round, or the round of
+// the try a fix's release check proves.
 func (r *Check) RemediationRound() int {
-	if r.candidate == nil {
+	switch {
+	case r.candidate != nil:
+		return r.candidate.RemediationRound
+	case r.fix != nil:
+		return r.fix.Round
+	default:
 		return 0
 	}
-	return r.candidate.RemediationRound
 }
 func (r *Check) RejectionPayload() []byte {
 	if r.candidate == nil {
@@ -270,11 +280,14 @@ func (r *Check) VerifiesReleaseID() string {
 	}
 	return r.fix.VerifiesReleaseID
 }
-func (r *Check) Attempt() int {
+
+// Try is the number, within its round, of the try a fix's release check
+// proves; 0 for a candidate.
+func (r *Check) Try() int {
 	if r.fix == nil {
 		return 0
 	}
-	return r.fix.Attempt
+	return r.fix.Try
 }
 func (r *Check) SourceOverlayURI() string {
 	if r.fix == nil {
@@ -597,16 +610,18 @@ type RehydrateInput struct {
 	CreatedAt               time.Time
 	Transitions             []Transition
 	Notices                 []release.Notice
+	// RemediationRound is a candidate's current remediation round, or the
+	// round of the try a fix's release check proves.
+	RemediationRound int
 	// Candidate-only.
 	Bootstrap        bool
 	Rebaseline       bool
 	Repo             string
 	CommitSHA        string
-	RemediationRound int
 	RejectionPayload []byte
 	// Fix-only.
 	VerifiesReleaseID string
-	Attempt           int
+	Try               int
 	SourceOverlayURI  string
 }
 
@@ -635,7 +650,7 @@ func Rehydrate(in RehydrateInput) *Check {
 	}
 	switch in.Kind {
 	case KindFix:
-		r.fix = &Fix{VerifiesReleaseID: in.VerifiesReleaseID, Attempt: in.Attempt, SourceOverlayURI: in.SourceOverlayURI}
+		r.fix = &Fix{VerifiesReleaseID: in.VerifiesReleaseID, Round: in.RemediationRound, Try: in.Try, SourceOverlayURI: in.SourceOverlayURI}
 	default:
 		round := in.RemediationRound
 		if round < 1 {

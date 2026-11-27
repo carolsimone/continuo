@@ -13,14 +13,14 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// ReopenTryAttempt moves the failed fix row of one attempt of a
+// ReopenFixRow moves the failed fix row of one try of a
 // remediation back in flight. Reopened generating, the row loses the
 // rationale its failure recorded and takes back the per-node outcomes
 // FailGenerating rewrote, keeping every outcome FailGenerating left alone.
 // Reopened verifying, it loses its verify error and keeps its edits, runs and
 // rationale, with the outcomes given. It changes no row of another
 // remediation, no row that belongs to no remediation and no row that is not failed.
-func TestFixRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing.T) {
+func TestFixRepository_ReopenFixRowMovesOnlyItsFailedRowBack(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		r := mustCreate(t, env, newRemediation("rel-reopen", 1, contractBase))
@@ -40,19 +40,19 @@ func TestFixRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing.T) {
 
 		require.NoError(t, env.fixes.InsertGenerating(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-reopen", RemediationID: r.ID.String(), NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a", "model.b", "model.c"}, NodeOutcomes: generating, Attempt: 1, CreatedAt: contractBase,
+			ResolvedNodeIDs: []string{"model.a", "model.b", "model.c"}, NodeOutcomes: generating, Try: 1, CreatedAt: contractBase,
 		}))
 		_, err := env.fixes.FailGenerating(ctx, "rel-reopen", "stuck; dead-lettered")
 		require.NoError(t, err)
-		first := findAttempt(t, env, "rel-reopen", 1)
+		first := findTry(t, env, "rel-reopen", 1)
 		require.Equal(t, fix.StatusFailed, first.Status)
 		require.Equal(t, fix.NodeOutcome{Status: fix.StatusFailed, Reason: "stuck; dead-lettered"}, first.NodeOutcomes["model.a"])
 
-		_, err = env.fixes.ReopenTryAttempt(ctx, r.ID, 1, fix.StatusGenerating, generating)
+		_, err = env.fixes.ReopenFixRow(ctx, r.ID, 1, fix.StatusGenerating, generating)
 		require.Error(t, err, "a row reopened generating takes back its own outcomes")
 		require.Equal(t, fix.StatusFailed, get(first.ID).Status, "a refused reopen writes nothing")
 
-		hit, err := env.fixes.ReopenTryAttempt(ctx, r.ID, 1, fix.StatusGenerating, nil)
+		hit, err := env.fixes.ReopenFixRow(ctx, r.ID, 1, fix.StatusGenerating, nil)
 		require.NoError(t, err)
 		require.True(t, hit)
 		got := get(first.ID)
@@ -60,7 +60,7 @@ func TestFixRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing.T) {
 		require.Empty(t, got.Rationale, "the reason of the failure is gone")
 		require.Equal(t, generating, got.NodeOutcomes, "the outcomes FailGenerating rewrote are generating again, the hand-over kept")
 
-		hit, err = env.fixes.ReopenTryAttempt(ctx, r.ID, 1, fix.StatusGenerating, nil)
+		hit, err = env.fixes.ReopenFixRow(ctx, r.ID, 1, fix.StatusGenerating, nil)
 		require.NoError(t, err)
 		require.False(t, hit, "a row in flight is not reopened")
 
@@ -69,15 +69,15 @@ func TestFixRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing.T) {
 		verifyingOutcomes := map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusVerifying}, "model.c": handedOver}
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-reopen", RemediationID: r.ID.String(), NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a", "model.c"}, NodeOutcomes: verifyingOutcomes, Attempt: 2, Status: fix.StatusVerifying,
+			ResolvedNodeIDs: []string{"model.a", "model.c"}, NodeOutcomes: verifyingOutcomes, Try: 2, Status: fix.StatusVerifying,
 			Edits: edits, ReleaseChecks: runs, Rationale: "the fix", SourceResolved: true, CreatedAt: contractBase,
 		}))
-		second := findAttempt(t, env, "rel-reopen", 2)
+		second := findTry(t, env, "rel-reopen", 2)
 		_, err = env.fixes.MarkVerifyFailed(ctx, second.ID, "stuck; dead-lettered", runs)
 		require.NoError(t, err)
 		require.Equal(t, fix.StatusFailed, get(second.ID).Status)
 
-		hit, err = env.fixes.ReopenTryAttempt(ctx, r.ID, 2, fix.StatusVerifying, verifyingOutcomes)
+		hit, err = env.fixes.ReopenFixRow(ctx, r.ID, 2, fix.StatusVerifying, verifyingOutcomes)
 		require.NoError(t, err)
 		require.True(t, hit)
 		got = get(second.ID)
@@ -89,22 +89,22 @@ func TestFixRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing.T) {
 		require.Equal(t, verifyingOutcomes, got.NodeOutcomes)
 
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
-			Source: "validation", ReleaseID: "rel-reopen", NodeID: "model.a", Attempt: 3, Status: fix.StatusFailed,
+			Source: "validation", ReleaseID: "rel-reopen", NodeID: "model.a", Try: 3, Status: fix.StatusFailed,
 			Rationale: "no remediation's", CreatedAt: contractBase,
 		}))
 		require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-reopen-other", RemediationID: other.ID.String(), NodeID: "model.a",
-			Attempt: 4, Status: fix.StatusFailed, Rationale: "the other's", CreatedAt: contractBase,
+			Try: 4, Status: fix.StatusFailed, Rationale: "the other's", CreatedAt: contractBase,
 		}))
-		for _, attempt := range []int{3, 4} {
-			hit, err = env.fixes.ReopenTryAttempt(ctx, r.ID, attempt, fix.StatusGenerating, nil)
+		for _, try := range []int{3, 4} {
+			hit, err = env.fixes.ReopenFixRow(ctx, r.ID, try, fix.StatusGenerating, nil)
 			require.NoError(t, err)
-			require.False(t, hit, "attempt %d belongs to no try of the remediation", attempt)
+			require.False(t, hit, "try %d belongs to no try of the remediation", try)
 		}
-		require.Equal(t, fix.StatusFailed, findAttempt(t, env, "rel-reopen", 3).Status)
-		require.Equal(t, fix.StatusFailed, findAttempt(t, env, "rel-reopen-other", 4).Status)
+		require.Equal(t, fix.StatusFailed, findTry(t, env, "rel-reopen", 3).Status)
+		require.Equal(t, fix.StatusFailed, findTry(t, env, "rel-reopen-other", 4).Status)
 
-		_, err = env.fixes.ReopenTryAttempt(ctx, r.ID, 3, fix.StatusProposed, nil)
+		_, err = env.fixes.ReopenFixRow(ctx, r.ID, 3, fix.StatusProposed, nil)
 		require.Error(t, err, "a row is reopened generating or verifying")
 	})
 }
@@ -112,7 +112,7 @@ func TestFixRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing.T) {
 // A row keeps the approvers it is recorded with, and RecordApprovers adds to
 // them: one entry per node, an approver for a node the row already holds
 // replacing it, the whole sorted by node id, so the fixed nodes and the
-// handed-over nodes of one attempt end up on the same row. An attempt of the
+// handed-over nodes of one try end up on the same row. A try of the
 // release that has no row is ErrNotFound with nothing written, and a row
 // recorded without approvers reads back with none. An upsert of a row that
 // carries approvers replaces the row's, and one that carries none keeps them.
@@ -120,14 +120,14 @@ func TestFixRepository_KeepsApprovers(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		r := mustCreate(t, env, newRemediation("rel-approvers", 1, contractBase))
-		get := func(attempt int) fix.View {
+		get := func(try int) fix.View {
 			t.Helper()
-			return findAttempt(t, env, "rel-approvers", attempt)
+			return findTry(t, env, "rel-approvers", try)
 		}
-		row := func(attempt int, approvers []fix.Approver) fix.Fix {
+		row := func(try int, approvers []fix.Approver) fix.Fix {
 			return fix.Fix{
 				Source: "validation", ReleaseID: "rel-approvers", RemediationID: r.ID.String(), NodeID: "model.a",
-				ResolvedNodeIDs: []string{"model.a", "model.b", "model.c"}, Attempt: attempt, Status: fix.StatusVerifying,
+				ResolvedNodeIDs: []string{"model.a", "model.b", "model.c"}, Try: try, Status: fix.StatusVerifying,
 				NodeOutcomes: map[string]fix.NodeOutcome{
 					"model.a": {Status: fix.StatusVerifying}, "model.b": {Status: fix.StatusVerifying},
 					"model.c": {Status: fix.StatusSkipped, Reason: "no type", Code: model.HandoverReasonNoType},
@@ -145,7 +145,7 @@ func TestFixRepository_KeepsApprovers(t *testing.T) {
 
 		require.NoError(t, env.fixes.InsertGenerating(ctx, fix.Fix{
 			Source: "validation", ReleaseID: "rel-approvers", RemediationID: r.ID.String(), NodeID: "model.a",
-			ResolvedNodeIDs: []string{"model.a"}, Attempt: 3, CreatedAt: contractBase,
+			ResolvedNodeIDs: []string{"model.a"}, Try: 3, CreatedAt: contractBase,
 		}))
 		require.Empty(t, get(3).Approvers, "a row in flight holds no approver")
 
@@ -156,23 +156,24 @@ func TestFixRepository_KeepsApprovers(t *testing.T) {
 		require.Equal(t, fixed, view.Approvers)
 
 		handedOver := []fix.Approver{{NodeID: "model.c", Owner: "growth", Source: model.ApproverSourceContractFile}}
-		require.NoError(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 1, append(append([]fix.Approver(nil), handedOver...), fixed...)))
+		require.NoError(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 1, 1, append(append([]fix.Approver(nil), handedOver...), fixed...)))
 		require.Equal(t, []fix.Approver{fixed[0], fixed[1], handedOver[0]}, get(1).Approvers,
 			"the approvers are stored sorted by node id")
 
-		require.NoError(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 2, handedOver))
+		require.NoError(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 1, 2, handedOver))
 		require.Equal(t, []fix.Approver{fixed[0], fixed[1], handedOver[0]}, get(2).Approvers,
-			"the fixed and the handed-over nodes of one attempt add up on its row")
+			"the fixed and the handed-over nodes of one try add up on its row")
 
 		renamed := []fix.Approver{{NodeID: "model.b", Owner: "ops", Source: model.ApproverSourceBundle}}
-		require.NoError(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 2, renamed))
+		require.NoError(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 1, 2, renamed))
 		require.Equal(t, []fix.Approver{fixed[0], renamed[0], handedOver[0]}, get(2).Approvers,
 			"an approver for a node the row holds replaces its entry")
-		require.NoError(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 2, nil))
+		require.NoError(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 1, 2, nil))
 		require.Equal(t, []fix.Approver{fixed[0], renamed[0], handedOver[0]}, get(2).Approvers, "recording nothing changes nothing")
 
-		require.ErrorIs(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 9, handedOver), repository.ErrNotFound)
-		require.ErrorIs(t, env.fixes.RecordApprovers(ctx, "rel-other", 1, handedOver), repository.ErrNotFound)
+		require.ErrorIs(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 1, 9, handedOver), repository.ErrNotFound)
+		require.ErrorIs(t, env.fixes.RecordApprovers(ctx, "rel-approvers", 2, 1, handedOver), repository.ErrNotFound, "try 1 of another round is another row")
+		require.ErrorIs(t, env.fixes.RecordApprovers(ctx, "rel-other", 1, 1, handedOver), repository.ErrNotFound)
 		require.Equal(t, []fix.Approver{fixed[0], fixed[1], handedOver[0]}, get(1).Approvers, "a refused call writes nothing")
 
 		require.NoError(t, env.fixes.Upsert(ctx, row(2, nil)))
@@ -183,16 +184,34 @@ func TestFixRepository_KeepsApprovers(t *testing.T) {
 	})
 }
 
-// findAttempt returns the fix row of one attempt of a release.
-func findAttempt(t *testing.T, env contractEnv, release string, attempt int) fix.View {
+// CountTries counts the terminal tries of one round: a row in flight is no
+// finished try yet, and the round's hand-over row (fix.HandOverTry), written
+// once its tries are spent, is no try of its own.
+func TestFixRepository_CountTriesLeavesOutTheHandOverRow(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		for try, status := range map[int]fix.Status{1: fix.StatusFailed, 2: fix.StatusFailed, 3: fix.StatusVerifying, fix.HandOverTry: fix.StatusEscalated} {
+			require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
+				Source: "validation", ReleaseID: "rel-count", RemediationRound: 1, NodeID: "model.a",
+				Try: try, Status: status, CreatedAt: contractBase,
+			}))
+		}
+		n, err := env.fixes.CountTries(ctx, "rel-count", 1)
+		require.NoError(t, err)
+		require.Equal(t, 2, n, "the two failed tries count; the verifying try and the hand-over row do not")
+	})
+}
+
+// findTry returns the fix row of one try of a release.
+func findTry(t *testing.T, env contractEnv, release string, try int) fix.View {
 	t.Helper()
 	views, err := env.fixes.List(context.Background(), repository.FixFilter{ReleaseID: release})
 	require.NoError(t, err)
 	for _, v := range views {
-		if v.Attempt == attempt {
+		if v.Try == try {
 			return v
 		}
 	}
-	require.Failf(t, "no fix row", "release %s attempt %d", release, attempt)
+	require.Failf(t, "no fix row", "release %s try %d", release, try)
 	return fix.View{}
 }

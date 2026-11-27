@@ -58,7 +58,7 @@ func verifying(rem remediation.Remediation) fix.Fix {
 	return fix.Fix{
 		Source: "validation", ReleaseID: "rel-1", RemediationID: rem.ID.String(), RemediationRound: 1,
 		NodeID: "model.a", ResolvedNodeIDs: []string{"model.a", "model.b"}, ErrorSignature: "sig-a",
-		Attempt: 1, Status: fix.StatusVerifying,
+		Try: 1, Status: fix.StatusVerifying,
 		NodeOutcomes:  map[string]fix.NodeOutcome{"model.a": {Status: fix.StatusVerifying}, "model.b": {Status: fix.StatusVerifying}},
 		ReleaseChecks: []fix.ReleaseCheck{{Project: "sales", Kind: "dbt", CheckID: "verify-rel-1-sales-a1", Phase: fix.PhaseQueued}},
 		Confidence:    fix.ConfidenceHigh, Rationale: "the column was renamed", Model: "model-x",
@@ -138,7 +138,7 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 	entries := store.OutboxEntries()
 	require.Len(t, entries, 1)
 	e := entries[0]
-	eventID := event.RemediationEventID("rel-1", 1)
+	eventID := event.RemediationEventID("rel-1", 1, 1)
 	assert.Equal(t, uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())), e.ID)
 	assert.Equal(t, event.AggregateType, e.AggregateType)
 	assert.Equal(t, event.AggregateIDForRelease("rel-1"), e.AggregateID)
@@ -171,7 +171,7 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 		"rationale":       "the column was renamed",
 		"confidence":      "high",
 		"model":           "model-x",
-		"attempt":         float64(1),
+		"try":             float64(1),
 		"source_resolved": true,
 		"proposed_at":     now.Format(time.RFC3339),
 	}, got)

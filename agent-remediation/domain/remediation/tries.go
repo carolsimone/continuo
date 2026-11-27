@@ -3,18 +3,18 @@ package remediation
 import (
 	"slices"
 	"sort"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // TryRecord is one earlier try at a release's failing set, as a later try is
-// shown it: the remediation round and try it was, its attempt, what
-// each of its clusters proposed and why it was refused, what the checks across
-// clusters found, and why the gate failed it. An attempt that
-// belongs to no remediation numbers no try, so it has Try 0 and orders before
-// every runner try of its round.
+// shown it: the remediation round and try it was, what each of its clusters
+// proposed and why it was refused, what the checks across clusters found, and
+// why the gate failed it. A try recorded with no remediation carries the
+// number its fix row has in its round.
 type TryRecord struct {
-	Round   int
-	Try     int
-	Attempt int
+	Round int
+	Try   int
 	// Clusters are the try's clusters, in cluster order.
 	Clusters []ClusterRecord
 	// CrossCluster is every finding of the try's cross-cluster checks.
@@ -49,12 +49,10 @@ type TryRef struct {
 }
 
 // Before reports whether r is a try made before o: an earlier round, or an
-// earlier try of the same round.
+// earlier try of the same round, a round's hand-over row coming after every
+// try of its round (model.TryBefore).
 func (r TryRef) Before(o TryRef) bool {
-	if r.Round != o.Round {
-		return r.Round < o.Round
-	}
-	return r.Try < o.Try
+	return model.TryBefore(r.Round, r.Try, o.Round, o.Try)
 }
 
 // Ref names the try the record is of.
@@ -63,8 +61,7 @@ func (t TryRecord) Ref() TryRef {
 }
 
 // TryRecords returns the records of the tries made before `before` that hold
-// any of nodeIDs as a cluster member, oldest first (by round, try, then
-// attempt). Each returned record keeps only its clusters that hold one of
+// any of nodeIDs as a cluster member, oldest first (by round, then try). Each returned record keeps only its clusters that hold one of
 // nodeIDs; its cross-cluster and gate findings are kept whole, since they judge
 // the whole try. The records given are left as they were.
 func TryRecords(records []TryRecord, nodeIDs []string, before TryRef) []TryRecord {
@@ -86,11 +83,7 @@ func TryRecords(records []TryRecord, nodeIDs []string, before TryRef) []TryRecor
 		out = append(out, rec)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.Ref() != b.Ref() {
-			return a.Ref().Before(b.Ref())
-		}
-		return a.Attempt < b.Attempt
+		return out[i].Ref().Before(out[j].Ref())
 	})
 	return out
 }

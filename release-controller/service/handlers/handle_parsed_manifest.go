@@ -734,9 +734,9 @@ func unionSorted(a, b []string) []string {
 // shown before being asked to merge that fix. A candidate with no node would
 // have built and checked nothing, so taking the trivial-pass path here would
 // report an unmeasured fix as verified. It fails instead, which routes it
-// into the handling a fix that failed its release check already gets: the attempt
+// into the handling a fix that failed its release check already gets: the try
 // is recorded as failed with this reason as its evidence, and either the next
-// attempt starts or the operator is left with the failure.
+// try starts or the operator is left with the failure.
 //
 // A non-empty candidate whose every node matches production is NOT this case:
 // that candidate is production's own proven code, so the fix is proven by

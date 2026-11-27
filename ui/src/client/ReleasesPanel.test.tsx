@@ -100,13 +100,13 @@ describe('ReleasesPanel — author column', () => {
 
 describe('ReleasesPanel — in-flight strip', () => {
   it('names a running fix\'s release check and links both the check and the release it verifies', async () => {
-    mockFetch([], { active: { check_id: 'verify-rel-1-core-a2', check_kind: 'fix', status: 'compiling', project: 'core', since: '2026-09-02T10:01:00Z', verifies_release_id: 'rel-1', attempt: 2 } });
+    mockFetch([], { active: { check_id: 'verify-rel-1-core-r1-t2', check_kind: 'fix', status: 'compiling', project: 'core', since: '2026-09-02T10:01:00Z', verifies_release_id: 'rel-1', remediation_round: 1, try: 2 } });
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
     const strip = await screen.findByText(/In flight · a fix's release check/);
-    expect(strip.textContent).toContain('attempt 2');
+    expect(strip.textContent).toContain('(round 1, try 2, project core)');
     expect(strip.textContent).toContain('project core');
     expect(strip.textContent).toContain('compiling');
-    expect(screen.getByRole('link', { name: 'verify-rel-1-core-a2' })).toHaveAttribute('href', '/release-checks/verify-rel-1-core-a2');
+    expect(screen.getByRole('link', { name: 'verify-rel-1-core-r1-t2' })).toHaveAttribute('href', '/release-checks/verify-rel-1-core-r1-t2');
     expect(screen.getByRole('link', { name: 'rel-1' })).toHaveAttribute('href', '/releases/rel-1');
   });
 

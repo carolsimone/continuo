@@ -926,7 +926,7 @@ describe('remediation router', () => {
         core: {
           repo: 'org/core-repo',
           commit_sha: 'core-sha',
-          branch: 'remediation/rel-1/attempt1/core',
+          branch: 'remediation/rel-1/round1/try1/core',
           claimed_at: '2026-06-24T00:00:00Z',
           release_id: 'rel-1',
           resolved_node_ids: ['core.schema.a'],
@@ -938,7 +938,7 @@ describe('remediation router', () => {
         finance: {
           repo: 'org/finance-repo',
           commit_sha: 'finance-sha',
-          branch: 'remediation/rel-1/attempt1/finance',
+          branch: 'remediation/rel-1/round1/try1/finance',
           claimed_at: '2026-06-24T00:00:01Z',
           release_id: 'rel-1',
           resolved_node_ids: ['finance.schema.b'],
@@ -983,14 +983,14 @@ describe('remediation router', () => {
       const createCalls = (prCreator.create as any).mock.calls;
       expect(createCalls[0][0]).toEqual(expect.objectContaining({
         repo: 'org/core-repo',
-        headBranch: 'remediation/rel-1/attempt1/core',
+        headBranch: 'remediation/rel-1/round1/try1/core',
         baseSha: 'core-sha',
         files: [{ path: 'models/a.sql', content: 'content of core/a.sql' }],
       }));
       expect(createCalls[0][0].title).toBe('[remediation] fix core.schema.a (release rel-1) (core)');
       expect(createCalls[1][0]).toEqual(expect.objectContaining({
         repo: 'org/finance-repo',
-        headBranch: 'remediation/rel-1/attempt1/finance',
+        headBranch: 'remediation/rel-1/round1/try1/finance',
         baseSha: 'finance-sha',
       }));
       expect(createCalls[1][0].title).toBe('[remediation] fix finance.schema.b (release rel-1) (finance)');

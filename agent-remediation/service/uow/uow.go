@@ -10,7 +10,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
 
-// UnitOfWork groups the writes of one operation (an attempt's fix row, or one
+// UnitOfWork groups the writes of one operation (a try's fix row, or one
 // step commit of a remediation) into one transaction. Begin must be called
 // before any repo method; Commit or Rollback closes the transaction.
 type UnitOfWork interface {

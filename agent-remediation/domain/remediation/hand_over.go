@@ -17,7 +17,7 @@ type HandOver struct {
 	Message string
 }
 
-// HandOvers is every node of an attempt's outcomes whose outcome carries a
+// HandOvers is every node of a try's outcomes whose outcome carries a
 // code, sorted by node id, each with its outcome's reason as the message,
 // cleaned (fix.NodeOutcome.Cleaned). A node whose outcome carries no code,
 // such as one a verified fix covers, is not handed over.

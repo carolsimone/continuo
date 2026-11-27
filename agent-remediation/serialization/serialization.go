@@ -148,7 +148,7 @@ type FixProposedDTO struct {
 	Rationale        string            `json:"rationale"`
 	Confidence       string            `json:"confidence"`
 	Model            string            `json:"model"`
-	Attempt          int               `json:"attempt"`
+	Try              int               `json:"try"`
 	SourceResolved   bool              `json:"source_resolved"`
 	ProposedAt       string            `json:"proposed_at"`
 }
@@ -176,7 +176,7 @@ func FixProposedFromDomain(e event.FixProposed) FixProposedDTO {
 		Rationale:        e.Rationale,
 		Confidence:       e.Confidence,
 		Model:            e.Model,
-		Attempt:          e.Attempt,
+		Try:              e.Try,
 		SourceResolved:   e.SourceResolved,
 		ProposedAt:       e.ProposedAt,
 	}
@@ -205,7 +205,7 @@ func (d FixProposedDTO) ToDomain() event.FixProposed {
 		Rationale:        d.Rationale,
 		Confidence:       d.Confidence,
 		Model:            d.Model,
-		Attempt:          d.Attempt,
+		Try:              d.Try,
 		SourceResolved:   d.SourceResolved,
 		ProposedAt:       d.ProposedAt,
 	}

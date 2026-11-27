@@ -210,7 +210,7 @@ streams:
 
   - name: fix.proposed:v1
     const: FixProposedV1
-    description: One verified fix per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
+    description: One verified fix per (release, round, try), carrying every node the try resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
     producers: [agent-remediation]
     consumers: []
 
@@ -222,7 +222,7 @@ streams:
 
   - name: fix.pr_opened:v1
     const: FixPrOpenedV1
-    description: Emitted when an operator opens a GitHub PR from a fix, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base fixes group.
+    description: Emitted when an operator opens a GitHub PR from a fix, one per (release, round, try, project) and carrying every node the PR resolves; consumed by catalog's case-base fixes group.
     producers: [agent-remediation]
     consumers:
       - component: catalog
@@ -231,7 +231,7 @@ streams:
 
   - name: fix.pr_closed:v1
     const: FixPrClosedV1
-    description: Terminal PR outcome (merged, or closed without merge), one per (release, attempt, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
+    description: Terminal PR outcome (merged, or closed without merge), one per (release, round, try, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
     producers: [agent-remediation]
     consumers:
       - component: catalog

@@ -49,7 +49,7 @@ const (
 const (
 	// maintenanceSkipReason closes a try that came due in maintenance mode, so
 	// the release can be retried once maintenance is off.
-	maintenanceSkipReason = "not attempted: continuo was in maintenance mode"
+	maintenanceSkipReason = "continuo was in maintenance mode."
 	// dbtTestSkipReason: a test is validation evidence, never a fix target. A
 	// model fix that makes it bind again resolves it in its release check, and a
 	// test that is itself wrong is a human's edit.
@@ -91,18 +91,19 @@ func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 
 // openTry opens the remediation's next try in one transaction, checking in
 // order:
-//   - the terminal attempts of the trigger's round reached the flow's tries:
+//   - the terminal tries of the trigger's round reached the flow's tries:
 //     the failing set is handed over (giveUp) and the remediation is done;
-//   - maintenance mode: the attempt is recorded skipped for every node, with
+//   - maintenance mode: the try is recorded skipped for every node, with
 //     no code, and the remediation is done;
-//   - the trigger names no repository: the attempt is recorded failed, every
+//   - the trigger names no repository: the try is recorded failed, every
 //     node with no_repository, since no pull request could ever be opened, and
 //     the remediation is done;
-//   - otherwise the try opens drafting, with the release's next attempt
-//     number, the trigger's failing set grouped into clusters each matched to
-//     a type, and the attempt's in-flight fix row.
+//   - otherwise the try opens drafting, numbered after the round's terminal
+//     tries, with the trigger's failing set grouped into clusters each matched
+//     to a type, and the try's in-flight fix row.
 //
-// In both attempts recorded without a try, a node the classifier marked
+// A skipped or failed try takes the number the try would have had. In both,
+// recorded with no fix row of the runner, a node the classifier marked
 // unfixable keeps the outcome the classifier gave it, and the nodes whose
 // outcome carries a code are handed over (handOver): none in maintenance mode
 // but the unfixable ones.
@@ -110,39 +111,39 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 	t := run.trigger
 	rem := run.snap.Remediation
 	return r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
-		inRound, total, err := countAttempts(ctx, u.FixRepo(), t)
+		inRound, err := u.FixRepo().CountTries(ctx, t.ReleaseID, t.Round)
 		if err != nil {
-			return err
+			return fmt.Errorf("count the tries of round %d: %w", t.Round, err)
 		}
-		attempt := total + 1
+		try := inRound + 1
 		switch {
 		case inRound >= run.flow.Tries:
-			return r.giveUp(ctx, u, run, attempt, inRound)
+			return r.giveUp(ctx, u, run, inRound)
 		case r.d.Maintenance:
 			r.logger.Info("remediation try skipped: maintenance mode is on",
-				"remediation", rem.ID, "release", t.ReleaseID, "round", t.Round, "attempt", attempt)
-			return r.endWithAttempt(ctx, u, run, attempt, fix.Fix{
+				"remediation", rem.ID, "release", t.ReleaseID, "round", t.Round, "try", try)
+			return r.endWithTry(ctx, u, run, try, fix.Fix{
 				Status:       fix.StatusSkipped,
-				NodeOutcomes: attemptOutcomes(t, fix.NodeOutcome{Status: fix.StatusSkipped, Reason: maintenanceSkipReason}),
+				NodeOutcomes: tryOutcomes(t, fix.NodeOutcome{Status: fix.StatusSkipped, Reason: maintenanceSkipReason}),
 				Rationale:    maintenanceSkipReason,
 			})
 		case t.Repo == "":
 			reason := fmt.Sprintf("the trigger carried no repository for %s", t.ReleaseID)
-			r.logger.Warn("heal.triggered trigger names no repository; recording the attempt failed",
-				"remediation", rem.ID, "release", t.ReleaseID, "attempt", attempt)
-			return r.endWithAttempt(ctx, u, run, attempt, fix.Fix{
+			r.logger.Warn("heal.triggered trigger names no repository; recording the try failed",
+				"remediation", rem.ID, "release", t.ReleaseID, "try", try)
+			return r.endWithTry(ctx, u, run, try, fix.Fix{
 				Status: fix.StatusFailed,
-				NodeOutcomes: attemptOutcomes(t, fix.NodeOutcome{
+				NodeOutcomes: tryOutcomes(t, fix.NodeOutcome{
 					Status: fix.StatusFailed, Reason: reason, Code: pkg_model.HandoverReasonNoRepository,
 				}),
 				Rationale: reason,
 			})
 		}
-		return r.startTry(ctx, u, run, attempt)
+		return r.startTry(ctx, u, run, try)
 	})
 }
 
-// startTry writes the remediation's next try, its clusters and the attempt's
+// startTry writes the remediation's next try, its clusters and the try's
 // in-flight fix row in u's transaction, and makes it the current try. The
 // failures counted on the remediation's own row are cleared: the try opened.
 //
@@ -151,15 +152,14 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 // it runs no step. Only the other nodes are grouped into clusters to work. The in-flight
 // row names every cluster handed over at once with its outcome, and every
 // other node as being worked on.
-func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int) error {
+func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, number int) error {
 	t := run.trigger
 	rem := run.snap.Remediation
 	repo := u.RemediationRepo()
 	now := r.clock.Now()
 	try := remediation.Try{
 		RemediationID: rem.ID,
-		Try:           rem.CurrentTry + 1,
-		Attempt:       attempt,
+		Try:           number,
 		Status:        remediation.TryDrafting,
 		FileRevisions: fileRevisions(r.d.Files, run.flow),
 		DeadlineAt:    now.Add(tryDraftingTime),
@@ -189,7 +189,7 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 			return fmt.Errorf("save cluster %d: %w", c.Cluster, err)
 		}
 	}
-	if err := u.FixRepo().InsertGenerating(ctx, generatingFix(rem.ID, t, attempt, now, clusters)); err != nil {
+	if err := u.FixRepo().InsertGenerating(ctx, generatingFix(rem.ID, t, number, now, clusters)); err != nil {
 		return fmt.Errorf("mark generating: %w", err)
 	}
 	rem.CurrentTry = try.Try
@@ -201,7 +201,7 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 		return fmt.Errorf("clear the failures of remediation %s: %w", rem.ID, err)
 	}
 	r.logger.Info("remediation try opened", "remediation", rem.ID, "release", t.ReleaseID,
-		"try", try.Try, "attempt", attempt, "clusters", len(clusters), "settled", len(settled))
+		"round", t.Round, "try", try.Try, "clusters", len(clusters), "settled", len(settled))
 	return nil
 }
 
@@ -263,9 +263,9 @@ func unfixableOutcome(u remediation.Unfixable) fix.NodeOutcome {
 	return fix.NodeOutcome{Status: fix.StatusSkipped, Reason: u.Detail, Code: u.Reason}
 }
 
-// attemptOutcomes stamps o on every node of the trigger but the ones the
+// tryOutcomes stamps o on every node of the trigger but the ones the
 // classifier marked unfixable, which keep the classifier's outcome.
-func attemptOutcomes(t remediation.Trigger, o fix.NodeOutcome) map[string]fix.NodeOutcome {
+func tryOutcomes(t remediation.Trigger, o fix.NodeOutcome) map[string]fix.NodeOutcome {
 	out := make(map[string]fix.NodeOutcome, len(t.Nodes))
 	for _, n := range t.Nodes {
 		if n.Unfixable != nil {
@@ -297,22 +297,22 @@ func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try
 }
 
 // giveUp hands the failing set over once the tries of the trigger's round are
-// spent, after tried terminal attempts, in u's transaction: the attempt is
-// recorded escalated with how each node ends (escalatedOutcomes), the nodes are
-// handed over and the remediation is done. The give-up output therefore never
+// spent, after tried terminal tries, in u's transaction: the round's hand-over
+// row (try fix.HandOverTry) is recorded escalated with how each node ends
+// (escalatedOutcomes), the nodes are handed over and the remediation is done. The give-up output therefore never
 // runs twice: a remediation that is done is never driven again.
-func (r *Runner) giveUp(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt, tried int) error {
+func (r *Runner) giveUp(ctx context.Context, u uow.UnitOfWork, run tryRun, tried int) error {
 	outcomes, err := escalatedOutcomes(ctx, u, run, tried)
 	if err != nil {
 		return err
 	}
 	r.logger.Info("remediation tries spent; handing over", "remediation", run.snap.Remediation.ID,
-		"release", run.trigger.ReleaseID, "round", run.trigger.Round, "attempt", attempt)
-	return r.endWithAttempt(ctx, u, run, attempt, fix.Fix{Status: fix.StatusEscalated, NodeOutcomes: outcomes})
+		"release", run.trigger.ReleaseID, "round", run.trigger.Round, "tries", tried)
+	return r.endWithTry(ctx, u, run, fix.HandOverTry, fix.Fix{Status: fix.StatusEscalated, NodeOutcomes: outcomes})
 }
 
 // escalatedOutcomes is how each failing node ends once the tries of the
-// trigger's round are spent, after tried terminal attempts. A node the
+// trigger's round are spent, after tried terminal tries. A node the
 // classifier marked unfixable keeps the classifier's outcome. Every other node
 // is judged by the outcome the remediation's last try recorded for it
 // (lastTry): one handed over with a settled code (settledCode), or because its
@@ -346,7 +346,7 @@ func escalatedOutcomes(ctx context.Context, u uow.UnitOfWork, run tryRun, tried 
 }
 
 // lastTry reads, in u's transaction, how the remediation's last try ended for
-// each node and why it failed, from the try's attempt row, which records the
+// each node and why it failed, from the try's fix row, which records the
 // outcome each of the try's clusters handed its members over with. Why is the
 // row's rationale when a check refused the try's drafts, which marks each
 // drafted member unverifiable_edits, and its verify error otherwise. A
@@ -355,7 +355,7 @@ func lastTry(ctx context.Context, u uow.UnitOfWork, run tryRun) (outcomes map[st
 	if run.snap.Try == nil {
 		return nil, "", nil
 	}
-	row, err := attemptRow(ctx, u.FixRepo(), run)
+	row, err := fixRowOf(ctx, u.FixRepo(), run)
 	if err != nil {
 		return nil, "", err
 	}
@@ -384,15 +384,15 @@ func triedMessage(tried int, why string) string {
 	return msg + "; the last try failed: " + why
 }
 
-// endWithAttempt records the attempt's terminal fix row, hands over the
+// endWithTry records the try's terminal fix row, hands over the
 // nodes whose outcome in it carries a code and ends the remediation, in u's
 // transaction. Once the transaction commits, each node counts with how it
 // ended.
-func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, p fix.Fix) error {
-	if err := r.recordAttempt(ctx, u, run, attempt, p); err != nil {
+func (r *Runner) endWithTry(ctx context.Context, u uow.UnitOfWork, run tryRun, try int, p fix.Fix) error {
+	if err := r.recordTry(ctx, u, run, try, p); err != nil {
 		return err
 	}
-	if err := r.handOver(ctx, u, run, attempt, p.NodeOutcomes); err != nil {
+	if err := r.handOver(ctx, u, run, try, p.NodeOutcomes); err != nil {
 		return err
 	}
 	if err := r.endRemediation(ctx, u, run.snap.Remediation); err != nil {
@@ -407,10 +407,10 @@ func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRu
 // carries a code (remediation.HandOvers): each node's approver, worked out from
 // the clusters of the current try and the earlier clusters that settled the
 // nodes it carried (workedClusters), is recorded on the row of
-// the remediation's attempt, which the caller has already recorded, and handed
+// the remediation's try, which the caller has already recorded, and handed
 // to the output. A remediation that made a try records the output on that try's
 // journal. With no node to hand over, nothing runs and nothing is written.
-func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, outcomes map[string]fix.NodeOutcome) error {
+func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, try int, outcomes map[string]fix.NodeOutcome) error {
 	handed := remediation.HandOvers(outcomes)
 	if len(handed) == 0 {
 		return nil
@@ -433,8 +433,8 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 		return err
 	}
 	if len(approvers) > 0 {
-		if err := u.FixRepo().RecordApprovers(ctx, run.trigger.ReleaseID, attempt, approvers); err != nil {
-			return fmt.Errorf("record the approvers of attempt %d: %w", attempt, err)
+		if err := u.FixRepo().RecordApprovers(ctx, run.trigger.ReleaseID, run.trigger.Round, try, approvers); err != nil {
+			return fmt.Errorf("record the approvers of round %d, try %d: %w", run.trigger.Round, try, err)
 		}
 	}
 	in := step.OutputInput{Remediation: run.snap.Remediation, Trigger: run.trigger, Snapshot: run.snap, HandedOver: handed, Approvers: approvers}
@@ -458,19 +458,19 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 	return nil
 }
 
-// recordAttempt stamps the trigger's identity and the remediation onto the
-// attempt's fix row, derives its representative views, and upserts it in
+// recordTry stamps the trigger's identity and the remediation onto the
+// try's fix row, derives its representative views, and upserts it in
 // u's transaction. A row that narrows no nodes addresses the trigger's whole
 // failing set. The row stores the message of every coded outcome cleaned
 // (fix.CleanedOutcomes); the caller's outcomes are left as they are.
-func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, p fix.Fix) error {
+func (r *Runner) recordTry(ctx context.Context, u uow.UnitOfWork, run tryRun, try int, p fix.Fix) error {
 	t := run.trigger
 	p.NodeOutcomes = fix.CleanedOutcomes(p.NodeOutcomes)
 	p.Source = t.Source
 	p.ReleaseID = t.ReleaseID
 	p.RemediationID = run.snap.Remediation.ID.String()
 	p.RemediationRound = t.Round
-	p.Attempt = attempt
+	p.Try = try
 	p.CreatedAt = r.clock.Now()
 	if len(p.ResolvedNodeIDs) == 0 {
 		p.ResolvedNodeIDs = t.NodeIDs()
@@ -482,17 +482,17 @@ func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun
 		return fmt.Errorf("upsert fix: %w", err)
 	}
 	r.logger.Info("fix recorded", "remediation", run.snap.Remediation.ID, "release", t.ReleaseID,
-		"node", p.NodeID, "nodes", len(p.ResolvedNodeIDs), "status", p.Status, "attempt", attempt)
+		"node", p.NodeID, "nodes", len(p.ResolvedNodeIDs), "status", p.Status, "try", try)
 	return nil
 }
 
 // finishTry takes the next committed step of a try whose every cluster has
 // ended. A drafting try with no checked draft that has an edit, every cluster
-// having been handed over or fallen back, is settled: its attempt is recorded
+// having been handed over or fallen back, is settled: its try is recorded
 // with what its clusters reported, its nodes are handed over, the try fails
 // and the remediation is done. Any other drafting try moves to checking. A
 // checking try runs the flow's cross-cluster checks one at a time, in file
-// order, each committed on its own; a finding fails the attempt and the try,
+// order, each committed on its own; a finding fails the try's fix row and the try,
 // like a gate that did not pass the fix, and the remediation's next try opens
 // in the drive's next step, or the failing set is handed over once the tries
 // are spent. Once every check passed, the drafts are submitted to the gate. The
@@ -529,18 +529,18 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 	return r.submitGate(ctx, run, checked)
 }
 
-// settleTry records the attempt of a try that has nothing to verify, hands
+// settleTry records the fix row of a try that has nothing to verify, hands
 // over its nodes, fails the try and ends the remediation, in one transaction.
-// The attempt is skipped when every node was skipped, and failed as soon as one
+// The try is skipped when every node was skipped, and failed as soon as one
 // node was attempted.
 func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
 	outcomes := nodeOutcomes(run.snap.Clusters)
 	p := fix.Fix{Status: settledStatus(outcomes), NodeOutcomes: outcomes}
 	if err := r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
-		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
+		if err := r.recordTry(ctx, u, run, run.snap.Try.Try, p); err != nil {
 			return err
 		}
-		if err := r.handOver(ctx, u, run, run.snap.Try.Attempt, outcomes); err != nil {
+		if err := r.handOver(ctx, u, run, run.snap.Try.Try, outcomes); err != nil {
 			return err
 		}
 		if err := r.endTry(ctx, u, run, remediation.TryFailed); err != nil {
@@ -552,13 +552,13 @@ func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
 	}); err != nil {
 		return err
 	}
-	r.logger.Info("no cluster of the try produced an edit; the attempt is settled",
-		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "attempt", run.snap.Try.Attempt, "status", p.Status)
+	r.logger.Info("no cluster of the try produced an edit; the try is settled",
+		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "try", run.snap.Try.Try, "status", p.Status)
 	return nil
 }
 
 // runCrossCheck runs one cross-cluster check over the drafts of the try's
-// checked clusters and commits its row. A finding fails the attempt with the
+// checked clusters and commits its row. A finding fails the try with the
 // finding and fails the try in the same transaction.
 func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, checked []checkedCluster, name workflow.StepName) error {
 	drafts := draftsOf(checked)
@@ -611,15 +611,15 @@ func (r *Runner) commitFlowStep(ctx context.Context, run tryRun, row remediation
 
 // failTryOnFindings fails the try because the check name, a cross-cluster
 // check or the gate refusing the drafts at submit, found findings in the drafts
-// of the checked clusters, in u's transaction: the attempt is recorded failed,
+// of the checked clusters, in u's transaction: the try is recorded failed,
 // with the findings' messages as its reason (recordRefusal), and the try fails
 // while the remediation keeps running, so the next try opens and is shown the
 // findings among the earlier tries.
 func (r *Runner) failTryOnFindings(ctx context.Context, u uow.UnitOfWork, run tryRun, checked []checkedCluster, name string, findings []remediation.Finding) error {
 	reason := findingsReason(findings)
 	r.logger.Warn("a check refused the try's drafts; the try fails",
-		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "try", run.snap.Try.Try,
-		"attempt", run.snap.Try.Attempt, "check", name, "reason", reason)
+		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "round", run.trigger.Round,
+		"try", run.snap.Try.Try, "check", name, "reason", reason)
 	if err := r.recordRefusal(ctx, u, run, checked, reason); err != nil {
 		return err
 	}
@@ -630,7 +630,7 @@ func (r *Runner) failTryOnFindings(ctx context.Context, u uow.UnitOfWork, run tr
 	return nil
 }
 
-// recordRefusal records the attempt of the current try failed for reason, in
+// recordRefusal records the fix row of the current try failed for reason, in
 // u's transaction. The members of each checked cluster whose draft has an edit,
 // the drafts the refusing check judged, fail for reason with
 // unverifiable_edits; every other node keeps how its cluster ended
@@ -643,7 +643,7 @@ func (r *Runner) recordRefusal(ctx context.Context, u uow.UnitOfWork, run tryRun
 			outcomes[m] = refused
 		}
 	}
-	return r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, fix.Fix{
+	return r.recordTry(ctx, u, run, run.snap.Try.Try, fix.Fix{
 		Status:       fix.StatusFailed,
 		NodeOutcomes: outcomes,
 		Rationale:    reason,
@@ -687,11 +687,11 @@ func (r *Runner) endTry(ctx context.Context, u uow.UnitOfWork, run tryRun, to re
 	return r.endRemediation(ctx, u, run.snap.Remediation)
 }
 
-// generatingFix is the in-flight row of an attempt, naming the trigger's
+// generatingFix is the in-flight row of a try, naming the trigger's
 // whole failing set: the members of each of the try's clusters handed over as
 // it opened with the cluster's outcome, its message cleaned, and every other
 // node as being worked on.
-func generatingFix(id uuid.UUID, t remediation.Trigger, attempt int, now time.Time, clusters []remediation.Cluster) fix.Fix {
+func generatingFix(id uuid.UUID, t remediation.Trigger, try int, now time.Time, clusters []remediation.Cluster) fix.Fix {
 	nodeIDs := t.NodeIDs()
 	outcomes := outcomesFor(nodeIDs, fix.NodeOutcome{Status: fix.StatusGenerating})
 	for _, c := range clusters {
@@ -709,7 +709,7 @@ func generatingFix(id uuid.UUID, t remediation.Trigger, attempt int, now time.Ti
 		RemediationRound: t.Round,
 		ResolvedNodeIDs:  nodeIDs,
 		NodeOutcomes:     fix.CleanedOutcomes(outcomes),
-		Attempt:          attempt,
+		Try:              try,
 		Status:           fix.StatusGenerating,
 		Projects:         t.Projects(),
 		CreatedAt:        now,
@@ -717,24 +717,6 @@ func generatingFix(id uuid.UUID, t remediation.Trigger, attempt int, now time.Ti
 	p.NormalizeRepresentativeViews()
 	p.ErrorSignature = signatureFor(t, p.NodeID)
 	return p
-}
-
-// countAttempts returns the release's terminal attempts: inRound in the
-// trigger's round, which the flow's tries are counted against, and total over
-// every round up to the trigger's, which the next attempt is numbered after.
-// The fix table's attempt numbers are unique per release, so a round's
-// first attempt continues the release's sequence. In-flight attempts are not
-// counted, so an attempt keeps its number while it runs.
-func countAttempts(ctx context.Context, repo repository.FixRepository, t remediation.Trigger) (inRound, total int, err error) {
-	for round := 1; round <= t.Round; round++ {
-		n, err := repo.CountAttempts(ctx, t.ReleaseID, round)
-		if err != nil {
-			return 0, 0, fmt.Errorf("count attempts (round %d): %w", round, err)
-		}
-		total += n
-		inRound = n
-	}
-	return inRound, total, nil
 }
 
 // newCluster is cluster n of a try, matched to the first type of the flow that
@@ -912,7 +894,7 @@ func signatureFor(t remediation.Trigger, nodeID string) string {
 	return ""
 }
 
-// releaseCheckProjects is the projects an attempt's release checks cover.
+// releaseCheckProjects is the projects a try's release checks cover.
 func releaseCheckProjects(vs []fix.ReleaseCheck) []string {
 	out := make([]string, 0, len(vs))
 	for _, v := range vs {

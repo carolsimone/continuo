@@ -595,7 +595,7 @@ func (v {{ .Const }}) IsValid() bool {
 {{- if .HasHealable }}
 
 // Healable reports whether the contract marks v as fixable by a change to the
-// user's source, and therefore worth a remediation attempt.
+// user's source, and therefore worth a fix.
 func (v {{ .Const }}) Healable() bool {
 	switch v {
 {{- range .Values }}
@@ -884,7 +884,7 @@ class {{ .Const }}(StrEnum):
 {{ end }}
 {{ if .HasHealable }}
 {{ .HealableConst }} = frozenset({ {{- range $i, $h := .Healable }}{{ if $i }}, {{ end }}{{ $h }}{{ end -}} })
-"""Values of {{ .Const }} a remediation attempt can fix by changing the user's source."""
+"""Values of {{ .Const }} a fix can repair by changing the user's source."""
 
 {{ end }}{{ if .FullRefreshConst }}
 {{ .FullRefreshConst }} = frozenset({ {{- range $i, $f := .FullRefresh }}{{ if $i }}, {{ end }}{{ $f }}{{ end -}} })

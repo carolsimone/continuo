@@ -42,7 +42,7 @@ func (f *fakeFixes) List(_ context.Context, filter repository.FixFilter) ([]fix.
 	return f.views, f.err
 }
 
-var _ repository.AttemptLister = (*fakeFixes)(nil)
+var _ repository.FixLister = (*fakeFixes)(nil)
 
 // diffObjects answers each stored diff by its uri, and fails any other.
 type diffObjects map[string]string
@@ -60,13 +60,13 @@ func previousTriesFailure() remediation.Failure {
 	return remediation.Failure{
 		Trigger: remediation.Trigger{TenantID: "acme", Source: "validation", ReleaseID: "rel-1", Round: 2},
 		Target:  node, TargetNodeID: "model.a", Members: []remediation.TriggerNode{node},
-		Attempt: 5, Try: 2,
+		Try: 2,
 	}
 }
 
 // triedSnapshot is one try of the release: a single cluster at node whose last
 // pre-flight round left draft, with the gate's findings when there are any.
-func triedSnapshot(t *testing.T, round, try, attempt int, node string, draft remediation.Draft, gate ...remediation.Finding) remediation.Snapshot {
+func triedSnapshot(t *testing.T, round, try int, node string, draft remediation.Draft, gate ...remediation.Finding) remediation.Snapshot {
 	t.Helper()
 	preflight, err := serialization.EncodeRecord(serialization.PreflightRecord{Draft: draft})
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func triedSnapshot(t *testing.T, round, try, attempt int, node string, draft rem
 	}
 	return remediation.Snapshot{
 		Remediation: remediation.Remediation{ID: uuid.New(), TenantID: "acme", ReleaseID: "rel-1", Round: round, CurrentTry: try},
-		Try:         &remediation.Try{Try: try, Attempt: attempt},
+		Try:         &remediation.Try{Try: try},
 		Clusters:    []remediation.Cluster{{Cluster: 1, TargetNodeID: node, Members: []string{node}, TypeName: "dbt-validation"}},
 		Steps:       steps,
 	}
@@ -93,9 +93,9 @@ func editOf(original, content string) remediation.Draft {
 	return remediation.Draft{Edits: []remediation.Edit{{Path: "models/a.sql", Original: original, Content: content}}}
 }
 
-func gatherPreviousTries(t *testing.T, tries repository.TryLister, attempts repository.AttemptLister, objects ports.EvidenceReader) []remediation.TryRecord {
+func gatherPreviousTries(t *testing.T, tries repository.TryLister, fixes repository.FixLister, objects ports.EvidenceReader) []remediation.TryRecord {
 	t.Helper()
-	out, err := shared.NewPreviousTries(tries, attempts, objects, discardLogger()).Gather(context.Background(),
+	out, err := shared.NewPreviousTries(tries, fixes, objects, discardLogger()).Gather(context.Background(),
 		step.ContextInput{Failure: previousTriesFailure()})
 	require.NoError(t, err)
 	got, ok := out.Evidence[remediation.KeyPreviousTries].([]remediation.TryRecord)
@@ -111,32 +111,32 @@ func TestPreviousTries_MetaNamesTheStepAndWhatItProvides(t *testing.T) {
 	assert.Equal(t, []remediation.EvidenceKey{remediation.KeyPreviousTries}, m.Provides)
 }
 
-func TestPreviousTries_IncludesEarlierRoundsAndAttemptsWithNoRemediation(t *testing.T) {
+func TestPreviousTries_IncludesEarlierRoundsAndTriesWithNoRemediation(t *testing.T) {
 	broken := remediation.Finding{Code: "release_check_failed", Message: "model.a: still broken"}
 	tries := &fakeTries{snaps: []remediation.Snapshot{
-		triedSnapshot(t, 1, 1, 2, "model.a", editOf("select a\n", "select b\n"), broken),
-		triedSnapshot(t, 1, 2, 3, "model.z", editOf("select z\n", "select y\n"), broken),
-		triedSnapshot(t, 2, 1, 4, "model.a", editOf("select a\n", "select c\n"), broken),
-		triedSnapshot(t, 2, 2, 5, "model.a", editOf("select a\n", "select d\n")),
+		triedSnapshot(t, 1, 2, "model.a", editOf("select a\n", "select b\n"), broken),
+		triedSnapshot(t, 1, 3, "model.z", editOf("select z\n", "select y\n"), broken),
+		triedSnapshot(t, 2, 1, "model.a", editOf("select a\n", "select c\n"), broken),
+		triedSnapshot(t, 2, 2, "model.a", editOf("select a\n", "select d\n")),
 	}}
-	attempts := &fakeFixes{views: []fix.View{
+	fixes := &fakeFixes{views: []fix.View{
 		{
-			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a", "model.b"}, VerifyError: "unowned attempt still broken",
+			Try: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a", "model.b"}, VerifyError: "unowned try still broken",
 			Edits: []fix.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}, {Path: "models/b.sql", DiffURI: "s3://diffs/missing"}, {Path: "models/c.sql"}},
 		},
 		// The fix rows of the runner's own tries, read from the journal instead.
-		{Attempt: 2, RemediationRound: 1, RemediationID: uuid.NewString(), ResolvedNodeIDs: []string{"model.a"}, VerifyError: "x"},
-		{Attempt: 4, RemediationRound: 2, RemediationID: uuid.NewString(), ResolvedNodeIDs: []string{"model.a"}, VerifyError: "x"},
-		// An attempt with no remediation at another node.
-		{Attempt: 3, RemediationRound: 1, ResolvedNodeIDs: []string{"model.z"}, VerifyError: "other"},
+		{Try: 2, RemediationRound: 1, RemediationID: uuid.NewString(), ResolvedNodeIDs: []string{"model.a"}, VerifyError: "x"},
+		{Try: 1, RemediationRound: 2, RemediationID: uuid.NewString(), ResolvedNodeIDs: []string{"model.a"}, VerifyError: "x"},
+		// A try with no remediation at another node.
+		{Try: 4, RemediationRound: 1, ResolvedNodeIDs: []string{"model.z"}, VerifyError: "other"},
 	}}
 
-	got := gatherPreviousTries(t, tries, attempts, diffObjects{"s3://diffs/1": "-a\n+unowned"})
+	got := gatherPreviousTries(t, tries, fixes, diffObjects{"s3://diffs/1": "-a\n+unowned"})
 
 	gate := []remediation.Finding{broken}
-	record := func(round, try, attempt int, content string) remediation.TryRecord {
+	record := func(round, try int, content string) remediation.TryRecord {
 		return remediation.TryRecord{
-			Round: round, Try: try, Attempt: attempt,
+			Round: round, Try: try,
 			Clusters: []remediation.ClusterRecord{{
 				Type: "dbt-validation", TargetNodeID: "model.a", Members: []string{"model.a"},
 				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: fix.ComputeUnifiedDiff("select a\n", content, "models/a.sql")}},
@@ -147,24 +147,24 @@ func TestPreviousTries_IncludesEarlierRoundsAndAttemptsWithNoRemediation(t *test
 	}
 	assert.Equal(t, []remediation.TryRecord{
 		{
-			Round: 1, Attempt: 1,
+			Round: 1, Try: 1,
 			Clusters: []remediation.ClusterRecord{{
 				Members: []string{"model.a", "model.b"},
 				Edits:   []remediation.EditRecord{{Path: "models/a.sql", Diff: "-a\n+unowned"}},
 			}},
-			Gate: []remediation.Finding{{Message: "unowned attempt still broken"}},
+			Gate: []remediation.Finding{{Message: "unowned try still broken"}},
 		},
-		record(1, 1, 2, "select b\n"),
-		record(2, 1, 4, "select c\n"),
-	}, got, "the attempt with no remediation and every earlier try at the node, oldest first; the try being made is left out")
+		record(1, 2, "select b\n"),
+		record(2, 1, "select c\n"),
+	}, got, "the try with no remediation and every earlier try at the node, oldest first; the try being made is left out")
 	assert.Equal(t, [][2]string{{"acme", "rel-1"}}, tries.calls)
-	assert.Equal(t, []repository.FixFilter{{ReleaseID: "rel-1", Source: "validation"}}, attempts.filters)
+	assert.Equal(t, []repository.FixFilter{{ReleaseID: "rel-1", Source: "validation"}}, fixes.filters)
 }
 
 func TestPreviousTries_AnUnreadableTryIsLeftOut(t *testing.T) {
-	bad := triedSnapshot(t, 1, 1, 1, "model.a", editOf("a\n", "b\n"))
+	bad := triedSnapshot(t, 1, 1, "model.a", editOf("a\n", "b\n"))
 	bad.Steps[0].Output = []byte("not json")
-	good := triedSnapshot(t, 1, 2, 2, "model.a", editOf("a\n", "c\n"))
+	good := triedSnapshot(t, 1, 2, "model.a", editOf("a\n", "c\n"))
 
 	got := gatherPreviousTries(t, &fakeTries{snaps: []remediation.Snapshot{bad, good}}, &fakeFixes{}, nil)
 
@@ -192,49 +192,73 @@ func TestPreviousTries_NoReadersGiveNoTries(t *testing.T) {
 	assert.Empty(t, got)
 }
 
-func TestPreviousTries_NoEvidenceReaderShowsAttemptsWithNoRemediationWithoutDiffs(t *testing.T) {
-	attempts := &fakeFixes{views: []fix.View{{
-		Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, VerifyError: "unowned attempt still broken",
+func TestPreviousTries_NoEvidenceReaderShowsTriesWithNoRemediationWithoutDiffs(t *testing.T) {
+	fixes := &fakeFixes{views: []fix.View{{
+		Try: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, VerifyError: "unowned try still broken",
 		Edits: []fix.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}},
 	}}}
 
-	got := gatherPreviousTries(t, &fakeTries{}, attempts, nil)
+	got := gatherPreviousTries(t, &fakeTries{}, fixes, nil)
 
 	assert.Equal(t, []remediation.TryRecord{{
-		Round: 1, Attempt: 1,
+		Round: 1, Try: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
-		Gate:     []remediation.Finding{{Message: "unowned attempt still broken"}},
+		Gate:     []remediation.Finding{{Message: "unowned try still broken"}},
 	}}, got)
 }
 
-// TestPreviousTries_LeavesOutAnAttemptTheStartupSweepFailed: an attempt row with
+// TestPreviousTries_LeavesOutATryTheStartupSweepFailed: a try row with
 // no remediation that the startup sweep failed was never judged by a gate, so
 // the model is not told its change failed. A generating row the sweep failed
 // holds the reason as its rationale, a verifying one as its verify error (with
 // its edits and diffs kept); both are left out, and another row with no
 // remediation is still listed.
-func TestPreviousTries_LeavesOutAnAttemptTheStartupSweepFailed(t *testing.T) {
-	attempts := &fakeFixes{views: []fix.View{
+func TestPreviousTries_LeavesOutATryTheStartupSweepFailed(t *testing.T) {
+	fixes := &fakeFixes{views: []fix.View{
 		{
-			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
+			Try: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
 			Rationale: "the model's rationale", VerifyError: fix.NoRemediationInFlightReason,
 			Edits: []fix.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/swept"}},
 		},
 		{
-			Attempt: 2, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
+			Try: 2, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
 			Rationale: fix.NoRemediationInFlightReason,
 		},
 		{
-			Attempt: 3, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
+			Try: 3, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
 			Rationale: "the model's rationale", VerifyError: "judged and still broken",
 		},
 	}}
 
-	got := gatherPreviousTries(t, &fakeTries{}, attempts, diffObjects{"s3://diffs/swept": "-a\n+swept"})
+	got := gatherPreviousTries(t, &fakeTries{}, fixes, diffObjects{"s3://diffs/swept": "-a\n+swept"})
 
 	assert.Equal(t, []remediation.TryRecord{{
-		Round: 1, Attempt: 3,
+		Round: 1, Try: 3,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
 		Gate:     []remediation.Finding{{Message: "judged and still broken"}},
 	}}, got, "only the row a gate judged is an earlier try")
+}
+
+// TestPreviousTries_LeavesOutARoundsHandOverRow: a round's hand-over row
+// (fix.HandOverTry), written escalated once the round's tries are spent, is no
+// try of its own, so a row of it that belongs to no remediation is not shown to
+// the model as an earlier try, while the round's tries are.
+func TestPreviousTries_LeavesOutARoundsHandOverRow(t *testing.T) {
+	fixes := &fakeFixes{views: []fix.View{
+		{
+			Try: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusFailed,
+			VerifyError: "judged and still broken",
+		},
+		{
+			Try: fix.HandOverTry, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusEscalated,
+		},
+	}}
+
+	got := gatherPreviousTries(t, &fakeTries{}, fixes, nil)
+
+	assert.Equal(t, []remediation.TryRecord{{
+		Round: 1, Try: 1,
+		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
+		Gate:     []remediation.Finding{{Message: "judged and still broken"}},
+	}}, got, "the hand-over row is no earlier try")
 }

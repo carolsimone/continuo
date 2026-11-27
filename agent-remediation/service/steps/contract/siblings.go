@@ -101,7 +101,7 @@ func (s *FailingSiblings) siblingFailure(ctx context.Context, f remediation.Fail
 		}
 	}
 	// Sorted so a release with several siblings always names the same one, and
-	// a re-run of the same attempt records the same rationale.
+	// a re-run of the same try records the same rationale.
 	sort.Strings(others)
 
 	for _, id := range others {

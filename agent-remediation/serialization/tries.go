@@ -25,7 +25,7 @@ func TryRecordOf(snap remediation.Snapshot) (remediation.TryRecord, error) {
 	if snap.Try == nil {
 		return remediation.TryRecord{}, errors.New("the snapshot holds no try")
 	}
-	rec := remediation.TryRecord{Round: snap.Remediation.Round, Try: snap.Try.Try, Attempt: snap.Try.Attempt}
+	rec := remediation.TryRecord{Round: snap.Remediation.Round, Try: snap.Try.Try}
 	steps := append([]remediation.StepRun(nil), snap.Steps...)
 	sort.SliceStable(steps, func(i, j int) bool { return steps[i].ID < steps[j].ID })
 	preflight := map[int][]remediation.StepRun{}

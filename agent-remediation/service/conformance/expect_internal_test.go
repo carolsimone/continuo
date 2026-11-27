@@ -151,14 +151,14 @@ func handedOverRow(t *testing.T, tenant string, p events.RemediationHandedOver) 
 	return outbox.Entry{ID: uuid.New(), StreamName: streams.RemediationHandedOverV1, Payload: stored}
 }
 
-// A hand-over names exactly the nodes the attempt handed over, each with its
+// A hand-over names exactly the nodes the try handed over, each with its
 // code, under the remediation's tenant, with the remediation's identity and
 // the tries it made, and appears once. Any difference is a problem.
 func TestExpectation_HandedOverReadsTheEventFromTheOutbox(t *testing.T) {
 	id := uuid.New()
 	rem := remediation.Remediation{ID: id, TenantID: "tenant-1", Flow: "rejected-release"}
 	trigger := remediation.Trigger{ReleaseID: "rel-1", Round: 1}
-	attempt := Attempt{Fix: fix.Fix{Attempt: 1, NodeOutcomes: map[string]fix.NodeOutcome{
+	try := FixRow{Fix: fix.Fix{Try: 1, NodeOutcomes: map[string]fix.NodeOutcome{
 		"a": {Status: fix.StatusSkipped, Reason: "why a", Code: model.HandoverReasonDeclined},
 		"b": {Status: fix.StatusFailed, Reason: "why b", Code: model.HandoverReasonPreflightRoundsSpent},
 	}}}
@@ -181,8 +181,8 @@ func TestExpectation_HandedOverReadsTheEventFromTheOutbox(t *testing.T) {
 		rows []outbox.Entry
 		want string
 	}{
-		"the event of the attempt": {rows: []outbox.Entry{handedOverRow(t, "tenant-1", event)}},
-		"no event":                 {want: "0 remediation.handed_over events were enqueued, want 1"},
+		"the event of the try": {rows: []outbox.Entry{handedOverRow(t, "tenant-1", event)}},
+		"no event":             {want: "0 remediation.handed_over events were enqueued, want 1"},
 		"two events": {
 			rows: []outbox.Entry{handedOverRow(t, "tenant-1", event), handedOverRow(t, "tenant-1", event)},
 			want: "2 remediation.handed_over events were enqueued, want 1",
@@ -237,7 +237,7 @@ func TestExpectation_HandedOverReadsTheEventFromTheOutbox(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := (&scenarioRun{w: handOverWorld{rem: rem, outbox: tc.rows}, id: id}).expect(trigger)
 
-			e.handedOver(attempt, 1, want)
+			e.handedOver(try, 1, want)
 
 			if tc.want == "" {
 				assert.NoError(t, e.err())
@@ -251,10 +251,10 @@ func TestExpectation_HandedOverReadsTheEventFromTheOutbox(t *testing.T) {
 	t.Run("a node whose outcome carries another code", func(t *testing.T) {
 		e := (&scenarioRun{w: handOverWorld{rem: rem, outbox: []outbox.Entry{handedOverRow(t, "tenant-1", event)}}, id: id}).expect(trigger)
 
-		e.handedOver(attempt, 1, map[string]model.HandoverReason{"a": model.HandoverReasonNoType, "b": model.HandoverReasonPreflightRoundsSpent})
+		e.handedOver(try, 1, map[string]model.HandoverReason{"a": model.HandoverReasonNoType, "b": model.HandoverReasonPreflightRoundsSpent})
 
 		require.Error(t, e.err())
-		assert.Contains(t, e.err().Error(), `node a ended attempt 1 with the code "declined" (why a), want "no_type"`)
+		assert.Contains(t, e.err().Error(), `node a ended try 1 with the code "declined" (why a), want "no_type"`)
 	})
 }
 

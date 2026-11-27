@@ -181,7 +181,7 @@ func main() {
 	candidateSQLDeleter := s3adapter.NewCandidateSQLDeleter(objectStore, logger)
 
 	// Dial agent-remediation once for the RetryRemediation handler, which reads
-	// a release's remediation attempts before starting another round.
+	// a release's remediation tries before starting another round.
 	remediationConn, err := grpc.NewClient(cfg.AgentRemediationGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logger.Error("grpc agent-remediation client dial", "error", err)

@@ -127,8 +127,8 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 		return step.PromptOutput{Draft: draft}, nil
 	}
 
-	candSQLKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.sql", f.Trigger.ReleaseID, nodeID, f.Attempt)
-	candDiffKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.diff", f.Trigger.ReleaseID, nodeID, f.Attempt)
+	candSQLKey := f.ArtifactPrefix(nodeID) + ".sql"
+	candDiffKey := f.ArtifactPrefix(nodeID) + ".diff"
 	draft.CandidateFixSQLURI, err = p.artifacts.Write(ctx, candSQLKey, res.ProposedSQL, "text/plain")
 	if err != nil {
 		return step.PromptOutput{}, fmt.Errorf("write candidate sql: %w", err)
@@ -210,7 +210,7 @@ func (p *DBTValidation) sourceFix(ctx context.Context, f remediation.Failure, bu
 		return step.PromptOutput{}, fmt.Errorf("llm propose source fix: %w", err)
 	}
 	nodeID := f.Target.NodeID
-	base := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source", f.Trigger.ReleaseID, nodeID, f.Attempt)
+	base := f.ArtifactPrefix(nodeID) + ".source"
 	draft.Edits = []remediation.Edit{{
 		Path:         path.Join(repoPrefix, bundle.FilePath),
 		Original:     bundle.Source,

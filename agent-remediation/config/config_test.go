@@ -240,7 +240,7 @@ func TestLoad_ReleaseCheckTimeoutNonPositiveFallsBackToDefault(t *testing.T) {
 
 // TestLoad_ReleaseCheckPollIntervalDefault verifies an install that never set
 // RELEASE_CHECK_POLL_INTERVAL gets the documented 15 second cadence for the
-// loop that reads each waiting attempt's release checks.
+// loop that reads each waiting try's release checks.
 func TestLoad_ReleaseCheckPollIntervalDefault(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("RELEASE_CHECK_POLL_INTERVAL", "")
@@ -471,7 +471,7 @@ func loadWith(t *testing.T, env map[string]string) (Config, []string) {
 
 // TestLoad_IgnoresTheRemovedMaxAttemptsSetting verifies that a leftover
 // AGENT_REMEDIATION_MAX_ATTEMPTS in an install's environment changes nothing
-// the component loads and does not stop start-up: the attempts a remediation
+// the component loads and does not stop start-up: the tries a remediation
 // makes come from its flow's tries.
 func TestLoad_IgnoresTheRemovedMaxAttemptsSetting(t *testing.T) {
 	without, missingWithout := loadWith(t, map[string]string{"AGENT_REMEDIATION_MAX_ATTEMPTS": ""})
