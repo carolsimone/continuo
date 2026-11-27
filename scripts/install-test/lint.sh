@@ -1702,6 +1702,17 @@ for old in v0.5.0 v0.10.0 v0.11.0 v0.12.0 v0.13.1 v0.14.0; do
 done
 # A v0.0.x tag is below every gate's floor too, so it is refused as well.
 refuse_render 'predates python-csv validation support' --set "validation.imageTag=v0.0.9"
+# The gate reads validation.engine and validation.imageTag, so a components
+# entry that sets VALIDATION_IMAGE itself, to anything but the placeholder the
+# chart fills from them, would run a runner the gate never saw: refused, in env
+# and in secretEnv.
+refuse_render 'components[name=execution-controller].env sets VALIDATION_IMAGE="ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"' \
+  --set-json 'components=[{"name":"execution-controller","enabled":true,"httpPort":8084,"env":{"VALIDATION_IMAGE":"ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"}}]'
+refuse_render 'components[name=execution-controller].secretEnv sets VALIDATION_IMAGE' \
+  --set-json 'components=[{"name":"execution-controller","enabled":true,"httpPort":8084,"secretEnv":[{"name":"VALIDATION_IMAGE","ref":"redis"}]}]'
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'components=[{"name":"execution-controller","enabled":true,"httpPort":8084,"env":{"VALIDATION_IMAGE":"__VALIDATION_IMAGE__"}}]' > /dev/null \
+  || { echo "FAIL: VALIDATION_IMAGE=__VALIDATION_IMAGE__ must render"; exit 1; }
 for ok in v0.15.0 v0.15.0@sha256:0000000000000000000000000000000000000000000000000000000000000000 v0.16.2; do
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "validation.imageTag=${ok}" > /dev/null \
     || { echo "FAIL: validation.imageTag=${ok} must render"; exit 1; }

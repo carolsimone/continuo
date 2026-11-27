@@ -37,7 +37,10 @@ UPGRADE NOTES
   A validation.imageTag below v0.15.0 fails the render: that runner knows
   neither the dependents check's op dependents_check nor build_from_prod.
   Re-pin it to v0.15.0 or later, or drop the override to track the chart's
-  default.
+  default. A components entry that sets VALIDATION_IMAGE to anything but
+  __VALIDATION_IMAGE__ fails the render too: set it back to
+  __VALIDATION_IMAGE__ and pin the image with validation.engine and
+  validation.imageTag.
 
   A values file that overrides the whole components list gets neither
   release-controller's grpcPort and RELEASE_CONTROLLER_GRPC_PORT nor

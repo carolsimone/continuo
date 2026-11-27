@@ -1036,6 +1036,8 @@ components:
       LOG_TAIL_LINES: "50"
       ERROR_MESSAGE_MAX_LENGTH: "4096"
       VALIDATION_IMAGE_PULL_POLICY: Always
+      # The chart fills it from validation.engine and validation.imageTag, whose
+      # gate refuses a runner older than v0.15.0; any other value fails the render.
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
       VALIDATION_WAREHOUSE_SECRET: __VALIDATION_WAREHOUSE_SECRET__
       S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__

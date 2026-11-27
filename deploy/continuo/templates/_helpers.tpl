@@ -689,20 +689,34 @@ Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 the chart sets for every component on the shared ConfigMap: an entry's own
 variable would win over the ConfigMap's, so that component would run with
 another setting than the rest of the install. REDIS_ACL_MODE comes from
-credentials.redis.mode.
+credentials.redis.mode. It also fails the render on a VALIDATION_IMAGE in
+secretEnv, or in env with any value but the placeholder __VALIDATION_IMAGE__
+(which deployment.yaml replaces with "continuo.validation.image"): the image
+comes from validation.engine and validation.imageTag, whose gate refuses a
+runner that cannot run what continuo sends it, so any other value would run a
+runner the gate never saw.
 Call: include "continuo.component.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- define "continuo.component.assertEnv" -}}
 {{- $svc := .svc -}}
+{{- $validationImage := "the chart sets it from validation.engine and validation.imageTag, whose gate refuses a runner older than v0.15.0; set those instead, and leave VALIDATION_IMAGE at __VALIDATION_IMAGE__" -}}
 {{- $reserved := dict "REDIS_ACL_MODE" "the chart sets it from credentials.redis.mode; set credentials.redis.mode instead, and remove the variable from the entry" -}}
-{{- range $key, $_ := ($svc.env | default dict) -}}
+{{- $env := $svc.env | default dict -}}
+{{- range $key, $_ := $env -}}
 {{- if hasKey $reserved $key -}}
 {{- fail (printf "components[name=%s].env sets %s: %s" $svc.name $key (get $reserved $key)) -}}
 {{- end -}}
+{{- end -}}
+{{- $image := get $env "VALIDATION_IMAGE" | toString -}}
+{{- if and (hasKey $env "VALIDATION_IMAGE") (ne $image "__VALIDATION_IMAGE__") -}}
+{{- fail (printf "components[name=%s].env sets VALIDATION_IMAGE=%q: %s" $svc.name $image $validationImage) -}}
 {{- end -}}
 {{- range $secret := ($svc.secretEnv | default (list)) -}}
 {{- $name := $secret.name | toString -}}
 {{- if hasKey $reserved $name -}}
 {{- fail (printf "components[name=%s].secretEnv sets %s: %s" $svc.name $name (get $reserved $name)) -}}
+{{- end -}}
+{{- if eq $name "VALIDATION_IMAGE" -}}
+{{- fail (printf "components[name=%s].secretEnv sets VALIDATION_IMAGE: %s" $svc.name $validationImage) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
