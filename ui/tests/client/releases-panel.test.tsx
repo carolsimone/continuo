@@ -13,10 +13,10 @@ const REL = {
   bootstrap: false,
 };
 
-function mockFetch(releases: any[], currentProd: any) {
+function mockFetch(releases: any[], liveRelease: any) {
   return vi.fn((url: string) => {
-    if (url.startsWith('/api/releases/current-prod')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(currentProd) });
+    if (url.startsWith('/api/releases/live-release')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(liveRelease) });
     }
     return Promise.resolve({ ok: true, json: () => Promise.resolve({ releases, next_cursor: '' }) });
   });
@@ -45,13 +45,13 @@ describe('ReleasesPanel', () => {
 
   it('renders info-strip banner, .form-field filter, and a nodes-table; no legacy classes', async () => {
     vi.stubGlobal('fetch', mockFetch([REL], {
-      current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
+      live_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
     }));
     const { container } = renderPanel();
 
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
 
-    expect(container.querySelector('.info-strip--info')).toBeTruthy();
+    expect(container.querySelector('.info-strip--info')?.textContent).toContain('Live release · rel_live · 21 nodes');
     expect(container.querySelector('.form-field select')).toBeTruthy();
     expect(container.querySelector('table.nodes-table')).toBeTruthy();
     expect(container.querySelector('.section-header__title')?.textContent).toBe('Releases');
@@ -63,7 +63,7 @@ describe('ReleasesPanel', () => {
 
   it('exposes a real link to the release detail (supports new-tab / keyboard)', async () => {
     vi.stubGlobal('fetch', mockFetch([REL], {
-      current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
+      live_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
     }));
     const { container } = renderPanel();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
@@ -75,7 +75,7 @@ describe('ReleasesPanel', () => {
 
   it('navigates when the release link is clicked', async () => {
     vi.stubGlobal('fetch', mockFetch([REL], {
-      current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
+      live_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
     }));
     renderPanel();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
@@ -86,7 +86,7 @@ describe('ReleasesPanel', () => {
 
   it('navigates when a non-link cell of the row is clicked', async () => {
     vi.stubGlobal('fetch', mockFetch([REL], {
-      current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
+      live_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
     }));
     renderPanel();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
@@ -98,7 +98,7 @@ describe('ReleasesPanel', () => {
 
   it('reloads with the status filter when the select changes', async () => {
     const fetch = mockFetch([REL], {
-      current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
+      live_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
     });
     vi.stubGlobal('fetch', fetch);
     renderPanel();

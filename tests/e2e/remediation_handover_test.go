@@ -98,7 +98,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	var prodNodes []map[string]string
 	fixtureFound := false
@@ -121,8 +121,8 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	handedOverTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationHandedOverV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// 2. The release validates the fixture alone and is rejected on it.
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)

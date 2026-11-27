@@ -74,8 +74,8 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID})
@@ -110,7 +110,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 // test whose bind check passes is fully invisible downstream of validation:
 // tbind_ok and its test are new to production, both bind-check ok, the
 // release promotes, and catalog's Neo4j graph gains the model but no
-// node for the test — while current_prod still records the test so it is not
+// node for the test — while the live release still records the test so it is not
 // re-checked as "changed" on the next release.
 func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	if testing.Short() {
@@ -150,8 +150,8 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})
@@ -170,11 +170,11 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 		"test_count on the tested model is unchanged by tests being nodes")
 
 	prodHasTest := 0
-	for _, n := range currentProdTopology(t, ctx, clients).Nodes {
+	for _, n := range liveReleaseTopology(t, ctx, clients).Nodes {
 		if n.UniqueID == tbindOkNotNullTestID {
 			prodHasTest++
 		}
 	}
-	require.Equal(t, 1, prodHasTest, "current_prod's artifact keeps the test so it is not re-checked next release")
+	require.Equal(t, 1, prodHasTest, "the live release's artifact keeps the test so it is not re-checked next release")
 	t.Logf("✅ release %s promoted invisibly: tbind_ok's test binds but never reaches Neo4j", releaseID)
 }

@@ -12,9 +12,9 @@ import (
 
 func TestAssembleManifestSet_ReplacesChangedProjectAndMergesOthers(t *testing.T) {
 	now := time.Unix(0, 0).UTC()
-	existing := []*release.ServiceProd{
-		release.NewServiceProd("service-1", "rOLD1", "k1", "t1", release.ManifestKindDbt, now),
-		release.NewServiceProd("service-2", "rOLD2", "kOLD", "tOLD", release.ManifestKindDbt, now),
+	existing := []*release.ProductionPointer{
+		release.NewProductionPointer("service-1", "rOLD1", "k1", "t1", release.ManifestKindDbt, now),
+		release.NewProductionPointer("service-2", "rOLD2", "kOLD", "tOLD", release.ManifestKindDbt, now),
 	}
 
 	result := handlers.AssembleManifestSet(
@@ -50,9 +50,9 @@ func TestAssembleManifestSet_NoExistingProjects(t *testing.T) {
 }
 
 func TestAssembleManifestSet_ThreadsKinds(t *testing.T) {
-	existing := []*release.ServiceProd{
-		release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t1", release.ManifestKindDbt, time.Unix(0, 0)),
-		release.NewServiceProd("svc-py-old", "rOld2", "s3://b/svc-py-old/rOld2/odcs-bundle.json", "t2", release.ManifestKindPython, time.Unix(0, 0)),
+	existing := []*release.ProductionPointer{
+		release.NewProductionPointer("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t1", release.ManifestKindDbt, time.Unix(0, 0)),
+		release.NewProductionPointer("svc-py-old", "rOld2", "s3://b/svc-py-old/rOld2/odcs-bundle.json", "t2", release.ManifestKindPython, time.Unix(0, 0)),
 	}
 	set := handlers.AssembleManifestSet(existing, "b", "svc-py", "rNew", "t3", release.ManifestKindPython)
 
@@ -67,8 +67,8 @@ func TestAssembleManifestSet_ThreadsKinds(t *testing.T) {
 // beside the changed project's artifact. The ontology project's own release
 // replaces it.
 func TestAssembleManifestSet_CarriesTheOntologyPointerOnEveryRelease(t *testing.T) {
-	existing := []*release.ServiceProd{
-		release.NewServiceProd("company-ontology", "rOnt", "s3://b/company-ontology/rOnt/ontology.yaml", "t1", release.ManifestKindOntology, time.Unix(0, 0)),
+	existing := []*release.ProductionPointer{
+		release.NewProductionPointer("company-ontology", "rOnt", "s3://b/company-ontology/rOnt/ontology.yaml", "t1", release.ManifestKindOntology, time.Unix(0, 0)),
 	}
 
 	set := handlers.AssembleManifestSet(existing, "b", "svc-dbt", "rNew", "t2", release.ManifestKindDbt)

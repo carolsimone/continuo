@@ -56,7 +56,7 @@ var ErrReleaseIDConflict = errors.New("release id already names a different cand
 // the source change so a downstream agent can locate it; they are opaque to
 // release-controller. The manifest-key assembly and image-tag collection for
 // other projects happen later in AdvanceQueue, not here, so that we always read
-// the live service_prod pointers at the moment this release becomes active.
+// the production pointers at the moment this release becomes active.
 type ReceiveCandidateInput struct {
 	Project   string
 	ReleaseID string
@@ -177,8 +177,8 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		// The release-queue lock serializes ontology submissions with each
 		// other and with promotions, so two submissions for two projects
 		// cannot both pass the one-ontology-project check, and a promotion
-		// cannot change service_prod between the check and the insert. It is
-		// taken before the check row is loaded, as every holder of both locks
+		// cannot change a production pointer between the check and the insert.
+		// It is taken before the check row is loaded, as every holder of both locks
 		// takes them.
 		if err := u.LockReleaseQueue(ctx); err != nil {
 			return fmt.Errorf("lock release queue: %w", err)
@@ -221,7 +221,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 }
 
 // kindChangeRefusalText is the refusal for a release of a project whose
-// service_prod row holds the kind stored, when the release's kind is on the
+// production pointer holds the kind stored, when the release's kind is on the
 // other side of the line between the ontology and the node kinds. Intake
 // answers it as a conflict and activation ends the check with it as its detail.
 func kindChangeRefusalText(project string, stored release.ManifestKind) string {
@@ -232,12 +232,12 @@ func kindChangeRefusalText(project string, stored release.ManifestKind) string {
 // refuseOntologyConflict returns ErrOntologyProjectConflict when a new release
 // of kind for project breaks the rules of the ontology project: the project is
 // released with a kind on the other side of the line between the ontology and
-// the node kinds, or another project already is the install's ontology, in
-// service_prod or in a candidate check that has not ended.
+// the node kinds, or another project already is the install's ontology, by its
+// production pointer or in a candidate check that has not ended.
 func refuseOntologyConflict(ctx context.Context, u uow.UnitOfWork, project string, kind release.ManifestKind) error {
-	stored, err := u.ServiceProdRepo().Get(ctx, project)
+	stored, err := u.ProductionPointerRepo().Get(ctx, project)
 	if err != nil {
-		return fmt.Errorf("get service_prod %q: %w", project, err)
+		return fmt.Errorf("get production pointer of %q: %w", project, err)
 	}
 	isOntology := kind == release.ManifestKindOntology
 	if stored != nil && (stored.ManifestKind() == release.ManifestKindOntology) != isOntology {
@@ -249,7 +249,7 @@ func refuseOntologyConflict(ctx context.Context, u uow.UnitOfWork, project strin
 	if !isOntology {
 		return nil
 	}
-	released, err := u.ServiceProdRepo().ProjectsWithKind(ctx, release.ManifestKindOntology)
+	released, err := u.ProductionPointerRepo().ProjectsWithKind(ctx, release.ManifestKindOntology)
 	if err != nil {
 		return fmt.Errorf("list the projects released as kind %q: %w", release.ManifestKindOntology, err)
 	}

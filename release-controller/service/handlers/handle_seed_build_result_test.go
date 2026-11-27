@@ -432,9 +432,9 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotesDirect(t *testing.T) {
 	assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1))
 	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 
-	// Verify current_prod was updated
-	cp := store.GetCurrentProd()
-	assert.Equal(t, releaseID, cp.ReleaseID())
+	// Verify the live release was updated
+	live := store.GetLiveRelease()
+	assert.Equal(t, releaseID, live.ReleaseID())
 }
 
 func TestHandleSeedBuildResult_EmptyAfterExclusionPromotePayloadCarriesCandidateSchema(t *testing.T) {
@@ -555,7 +555,7 @@ func TestHandleSeedBuildResult_Fix_Failed_NoReleaseRejected_FinishedEmitted(t *t
 // TestHandleSeedBuildResult_Fix_SeedOnlyOK_PassesNoReleaseEvents_FinishedEmitted
 // verifies a fix's release check whose only change is a seed (nothing left to
 // validate after the built seed is excluded) ends at Passed rather than
-// Promoted, touches neither current_prod nor service_prod, emits neither
+// Promoted, touches neither the live release nor a production pointer, emits neither
 // release.promoted:v1 nor release.rejected:v1, and emits
 // release_check.finished:v1 with outcome "passed".
 func TestHandleSeedBuildResult_Fix_SeedOnlyOK_PassesNoReleaseEvents_FinishedEmitted(t *testing.T) {
@@ -569,8 +569,8 @@ func TestHandleSeedBuildResult_Fix_SeedOnlyOK_PassesNoReleaseEvents_FinishedEmit
 	r := mustGetRelease(t, store, releaseID)
 	assert.Equal(t, releasecheck.StatusPassed, r.Status(),
 		"a fix's release check with nothing left to validate after the built seed passes rather than promotes")
-	assert.Equal(t, 0, store.CurrentProdUpsertCalls(), "a fix's release check never writes current_prod")
-	assert.Nil(t, store.GetServiceProd("svc-fin"), "a fix's release check never writes service_prod")
+	assert.Equal(t, 0, store.LiveReleaseUpsertCalls(), "a fix's release check never writes the live release")
+	assert.Nil(t, store.GetProductionPointer("svc-fin"), "a fix's release check never writes a production pointer")
 
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName)

@@ -6,7 +6,7 @@ import "fmt"
 // parsed: a dbt manifest.json, a Python project's odcs-bundle.json (one ODCS
 // contract per node), or the install's ontology.yaml (the company ontology,
 // which declares no node). It travels POST /releases → Release →
-// service_prod.manifest_kind → ManifestKey → the per-entry kind on
+// ProductionPointer → ManifestKey → the per-entry kind on
 // release.requested:v1. release-controller only moves (project, pointer, kind)
 // triples; topology-controller is the sole component that parses
 // kind-specifically. The kinds ParseManifestKind accepts must match

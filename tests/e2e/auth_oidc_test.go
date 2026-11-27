@@ -117,8 +117,8 @@ func TestAuthOIDC(t *testing.T) {
 
 	t.Run("operator Dex bearer is authorized to submit", func(t *testing.T) {
 		tok := dexToken(t, "operator@example.com")
-		if st, _ := bearer(t, "GET", "/api/v1/current-prod", tok, ""); st != http.StatusOK {
-			t.Fatalf("operator GET current-prod = %d, want 200", st)
+		if st, _ := bearer(t, "GET", "/api/v1/live-release", tok, ""); st != http.StatusOK {
+			t.Fatalf("operator GET live-release = %d, want 200", st)
 		}
 		st, out := bearer(t, "POST", "/api/v1/releases", tok, submitBody)
 		if st != http.StatusBadRequest {
@@ -133,7 +133,7 @@ func TestAuthOIDC(t *testing.T) {
 		if st, out := bearer(t, "POST", "/api/v1/releases", dexToken(t, "viewer@example.com"), submitBody); st != http.StatusForbidden {
 			t.Fatalf("viewer POST = %d (%v), want 403", st, out)
 		}
-		if st, _ := bearer(t, "GET", "/api/v1/current-prod", dexToken(t, "norole@example.com"), ""); st != http.StatusForbidden {
+		if st, _ := bearer(t, "GET", "/api/v1/live-release", dexToken(t, "norole@example.com"), ""); st != http.StatusForbidden {
 			t.Fatalf("norole GET = %d, want 403", st)
 		}
 	})

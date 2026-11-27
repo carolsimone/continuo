@@ -51,17 +51,17 @@ func TestPublicAPI_Authorization(t *testing.T) {
 		require.Equal(t, "invalid_token", out["code"])
 	})
 
-	t.Run("a CI token reads current-prod", func(t *testing.T) {
+	t.Run("a CI token reads live-release", func(t *testing.T) {
 		token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", "abc")
-		req, err := http.NewRequest(http.MethodGet, clients.uiBase+"/api/v1/current-prod", nil)
+		req, err := http.NewRequest(http.MethodGet, clients.uiBase+"/api/v1/live-release", nil)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		var cp map[string]any
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&cp))
-		require.Contains(t, cp, "current_prod_release_id")
+		var live map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&live))
+		require.Contains(t, live, "live_release_id")
 	})
 }

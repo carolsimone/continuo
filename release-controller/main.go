@@ -280,7 +280,7 @@ func main() {
 	runConsumer("compile_completed", redisadapter.NewCompileCompletedConsumer(rc, deps, logger))
 
 	// Retention loop: prune terminal releases older than the retention window on
-	// the janitor interval. current_prod is never pruned.
+	// the janitor interval. The live release and every release a production pointer names are never pruned.
 	retentionDays, err := strconv.Atoi(cfg.RetentionDays)
 	if err != nil {
 		logger.Error("invalid RELEASE_RETENTION_DAYS", "value", cfg.RetentionDays)

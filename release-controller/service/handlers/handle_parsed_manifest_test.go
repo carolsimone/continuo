@@ -54,7 +54,7 @@ func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) 
 
 // seedToParsingBootstrap is seedToParsing for a bootstrap release.
 // imageTags may have multiple entries when the test topology has cross-project nodes;
-// only the first entry is used as the changed project, others are pre-seeded as service_prod.
+// only the first entry is used as the changed project, others get a production pointer beforehand.
 func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string]string, opts ...func(*handlers.ReceiveCandidateInput)) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -72,7 +72,7 @@ func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string
 		if s == changedSvc {
 			continue
 		}
-		store.SeedServiceProd(release.NewServiceProd(s, releaseID+"-prev", "s3://continuo/"+s+"/prev/manifest.json", tg, release.ManifestKindDbt, time.Unix(0, 0)))
+		store.SeedProductionPointer(release.NewProductionPointer(s, releaseID+"-prev", "s3://continuo/"+s+"/prev/manifest.json", tg, release.ManifestKindDbt, time.Unix(0, 0)))
 	}
 
 	in := handlers.ReceiveCandidateInput{
@@ -654,7 +654,7 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 }
 
 // TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff seeds a
-// current_prod snapshot with known hashes, then submits a candidate where one
+// live release with known hashes, then submits a candidate where one
 // existing node's hash changed and one node is new. The validation closure must
 // contain the changed node, the new node, and the downstream of the changed
 // node — but not an unchanged node that is neither.
@@ -818,11 +818,11 @@ func TestHandleParsedManifest_UnknownExternalNodeAloneIsNothingToValidate(t *tes
 	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV1).Payload, &promoted))
 	assert.Empty(t, promoted["changed_node_ids"], "an unknown-external node is never a changed node")
 
-	cp := store.GetCurrentProd()
-	assert.Equal(t, "rA", cp.ReleaseID())
-	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
+	live := store.GetLiveRelease()
+	assert.Equal(t, "rA", live.ReleaseID())
+	prodTopo, err := deps.Topologies.Load(context.Background(), live.Topology())
 	require.NoError(t, err)
-	assert.Equal(t, byID(topo), byID(prodTopo), "the unknown-external node stays in current_prod")
+	assert.Equal(t, byID(topo), byID(prodTopo), "the unknown-external node stays in the live release")
 }
 
 // TestHandleParsedManifest_UnknownExternalNodeIsNotADuplicateOfABuiltTable pins that
@@ -900,7 +900,7 @@ func TestHandleParsedManifest_OK_ChangedNodePullsDownstream(t *testing.T) {
 }
 
 // TestHandleParsedManifest_OK_BootstrapValidatesAllNodes confirms that with no
-// current_prod row, every candidate node is treated as new -> validate-all.
+// live release, every candidate node is treated as new -> validate-all.
 func TestHandleParsedManifest_OK_BootstrapValidatesAllNodes(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
@@ -959,8 +959,8 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 		"empty-diff promote-direct path must carry code_bundle_uri")
 	assert.Equal(t, false, payload["bootstrap"], "non-bootstrap release must carry bootstrap=false")
 
-	cp := store.GetCurrentProd()
-	assert.Equal(t, "rA", cp.ReleaseID(), "current prod advanced to this release")
+	live := store.GetLiveRelease()
+	assert.Equal(t, "rA", live.ReleaseID(), "the live release advanced to this release")
 
 	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
@@ -1018,8 +1018,8 @@ func TestHandleParsedManifest_OK_NothingToValidate_Fix(t *testing.T) {
 			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
 		}
 
-		assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
-			"a fix's passed release check must not advance current prod")
+		assert.Equal(t, "prev", store.GetLiveRelease().ReleaseID(),
+			"a fix's passed release check must not advance the live release")
 		assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 	})
 
@@ -1047,8 +1047,8 @@ func TestHandleParsedManifest_OK_NothingToValidate_Fix(t *testing.T) {
 				"a fix's failure is never a release rejection")
 		}
 
-		assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
-			"a fix's failed release check must not advance current prod")
+		assert.Equal(t, "prev", store.GetLiveRelease().ReleaseID(),
+			"a fix's failed release check must not advance the live release")
 		assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 	})
 
@@ -1068,7 +1068,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Fix(t *testing.T) {
 			"the empty-set trivial pass must be unchanged for a normal release")
 
 		assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1), "promotes directly")
-		assert.Equal(t, "rA", store.GetCurrentProd().ReleaseID(), "current prod advanced to this release")
+		assert.Equal(t, "rA", store.GetLiveRelease().ReleaseID(), "the live release advanced to this release")
 	})
 }
 
@@ -1160,11 +1160,11 @@ func TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode(t *testing.T) 
 // topology is NOT rejected. Under self-contained validation the upstream is
 // built into the candidate schema, so the reference is resolvable.
 func TestHandleParseOK_CrossProjectUpstreamInCandidatePromotes(t *testing.T) {
-	// svc-a is the changed project. svc-b has a pre-existing service_prod pointer
-	// so AdvanceQueue assembles both image tags. Seed service_prod BEFORE AdvanceQueue.
+	// svc-a is the changed project. svc-b has a pre-existing production pointer
+	// so AdvanceQueue assembles both image tags. Seed svc-b's production pointer BEFORE AdvanceQueue.
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", release.ManifestKindDbt, time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
@@ -1336,7 +1336,7 @@ func TestHandleParseOK_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 
 	// Nothing was written: no validation.requested, no release.rejected, no promotion.
 	require.Empty(t, outboxEntries(store))
-	assert.Equal(t, "", store.GetCurrentProd().ReleaseID())
+	assert.Equal(t, "", store.GetLiveRelease().ReleaseID())
 }
 
 // TestHandleParsedManifest_ImageTagsComeFromTheArtifact pins that the image
@@ -1346,7 +1346,7 @@ func TestHandleParseOK_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 func TestHandleParsedManifest_ImageTagsComeFromTheArtifact(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", release.ManifestKindDbt, time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
@@ -1387,13 +1387,13 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	r, err := store.GetRelease("rBoot")
 	require.NoError(t, err)
 	assert.Equal(t, releasecheck.StatusPromoted, r.Status())
-	// The candidate topology is recorded — promoteToProduction reads it to seed
-	// current_prod and the release.promoted:v1 payload; an empty one would
+	// The candidate topology is recorded — promoteToProduction reads it to fill
+	// the live release and the release.promoted:v1 payload; an empty one would
 	// silently produce an empty prod snapshot.
 	assert.Equal(t, 2, r.CandidateTopologyRef().NodeCount)
 
-	// current_prod seeded to this release.
-	assert.Equal(t, "rBoot", store.GetCurrentProd().ReleaseID())
+	// This release is the live release.
+	assert.Equal(t, "rBoot", store.GetLiveRelease().ReleaseID())
 
 	// Exactly CompileRequested + ReleaseRequested + ReleasePromoted + ReleaseCheckFinished;
 	// NO validation_requested, NO rejection.
@@ -1409,13 +1409,13 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	assert.Equal(t, true, payload["bootstrap"], "bootstrap release must carry bootstrap=true")
 	assert.Equal(t, false, payload["rebaseline"], "a plain bootstrap release must carry rebaseline=false")
 
-	// Assert the changed project's service_prod row carries the correct values.
+	// Assert the changed project's production pointer carries the correct values.
 	// Changed project is the lexically-first project ("svc-a", tag "sha-a").
-	sp := store.GetServiceProd("svc-a")
-	require.NotNil(t, sp)
-	assert.Equal(t, "rBoot", sp.ReleaseID())
-	assert.Equal(t, "s3://continuo/svc-a/rBoot/manifest.json", sp.ManifestS3Key())
-	assert.Equal(t, "sha-a", sp.ImageTag())
+	pointer := store.GetProductionPointer("svc-a")
+	require.NotNil(t, pointer)
+	assert.Equal(t, "rBoot", pointer.ReleaseID())
+	assert.Equal(t, "s3://continuo/svc-a/rBoot/manifest.json", pointer.ManifestS3Key())
+	assert.Equal(t, "sha-a", pointer.ImageTag())
 }
 
 // TestHandleParsedManifest_AssignsPerNodeValidationOp asserts the six
@@ -1814,7 +1814,7 @@ func TestHandleParsedManifest_DuplicateTablePayloadSameProjectCarriesBothFilePat
 }
 
 // Bootstrap skips validation and promotes directly, so the gate must run above
-// that branch or a colliding bootstrap topology reaches current_prod.
+// that branch or a colliding bootstrap topology reaches the live release.
 func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
 	deps, store := seedToParsingBootstrap(t, "rBoot", map[string]string{"finance": "sha-f"})
 
@@ -1831,11 +1831,11 @@ func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
 	require.NoError(t, rErr)
 	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "duplicate_table", r.FailReason())
-	assert.Equal(t, "", store.GetCurrentProd().ReleaseID(), "nothing may be promoted")
+	assert.Equal(t, "", store.GetLiveRelease().ReleaseID(), "nothing may be promoted")
 }
 
 // A model copied verbatim into a second project produces a duplicate
-// unique_id whose content_hash matches current_prod for BOTH claimants, so
+// unique_id whose content_hash matches the live release for BOTH claimants, so
 // DerivedChangedNodeIDs finds nothing changed and validationIDs is empty —
 // the route that promotes directly via the len(validationIDs)==0
 // short-circuit further down in handleParseOK. This pins the gate above that
@@ -1861,7 +1861,7 @@ func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t 
 	require.NoError(t, rErr)
 	assert.Equal(t, releasecheck.StatusRejected, r.Status())
 	assert.Equal(t, "duplicate_table", r.FailReason())
-	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(), "current_prod must not move")
+	assert.Equal(t, "prev", store.GetLiveRelease().ReleaseID(), "the live release must not move")
 }
 
 // A three-way collision cannot be fixed by one rename proposal: renaming the
@@ -2072,7 +2072,7 @@ func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 
 // --- fix build-set derivation ---
 //
-// A fix's release check re-measures a node when it differs from current_prod AND
+// A fix's release check re-measures a node when it differs from the live release AND
 // either the fix touched it (it differs from the rejected candidate too) or the
 // rejected release did not record it as failing. A fix spanning two projects
 // submits one check per edited project, and each check assembles the OTHER edited
@@ -2166,7 +2166,7 @@ func verifyParsedTopo() release.Topology {
 
 // TestHandleParsedManifest_OK_FixBaselinesOnVerifiedCandidate: a
 // fix's release check verifying a rejected release re-checks only the nodes
-// its fix changed relative to both current_prod and the rejected candidate.
+// its fix changed relative to both the live release and the rejected candidate.
 // The fixed node is checked; the sibling's still-broken node,
 // byte-identical to the rejected candidate, is not.
 func TestHandleParsedManifest_OK_FixBaselinesOnVerifiedCandidate(t *testing.T) {
@@ -2197,7 +2197,7 @@ func TestHandleParsedManifest_OK_FixBaselinesOnVerifiedCandidate(t *testing.T) {
 // TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly pins that the
 // seed-set exclusion is confined to the fix-with-verifies path: a
 // candidate release with the identical topology still diffs against
-// current_prod alone, so both nodes absent from production read as changed.
+// the live release alone, so both nodes absent from production read as changed.
 func TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
@@ -2221,7 +2221,7 @@ func TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly(t *testing.T) {
 
 // TestHandleParsedManifest_OK_FixWithoutVerifiesDiffsAgainstProdOnly
 // pins that a fix's release check that names no verified release keeps today's
-// behavior (diff against current_prod), so the seed-set derivation is
+// behavior (diff against the live release), so the seed-set derivation is
 // genuinely gated on VerifiesReleaseID.
 func TestHandleParsedManifest_OK_FixWithoutVerifiesDiffsAgainstProdOnly(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -2332,8 +2332,8 @@ func TestHandleParsedManifest_OK_FixRestoringProductionAfterCompileRejectionPass
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
 		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a fix's release check never promotes")
 	}
-	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
-		"a fix's passed release check must not advance current prod")
+	assert.Equal(t, "prev", store.GetLiveRelease().ReleaseID(),
+		"a fix's passed release check must not advance the live release")
 	assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.ReleaseCheckFinishedV1)))
 }
 
@@ -2343,18 +2343,18 @@ func TestHandleParsedManifest_OK_FixRestoringProductionAfterCompileRejectionPass
 const verifyHID = "svc4.ftable_h"
 
 // TestHandleParsedManifest_OK_FixBaselinePrefersNewerProdOverRejectedCandidate
-// covers current_prod advancing past a node between the rejection and this
+// covers the live release advancing past a node between the rejection and this
 // fix's parse (an unrelated project promoting in the
 // meantime). The fix's release check assembles that node at its live
-// production hash, so it matches current_prod and is absent from the
-// current_prod diff — never a seed even though it still differs from the
+// production hash, so it matches the live release and is absent from the
+// diff against it — never a seed even though it still differs from the
 // rejected candidate's stale copy. Without that, a live, already-promoted
 // node would be dragged into a fix-only release check.
 func TestHandleParsedManifest_OK_FixBaselinePrefersNewerProdOverRejectedCandidate(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	// current_prod already carries H's NEW hash: some other release promoted it
+	// The live release already carries H's NEW hash: some other release promoted it
 	// after the rejection below.
 	prod := release.Topology{
 		{UniqueID: verifyUID, ProjectName: "shared", ContentHash: "h_u"},
@@ -2368,7 +2368,7 @@ func TestHandleParsedManifest_OK_FixBaselinePrefersNewerProdOverRejectedCandidat
 		{UniqueID: verifyGID, ProjectName: "service-3", NodeType: "dbt-model", ContentHash: "g_broken"},
 		{UniqueID: verifyHID, ProjectName: "service-4", NodeType: "dbt-model", ContentHash: "h_old"},
 	}
-	// The fix's release check assembles H from current_prod (its NEW hash), same
+	// The fix's release check assembles H from the live release (its NEW hash), same
 	// as any other unrelated, already-live node.
 	parsed := release.Topology{
 		{UniqueID: verifyUID, ProjectName: "shared", ContentHash: "h_u"},
@@ -2395,11 +2395,11 @@ func TestHandleParsedManifest_OK_FixBaselinePrefersNewerProdOverRejectedCandidat
 	assert.NotContains(t, validIDs, verifyGID,
 		"the sibling's still-broken node matches the rejected candidate -> NOT checked again")
 	assert.NotContains(t, validIDs, verifyHID,
-		"an unrelated node promoted to production since the rejection matches current_prod, so it is absent from the changed-vs-prod set and never a seed, over the stale rejected candidate -> NOT checked again")
+		"an unrelated node promoted to production since the rejection matches the live release, so it is absent from the changed-vs-prod set and never a seed, over the stale rejected candidate -> NOT checked again")
 }
 
 // verifySID is an ESTABLISHED sibling node: the sibling project's failing
-// node MODIFIES a node that already exists in production, so current_prod
+// node MODIFIES a node that already exists in production, so the live release
 // holds it at its pre-rejection hash rather than it being absent. This is
 // the case the absent-sibling fixture (verifyGID, new in production) does
 // not cover.
@@ -2407,12 +2407,12 @@ const verifySID = "svc3.ftable_s"
 
 // TestHandleParsedManifest_OK_FixExcludesEstablishedSiblingModification
 // is the established-sibling case: a two-project fix where the sibling
-// project's failing node edits an EXISTING production node. current_prod
+// project's failing node edits an EXISTING production node. The live release
 // holds that node at its pre-rejection hash (s_old), the rejected candidate
 // holds the sibling's still-broken edit (s_broken), and this fix's release
 // check (for the OTHER project) assembles the sibling unchanged from the
-// rejected candidate (s_broken). The sibling differs from current_prod, so a
-// current_prod-only or current_prod-wins baseline would re-validate it and
+// rejected candidate (s_broken). The sibling differs from the live release, so a
+// baseline of the live release alone, or one where the live release wins, would re-validate it and
 // re-fail the fix's release check on a node its fix was never about — sinking
 // the good fix. The sibling is in the rejected release's failing_nodes and the
 // fix did not touch it (it matches the rejected candidate), so FixBuildSets
@@ -2422,7 +2422,7 @@ func TestHandleParsedManifest_OK_FixExcludesEstablishedSiblingModification(t *te
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	// current_prod holds the sibling node S at its pre-rejection hash: the
+	// The live release holds the sibling node S at its pre-rejection hash: the
 	// sibling's failure MODIFIES this existing node rather than adding it.
 	prod := release.Topology{
 		{UniqueID: verifyUID, ProjectName: "shared", ContentHash: "h_u"},
@@ -2458,9 +2458,9 @@ func TestHandleParsedManifest_OK_FixExcludesEstablishedSiblingModification(t *te
 	require.NoError(t, err)
 	validIDs := r.ValidationNodeIDs()
 	assert.Contains(t, validIDs, verifyEID,
-		"the fix's own edit departs from both current_prod and the rejected candidate -> checked")
+		"the fix's own edit departs from both the live release and the rejected candidate -> checked")
 	assert.NotContains(t, validIDs, verifySID,
-		"the sibling's still-broken modification differs from current_prod (which holds it at its pre-rejection hash) but matches the rejected candidate and is in its failing_nodes, so the seed set leaves it out and clones it from production -> NOT checked again")
+		"the sibling's still-broken modification differs from the live release (which holds it at its pre-rejection hash) but matches the rejected candidate and is in its failing_nodes, so the seed set leaves it out and clones it from production -> NOT checked again")
 	assert.NotContains(t, validIDs, verifyUID,
 		"an unchanged upstream is neither changed nor pulled into the build set")
 }
@@ -2797,7 +2797,7 @@ func TestHandleParsedManifest_OK_FixWaitsForAnUnreachableArtifactStore(t *testin
 	assert.Equal(t, releasecheck.StatusParsing, r.Status())
 }
 
-// The diff against production reads the artifact current_prod points at: a
+// The diff against production reads the live release's artifact: a
 // node whose hash matches the production artifact is not changed, so only the
 // new node is in scope and its unchanged upstream is built as its ancestor.
 func TestHandleParsedManifest_DiffReadsTheProductionArtifact(t *testing.T) {
@@ -2819,19 +2819,19 @@ func TestHandleParsedManifest_DiffReadsTheProductionArtifact(t *testing.T) {
 	assert.ElementsMatch(t, []string{"a", "b"}, r.ValidationNodeIDs(), "b is new; a is validated only as b's upstream")
 }
 
-// A current_prod that names a release but references no artifact gives the
+// A live release that names a release but references no artifact gives the
 // parse no topology to diff against: it fails loudly instead of treating
 // production as empty and validating everything.
 func TestHandleParsedManifest_ProdWithoutArtifactIsAnError(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
-	store.SeedCurrentProd(release.RehydrateCurrentProd("rLegacy", release.TopologyRef{}, 0, time.Unix(50, 0).UTC()))
+	store.SeedLiveRelease(release.RehydrateLiveRelease("rLegacy", release.TopologyRef{}, 0, time.Unix(50, 0).UTC()))
 
 	topo := release.Topology{{UniqueID: "a", ProjectName: "svc-a", UpstreamUniqueIDs: []string{}}}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok", TopologyRef: putTopology(t, deps, "rA", topo),
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "current_prod rLegacy references no topology artifact")
+	assert.Contains(t, err.Error(), "live release rLegacy references no topology artifact")
 }
 
 func TestHandleParsedManifest_Rebaseline_PromotesWithBothFlags(t *testing.T) {

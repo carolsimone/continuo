@@ -17,21 +17,21 @@ type AssembledSet struct {
 
 // AssembleManifestSet builds the full manifest set for a single-project release:
 // the changed project's new manifest key + every OTHER project's stored pointer.
-// existing is the live set of service_prod pointers, read once by the caller.
+// existing is the set of production pointers, read once by the caller.
 // The changed project's prior pointer (if present) is replaced, never duplicated.
-func AssembleManifestSet(existing []*release.ServiceProd, bucket, changedProject, releaseID, imageTag string, changedKind release.ManifestKind) AssembledSet {
+func AssembleManifestSet(existing []*release.ProductionPointer, bucket, changedProject, releaseID, imageTag string, changedKind release.ManifestKind) AssembledSet {
 	keys := []release.ManifestKey{{
 		Project: changedProject,
 		S3URI:   CanonicalManifestKey(bucket, changedProject, releaseID, changedKind),
 		Kind:    changedKind,
 	}}
 	tags := map[string]string{changedProject: imageTag}
-	for _, sp := range existing {
-		if sp.ProjectName() == changedProject {
+	for _, pointer := range existing {
+		if pointer.ProjectName() == changedProject {
 			continue // replaced by the fresh delta
 		}
-		keys = append(keys, release.ManifestKey{Project: sp.ProjectName(), S3URI: sp.ManifestS3Key(), Kind: sp.ManifestKind()})
-		tags[sp.ProjectName()] = sp.ImageTag()
+		keys = append(keys, release.ManifestKey{Project: pointer.ProjectName(), S3URI: pointer.ManifestS3Key(), Kind: pointer.ManifestKind()})
+		tags[pointer.ProjectName()] = pointer.ImageTag()
 	}
 	return AssembledSet{ManifestKeys: keys, ImageTags: tags}
 }
@@ -41,8 +41,8 @@ func AssembleManifestSet(existing []*release.ServiceProd, bucket, changedProject
 // different project.
 //
 // A fix's release check is a single-project delta like any other check: its own
-// project carries the fix, and every other project is assembled from the
-// live service_prod pointers. When the fix edits a DOWNSTREAM project, the
+// project carries the fix, and every other project is assembled from its
+// production pointer. When the fix edits a DOWNSTREAM project, the
 // project whose release was actually rejected is one of those "other"
 // projects, so the fix would be checked against that project's PRODUCTION
 // code — not the candidate whose rejection the fix is answering. The change
@@ -95,7 +95,7 @@ func applyVerifiedReleaseOverride(set AssembledSet, bucket string, fix, original
 // manifest a project contributes.
 func assembleFor(
 	ctx context.Context, u uow.UnitOfWork, logger *slog.Logger,
-	r *releasecheck.Check, pointers []*release.ServiceProd, bucket string,
+	r *releasecheck.Check, pointers []*release.ProductionPointer, bucket string,
 ) AssembledSet {
 	imageTag := r.ImageTags()[r.ChangedProject()]
 	set := AssembleManifestSet(pointers, bucket, r.ChangedProject(), r.ID(), imageTag, r.ManifestKind())

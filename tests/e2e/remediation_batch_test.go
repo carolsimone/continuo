@@ -96,7 +96,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	t.Logf("release_id=%s changed_project=%s changed_nodes=%s,%s",
 		releaseID, changedProject, ftableEUniqueID, ftableKUniqueID)
 
-	// 1. Build the prod snapshot from the baseline manifests, holding back both
+	// 1. Build the live release from the baseline manifests, holding back both
 	//    broken models so the derived changed set is exactly {ftable_e, ftable_k}.
 	allProjects := baselineProjects(t, ctx, clients)
 	require.NotEmpty(t, allProjects,
@@ -104,7 +104,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	held := map[string]bool{ftableEUniqueID: false, ftableKUniqueID: false}
 	var prodNodes []map[string]string
@@ -112,7 +112,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 		for _, n := range si.nodes {
 			if _, excluded := held[n.uniqueID]; excluded {
 				held[n.uniqueID] = true
-				continue // excluded from prod → a changed node of this release
+				continue // left out of the live release → a changed node of this release
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
@@ -125,7 +125,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 		require.True(t, found,
 			"%s not found in any baseline manifest — is the model in service-2 and the image rebuilt?", nodeID)
 	}
-	t.Logf("seeded prod snapshot with %d nodes (%s and %s excluded)",
+	t.Logf("seeded the live release with %d nodes (%s and %s excluded)",
 		len(prodNodes), ftableEUniqueID, ftableKUniqueID)
 
 	// Tap the streams before the release is posted: the trim loop removes
@@ -134,8 +134,8 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// 2. Place both broken models in the graph. The clusters' steps read the
 	//    failing node's location off the trigger, but the runner's
@@ -293,7 +293,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	t.Logf("release_id=%s changed_project=%s changed_node=%s expected_failures=%s,%s",
 		releaseID, changedProject, ftableUUniqueID, ftableVUniqueID, ftableWUniqueID)
 
-	// 1. Seed prod with EVERY baseline node, but give ftable_u a stale
+	// 1. Seed the live release with EVERY baseline node, but give ftable_u a stale
 	//    content_hash. It is then the release's only changed node, while its two
 	//    descendants keep their real hashes and are pulled into validation only
 	//    because they descend from it — which is precisely the shape a
@@ -304,7 +304,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
@@ -328,15 +328,15 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 		require.True(t, seen[nodeID],
 			"%s not found in any baseline manifest — is the model in service-2 and the image rebuilt?", nodeID)
 	}
-	t.Logf("seeded prod snapshot with %d nodes (%s hash staled)", len(prodNodes), ftableUUniqueID)
+	t.Logf("seeded the live release with %d nodes (%s hash staled)", len(prodNodes), ftableUUniqueID)
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// 2. Place the changed ancestor in the graph. The shared-upstream type edits
 	//    a node that never failed; its location travels on the trigger (each
@@ -511,14 +511,14 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 // closed without merging, draws none.
 //
 // ftable_e (service-2) and ftable_g (service-3) are both held back from
-// current_prod, so a release posted for service-2 sees BOTH as changed — the
+// the live release, so a release posted for service-2 sees BOTH as changed — the
 // same cross-project assembly TestE2E_ReleasePromote_GatedCrossProjectUpstream
 // exercises with a genuine dependency edge, here with none: the two failures
 // share no ancestor and no error signature (they reference different
 // nonexistent relations), so the runner forms two independent clusters, one
 // edit each, grouped by owning project into two pull requests:
 //
-//	POST /releases (service-2; ftable_e and ftable_g both held back from prod)
+//	POST /releases (service-2; ftable_e and ftable_g both held back from the live release)
 //	→ validation fails on both nodes → release "rejected"
 //	→ ONE heal.triggered:v1 carrying both nodes
 //	→ ONE proposal row (attempt 1) holding TWO file edits, one per project
@@ -551,8 +551,8 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 		releaseID, changedProject, otherProject, ftableEUniqueID, ftableGUniqueID)
 
 	// 1. Hold BOTH ftable_e (service-2) and ftable_g (service-3) back from
-	//    current_prod. Neither project's own manifest is what makes them
-	//    "changed" — that comes purely from their absence in current_prod
+	//    the live release. Neither project's own manifest is what makes them
+	//    "changed" — that comes purely from their absence in the live release
 	//    against the assembled candidate topology, which is why this works
 	//    for ftable_g even though the release is posted for service-2, not
 	//    service-3 (see TestE2E_ReleasePromote_GatedCrossProjectUpstream's
@@ -564,7 +564,7 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	held := map[string]bool{ftableEUniqueID: false, ftableGUniqueID: false}
 	var prodNodes []map[string]string
@@ -584,7 +584,7 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	for nodeID, found := range held {
 		require.True(t, found, "%s not found in any baseline manifest", nodeID)
 	}
-	t.Logf("seeded prod snapshot with %d nodes (%s and %s excluded)",
+	t.Logf("seeded the live release with %d nodes (%s and %s excluded)",
 		len(prodNodes), ftableEUniqueID, ftableGUniqueID)
 
 	// Tap the streams before the release is posted: the trim loop removes
@@ -592,14 +592,14 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// The other project's release check needs the rejected project's baseline
-	// pointer to cover every project live in current_prod at activation.
+	// pointer to cover every project live in the live release at activation.
 	var baselineManifest string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT manifest_s3_key FROM service_prod WHERE project_name = $1`, changedProject).Scan(&baselineManifest))
+		`SELECT manifest_s3_key FROM production_pointers WHERE project_name = $1`, changedProject).Scan(&baselineManifest))
 	require.Equal(t, "s3://continuo/service-2/e2e-baseline/manifest.json", baselineManifest)
 
 	// 2. Seed both broken models' :Node nodes in Neo4j so the Locator can
@@ -780,7 +780,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	var prodNodes []map[string]string
 	ftableFound := false
@@ -798,15 +798,15 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 		}
 	}
 	require.True(t, ftableFound, "ftable_e not found in any manifest")
-	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
+	t.Logf("seeded the live release with %d nodes (ftable_e excluded)", len(prodNodes))
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 	seedFTableETopologyNode(t, ctx, clients)
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
@@ -1244,7 +1244,7 @@ func seedModelTopologyNodes(t *testing.T, ctx context.Context, clients *testClie
 // releases are one project at a time and the consumer's release would be
 // validated against the producer's production code.
 //
-//	current_prod: xbreak_up (service-3) at a STALE hash, xbreak_down (service-2) real
+//	The live release: xbreak_up (service-3) at a STALE hash, xbreak_down (service-2) real
 //	POST /releases (service-3) → xbreak_up changed, validates ok; xbreak_down
 //	  (its consumer, from service-2's production manifest) fails on amount_eur
 //	→ ONE heal.triggered:v1 with one node whose changed_ancestors names
@@ -1280,7 +1280,7 @@ func TestE2E_BatchedRemediation_CrossProjectBreakFixedAtProducer(t *testing.T) {
 	require.NotEmpty(t, allProjects,
 		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 	producerImageTag := allProjects[producerProject].imageTag
-	require.NotEmpty(t, producerImageTag, "image_tag missing for %s — setup.sh must seed service_prod", producerProject)
+	require.NotEmpty(t, producerImageTag, "image_tag missing for %s — setup.sh must seed the production pointers", producerProject)
 
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
@@ -1303,8 +1303,8 @@ func TestE2E_BatchedRemediation_CrossProjectBreakFixedAtProducer(t *testing.T) {
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 	// The producer is placed in the graph so the upstream_target step's diff
 	// against the version that runs now has a stored version to read; its
 	// location travels on the trigger.

@@ -25,9 +25,9 @@ func lastSeq(t *testing.T, db interface {
 	return seq
 }
 
-// A real promotion reads current_prod, takes the next promotion seq and upserts
-// current_prod. It must do all three under the release-queue lock so a
-// concurrent announce cannot read current_prod, take a higher seq and clobber
+// A real promotion reads the live release, takes the next promotion seq and upserts
+// the live release. It must do all three under the release-queue lock so a
+// concurrent announce cannot read the live release, take a higher seq and clobber
 // the promotion. AnnounceTopology therefore blocks while another caller holds
 // the lock, and takes its seq only once the lock is free.
 func TestIntegration_AnnounceTopology_SerializesUnderTheReleaseQueueLock(t *testing.T) {
@@ -64,13 +64,13 @@ func TestIntegration_AnnounceTopology_SerializesUnderTheReleaseQueueLock(t *test
 	assert.Equal(t, int64(1), lastSeq(t, db), "the announcement took exactly one seq once the lock was free")
 }
 
-// ReannounceCurrentProd reads current_prod, takes the next seq and upserts
-// current_prod, and must serialise with a concurrent promotion the same way.
-func TestIntegration_ReannounceCurrentProd_SerializesUnderTheReleaseQueueLock(t *testing.T) {
+// ReannounceLiveRelease reads the live release, takes the next seq and upserts
+// the live release, and must serialise with a concurrent promotion the same way.
+func TestIntegration_ReannounceLiveRelease_SerializesUnderTheReleaseQueueLock(t *testing.T) {
 	_, deps, db := setup(t)
 	defer db.Close()
 	ctx := context.Background()
-	_, err := db.Exec(`INSERT INTO current_prod (id, release_id, topology_uri, topology_sha256, node_count, promotion_seq, updated_at)
+	_, err := db.Exec(`INSERT INTO live_release (id, release_id, topology_uri, topology_sha256, node_count, promotion_seq, updated_at)
 		VALUES (1, 'rLive', 's3://test-bucket/tenants/default/topologies/rLive/topology.json.gz', 'deadbeef', 1, 0, now())`)
 	require.NoError(t, err)
 
@@ -81,13 +81,13 @@ func TestIntegration_ReannounceCurrentProd_SerializesUnderTheReleaseQueueLock(t 
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := handlers.ReannounceCurrentProd(ctx, deps)
+		_, err := handlers.ReannounceLiveRelease(ctx, deps)
 		done <- err
 	}()
 
 	select {
 	case err := <-done:
-		t.Fatalf("ReannounceCurrentProd returned (err=%v) while another caller held the release-queue lock", err)
+		t.Fatalf("ReannounceLiveRelease returned (err=%v) while another caller held the release-queue lock", err)
 	case <-time.After(300 * time.Millisecond):
 	}
 	assert.Equal(t, int64(0), lastSeq(t, db), "no seq is taken while the lock is held elsewhere")
@@ -97,13 +97,13 @@ func TestIntegration_ReannounceCurrentProd_SerializesUnderTheReleaseQueueLock(t 
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("ReannounceCurrentProd did not finish after the release-queue lock was released")
+		t.Fatal("ReannounceLiveRelease did not finish after the release-queue lock was released")
 	}
 	assert.Equal(t, int64(1), lastSeq(t, db), "the re-announcement took exactly one seq once the lock was free")
 }
 
-// The validation-passed promotion (promoteToProduction) reads current_prod,
-// takes the next seq and moves current_prod. Held behind the release-queue
+// The validation-passed promotion (promoteToProduction) reads the live release,
+// takes the next seq and moves the live release. Held behind the release-queue
 // lock, HandleValidationResult must not promote: no seq is taken and the check
 // stays Validating until the lock is free, after which it promotes exactly once.
 func TestIntegration_PromoteToProduction_SerializesUnderTheReleaseQueueLock(t *testing.T) {

@@ -1665,7 +1665,7 @@ on click, so there is no hover state.
     <span className="section-header__title">Services</span>
     <span className="section-header__count">7</span>
   </div>
-  <div className="section-header__sub">core is new in this release · 6 carried over from prod</div>
+  <div className="section-header__sub">core is new in this release · 6 carried over from production</div>
 </div>
 <div className="service-tile-grid">
   <div className="service-tile service-tile--changed">
@@ -1704,7 +1704,8 @@ Rules:
   whose image is new in this run. The section sub-line says so and counts
   the rest as carried over, naming the kind of run the page shows
   (`subject`: "release", or "release check") and where the rest came
-  from (`carriedFrom`: "prod" for a candidate; for a release check, the
+  from (`carriedFrom`: "production" for a candidate, whose other images come
+  from the production pointers; for a release check, the
   release it verifies, since its image set is that release's with the fixed
   service swapped in). When the changed service is the only one, the
   sub-line stops after "is new in this release". Unknown changed service:

@@ -126,44 +126,44 @@ func (f *fakeReleaseRepo) DeleteFinishedBefore(context.Context, time.Time, []str
 
 var _ repository.ReleaseCheckRepository = (*fakeReleaseRepo)(nil)
 
-// --- fakeServiceProdRepo: in-memory ServiceProdRepository ---
+// --- fakeProductionPointerRepo: in-memory ProductionPointerRepository ---
 
-type fakeServiceProdRepo struct {
-	rows map[string]*release.ServiceProd
+type fakeProductionPointerRepo struct {
+	rows map[string]*release.ProductionPointer
 }
 
-func newFakeServiceProdRepo() *fakeServiceProdRepo {
-	return &fakeServiceProdRepo{rows: map[string]*release.ServiceProd{}}
+func newFakeProductionPointerRepo() *fakeProductionPointerRepo {
+	return &fakeProductionPointerRepo{rows: map[string]*release.ProductionPointer{}}
 }
 
-// seedServiceProd stores sp as a production pointer the deps' unit of work
+// seedProductionPointer stores pointer as a production pointer the deps' unit of work
 // reads.
-func seedServiceProd(t *testing.T, deps *handlers.Deps, sp *release.ServiceProd) {
+func seedProductionPointer(t *testing.T, deps *handlers.Deps, pointer *release.ProductionPointer) {
 	t.Helper()
-	require.NoError(t, deps.NewUoW().ServiceProdRepo().Upsert(context.Background(), sp))
+	require.NoError(t, deps.NewUoW().ProductionPointerRepo().Upsert(context.Background(), pointer))
 }
 
-func (f *fakeServiceProdRepo) List(context.Context) ([]*release.ServiceProd, error) {
-	out := make([]*release.ServiceProd, 0, len(f.rows))
-	for _, sp := range f.rows {
-		out = append(out, sp)
+func (f *fakeProductionPointerRepo) List(context.Context) ([]*release.ProductionPointer, error) {
+	out := make([]*release.ProductionPointer, 0, len(f.rows))
+	for _, pointer := range f.rows {
+		out = append(out, pointer)
 	}
 	return out, nil
 }
 
-func (f *fakeServiceProdRepo) Get(_ context.Context, name string) (*release.ServiceProd, error) {
+func (f *fakeProductionPointerRepo) Get(_ context.Context, name string) (*release.ProductionPointer, error) {
 	return f.rows[name], nil
 }
 
-func (f *fakeServiceProdRepo) Upsert(_ context.Context, sp *release.ServiceProd) error {
-	f.rows[sp.ProjectName()] = sp
+func (f *fakeProductionPointerRepo) Upsert(_ context.Context, pointer *release.ProductionPointer) error {
+	f.rows[pointer.ProjectName()] = pointer
 	return nil
 }
 
-func (f *fakeServiceProdRepo) ProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+func (f *fakeProductionPointerRepo) ProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
 	names := []string{}
-	for name, sp := range f.rows {
-		if sp.ManifestKind() == kind {
+	for name, pointer := range f.rows {
+		if pointer.ManifestKind() == kind {
 			names = append(names, name)
 		}
 	}
@@ -171,7 +171,7 @@ func (f *fakeServiceProdRepo) ProjectsWithKind(_ context.Context, kind release.M
 	return names, nil
 }
 
-var _ repository.ServiceProdRepository = (*fakeServiceProdRepo)(nil)
+var _ repository.ProductionPointerRepository = (*fakeProductionPointerRepo)(nil)
 
 // --- fakeOutboxRepo: records every entry Create writes ---
 
@@ -197,14 +197,16 @@ var _ pkgoutbox.Repository = (*fakeOutboxRepo)(nil)
 // --- fakeUoW: a no-op transaction wrapping the fakes above ---
 
 type fakeUoW struct {
-	releases    *fakeReleaseRepo
-	serviceProd *fakeServiceProdRepo
-	outbox      *fakeOutboxRepo
+	releases          *fakeReleaseRepo
+	productionPointer *fakeProductionPointerRepo
+	outbox            *fakeOutboxRepo
 }
 
-func (u *fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository           { return u.releases }
-func (u *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository             { return nil }
-func (u *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository             { return u.serviceProd }
+func (u *fakeUoW) ReleaseCheckRepo() repository.ReleaseCheckRepository { return u.releases }
+func (u *fakeUoW) LiveReleaseRepo() repository.LiveReleaseRepository   { return nil }
+func (u *fakeUoW) ProductionPointerRepo() repository.ProductionPointerRepository {
+	return u.productionPointer
+}
 func (u *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository { return nil }
 func (u *fakeUoW) OutboxRepo() pkgoutbox.Repository                              { return u.outbox }
 func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository           { return nil }
@@ -239,7 +241,7 @@ var _ ports.Clock = (fakeClock{})
 // newRetryRemediationDeps builds a handlers.Deps wired to fresh, empty fakes.
 func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
 	releases := &fakeReleaseRepo{releases: map[string]*releasecheck.Check{}}
-	u := &fakeUoW{releases: releases, serviceProd: newFakeServiceProdRepo(), outbox: &fakeOutboxRepo{}}
+	u := &fakeUoW{releases: releases, productionPointer: newFakeProductionPointerRepo(), outbox: &fakeOutboxRepo{}}
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return u },
 		Clock:     fakeClock{t: now},
@@ -376,7 +378,7 @@ func (erroringReleaseRepo) Load(context.Context, string) (*releasecheck.Check, e
 func TestRetryRemediationHandler_GenericErrorIsInternal(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	repo := erroringReleaseRepo{&fakeReleaseRepo{releases: map[string]*releasecheck.Check{}}}
-	u := &fakeUoW{releases: repo.fakeReleaseRepo, serviceProd: newFakeServiceProdRepo(), outbox: &fakeOutboxRepo{}}
+	u := &fakeUoW{releases: repo.fakeReleaseRepo, productionPointer: newFakeProductionPointerRepo(), outbox: &fakeOutboxRepo{}}
 	deps := &handlers.Deps{
 		NewUoW: func() uow.UnitOfWork {
 			return &loadErrUoW{fakeUoW: u, releaseRepo: repo}

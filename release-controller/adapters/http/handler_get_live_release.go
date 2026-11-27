@@ -5,19 +5,19 @@ import (
 	"net/http"
 )
 
-func (s *Server) handleGetCurrentProd(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetLiveRelease(w http.ResponseWriter, r *http.Request) {
 	// Each request gets its own UoW; no Begin is called — the repo uses the
 	// connection pool directly for this read-only path.
 	u := s.deps.NewUoW()
-	cp, err := u.CurrentProdRepo().Get(r.Context())
+	live, err := u.LiveReleaseRepo().Get(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"current_prod_release_id": cp.ReleaseID(),
-		"node_count":              cp.Topology().NodeCount,
-		"updated_at":              cp.UpdatedAt(),
+		"live_release_id": live.ReleaseID(),
+		"node_count":      live.Topology().NodeCount,
+		"updated_at":      live.UpdatedAt(),
 	})
 }

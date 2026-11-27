@@ -81,7 +81,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	// The fix's release check clones its four unchanged upstream models from
-	// production (only ftable_e differs from current_prod in that run, see
+	// production (only ftable_e differs from the live release in that run, see
 	// ensureParseFixClonedProdRelations), so those models must already exist in the
 	// warehouse before the release is posted. Deferred, so it runs when
 	// the test function returns, while the pool is open.
@@ -129,8 +129,8 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// Break ftable_e's compiled SQL in a copy of service-2's baseline manifest,
 	// copy the baseline's compile extras beside it, and pin service-2's
@@ -160,10 +160,10 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	putS3Object(t, ctx, clients,
 		fmt.Sprintf("%s/%s/manifest.json", parseFixBrokenProject, brokenReleaseID), body)
 	copyBaselineExtras(t, ctx, clients, parseFixBrokenProject, brokenReleaseID)
-	pinServiceProd(t, ctx, clients, parseFixBrokenProject, brokenReleaseID, broken.imageTag)
+	pinProductionPointer(t, ctx, clients, parseFixBrokenProject, brokenReleaseID, broken.imageTag)
 	// Put the pointer back so no later test parses the broken manifest. Deferred, so it
 	// runs when the test function returns, while the pool is open.
-	defer pinServiceProd(t, context.Background(), clients,
+	defer pinProductionPointer(t, context.Background(), clients,
 		parseFixBrokenProject, e2eBaselineReleaseID, broken.imageTag)
 
 	postRelease(t, clients, parseFixReleaseProject, releaseID, released.imageTag, false)
@@ -257,7 +257,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 
 // parseFixClonedProdRelations are the production relations this scenario's
 // fix's release check clones rather than rebuilds. Only ftable_e differs from
-// current_prod in that run (every other node's manifest content is untouched),
+// the live release in that run (every other node's manifest content is untouched),
 // so DescendantsClosure(topo, {ftable_e}) yields {ftable_e, ftable_f} as the
 // changed closure, and FullAncestorsClosure of that closure adds {ftable_a,
 // ftable_b, ftable_c, ftable_d} as buildable upstreams — release-controller's
@@ -339,12 +339,12 @@ type parseProposalRow struct {
 	ReleaseChecks  []byte `db:"release_checks"`
 }
 
-// pinServiceProd points a project's production manifest pointer at one release
+// pinProductionPointer points a project's production manifest pointer at one release
 // id's canonical dbt manifest key, keeping its image tag.
-func pinServiceProd(t *testing.T, ctx context.Context, clients *testClients, project, releaseID, imageTag string) {
+func pinProductionPointer(t *testing.T, ctx context.Context, clients *testClients, project, releaseID, imageTag string) {
 	t.Helper()
 	_, err := clients.releaseDB.ExecContext(ctx,
-		`INSERT INTO service_prod (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+		`INSERT INTO production_pointers (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
 		 VALUES ($1, $2, $3, $4, 'dbt', now())
 		 ON CONFLICT (project_name) DO UPDATE SET
 		   release_id = EXCLUDED.release_id,
@@ -353,7 +353,7 @@ func pinServiceProd(t *testing.T, ctx context.Context, clients *testClients, pro
 		   manifest_kind = EXCLUDED.manifest_kind,
 		   updated_at = EXCLUDED.updated_at`,
 		project, releaseID, canonicalManifestS3URI(project, releaseID), imageTag)
-	require.NoError(t, err, "pin service_prod for %s at %s", project, releaseID)
+	require.NoError(t, err, "pin the production pointer of %s at %s", project, releaseID)
 }
 
 // assertRejectedParseStage waits for this release's release.rejected:v1 and

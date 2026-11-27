@@ -116,7 +116,7 @@ A project may list several bindings; a token that matches any one of them may
 release it. With no bindings (the default) no pipeline can use the API: `ui`
 does not trust the GitHub issuer at all, so every CI token is a `401`. A token
 whose repository matches no binding is refused on every route, including
-`GET /api/v1/current-prod`. The other `ciAuth` keys are `issuer` (default
+`GET /api/v1/live-release`. The other `ciAuth` keys are `issuer` (default
 `https://token.actions.githubusercontent.com`; GitHub Enterprise Server uses
 `https://<host>/_services/token`) and `audience`, which defaults to the origin of
 `auth.publicUrl` (scheme, host and port, no path). Changing `ciAuth` rolls the
@@ -179,7 +179,7 @@ All three routes live under `/api/v1` on the `ui`. Each takes
 |---|---|
 | `POST /api/v1/releases` | Submit a release. Answers `202` with `{release_id, status}`. |
 | `GET /api/v1/releases/{id}` | Read a release (below). |
-| `GET /api/v1/current-prod` | Which release production is serving: `{current_prod_release_id, node_count, updated_at}`. An empty `current_prod_release_id` means production has never been seeded. |
+| `GET /api/v1/live-release` | Which release production is serving: `{live_release_id, node_count, updated_at}`. An empty `live_release_id` means production has never been seeded. |
 
 **Submit body.** `release_id`, `project` and `image_tag` are required;
 `bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default,
@@ -231,7 +231,7 @@ one read every few seconds.
 | 403 | `bootstrap_not_allowed` | `"bootstrap": true` from a binding without `allowBootstrap`. |
 | 404 | `not_found` | No such release, a release of a project the CI token's repository is not bound to, or an id outside the `release_id` pattern. |
 | 409 | `release_kind_conflict` | The `release_id` already names a release with a different project, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo` or `commit_sha`. It is also the answer to the two ontology conflicts: the kind `ontology` for a project while another project is the install's ontology, and a project that changes between the kind `ontology` and a node kind. The release service makes these checks. A person's `error` carries its message. A CI token gets `release id already exists with different content`, which names no other release, except for the two ontology conflicts. The kind change, whose message names only the caller's own project (`project "<name>" is released as kind "<kind>": a project cannot change between kind "ontology" and a node kind`), reaches a CI token as it is. The second ontology project reaches it as `an install has one ontology project`, with the other project's name left out. The kind-change refusal also applies when queued releases come up to run: the second of two queued releases that change a project between `ontology` and a node kind is not a 409 but ends `rejected` with the reason `invalid_artifact`, the same text as its `reject_detail`, and nothing is promoted. |
-| 429 | `rate_limited` | More than 30 submits, or more than 300 reads (`GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` together), in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. Submits and reads have separate budgets. |
+| 429 | `rate_limited` | More than 30 submits, or more than 300 reads (`GET /api/v1/releases/{id}` and `GET /api/v1/live-release` together), in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. Submits and reads have separate budgets. |
 | 503 | `auth_unavailable` | The token's issuer could not be reached, its discovery document or signing keys could not be read, or its key set has no usable RS256 key, publishes a `kid` twice, or holds an RSA key shorter than 2048 bits; the dashboard keeps working. Retry. |
 | 503 | `upstream_unavailable` | release-controller is unreachable or failed. Retry; a submit is idempotent. |
 
@@ -326,7 +326,7 @@ TOKEN=$(curl -s -u "continuo-ui:${CLIENT_SECRET}" http://localhost:5556/dex/toke
   -d grant_type=password -d scope="openid email profile" \
   -d username=admin@example.com -d password=password | jq -r .id_token)
 
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8090/api/v1/current-prod
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8090/api/v1/live-release
 ```
 
 If `echo $TOKEN` prints `null`, the login failed: check the Dex port-forward

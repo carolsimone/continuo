@@ -48,15 +48,15 @@ func (u *UnitOfWork) ReleaseCheckRepo() repository.ReleaseCheckRepository {
 	return NewReleaseCheckRepository(u.queryer(), u.deleter)
 }
 
-// CurrentProdRepo returns the current-prod repository bound to the current queryer.
-func (u *UnitOfWork) CurrentProdRepo() repository.CurrentProdRepository {
-	return NewCurrentProdRepository(u.queryer())
+// LiveReleaseRepo returns the live-release repository bound to the current queryer.
+func (u *UnitOfWork) LiveReleaseRepo() repository.LiveReleaseRepository {
+	return NewLiveReleaseRepository(u.queryer())
 }
 
-// ServiceProdRepo returns the per-project production pointer repository bound
+// ProductionPointerRepo returns the per-project production pointer repository bound
 // to the current queryer.
-func (u *UnitOfWork) ServiceProdRepo() repository.ServiceProdRepository {
-	return NewServiceProdRepository(u.queryer())
+func (u *UnitOfWork) ProductionPointerRepo() repository.ProductionPointerRepository {
+	return NewProductionPointerRepository(u.queryer())
 }
 
 // PromotionSequenceRepo returns the promotion-sequence repository bound to the

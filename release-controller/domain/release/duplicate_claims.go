@@ -52,7 +52,7 @@ type Claimant struct {
 //   - CollisionRelation: RelationID is the physical write target, not merely
 //     a graph key. Two nodes claiming it write the same warehouse table and
 //     overwrite each other, and the second silently replaces the first in
-//     the promoted topology, current_prod, and the code bundle. RelationID
+//     the promoted topology, the live release and the code bundle. RelationID
 //     is not necessarily any single claimant's own UniqueID — see Claimant.
 //   - CollisionIdentity: UniqueID is the declared identity two or more nodes
 //     share. It cannot be cleared by renaming a claimant's alias — alias
@@ -243,7 +243,7 @@ func sortClaimants(claimants []Claimant) {
 // being changed in this release, so renaming it never touches a project the
 // release did not modify. This holds for a bootstrap release too — bootstrap
 // still carries a single changedProject (the posting project, also used by
-// promoteToProduction for the service_prod upsert), so its claimant is
+// promoteToProduction to write its production pointer), so its claimant is
 // targeted the same way. Only when neither claimant belongs to the changed
 // project (both are already-promoted projects colliding) does the choice fall
 // back to the first claimant in sorted order, to keep it deterministic; the

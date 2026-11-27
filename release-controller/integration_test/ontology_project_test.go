@@ -79,7 +79,7 @@ func TestIntegration_OntologyRelease_PromotesWithNoNodes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, releasecheck.StatusPromoted, r.Status(), "nothing to validate: the ontology release promotes")
 	var kind, key string
-	require.NoError(t, db.QueryRow(`SELECT manifest_kind, manifest_s3_key FROM service_prod WHERE project_name = 'company-ontology'`).Scan(&kind, &key))
+	require.NoError(t, db.QueryRow(`SELECT manifest_kind, manifest_s3_key FROM production_pointers WHERE project_name = 'company-ontology'`).Scan(&kind, &key))
 	assert.Equal(t, "ontology", kind)
 	assert.Equal(t, "s3://test-bucket/company-ontology/it-ont-1/ontology.yaml", key)
 

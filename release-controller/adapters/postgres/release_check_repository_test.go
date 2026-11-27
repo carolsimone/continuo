@@ -69,7 +69,7 @@ func connectTestDB(t *testing.T) *sqlx.DB {
 func openTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
 	db := connectTestDB(t)
-	_, _ = db.Exec("TRUNCATE release_checks, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
+	_, _ = db.Exec("TRUNCATE release_checks, live_release, release_controller_outbox, message_processing, production_pointers RESTART IDENTITY CASCADE")
 	_, err := db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
 	require.NoError(t, err, "promotion_sequence is missing: run make test-deps-up to apply the release migrations")
 	return db
@@ -507,7 +507,7 @@ func TestReleaseCheckRepository_List_IncludesFailDetail(t *testing.T) {
 		got.FailDetail())
 }
 
-func TestReleaseCheckRepository_DeleteFinishedBeforeKeepsCurrentProd(t *testing.T) {
+func TestReleaseCheckRepository_DeleteFinishedBeforeKeepsLiveRelease(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseCheckRepository(db, nil)
 	ctx := context.Background()
@@ -546,10 +546,10 @@ func TestReleaseCheckRepository_DeleteFinishedBeforeKeepsCurrentProd(t *testing.
 	assert.NotNil(t, young)
 }
 
-func TestReleaseCheckRepository_DeleteFinishedBeforeKeepsServiceProdRefs(t *testing.T) {
+func TestReleaseCheckRepository_DeleteFinishedBeforeKeepsProductionPointerRefs(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseCheckRepository(db, nil)
-	spRepo := postgres.NewServiceProdRepository(db)
+	pointerRepo := postgres.NewProductionPointerRepository(db)
 	ctx := context.Background()
 
 	mkPromoted := func(id string, ts int64) {
@@ -560,18 +560,18 @@ func TestReleaseCheckRepository_DeleteFinishedBeforeKeepsServiceProdRefs(t *test
 		require.NoError(t, repo.Save(ctx, r))
 	}
 
-	// Two old promoted checks; svc-a's pointer references sp-ref, the other has no pointer.
-	mkPromoted("sp-ref", 100)
-	mkPromoted("sp-unref", 100)
-	// svc-a still points at sp-ref (its last promoted check).
-	require.NoError(t, spRepo.Upsert(ctx, release.NewServiceProd("svc-a", "sp-ref", "s3://a", "t1", release.ManifestKindDbt, time.Unix(100, 0).UTC())))
+	// Two old promoted checks; svc-a's pointer references rel-pointed, the other has no pointer.
+	mkPromoted("rel-pointed", 100)
+	mkPromoted("rel-unpointed", 100)
+	// svc-a still points at rel-pointed (its last promoted check).
+	require.NoError(t, pointerRepo.Upsert(ctx, release.NewProductionPointer("svc-a", "rel-pointed", "s3://a", "t1", release.ManifestKindDbt, time.Unix(100, 0).UTC())))
 
-	// Collect keep IDs by reading service_prod (mirroring what the prune handler does).
-	sps, err := spRepo.List(ctx)
+	// Collect keep IDs from the production pointers (mirroring what the prune handler does).
+	pointers, err := pointerRepo.List(ctx)
 	require.NoError(t, err)
-	keepIDs := make([]string, 0, len(sps))
-	for _, sp := range sps {
-		keepIDs = append(keepIDs, sp.ReleaseID())
+	keepIDs := make([]string, 0, len(pointers))
+	for _, pointer := range pointers {
+		keepIDs = append(keepIDs, pointer.ReleaseID())
 	}
 
 	cutoff := time.Unix(1000, 0).UTC()
@@ -579,12 +579,12 @@ func TestReleaseCheckRepository_DeleteFinishedBeforeKeepsServiceProdRefs(t *test
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "only the unreferenced old check should be deleted")
 
-	// sp-ref is still reachable (service_prod points at it).
-	kept, _ := repo.Get(ctx, "sp-ref")
-	assert.NotNil(t, kept, "check referenced by service_prod must survive retention")
+	// rel-pointed is still reachable: svc-a's production pointer names it.
+	kept, _ := repo.Get(ctx, "rel-pointed")
+	assert.NotNil(t, kept, "a check a production pointer names must survive retention")
 
-	// sp-unref has no pointer and is older than cutoff — it should be gone.
-	gone, _ := repo.Get(ctx, "sp-unref")
+	// rel-unpointed has no pointer and is older than cutoff — it should be gone.
+	gone, _ := repo.Get(ctx, "rel-unpointed")
 	assert.Nil(t, gone, "unreferenced old terminal check must be pruned")
 }
 
@@ -989,26 +989,26 @@ func TestReleaseCheckRepository_ARowWithOnlyOneDurationLoadsWithNeither(t *testi
 func TestReleaseCheckRepository_TheMigrationAcceptsPython(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseCheckRepository(db, nil)
-	spRepo := postgres.NewServiceProdRepository(db)
+	pointerRepo := postgres.NewProductionPointerRepository(db)
 	ctx := context.Background()
 	now := time.Unix(100, 0).UTC()
 
 	require.NoError(t, repo.Save(ctx, releasecheck.NewCandidate("rPy", "svc-py", "img:1", false, false, "acme/py", "cafebabe",
 		release.ManifestKindPython, now)))
-	require.NoError(t, spRepo.Upsert(ctx, release.NewServiceProd("svc-py", "rPy", "s3://b/svc-py/rPy/odcs-bundle.json", "img:1",
+	require.NoError(t, pointerRepo.Upsert(ctx, release.NewProductionPointer("svc-py", "rPy", "s3://b/svc-py/rPy/odcs-bundle.json", "img:1",
 		release.ManifestKindPython, now)))
-	sp, err := spRepo.Get(ctx, "svc-py")
+	pointer, err := pointerRepo.Get(ctx, "svc-py")
 	require.NoError(t, err)
-	require.NotNil(t, sp)
-	assert.Equal(t, release.ManifestKindPython, sp.ManifestKind())
+	require.NotNil(t, pointer)
+	assert.Equal(t, release.ManifestKindPython, pointer.ManifestKind())
 
 	err = repo.Save(ctx, releasecheck.NewCandidate("rOther", "svc-x", "img:1", false, false, "acme/x", "cafebabe",
 		release.ManifestKind("other"), now))
 	require.Error(t, err, "release_checks refuses a kind outside dbt, python and ontology")
-	err = spRepo.Upsert(ctx, release.NewServiceProd("svc-x", "rOther", "s3://b/svc-x/x", "img:1", release.ManifestKind("other"), now))
-	require.Error(t, err, "service_prod refuses a kind outside dbt, python and ontology")
+	err = pointerRepo.Upsert(ctx, release.NewProductionPointer("svc-x", "rOther", "s3://b/svc-x/x", "img:1", release.ManifestKind("other"), now))
+	require.Error(t, err, "production_pointers refuses a kind outside dbt, python and ontology")
 
-	for _, table := range []string{"release_checks", "service_prod"} {
+	for _, table := range []string{"release_checks", "production_pointers"} {
 		var n int
 		require.NoError(t, db.GetContext(ctx, &n, `
 			SELECT count(*) FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid

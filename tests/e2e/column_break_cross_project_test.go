@@ -48,12 +48,12 @@ const (
 //	xbreak_down validates against it and fails on the DROPPED amount_eur column
 //	(valid SQL, column simply gone — not a missing relation) →
 //	validation.result:v1 terminal rejects the release with reject_reason
-//	validation_failed → current_prod does NOT move.
+//	validation_failed → the live release does NOT move.
 //
 // xbreak_down lives in service-2, xbreak_up lives in service-3. The test posts a
 // per-project release for service-2. Assembly attaches service-3's baseline
-// manifest (via service_prod), so topology-controller sees xbreak_up as part of
-// the candidate topology. current_prod is seeded with every node EXCEPT the
+// manifest (via the production pointers), so topology-controller sees xbreak_up as part of
+// the candidate topology. The live release is seeded with every node EXCEPT the
 // xbreak pair, so the derived changed set is exactly {xbreak_up, xbreak_down}
 // with the cross-project gating edge xbreak_down -> xbreak_up — identical seeding
 // to the happy-path cross-project test, so only the column mismatch differs.
@@ -76,7 +76,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossProjects(t *testing.T) {
 
 	releaseID := "e2e-colbreak-" + uuid.NewString()[:8]
 	// xbreak_down is in service-2; posting a release for service-2 causes assembly
-	// to attach service-3's manifest (which contains xbreak_up) from service_prod,
+	// to attach service-3's manifest (which contains xbreak_up) from the production pointers,
 	// exposing the cross-project gating edge.
 	changedProject := "service-2"
 	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
@@ -91,7 +91,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossProjects(t *testing.T) {
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
@@ -117,21 +117,21 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossProjects(t *testing.T) {
 		"xbreak_up not found in any manifest — is the model in service-3 and the image rebuilt + manifests re-uploaded?")
 	require.True(t, downFound,
 		"xbreak_down not found in any manifest — is the model in service-2 and the image rebuilt + manifests re-uploaded?")
-	t.Logf("seeded prod snapshot with %d nodes (xbreak pair excluded)", len(prodNodes))
+	t.Logf("seeded the live release with %d nodes (xbreak pair excluded)", len(prodNodes))
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
-	// Capture current_prod's release pointer after seeding its fresh artifact.
+	// Capture the live release after seeding its fresh artifact.
 	// A rejected release must leave this exact value in place.
-	var currentProdBefore string
+	var liveReleaseBefore string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT release_id FROM current_prod`).Scan(&currentProdBefore))
+		`SELECT release_id FROM live_release`).Scan(&liveReleaseBefore))
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
@@ -169,14 +169,14 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossProjects(t *testing.T) {
 	assert.Contains(t, failing, xbreakDownUniqueID,
 		"the downstream node that read the dropped amount_eur column must be the failing node")
 
-	// current_prod must NOT have moved to the rejected release: a rejected release
-	// is never promoted, so the production pointer stays exactly where it was.
-	var currentProdAfter string
+	// The live release must NOT have moved to the rejected release: a rejected release
+	// is never promoted, so the live release stays exactly where it was.
+	var liveReleaseAfter string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT release_id FROM current_prod`).Scan(&currentProdAfter))
-	assert.NotEqual(t, releaseID, currentProdAfter,
-		"a rejected release must never become current_prod")
-	assert.Equal(t, currentProdBefore, currentProdAfter,
-		"current_prod must be unchanged by a rejected release")
-	t.Logf("✅ cross-project column break rejected as validation_failed; current_prod unchanged (release_id=%q)", currentProdAfter)
+		`SELECT release_id FROM live_release`).Scan(&liveReleaseAfter))
+	assert.NotEqual(t, releaseID, liveReleaseAfter,
+		"a rejected release must never become the live release")
+	assert.Equal(t, liveReleaseBefore, liveReleaseAfter,
+		"the live release must be unchanged by a rejected release")
+	t.Logf("✅ cross-project column break rejected as validation_failed; the live release is unchanged (release_id=%q)", liveReleaseAfter)
 }

@@ -25,7 +25,7 @@ describe('ProjectTiles', () => {
     expect(container.querySelector('.section-header__title')?.textContent).toBe('Projects');
     expect(container.querySelector('.section-header__count')?.textContent).toBe('4');
     expect(container.querySelector('.section-header__sub')?.textContent)
-      .toBe('core is new in this release · 3 carried over from prod');
+      .toBe('core is new in this release · 3 carried over from production');
   });
 
   it('paints each tile with the accent buildProjectColors assigns it within this set of projects', () => {
@@ -41,7 +41,7 @@ describe('ProjectTiles', () => {
   it('names what the changed image is new in, when the page is not a release', () => {
     const { container } = render(<ProjectTiles imageTags={TAGS} changedProject="core" subject="release check" />);
     expect(container.querySelector('.section-header__sub')?.textContent)
-      .toBe('core is new in this release check · 3 carried over from prod');
+      .toBe('core is new in this release check · 3 carried over from production');
   });
 
   it('names where the other images were carried over from, when it is not prod', () => {

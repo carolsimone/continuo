@@ -65,7 +65,7 @@ func (n Node) IsExternal() bool {
 
 // WithoutTests returns a copy of the topology without dbt-test nodes. A test
 // is validation-only: it is bind-checked in the candidate schema and kept in
-// current_prod so an unchanged test is not re-checked next release, but it is
+// the live release's topology so an unchanged test is not re-checked next release, but it is
 // never published to catalog, which draws relations.
 func (t Topology) WithoutTests() Topology {
 	out := make(Topology, 0, len(t))

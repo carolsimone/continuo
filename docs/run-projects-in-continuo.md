@@ -431,18 +431,18 @@ here.
 Ask production what it is currently running:
 
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" $API/current-prod | jq
+curl -s -H "Authorization: Bearer $TOKEN" $API/live-release | jq
 ```
 
 ```json
 {
-  "current_prod_release_id": "",
+  "live_release_id": "",
   "node_count": 0,
   "updated_at": "0001-01-01T00:00:00Z"
 }
 ```
 
-An empty `current_prod_release_id` means production has never been seeded, and
+An empty `live_release_id` means production has never been seeded, and
 this first release must **bootstrap**: promote without validation. That is not a
 shortcut — against an empty production, every cross-project dependency looks
 like a new one, so normal validation would reject everything. Real CD detects
@@ -993,7 +993,7 @@ both runtimes. You touched one file in finance.
 Now check production:
 
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" $API/current-prod | jq '.current_prod_release_id'
+curl -s -H "Authorization: Bearer $TOKEN" $API/live-release | jq '.live_release_id'
 ```
 
 Still `rel-marketing-v2`, the release chapter 6 promoted. Production never saw

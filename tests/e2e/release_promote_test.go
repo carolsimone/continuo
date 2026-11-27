@@ -39,7 +39,7 @@ const e2eS3Bucket = "continuo"
 //
 //	<project>/e2e-baseline/manifest.json
 //
-// Tests seed service_prod rows pointing at these keys for every baseline project
+// Tests seed production pointers pointing at these keys for every baseline project
 // so that release-controller assembly can reconstruct the full topology.
 const e2eBaselineReleaseID = "e2e-baseline"
 
@@ -58,10 +58,10 @@ const probeUniqueID = "e2e_schema.rel_probe"
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
 //	→ release.promoted:v1 → catalog loads the artifact and swaps the Neo4j topology.
 //
-// The changed project is service-1 (which contains rel_probe). current_prod is
+// The changed project is service-1 (which contains rel_probe). The live release is
 // seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
 // {rel_probe}: one known-good node that validates without touching any
-// production table. service_prod is seeded for every baseline project so that
+// production table. Every baseline project gets a production pointer so that
 // assembly can reconstruct the full manifest list at advance-time.
 //
 // After promotion, the test also drives two real production runs of rel_probe
@@ -92,7 +92,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
 	// 1. Read the baseline manifests from S3 (uploaded by setup.sh with
-	//    --release-id e2e-baseline). Build the prod snapshot of every node except
+	//    --release-id e2e-baseline). Build the live release from every node except
 	//    rel_probe so the derived changed set is exactly {rel_probe}.
 	allProjects := baselineProjects(t, ctx, clients)
 	require.NotEmpty(t, allProjects,
@@ -100,7 +100,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	var prodNodes []map[string]string
 	probeFound := false
@@ -119,17 +119,17 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	}
 	require.True(t, probeFound,
 		"rel_probe not found in any manifest — is the model in service-1 and the image rebuilt?")
-	t.Logf("seeded prod snapshot with %d nodes (rel_probe excluded)", len(prodNodes))
+	t.Logf("seeded the live release with %d nodes (rel_probe excluded)", len(prodNodes))
 
-	// 2. Reset the queue and seed current_prod and every service_prod pointer
+	// 2. Reset the queue and seed the live release and every production pointer
 	//    so candidate and fix assembly reconstruct the full topology.
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	// 4. POST /releases with the single-project per-project body.
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
@@ -150,10 +150,10 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	//    The swap is asynchronous relative to promotion, so poll.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
 
-	// 7a. Promotion moved current_prod by reference: it points at the release's
+	// 7a. Promotion moved the live release by reference: it points at the release's
 	//     own artifact under the seq the promotion took, and catalog's
 	//     live pointer carries that same seq.
-	assertCurrentProdByReference(t, ctx, clients, releaseID)
+	assertLiveReleaseByReference(t, ctx, clients, releaseID)
 
 	// 7b. The version-ingestion consumer must have recorded the promoted code
 	//     behind the node, fingerprinted identically to what the swap stamped
@@ -170,7 +170,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 		"the recorded version must carry the node's source")
 
 	// Which release authored the current version is not fixed across suite
-	// orderings: this test makes rel_probe "changed" by seeding current_prod
+	// orderings: this test makes rel_probe "changed" by seeding the live release
 	// without it, but rel_probe's source is identical every run, so its
 	// content_hash never moves. If an earlier release in the same suite already
 	// recorded that exact code, the anti-bloat rule correctly writes nothing here
@@ -312,7 +312,7 @@ const (
 // against it; the release then promotes and the candidate schema is torn down.
 //
 // Both rel_probe_up and rel_probe_down live in service-1. The test posts a
-// per-project release for service-1. current_prod is seeded with every candidate
+// per-project release for service-1. The live release is seeded with every candidate
 // node EXCEPT rel_probe_up and rel_probe_down. The derived changed set is
 // therefore exactly {rel_probe_up, rel_probe_down} with the intra-project
 // gating edge rel_probe_down → rel_probe_up.
@@ -344,7 +344,7 @@ func TestE2E_ReleasePromote_GatedIntraProjectUpstream(t *testing.T) {
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
@@ -370,15 +370,15 @@ func TestE2E_ReleasePromote_GatedIntraProjectUpstream(t *testing.T) {
 		"rel_probe_up not found in any manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?")
 	require.True(t, downFound,
 		"rel_probe_down not found in any manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?")
-	t.Logf("seeded prod snapshot with %d nodes (rel_probe* chain excluded)", len(prodNodes))
+	t.Logf("seeded the live release with %d nodes (rel_probe* chain excluded)", len(prodNodes))
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
@@ -403,8 +403,8 @@ func TestE2E_ReleasePromote_GatedIntraProjectUpstream(t *testing.T) {
 //
 // xprobe_down lives in service-2, xprobe_up lives in service-3. The test posts
 // a per-project release for service-2. Assembly attaches service-3's current
-// baseline manifest (via service_prod), so topology-controller sees xprobe_up
-// as part of the candidate topology. current_prod is seeded with every node
+// baseline manifest (via the production pointers), so topology-controller sees xprobe_up
+// as part of the candidate topology. The live release is seeded with every node
 // EXCEPT the xprobe pair, so the derived changed set is exactly
 // {xprobe_up, xprobe_down} with the cross-project gating edge
 // xprobe_down -> xprobe_up.
@@ -425,7 +425,7 @@ func TestE2E_ReleasePromote_GatedCrossProjectUpstream(t *testing.T) {
 	releaseID := "e2e-rel-" + uuid.NewString()[:8]
 	// xprobe_down is in service-2; posting a release for service-2 causes
 	// assembly to attach service-3's manifest (which contains xprobe_up) from
-	// service_prod, exposing the cross-project gating edge.
+	// the production pointers, exposing the cross-project gating edge.
 	changedProject := "service-2"
 	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
@@ -439,7 +439,7 @@ func TestE2E_ReleasePromote_GatedCrossProjectUpstream(t *testing.T) {
 
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+		"image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
@@ -465,15 +465,15 @@ func TestE2E_ReleasePromote_GatedCrossProjectUpstream(t *testing.T) {
 		"xprobe_up not found in any manifest — is the model in service-3 and the image rebuilt + manifests re-uploaded?")
 	require.True(t, downFound,
 		"xprobe_down not found in any manifest — is the model in service-2 and the image rebuilt + manifests re-uploaded?")
-	t.Logf("seeded prod snapshot with %d nodes (xprobe pair excluded)", len(prodNodes))
+	t.Logf("seeded the live release with %d nodes (xprobe pair excluded)", len(prodNodes))
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
@@ -487,11 +487,11 @@ func TestE2E_ReleasePromote_GatedCrossProjectUpstream(t *testing.T) {
 }
 
 // TestE2E_ReleasePromote_BootstrapSkipsValidation proves that a release posted
-// with bootstrap=true promotes directly against an empty current_prod without
+// with bootstrap=true promotes directly against an empty live release without
 // dispatching any validation jobs. This covers the first-ever deploy scenario
 // where there is no production baseline to diff against.
 //
-// Both current_prod and service_prod are cleared to simulate a fresh environment.
+// Both the live release and the production pointers are cleared to simulate a fresh environment.
 // A per-project bootstrap release is posted for service-1; it promotes immediately
 // and swaps the Neo4j topology.
 func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
@@ -518,14 +518,14 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedProject)
 
-	// Empty current_prod and service_prod: a non-bootstrap release against an
+	// Empty the live release and the production pointers: a non-bootstrap release against an
 	// empty baseline would treat every node as changed and could not promote.
 	// A bootstrap release skips validation entirely.
 	resetReleaseControllerQueue(t, ctx, clients)
-	_, err := clients.releaseDB.ExecContext(ctx, "DELETE FROM current_prod")
-	require.NoError(t, err, "clear current_prod")
-	_, err = clients.releaseDB.ExecContext(ctx, "DELETE FROM service_prod")
-	require.NoError(t, err, "clear service_prod")
+	_, err := clients.releaseDB.ExecContext(ctx, "DELETE FROM live_release")
+	require.NoError(t, err, "clear live_release")
+	_, err = clients.releaseDB.ExecContext(ctx, "DELETE FROM production_pointers")
+	require.NoError(t, err, "clear production_pointers")
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, true)
 
@@ -546,7 +546,7 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 // an inactive :Node, so presence alone proves nothing: after promotion the topology
 // must contain active nodes from both the changed project and the unchanged projects.
 //
-// service_prod is seeded for all three projects at the baseline; then a release is
+// Each of the three projects gets its baseline production pointer; then a release is
 // posted for service-1 only (using rel_probe as the changed node). After promotion
 // the topology must still contain nodes that belong to service-2 and service-3.
 func TestE2E_ReleasePromote_PerProjectLeavesOthersIntact(t *testing.T) {
@@ -577,7 +577,7 @@ func TestE2E_ReleasePromote_PerProjectLeavesOthersIntact(t *testing.T) {
 	// Collect the service-2 and service-3 node IDs we expect to stay active in the
 	// Neo4j graph. dbt-test nodes are excluded: they are validation-only and
 	// catalog keeps them out of the graph, so the graph-level anti-amputation
-	// check cannot look for them. current_prod retention of an unchanged test is covered by the
+	// check cannot look for them. The live release keeping an unchanged test is covered by the
 	// bind-check e2e. A dbt-test's manifest id is "test.<project>.<name>[.<hash>]";
 	// a relation node's id is "<schema>.<table>".
 	survivingProjects := []string{"service-2", "service-3"}
@@ -593,7 +593,7 @@ func TestE2E_ReleasePromote_PerProjectLeavesOthersIntact(t *testing.T) {
 	require.NotEmpty(t, expectedSurvivingNodes,
 		"expected at least one service-2/3 node in baseline — setup.sh must have uploaded their manifests")
 
-	// Seed current_prod with ALL nodes except rel_probe (changed node for service-1).
+	// Seed the live release with ALL nodes except rel_probe (changed node for service-1).
 	var prodNodes []map[string]string
 	probeFound := false
 	for svc, si := range allProjects {
@@ -617,8 +617,8 @@ func TestE2E_ReleasePromote_PerProjectLeavesOthersIntact(t *testing.T) {
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
@@ -655,7 +655,7 @@ func requireReleaseControllerHealthy(t *testing.T, clients *testClients) {
 }
 
 // manifestNode is the minimal projection of a dbt manifest node needed to seed
-// current_prod: the change-detector identity (unique_id) and fingerprint.
+// the live release: the change-detector identity (unique_id) and fingerprint.
 type manifestNode struct {
 	uniqueID    string
 	contentHash string
@@ -677,13 +677,13 @@ func canonicalManifestS3URI(project, releaseID string) string {
 // baselineProjects loads every project's baseline manifest from S3 (written by
 // setup.sh with --release-id e2e-baseline), with the compile-extras.json beside
 // it when the baseline has one, and its current image tag from the
-// release-controller service_prod table, returning a map keyed by project name.
-// The map is used to seed current_prod topology snapshots and service_prod rows.
+// project's production pointer, returning a map keyed by project name.
+// The map is used to seed the live release's topology and the production pointers.
 func baselineProjects(t *testing.T, ctx context.Context, clients *testClients) map[string]projectInfo {
 	t.Helper()
 	// Re-establish the per-project image pointers a prior blue/green test may
 	// have mutated, so readProjectImageTag below sees the full baseline.
-	seedBaselineServiceProd(t, ctx, clients)
+	seedBaselineProductionPointers(t, ctx, clients)
 	// Discover all projects by listing objects under their baseline prefix.
 	// The bucket also accumulates candidate-sql/* and code-bundles/* artifacts
 	// across e2e runs, which sort lexicographically before service-*/... keys,
@@ -717,9 +717,9 @@ func baselineProjects(t *testing.T, ctx context.Context, clients *testClients) m
 }
 
 // readProjectImageTag resolves a dbt project's image tag from the
-// release-controller's service_prod pointer table (DB continuo_release) — the
+// project's production pointer in release-controller (DB continuo_release) — the
 // production source of truth for each project's current image. setup.sh /
-// provision-k8s-test-env.sh seed one service_prod row per project with the real
+// provision-k8s-test-env.sh seed one production pointer per project with the real
 // content-addressed tag the kind dbt images are loaded under. execution-controller
 // composes the dbt job image as service-<n>:<image_tag>, so this tag must match
 // the kind image exactly.
@@ -727,11 +727,11 @@ func readProjectImageTag(t *testing.T, ctx context.Context, clients *testClients
 	t.Helper()
 	var tag string
 	err := clients.releaseDB.QueryRowContext(ctx,
-		`SELECT image_tag FROM service_prod WHERE project_name = $1`, project).Scan(&tag)
+		`SELECT image_tag FROM production_pointers WHERE project_name = $1`, project).Scan(&tag)
 	require.NoError(t, err,
-		"read service_prod.image_tag for %s — setup.sh must seed service_prod before e2e", project)
+		"read production_pointers.image_tag for %s — setup.sh must seed the production pointers before e2e", project)
 	require.NotEmpty(t, tag,
-		"service_prod.image_tag is empty for %s — setup.sh seeded an empty tag", project)
+		"production_pointers.image_tag is empty for %s — setup.sh seeded an empty tag", project)
 	return tag
 }
 
@@ -799,7 +799,7 @@ func copyBaselineExtras(t *testing.T, ctx context.Context, clients *testClients,
 // parseManifestNodes returns one manifestNode per node topology-controller's
 // parser yields from project's dbt manifest and its compile extras (nil when
 // the compile wrote none), with the unique_id and content_hash the live parser
-// gives it (see contentHashesOf), sorted by unique_id. Seeding current_prod
+// gives it (see contentHashesOf), sorted by unique_id. Seeding the live release
 // with these makes a node the release leaves unchanged read as unchanged.
 func parseManifestNodes(t *testing.T, ctx context.Context, project string, manifest, extras []byte) []manifestNode {
 	t.Helper()
@@ -825,24 +825,24 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 	require.NoError(t, err, "reset release outbox")
 }
 
-// seedCurrentProd points current_prod at a fresh topology artifact holding
+// seedLiveRelease points the live release at a fresh topology artifact holding
 // nodes. The change detector reads unique_id and content_hash, and the
-// activation guard reads project_name (every project live in the prod topology
-// must carry a service_prod pointer or be the release's changed project), so
+// activation guard reads project_name (every project of the live release
+// must carry a production pointer or be the release's changed project), so
 // each node map must carry unique_id, content_hash, and project. The seed
 // reload rules read a seed's declared columns, so a node map may also carry
 // seed_columns (a JSON array of {"name","type"}), seed_columns_hash,
 // materialized and full_refresh ("true" or "false"), which are copied when
 // present; other node fields stay empty.
 // Each call writes under its own release id, so a prior promoted release never
-// lingers across reused-stack runs. current_prod's promotion seq is left
+// lingers across reused-stack runs. The live release's promotion seq is left
 // alone: seeding announces nothing.
-func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
+func seedLiveRelease(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
 	t.Helper()
 	releaseID := "e2e-prod-" + uuid.NewString()[:8]
 	artifactNodes := make([]topologyartifact.Node, 0, len(nodes))
 	for _, n := range nodes {
-		require.NotEmpty(t, n["project"], "current_prod node %s must identify its project", n["unique_id"])
+		require.NotEmpty(t, n["project"], "live release node %s must identify its project", n["unique_id"])
 		node := topologyartifact.Node{
 			UniqueID:          n["unique_id"],
 			ProjectName:       n["project"],
@@ -853,11 +853,11 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 		}
 		if raw, ok := n["seed_columns"]; ok {
 			require.NoError(t, json.Unmarshal([]byte(raw), &node.SeedColumns),
-				"current_prod node %s: seed_columns must be a JSON array of columns", n["unique_id"])
+				"live release node %s: seed_columns must be a JSON array of columns", n["unique_id"])
 		}
 		if raw, ok := n["full_refresh"]; ok {
 			fullRefresh, err := strconv.ParseBool(raw)
-			require.NoError(t, err, "current_prod node %s: full_refresh must be true or false", n["unique_id"])
+			require.NoError(t, err, "live release node %s: full_refresh must be true or false", n["unique_id"])
 			node.FullRefresh = &fullRefresh
 		}
 		artifactNodes = append(artifactNodes, node)
@@ -868,11 +868,11 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 		ReleaseID:     releaseID,
 		Nodes:         artifactNodes,
 	})
-	require.NoError(t, err, "encode the current_prod artifact")
+	require.NoError(t, err, "encode the live release's artifact")
 	key := topologyartifact.Key(events.DefaultTenantID, releaseID)
 	putS3Object(t, ctx, clients, key, gz)
 	_, err = clients.releaseDB.ExecContext(ctx,
-		`INSERT INTO current_prod (id, release_id, topology_uri, topology_sha256, node_count, updated_at)
+		`INSERT INTO live_release (id, release_id, topology_uri, topology_sha256, node_count, updated_at)
 		 VALUES (1, $1, $2, $3, $4, now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   release_id = EXCLUDED.release_id,
@@ -881,19 +881,19 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 		   node_count = EXCLUDED.node_count,
 		   updated_at = EXCLUDED.updated_at`,
 		releaseID, "s3://"+e2eS3Bucket+"/"+key, sha, len(artifactNodes))
-	require.NoError(t, err, "seed current_prod")
+	require.NoError(t, err, "seed the live release")
 }
 
-// seedServiceProd seeds the baseline manifest key and image tag for every
+// seedProductionPointers seeds the baseline manifest key and image tag for every
 // project. Assembly replaces the changed project's pointer with its candidate;
 // a fix's release check editing another project still needs that baseline pointer to
-// cover every project live in current_prod at activation.
-func seedServiceProd(t *testing.T, ctx context.Context, clients *testClients, allProjects map[string]projectInfo) {
+// cover every project live in the live release at activation.
+func seedProductionPointers(t *testing.T, ctx context.Context, clients *testClients, allProjects map[string]projectInfo) {
 	t.Helper()
 	for svc, si := range allProjects {
 		s3URI := canonicalManifestS3URI(svc, e2eBaselineReleaseID)
 		_, err := clients.releaseDB.ExecContext(ctx,
-			`INSERT INTO service_prod (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+			`INSERT INTO production_pointers (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
 			 VALUES ($1, $2, $3, $4, 'dbt', now())
 			 ON CONFLICT (project_name) DO UPDATE SET
 			   release_id = EXCLUDED.release_id,
@@ -902,7 +902,7 @@ func seedServiceProd(t *testing.T, ctx context.Context, clients *testClients, al
 			   manifest_kind = EXCLUDED.manifest_kind,
 			   updated_at = EXCLUDED.updated_at`,
 			svc, e2eBaselineReleaseID, s3URI, si.imageTag)
-		require.NoError(t, err, "seed service_prod for %s", svc)
+		require.NoError(t, err, "seed the production pointer of %s", svc)
 	}
 }
 

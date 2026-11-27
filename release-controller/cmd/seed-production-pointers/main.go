@@ -1,7 +1,10 @@
-// seed-service-prod is a one-time migration command that populates the
-// service_prod table from the topology current_prod points at. Run it
-// once after deploying the per-project release feature so that each project has
-// a production pointer for the first incremental release cycle.
+// seed-production-pointers writes a production pointer for every project of
+// the live release's topology. Run it on an install whose live release lists
+// projects that have no production pointer: release activation stays blocked
+// until each of them has one. It rewrites the pointer of every project the
+// topology lists, a project that already has one included, to name the live
+// release, the image tag of the project's nodes and the manifest key --keys
+// gives, so --keys names every project.
 //
 // The --keys flag accepts a JSON object mapping project names to their existing
 // manifest S3 keys: a dbt project's manifest.json, and a python project's
@@ -64,19 +67,19 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	cpRepo := postgres.NewCurrentProdRepository(db)
-	cp, err := cpRepo.Get(ctx)
+	liveReleaseRepo := postgres.NewLiveReleaseRepository(db)
+	live, err := liveReleaseRepo.Get(ctx)
 	if err != nil {
-		logger.Error("read current_prod", "error", err)
+		logger.Error("read the live release", "error", err)
 		os.Exit(1)
 	}
-	if cp == nil || cp.ReleaseID() == "" {
-		logger.Error("current_prod is empty — nothing to seed from")
+	if live == nil || live.ReleaseID() == "" {
+		logger.Error("nothing has been promoted, so there is no live release to seed from")
 		os.Exit(1)
 	}
 
-	if cp.Topology().IsZero() {
-		logger.Error("current_prod references no topology artifact", "release_id", cp.ReleaseID())
+	if live.Topology().IsZero() {
+		logger.Error("the live release references no topology artifact", "release_id", live.ReleaseID())
 		os.Exit(1)
 	}
 	s3Cfg, err := loadS3Config()
@@ -89,22 +92,22 @@ func main() {
 		logger.Error("connect to object storage", "error", err)
 		os.Exit(1)
 	}
-	topo, err := s3adapter.NewTopologyArtifactStore(objectStore, s3Cfg.Bucket, 1).Load(ctx, cp.Topology())
+	topo, err := s3adapter.NewTopologyArtifactStore(objectStore, s3Cfg.Bucket, 1).Load(ctx, live.Topology())
 	if err != nil {
-		logger.Error("load current_prod topology", "error", err)
+		logger.Error("load the live release's topology", "error", err)
 		os.Exit(1)
 	}
 
-	spRepo := postgres.NewServiceProdRepository(db)
+	pointerRepo := postgres.NewProductionPointerRepository(db)
 
-	n, err := handlers.SeedServiceProd(ctx, cp.ReleaseID(), topo, existingKeys, spRepo, time.Now().UTC())
+	n, err := handlers.SeedProductionPointers(ctx, live.ReleaseID(), topo, existingKeys, pointerRepo, time.Now().UTC())
 	if err != nil {
 		logger.Error("seed failed", "error", err)
 		os.Exit(1)
 	}
 
-	logger.Info("seed complete", "projects_seeded", n, "release_id", cp.ReleaseID())
-	fmt.Printf("seeded %d project(s) from release %s\n", n, cp.ReleaseID())
+	logger.Info("seed complete", "projects_seeded", n, "release_id", live.ReleaseID())
+	fmt.Printf("seeded %d project(s) from release %s\n", n, live.ReleaseID())
 }
 
 // loadPostgresConfig reads the connection settings from the environment.

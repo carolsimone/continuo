@@ -6,7 +6,7 @@ import (
 )
 
 // DerivedChangedNodeIDs returns the unique_ids of candidate nodes whose dbt
-// content_hash differs from the current prod topology — either because the node
+// content_hash differs from the live release's topology — either because the node
 // is new (absent from prod) or because its hash changed. Removed nodes (present
 // in prod but absent from the candidate) are not returned: only candidate nodes
 // can seed a validation leg. Output follows candidate order for determinism.

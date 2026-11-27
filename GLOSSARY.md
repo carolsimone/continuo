@@ -88,7 +88,7 @@ _Avoid_: pipeline run, release pipeline, verification run, validation run
 
 **Live release**:
 The release production is on now. A new run uses it unless it repeats an earlier run's release.
-_Avoid_: latest snapshot, current topology
+_Avoid_: latest snapshot, current topology, current prod
 
 **Promotion**:
 The moment a candidate release becomes the live release.

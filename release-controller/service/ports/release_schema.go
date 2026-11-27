@@ -5,7 +5,8 @@ import "context"
 // ReleaseSchema reads whether the release-controller database holds the
 // schema its migrations build.
 type ReleaseSchema interface {
-	// Initialized reports whether the release schema's base tables
-	// (release_checks, current_prod and service_prod) exist.
+	// Initialized reports whether the tables of the release checks, the live
+	// release and the production pointers (release_checks, live_release and
+	// production_pointers) exist.
 	Initialized(ctx context.Context) (bool, error)
 }

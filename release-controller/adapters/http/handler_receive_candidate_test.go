@@ -123,7 +123,7 @@ func TestHandleReceiveCandidate_OntologyConflictsAre409(t *testing.T) {
 	t.Run("a second ontology project", func(t *testing.T) {
 		deps, releases := newRetryRemediationDeps(now)
 		deps.OntologyEnabled = true
-		seedServiceProd(t, deps, release.NewServiceProd("ontology-a", "rel-0", "s3://b/ontology-a/rel-0/ontology.yaml", "img:1",
+		seedProductionPointer(t, deps, release.NewProductionPointer("ontology-a", "rel-0", "s3://b/ontology-a/rel-0/ontology.yaml", "img:1",
 			release.ManifestKindOntology, now))
 		in := validCandidateInput()
 		in.Project, in.Kind = "ontology-b", "ontology"
@@ -138,7 +138,7 @@ func TestHandleReceiveCandidate_OntologyConflictsAre409(t *testing.T) {
 	t.Run("a dbt project released as the ontology", func(t *testing.T) {
 		deps, releases := newRetryRemediationDeps(now)
 		deps.OntologyEnabled = true
-		seedServiceProd(t, deps, release.NewServiceProd("core", "rel-0", "s3://b/core/rel-0/manifest.json", "img:1",
+		seedProductionPointer(t, deps, release.NewProductionPointer("core", "rel-0", "s3://b/core/rel-0/manifest.json", "img:1",
 			release.ManifestKindDbt, now))
 		in := validCandidateInput()
 		in.Kind = "ontology"
@@ -153,7 +153,7 @@ func TestHandleReceiveCandidate_OntologyConflictsAre409(t *testing.T) {
 	t.Run("the ontology project released as python", func(t *testing.T) {
 		deps, releases := newRetryRemediationDeps(now)
 		deps.OntologyEnabled = true
-		seedServiceProd(t, deps, release.NewServiceProd("core", "rel-0", "s3://b/core/rel-0/ontology.yaml", "img:1",
+		seedProductionPointer(t, deps, release.NewProductionPointer("core", "rel-0", "s3://b/core/rel-0/ontology.yaml", "img:1",
 			release.ManifestKindOntology, now))
 		in := validCandidateInput()
 		in.Kind = "python"
@@ -178,7 +178,7 @@ func (beginFailsUoW) Begin(context.Context) error {
 // the cause is logged, never returned.
 func TestHandleReceiveCandidate_StorageFailureIs500WithoutInternalText(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
-	failing := beginFailsUoW{&fakeUoW{releases: releases, serviceProd: newFakeServiceProdRepo(), outbox: &fakeOutboxRepo{}}}
+	failing := beginFailsUoW{&fakeUoW{releases: releases, productionPointer: newFakeProductionPointerRepo(), outbox: &fakeOutboxRepo{}}}
 	deps.NewUoW = func() uow.UnitOfWork { return failing }
 	var logged bytes.Buffer
 	srv := NewServer(liveness.NewRegistry(), "0", slog.New(slog.NewTextHandler(&logged, nil)))

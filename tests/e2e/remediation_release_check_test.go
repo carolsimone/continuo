@@ -60,7 +60,7 @@ func TestE2E_FixReleaseCheck_FailsConsumerFixThatIgnoresChangedUpstream(t *testi
 	require.NotEmpty(t, allProjects,
 		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 	changedImageTag := allProjects[changedProject].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed service_prod", changedProject)
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed the production pointers", changedProject)
 
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
@@ -83,8 +83,8 @@ func TestE2E_FixReleaseCheck_FailsConsumerFixThatIgnoresChangedUpstream(t *testi
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.HealTriggeredV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 	seedModelTopologyNodes(t, ctx, clients,
 		topologyModel{uniqueID: ybreakUpUniqueID, schema: "e2e_schema", table: "ybreak_up", project: changedProject, filePath: "models/ybreak_up.sql"},
 		topologyModel{uniqueID: ybreakDownUniqueID, schema: "e2e_schema", table: "ybreak_down", project: changedProject, filePath: "models/ybreak_down.sql"},

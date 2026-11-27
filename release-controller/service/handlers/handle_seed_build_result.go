@@ -173,7 +173,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 	// schema). rebuiltFromCandidateFor derives it as the parse leg did, so a
 	// fix's release check identifies the same built seeds and assigns the same
 	// per-node build strategy here as it did when it requested the seed build.
-	prod, err := currentProdTopology(ctx, d, u)
+	prod, err := liveReleaseTopology(ctx, d, u)
 	if err != nil {
 		return err
 	}

@@ -85,8 +85,8 @@ func TestE2E_RebaselineRelease_AdoptsSeedsAndValidatesNothing(t *testing.T) {
 	waitForPromoteSeedRunsToEnd(t, ctx, clients, "", 5*time.Minute)
 	defer restoreDefaultTopologyAfter(t, clients, releaseID)
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 
 	token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", imageTag)
 	status, body := submitPublicRelease(t, clients, token, map[string]any{

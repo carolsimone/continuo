@@ -251,7 +251,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releaseche
 	// A relation must be produced by exactly one node, and a unique_id must
 	// identify exactly one node — two independent checks. Two nodes claiming
 	// the same relation write the same warehouse table, the second silently
-	// replacing the first in the promoted topology, current_prod, and the
+	// replacing the first in the promoted topology, the live release and the
 	// code bundle. Two nodes sharing a unique_id are indistinguishable to
 	// every downstream lookup keyed on it — the code bundle, the candidate
 	// object key, release-controller's own topology walks,
@@ -268,15 +268,15 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releaseche
 		return rejectDuplicateTable(ctx, d, u, r, in.ReleaseID, claims, now)
 	}
 
-	// A bootstrap release skips validation entirely: it seeds current_prod and
-	// swaps topology directly. This is the one-time cutover (or a trusted
-	// re-baseline) where current_prod is empty/mismatched and normal validation
-	// would reject every cross-project upstream as new.
+	// A bootstrap release skips validation entirely: it becomes the live release
+	// and swaps topology directly. This is the one-time cutover (or a trusted
+	// re-baseline) where the live release is absent or does not match and normal
+	// validation would reject every cross-project upstream as new.
 	if r.IsBootstrap() {
 		return promoteBootstrap(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, now)
 	}
 
-	prod, err := currentProdTopology(ctx, d, u)
+	prod, err := liveReleaseTopology(ctx, d, u)
 	if err != nil {
 		return err
 	}
@@ -286,8 +286,8 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releaseche
 	// Derive the validation build sets: candidate nodes rebuilt from their own
 	// SQL rather than cloned from production, split into the fix's own delta
 	// (scope) and the rejected release's validated-ok changes (context). A
-	// production release returns every node that differs from current_prod as
-	// scope with no context (bootstrap, with no prod row, treats every candidate
+	// production release returns every node that differs from the live release
+	// as scope with no context (bootstrap, with no live release, treats every candidate
 	// node as new and validates the whole topology). A fix's release check splits
 	// the two so the fix's shared changed ancestor is rebuilt for context
 	// without expanding this check to a sibling project's still-unfixed failure.
@@ -422,9 +422,9 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releaseche
 //     seed the closure themselves.
 //
 // A candidate release, and every fix's release check that names no verified
-// release, returns every node that differs from current_prod as scope with no
-// context (bootstrap, with no prod row, treats every candidate node as new and
-// validates the whole topology).
+// release, returns every node that differs from the live release as scope with
+// no context (bootstrap, with no live release, treats every candidate node as
+// new and validates the whole topology).
 //
 // A fix's release check exists to verify a proposed fix, and it is measured
 // against the graph the rejection happened in: the rejected candidate plus the
@@ -434,12 +434,12 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releaseche
 // that ancestor drag the OTHER project's still-broken descendant — named in the
 // rejected release's failing_nodes — into this check and re-fail it. A node the
 // rejected release recorded as not ok that the fix did not touch is in neither
-// set; a node another release promoted since the rejection matches current_prod
-// and is in neither set.
+// set; a node another release promoted since the rejection matches the live
+// release and is in neither set.
 //
 // If the verified release cannot be read, never parsed far enough to hold a
 // candidate topology, or its artifact is missing or corrupt, the fix's release
-// check falls back to the plain current_prod diff as scope — a weaker but
+// check falls back to the plain diff against the live release as scope — a weaker but
 // still-running check, mirroring assembleFor's graceful degradation. An
 // unreachable object store is returned as an error instead: measuring a fix
 // against the wrong baseline because of an outage would be silent and wrong.
@@ -596,7 +596,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 
 // promoteBootstrap promotes a bootstrap release without validation: it records
 // the reference to the candidate topology (TransitionToValidating with no validation nodes) and
-// runs the shared promoteToProduction path, which seeds current_prod and emits
+// runs the shared promoteToProduction path, which makes it the live release and emits
 // release.promoted:v1. It calls Telemetry for the parse, a zero-node validation
 // and the promotion, as any other promotion does (the adapter observes no
 // validating sample for a zero-node validation).
@@ -607,7 +607,7 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release
 	var prod release.Topology
 	if !r.IsRebaseline() {
 		var err error
-		if prod, err = currentProdTopology(ctx, d, u); err != nil {
+		if prod, err = liveReleaseTopology(ctx, d, u); err != nil {
 			return err
 		}
 	}

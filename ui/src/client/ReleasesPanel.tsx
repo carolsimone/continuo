@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { ReleaseListItem, ReleasesListResponse, CurrentProd, ReleaseQueueResponse } from './types';
+import { ReleaseListItem, ReleasesListResponse, LiveRelease, ReleaseQueueResponse } from './types';
 import { releasePillClass, reasonLabel } from './release-helpers';
 
 const STATUS_FILTERS = ['', 'promoted', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
@@ -10,7 +10,7 @@ export default function ReleasesPanel() {
   const [items, setItems] = useState<ReleaseListItem[]>([]);
   const [nextCursor, setNextCursor] = useState('');
   const [status, setStatus] = useState('');
-  const [currentProd, setCurrentProd] = useState<CurrentProd | null>(null);
+  const [liveRelease, setLiveRelease] = useState<LiveRelease | null>(null);
   const [releaseQueue, setReleaseQueue] = useState<ReleaseQueueResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +32,7 @@ export default function ReleasesPanel() {
 
   useEffect(() => {
     const f = () => {
-      fetch('/api/releases/current-prod').then(r => r.json()).then(setCurrentProd).catch(() => {});
+      fetch('/api/releases/live-release').then(r => r.json()).then(setLiveRelease).catch(() => {});
       fetch('/api/release-queue').then(r => r.json()).then(setReleaseQueue).catch(() => {});
     };
     f();
@@ -48,10 +48,10 @@ export default function ReleasesPanel() {
         </div>
       )}
 
-      {currentProd?.current_prod_release_id ? (
+      {liveRelease?.live_release_id ? (
         <div className="info-strip info-strip--info">
           <span className="info-strip__icon">ⓘ</span>
-          Live prod · <strong>{currentProd.current_prod_release_id}</strong> · {currentProd.node_count} nodes
+          Live release · <strong>{liveRelease.live_release_id}</strong> · {liveRelease.node_count} nodes
         </div>
       ) : (
         <div className="info-strip info-strip--neutral">

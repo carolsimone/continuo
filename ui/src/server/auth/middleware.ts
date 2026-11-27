@@ -131,7 +131,7 @@ export function bearerAuth(deps: BearerDeps): RequestHandler {
 const PER_ACTION_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: 'POST', path: /^\/v1\/releases\/?$/ },
   { method: 'GET', path: /^\/v1\/releases\/[^/]+\/?$/ },
-  { method: 'GET', path: /^\/v1\/current-prod\/?$/ },
+  { method: 'GET', path: /^\/v1\/live-release\/?$/ },
 ];
 
 // Gate for everything mounted under /api. Apart from the routes in

@@ -55,41 +55,41 @@ func assertCandidateTopologyArtifact(t *testing.T, ctx context.Context, clients 
 	return node
 }
 
-// assertCurrentProdByReference checks what a promotion left on current_prod:
+// assertLiveReleaseByReference checks what a promotion left on the live release:
 // it names releaseID, points at that release's own artifact (the candidate run's
 // URI and checksum, no copy), carries the promotion seq the promotion took, and
 // catalog's live pointer holds the release under that same seq.
-func assertCurrentProdByReference(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
+func assertLiveReleaseByReference(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
 	t.Helper()
 	var cpRelease, cpURI, cpSHA, checkURI, checkSHA string
 	var cpSeq int64
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT release_id, topology_uri, topology_sha256, promotion_seq FROM current_prod WHERE id = 1`).
-		Scan(&cpRelease, &cpURI, &cpSHA, &cpSeq), "read current_prod")
+		`SELECT release_id, topology_uri, topology_sha256, promotion_seq FROM live_release WHERE id = 1`).
+		Scan(&cpRelease, &cpURI, &cpSHA, &cpSeq), "read live_release")
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
 		`SELECT candidate_topology_uri, candidate_topology_sha256 FROM release_checks WHERE check_id = $1`,
 		releaseID).Scan(&checkURI, &checkSHA), "read the topology reference of release %s", releaseID)
 
 	require.Equal(t, releaseID, cpRelease)
-	require.Equal(t, checkURI, cpURI, "current_prod must point at the release's own artifact")
+	require.Equal(t, checkURI, cpURI, "the live release must point at the release's own artifact")
 	require.Equal(t, checkSHA, cpSHA)
 	require.Positive(t, cpSeq, "a promotion takes a promotion seq")
 	require.Equal(t, livePointer{releaseID: releaseID, promotionSeq: cpSeq}, readLivePointer(ctx, clients),
 		"catalog's live pointer must carry the seq the promotion took")
-	t.Logf("✅ current_prod → %s at promotion seq %d", cpURI, cpSeq)
+	t.Logf("✅ live release → %s at promotion seq %d", cpURI, cpSeq)
 }
 
-// currentProdTopology reads the artifact current_prod points at from MinIO and
+// liveReleaseTopology reads the artifact the live release points at from MinIO and
 // decodes it, verifying the recorded checksum.
-func currentProdTopology(t *testing.T, ctx context.Context, clients *testClients) topologyartifact.Document {
+func liveReleaseTopology(t *testing.T, ctx context.Context, clients *testClients) topologyartifact.Document {
 	t.Helper()
 	var uri, sha string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT topology_uri, topology_sha256 FROM current_prod WHERE id = 1`).Scan(&uri, &sha),
-		"read current_prod's topology reference")
+		`SELECT topology_uri, topology_sha256 FROM live_release WHERE id = 1`).Scan(&uri, &sha),
+		"read the live release's topology reference")
 	prefix := "s3://" + e2eS3Bucket + "/"
-	require.True(t, strings.HasPrefix(uri, prefix), "current_prod's artifact %s is not in bucket %s", uri, e2eS3Bucket)
+	require.True(t, strings.HasPrefix(uri, prefix), "the live release's artifact %s is not in bucket %s", uri, e2eS3Bucket)
 	doc, err := topologyartifact.Decode(getS3Object(t, ctx, clients, strings.TrimPrefix(uri, prefix)), sha)
-	require.NoError(t, err, "decode current_prod's artifact %s", uri)
+	require.NoError(t, err, "decode the live release's artifact %s", uri)
 	return doc
 }

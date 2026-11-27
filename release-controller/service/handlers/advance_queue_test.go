@@ -65,8 +65,8 @@ func TestAdvanceQueue_OtherProjectsIncluded_ImageTagsAssembledOnRelease(t *testi
 	deps.Bucket = "bucket"
 
 	// Pre-seed two other projects' production pointers.
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
-	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "svc-a", ReleaseID: "rNEW", ImageTag: "tag-a-new", Repo: "acme/demo", CommitSHA: "deadbeef",
@@ -103,8 +103,8 @@ func TestAdvanceQueue_ProdSeeded_UncoveredProject_BlocksActivation(t *testing.T)
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
-	// current_prod lists three live projects, but no service_prod pointers exist
-	// (the state right after an upgrade from the whole-snapshot model).
+	// The live release lists three live projects, but none of them has a
+	// production pointer.
 	topology := release.Topology{
 		{UniqueID: "a", ProjectName: "svc-a"},
 		{UniqueID: "b", ProjectName: "svc-b"},
@@ -118,7 +118,7 @@ func TestAdvanceQueue_ProdSeeded_UncoveredProject_BlocksActivation(t *testing.T)
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	// svc-b and svc-c are uncovered, so the release stays Received and nothing
-	// is emitted; the operator must seed service_prod first.
+	// is emitted; the operator must seed their production pointers first.
 	r, _ := store.GetRelease("rA")
 	assert.Equal(t, releasecheck.StatusReceived, r.Status())
 	assert.Empty(t, outboxEntries(store))
@@ -136,8 +136,8 @@ func TestAdvanceQueue_ProdSeeded_AllProjectsCovered_Proceeds(t *testing.T) {
 	seedProd(t, deps, store, "rProd", topology, time.Unix(0, 0).UTC())
 
 	// svc-b and svc-c are covered by pointers; svc-a is the changed project.
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
-	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
@@ -152,9 +152,9 @@ func TestAdvanceQueue_ProdSeeded_AllProjectsCovered_Proceeds(t *testing.T) {
 	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
 }
 
-// TestUncoveredProdProjects_IgnoresUnknownExternalNodes pins that the live production
-// topology's unknown-external nodes do not count as a project without a service_prod
-// pointer: an unknown-external node has no project, so no pointer can ever cover it,
+// TestUncoveredProdProjects_IgnoresUnknownExternalNodes pins that the live
+// release's unknown-external nodes do not count as a project without a
+// production pointer: an unknown-external node has no project, so no pointer can ever cover it,
 // and counting it would hold every release in the queue.
 func TestUncoveredProdProjects_IgnoresUnknownExternalNodes(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
@@ -164,7 +164,7 @@ func TestUncoveredProdProjects_IgnoresUnknownExternalNodes(t *testing.T) {
 		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "unknown-external", UpstreamUniqueIDs: []string{}},
 		{UniqueID: "b", ProjectName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
 	}, time.Unix(0, 0).UTC())
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
@@ -222,7 +222,7 @@ func TestAdvanceQueue_NoQueued_DoesNothing(t *testing.T) {
 func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
-	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Project: "svc-py", ReleaseID: "rPy", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
@@ -269,7 +269,7 @@ func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testin
 func TestAdvanceQueue_AnOntologyReleaseGoesStraightToParsing(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
-	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
 	store.SeedRelease(releasecheck.NewCandidate("rOnt", "company-ontology", "img:1", false, false, "acme/ontology", "cafebabe",
 		release.ManifestKindOntology, deps.Clock.Now()))
 
@@ -385,7 +385,7 @@ func TestAdvanceQueue_FixVerifiesTheRejectedReleasesCandidate(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO", deps.Clock.Now()))
-	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	store.SeedRelease(releasecheck.NewFix("rVerify", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
@@ -412,7 +412,7 @@ func TestAdvanceQueue_FixVerifiesTheRejectedReleasesCandidate(t *testing.T) {
 func TestAdvanceQueue_FixVerifyingAnUnknownRelease_FallsBackToProd(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
-	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	store.SeedRelease(releasecheck.NewFix("rVerify2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
@@ -477,18 +477,18 @@ func releaseRequestedImageTags(t *testing.T, payload []byte) map[string]string {
 
 // assertKindChangeRejectedAtActivation checks that the queued check releaseID of
 // the project named project ended with kind-change refusal text as an invalid_artifact
-// rejection, was never parsed, and left the project's service_prod row and
-// current_prod as they were.
-func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releaseID, project, refusal string, row *release.ServiceProd) {
+// rejection, was never parsed, and left the project's production pointer and
+// the live release as they were.
+func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releaseID, project, refusal string, row *release.ProductionPointer) {
 	t.Helper()
 	r := mustGetRelease(t, store, releaseID)
 	assert.Equal(t, releasecheck.StatusRejected, r.Status(), "a kind change is rejected, never promoted")
 	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), r.FailReason())
 	assert.Equal(t, refusal, r.FailDetail())
 
-	assert.Equal(t, row.ManifestKind(), store.GetServiceProd(project).ManifestKind(), "the project keeps its stored kind")
-	assert.Equal(t, row.ReleaseID(), store.GetServiceProd(project).ReleaseID(), "no service_prod row is written")
-	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
+	assert.Equal(t, row.ManifestKind(), store.GetProductionPointer(project).ManifestKind(), "the project keeps its stored kind")
+	assert.Equal(t, row.ReleaseID(), store.GetProductionPointer(project).ReleaseID(), "no production pointer is written")
+	assert.Zero(t, store.LiveReleaseUpsertCalls(), "the live release is not moved")
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleaseRequestedV1, e.StreamName, "a refused kind change requests no parse")
 		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a refused kind change is not promoted")
@@ -513,8 +513,8 @@ func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releas
 func TestAdvanceQueue_AnOntologyCheckOfAServiceNowReleasedAsDbtIsRejectedAtActivation(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
-	row := release.NewServiceProd("svc-x", "rDbt", "s3://b/svc-x/rDbt/manifest.json", "t-dbt", release.ManifestKindDbt, time.Unix(0, 0))
-	store.SeedServiceProd(row)
+	row := release.NewProductionPointer("svc-x", "rDbt", "s3://b/svc-x/rDbt/manifest.json", "t-dbt", release.ManifestKindDbt, time.Unix(0, 0))
+	store.SeedProductionPointer(row)
 	store.SeedRelease(releasecheck.NewCandidate("rOnt", "svc-x", "img:1", false, false, "acme/ontology", "cafebabe",
 		release.ManifestKindOntology, deps.Clock.Now()))
 	store.SeedRelease(releasecheck.NewCandidate("rBehind", "svc-y", "img:2", false, false, "acme/demo", "deadbeef",
@@ -534,8 +534,8 @@ func TestAdvanceQueue_AnOntologyCheckOfAServiceNowReleasedAsDbtIsRejectedAtActiv
 func TestAdvanceQueue_ADbtCheckOfTheOntologyProjectIsRejectedAtActivation(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
-	row := release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0))
-	store.SeedServiceProd(row)
+	row := release.NewProductionPointer("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0))
+	store.SeedProductionPointer(row)
 	store.SeedRelease(releasecheck.NewCandidate("rDbt", "svc-x", "img:2", false, false, "acme/demo", "deadbeef",
 		release.ManifestKindDbt, deps.Clock.Now()))
 
@@ -550,7 +550,7 @@ func TestAdvanceQueue_ADbtCheckOfTheOntologyProjectIsRejectedAtActivation(t *tes
 func TestAdvanceQueue_ACheckKeepingItsProjectsKindSideIsNotRejected(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
-	store.SeedServiceProd(release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0)))
+	store.SeedProductionPointer(release.NewProductionPointer("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0)))
 	store.SeedRelease(releasecheck.NewCandidate("rOnt2", "svc-x", "img:2", false, false, "acme/ontology", "cafebabe",
 		release.ManifestKindOntology, deps.Clock.Now()))
 

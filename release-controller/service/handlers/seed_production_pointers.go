@@ -11,12 +11,12 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 )
 
-// SeedServiceProd derives one service_prod pointer per distinct project in the
-// production topology topo of release releaseID and upserts it. The manifest S3
-// key for each project is taken verbatim from existingKeys (project_name -> s3
-// key); a project present in topo but absent from existingKeys is an error (we
-// cannot point at a manifest we do not know). image_tag is the first non-empty tag among the
-// project's nodes. manifest_kind is derived from the project's own nodes: any
+// SeedProductionPointers derives one production pointer per distinct project
+// in the production topology topo of release releaseID and upserts it. The
+// manifest S3 key for each project is taken verbatim from existingKeys
+// (project_name -> s3 key); a project present in topo but absent from
+// existingKeys is an error (we cannot point at a manifest we do not know).
+// image_tag is the first non-empty tag among the project's nodes. manifest_kind is derived from the project's own nodes: any
 // node whose NodeType.IsPython() is true (python-node, python-csv or python-api)
 // makes the project a python project, otherwise ManifestKindDbt; a project whose
 // nodes mix python and non-python types is an error (a project is either a
@@ -25,22 +25,22 @@ import (
 // a python project whose key names anything else is an error. Idempotent:
 // re-running upserts the same rows.
 // Returns the count of projects seeded.
-func SeedServiceProd(
+func SeedProductionPointers(
 	ctx context.Context,
 	releaseID string,
 	topo release.Topology,
 	existingKeys map[string]string,
-	repo repository.ServiceProdRepository,
+	repo repository.ProductionPointerRepository,
 	now time.Time,
 ) (int, error) {
 	// Group nodes by project name; track the first non-empty image tag and
 	// which node kinds (dbt vs python) were seen, per project.
-	type svcEntry struct {
+	type projectEntry struct {
 		imageTag  string
 		hasDbt    bool
 		hasPython bool
 	}
-	entries := map[string]*svcEntry{}
+	entries := map[string]*projectEntry{}
 	orderSeen := []string{} // deterministic iteration order
 
 	for _, node := range topo {
@@ -48,7 +48,7 @@ func SeedServiceProd(
 			continue
 		}
 		if _, exists := entries[node.ProjectName]; !exists {
-			entries[node.ProjectName] = &svcEntry{}
+			entries[node.ProjectName] = &projectEntry{}
 			orderSeen = append(orderSeen, node.ProjectName)
 		}
 		e := entries[node.ProjectName]
@@ -84,9 +84,9 @@ func SeedServiceProd(
 		if entries[project].hasPython {
 			kind = release.ManifestKindPython
 		}
-		sp := release.NewServiceProd(project, releaseID, existingKeys[project], entries[project].imageTag, kind, now)
-		if err := repo.Upsert(ctx, sp); err != nil {
-			return 0, fmt.Errorf("upsert service_prod for %q: %w", project, err)
+		pointer := release.NewProductionPointer(project, releaseID, existingKeys[project], entries[project].imageTag, kind, now)
+		if err := repo.Upsert(ctx, pointer); err != nil {
+			return 0, fmt.Errorf("upsert the production pointer of %q: %w", project, err)
 		}
 	}
 

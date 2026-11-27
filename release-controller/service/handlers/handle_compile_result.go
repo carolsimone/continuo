@@ -51,8 +51,8 @@ func compileRejection(perNode []NodeResult) (reason pkg_model.RejectReason, deta
 // finishes.
 //
 // ok path: TransitionFromCompiling (Compiling→Parsing), re-assembles the
-// manifest-key set from live service_prod, emits release.requested:v1 with
-// manifest_keys.
+// manifest-key set from the production pointers, emits release.requested:v1
+// with manifest_keys.
 //
 // failed path: Fail with a reason derived from the per-node failed_container
 // attribution (compile_failed, parse_rehearsal_failed, or
@@ -147,7 +147,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		return nil
 	}
 
-	// ok path: Compiling → Parsing, re-read live service_prod, emit release.requested.
+	// ok path: Compiling → Parsing, re-read the production pointers, emit release.requested.
 	// Record compile results on the ok path too so the UI can surface
 	// "Compilation: success" for each project unit.
 	r.RecordStageResults("compile", results)
@@ -158,12 +158,12 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	// Re-read live service_prod so the manifest-key set reflects any promotions
+	// Re-read the production pointers so the manifest-key set reflects any promotions
 	// that happened while this release was compiling — same "read live state when
 	// proceeding" rationale as AdvanceQueue.
-	pointers, err := u.ServiceProdRepo().List(ctx)
+	pointers, err := u.ProductionPointerRepo().List(ctx)
 	if err != nil {
-		return fmt.Errorf("list service prod: %w", err)
+		return fmt.Errorf("list production pointers: %w", err)
 	}
 	set := assembleFor(ctx, u, d.Logger, r, pointers, d.Bucket)
 

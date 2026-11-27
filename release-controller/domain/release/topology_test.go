@@ -9,7 +9,7 @@ import (
 
 // TestWithoutTests_DropsOnlyDbtTestNodes verifies WithoutTests strips only
 // dbt-test nodes, leaves every other NodeType untouched, and does not mutate
-// the receiver — the promoted topology and current_prod must diverge on
+// the receiver — the topology catalog receives and the live release's must diverge on
 // tests without either one aliasing the other's backing array.
 func TestWithoutTests_DropsOnlyDbtTestNodes(t *testing.T) {
 	topo := release.Topology{

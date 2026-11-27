@@ -13,7 +13,7 @@ import (
 )
 
 // promoteCandidate drives a candidate of svc-a through parse and an all-ok
-// validation, so it promotes over whatever current_prod holds.
+// validation, so it promotes over whatever the live release holds.
 func promoteCandidate(t *testing.T, deps *handlers.Deps, releaseID string, topo release.Topology) {
 	t.Helper()
 	ctx := context.Background()
@@ -35,7 +35,7 @@ func promoteCandidate(t *testing.T, deps *handlers.Deps, releaseID string, topo 
 	require.NoError(t, handlers.HandleValidationResult(ctx, deps, handlers.HandleValidationResultInput{ReleaseID: releaseID, AggregateStatus: "ok"}))
 }
 
-// Each promotion takes the next seq, records it on current_prod and carries it
+// Each promotion takes the next seq, records it on the live release and carries it
 // on release.promoted:v1 with the check's own topology reference.
 func TestPromote_EachPromotionTakesTheNextSeq(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -60,8 +60,8 @@ func TestPromote_EachPromotionTakesTheNextSeq(t *testing.T) {
 	assert.Equal(t, "rB", last.ReleaseID)
 	assert.Equal(t, rB.CandidateTopologyRef().URI, last.TopologyURI)
 	assert.Equal(t, rB.CandidateTopologyRef().SHA256, last.TopologySHA256)
-	assert.Equal(t, int64(2), store.GetCurrentProd().PromotionSeq())
-	assert.Equal(t, rB.CandidateTopologyRef(), store.GetCurrentProd().Topology())
+	assert.Equal(t, int64(2), store.GetLiveRelease().PromotionSeq())
+	assert.Equal(t, rB.CandidateTopologyRef(), store.GetLiveRelease().Topology())
 }
 
 // changed_node_ids lists, sorted, the non-test nodes whose content_hash differs

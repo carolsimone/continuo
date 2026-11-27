@@ -36,8 +36,8 @@ type HandleValidationResultInput struct {
 // nodes rather than blocking.
 //
 // If every present validation node passed and the aggregate status is ok: a
-// candidate promotes to production (updates CurrentProd, upserts the changed
-// project's service_prod pointer, emits release.promoted:v1) and a
+// candidate promotes to production (becomes the live release, upserts the
+// changed project's production pointer, emits release.promoted:v1) and a
 // fix's release check passes without touching either. Otherwise a candidate rejects
 // and emits release.rejected:v1, while a fix's release check fails and emits no
 // release event. A check of either kind, on either outcome, emits
@@ -124,7 +124,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 
 // finishFix ends a fix's release check that every leg passed: it
 // passes, saves, and announces the terminal decision. It never reads or
-// writes current_prod or service_prod and emits no release event.
+// writes the live release or a production pointer and emits no release event.
 func finishFix(ctx context.Context, u uow.UnitOfWork, r *releasecheck.Check, now time.Time) error {
 	if err := r.Pass(now); err != nil {
 		return fmt.Errorf("pass fix's release check %s: %w", r.ID(), err)
@@ -146,9 +146,9 @@ func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 
 // promoteToProduction applies the promotion effects shared by the
 // validation-passed path and the nothing-to-validate short-circuit: it takes
-// the next promotion seq, points current_prod at this release's candidate
-// topology artifact under that seq, upserts the changed project's
-// service_prod pointer, transitions the release to Promoted, persists it, and
+// the next promotion seq, makes this release, with its candidate topology
+// artifact, the live release under that seq, upserts the changed project's
+// production pointer, transitions the release to Promoted, persists it, and
 // writes the release.promoted:v1 and release_check.finished:v1 outbox rows. The
 // caller owns Begin/Commit and any telemetry. The release must already hold
 // its candidate topology (i.e. be in Validating) and be a candidate — call
@@ -157,11 +157,11 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	releaseID := r.ID()
 	ref := r.CandidateTopologyRef()
 
-	// Hold the release-queue lock across the current_prod read, the seq
-	// allocation and the current_prod move, so a concurrent announce or
-	// re-announce cannot read current_prod, take a higher seq and clobber this
-	// promotion between those steps. Every holder takes this lock before reading
-	// current_prod, so the order is consistent. This keeps promoteToProduction
+	// Hold the release-queue lock across the live release's read, the seq
+	// allocation and the live release's move, so a concurrent announce or
+	// re-announce cannot read the live release, take a higher seq and clobber
+	// this promotion between those steps. Every holder takes this lock before
+	// reading the live release, so the order is consistent. This keeps promoteToProduction
 	// correct for every caller; a caller that loads a check row FOR UPDATE first
 	// (HandleValidationResult) takes this lock immediately after Begin, and this
 	// re-acquisition in the same transaction is a no-op (pg_advisory_xact_lock
@@ -170,12 +170,12 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		return fmt.Errorf("lock release queue: %w", err)
 	}
 
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	live, err := u.LiveReleaseRepo().Get(ctx)
 	if err != nil {
-		return fmt.Errorf("get current prod: %w", err)
+		return fmt.Errorf("get live release: %w", err)
 	}
-	// Computed against the production topology BEFORE cp.Update replaces it.
-	changed, err := changedSincePromotion(ctx, d, r, cp)
+	// Computed against the production topology BEFORE live.Update replaces it.
+	changed, err := changedSincePromotion(ctx, d, r, live)
 	if err != nil {
 		return err
 	}
@@ -184,17 +184,17 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	if err != nil {
 		return fmt.Errorf("take promotion seq: %w", err)
 	}
-	if err := cp.Update(releaseID, ref, seq, now); err != nil {
-		return fmt.Errorf("move current prod: %w", err)
+	if err := live.Update(releaseID, ref, seq, now); err != nil {
+		return fmt.Errorf("move live release: %w", err)
 	}
-	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
-		return fmt.Errorf("upsert current prod: %w", err)
+	if err := u.LiveReleaseRepo().Upsert(ctx, live); err != nil {
+		return fmt.Errorf("upsert live release: %w", err)
 	}
 
 	// Upsert the changed project's production pointer so future releases can
 	// assemble this project's manifest key at their AdvanceQueue step.
 	changedProject := r.ChangedProject()
-	sp := release.NewServiceProd(
+	pointer := release.NewProductionPointer(
 		changedProject,
 		releaseID,
 		CanonicalManifestKey(d.Bucket, changedProject, releaseID, r.ManifestKind()),
@@ -202,8 +202,8 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		r.ManifestKind(),
 		now,
 	)
-	if err := u.ServiceProdRepo().Upsert(ctx, sp); err != nil {
-		return fmt.Errorf("upsert service_prod: %w", err)
+	if err := u.ProductionPointerRepo().Upsert(ctx, pointer); err != nil {
+		return fmt.Errorf("upsert production pointer: %w", err)
 	}
 
 	if err := r.Promote(now); err != nil {
@@ -268,7 +268,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	if err != nil {
 		return err
 	}
-	prod, err := currentProdTopology(ctx, d, u)
+	prod, err := liveReleaseTopology(ctx, d, u)
 	if err != nil {
 		return err
 	}

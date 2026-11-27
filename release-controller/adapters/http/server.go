@@ -48,7 +48,7 @@ func (s *Server) ServeAPI(deps *handlers.Deps) {
 	s.mux.HandleFunc("GET /releases/{id}", s.handleGetRelease)
 	s.mux.HandleFunc("POST /releases/{id}/retry-remediation", s.handleRetryRemediation)
 	s.mux.HandleFunc("GET /releases", s.handleListReleases)
-	s.mux.HandleFunc("GET /current-prod", s.handleGetCurrentProd)
+	s.mux.HandleFunc("GET /live-release", s.handleGetLiveRelease)
 	s.mux.HandleFunc("POST /release-checks", s.handleReceiveFix)
 	s.mux.HandleFunc("GET /release-checks/{id}", s.handleGetReleaseCheck)
 	s.mux.HandleFunc("GET /release-checks", s.handleListReleaseChecks)

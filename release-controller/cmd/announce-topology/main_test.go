@@ -20,7 +20,7 @@ import (
 type fakeAnnouncer struct {
 	releaseID string
 	topo      release.Topology
-	current   release.Topology
+	live      release.Topology
 	result    handlers.AnnounceResult
 	err       error
 }
@@ -30,12 +30,12 @@ func (f *fakeAnnouncer) Announce(_ context.Context, releaseID string, topo relea
 	return f.result, f.err
 }
 
-func (f *fakeAnnouncer) ReannounceCurrent(context.Context) (handlers.AnnounceResult, error) {
+func (f *fakeAnnouncer) ReannounceLive(context.Context) (handlers.AnnounceResult, error) {
 	return f.result, f.err
 }
 
-func (f *fakeAnnouncer) CurrentTopology(context.Context) (release.Topology, error) {
-	return f.current, f.err
+func (f *fakeAnnouncer) LiveTopology(context.Context) (release.Topology, error) {
+	return f.live, f.err
 }
 
 func runWith(t *testing.T, a *fakeAnnouncer, stdin string, args ...string) (int, string, string) {
@@ -69,7 +69,7 @@ func TestCheck_UsageErrors(t *testing.T) {
 		args  []string
 	}{
 		{name: "no mode", args: nil},
-		{name: "two modes", args: []string{"--reannounce-current", "--print-current"}},
+		{name: "two modes", args: []string{"--reannounce-live", "--print-live"}},
 		{name: "topology without a release id", stdin: twoNodes, args: []string{"--topology", "-"}},
 		{name: "release id without a topology", args: []string{"--release-id", "bench-1"}},
 		{name: "not JSON", stdin: "{", args: []string{"--release-id", "bench-1", "--topology", "-"}},
@@ -77,7 +77,7 @@ func TestCheck_UsageErrors(t *testing.T) {
 		{name: "no nodes", stdin: `[]`, args: []string{"--release-id", "bench-1", "--topology", "-"}},
 		{name: "a node without unique_id", stdin: `[{"project_name":"bench"}]`, args: []string{"--release-id", "bench-1", "--topology", "-"}},
 		{name: "a duplicate unique_id", stdin: `[{"unique_id":"a"},{"unique_id":"a"}]`, args: []string{"--release-id", "bench-1", "--topology", "-"}},
-		{name: "an extra argument", args: []string{"--reannounce-current", "extra"}},
+		{name: "an extra argument", args: []string{"--reannounce-live", "extra"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, stdout, stderr := runWith(t, &fakeAnnouncer{}, tc.stdin, tc.args...)
@@ -89,11 +89,11 @@ func TestCheck_UsageErrors(t *testing.T) {
 }
 
 func TestCheck_ErrorExitCodes(t *testing.T) {
-	code, _, _ := runWith(t, &fakeAnnouncer{err: handlers.ErrNoCurrentProd}, "", "--reannounce-current")
-	assert.Equal(t, exitNoCurrentProd, code)
+	code, _, _ := runWith(t, &fakeAnnouncer{err: handlers.ErrNoLiveRelease}, "", "--reannounce-live")
+	assert.Equal(t, exitNoLiveRelease, code)
 
-	code, _, _ = runWith(t, &fakeAnnouncer{err: handlers.ErrNoCurrentProd}, "", "--print-current")
-	assert.Equal(t, exitNoCurrentProd, code)
+	code, _, _ = runWith(t, &fakeAnnouncer{err: handlers.ErrNoLiveRelease}, "", "--print-live")
+	assert.Equal(t, exitNoLiveRelease, code)
 
 	code, _, _ = runWith(t, &fakeAnnouncer{err: handlers.ErrReleaseIDTaken}, twoNodes, "--release-id", "rA", "--topology", "-")
 	assert.Equal(t, exitUsage, code)
@@ -103,11 +103,11 @@ func TestCheck_ErrorExitCodes(t *testing.T) {
 	assert.Empty(t, stdout)
 }
 
-func TestCheck_PrintsTheCurrentTopology(t *testing.T) {
-	a := &fakeAnnouncer{current: release.Topology{
+func TestCheck_PrintsTheLiveTopology(t *testing.T) {
+	a := &fakeAnnouncer{live: release.Topology{
 		{UniqueID: "a", ProjectName: "svc", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{}},
 	}}
-	code, stdout, _ := runWith(t, a, "", "--print-current")
+	code, stdout, _ := runWith(t, a, "", "--print-live")
 	require.Equal(t, exitOK, code)
 	var nodes []topologyartifact.Node
 	require.NoError(t, json.Unmarshal([]byte(stdout), &nodes))
@@ -116,7 +116,7 @@ func TestCheck_PrintsTheCurrentTopology(t *testing.T) {
 	assert.Equal(t, "h", nodes[0].ContentHash)
 }
 
-// What --print-current writes, --topology reads back unchanged: the benchmark
+// What --print-live writes, --topology reads back unchanged: the benchmark
 // builds its union from one and announces it with the other.
 func TestTopologyRoundTrip(t *testing.T) {
 	topo := release.Topology{{ //nolint:gosec // G101: SecretRef names a Kubernetes Secret; it is not a credential

@@ -319,8 +319,8 @@ export interface ReleasesListResponse {
   next_cursor: string;
 }
 
-export interface CurrentProd {
-  current_prod_release_id: string;
+export interface LiveRelease {
+  live_release_id: string;
   node_count: number;
   updated_at: string;
 }
@@ -402,7 +402,8 @@ export interface ReleaseDetail {
   // that has not been retried; "Try again" increments it up to the 3-round cap.
   remediation_round: number;
   // The one project this candidate changes; every other entry in image_tags is
-  // carried over from prod. Empty when the release row records none.
+  // carried over from its production pointer. Empty when the release row
+  // records none.
   changed_project?: string;
   // Where the change came from: the GitHub owner/name repo and the commit, and
   // the commit's page under the install's GitHub host, attached by the ui
@@ -621,7 +622,7 @@ export interface ProposalDTO {
 }
 
 // A fix's release check puts a remediation attempt's fix through every stage
-// a release passes, without becoming prod. verifies_release_id names the
+// a release passes, without becoming the live release. verifies_release_id names the
 // release whose fix it judges.
 export interface ReleaseCheckDetail {
   check_id: string;

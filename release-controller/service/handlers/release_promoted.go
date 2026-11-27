@@ -45,16 +45,16 @@ func enqueueReleasePromoted(ctx context.Context, u uow.UnitOfWork, p events.Rele
 // topology whose content_hash differs from, or is absent in, the production
 // topology the promotion replaces (every node when there is no production yet).
 // The list is never nil, so the event always carries a JSON array.
-func changedSincePromotion(ctx context.Context, d *Deps, r *releasecheck.Check, cp *release.CurrentProd) ([]string, error) {
+func changedSincePromotion(ctx context.Context, d *Deps, r *releasecheck.Check, live *release.LiveRelease) ([]string, error) {
 	candidate, err := d.Topologies.Load(ctx, r.CandidateTopologyRef())
 	if err != nil {
 		return nil, fmt.Errorf("load candidate topology %s: %w", r.ID(), err)
 	}
-	prod, err := loadProdTopology(ctx, d, cp)
+	liveTopology, err := loadLiveTopology(ctx, d, live)
 	if err != nil {
 		return nil, err
 	}
-	changed := release.DerivedChangedNodeIDs(candidate.WithoutTests(), prod)
+	changed := release.DerivedChangedNodeIDs(candidate.WithoutTests(), liveTopology)
 	if changed == nil {
 		changed = []string{}
 	}

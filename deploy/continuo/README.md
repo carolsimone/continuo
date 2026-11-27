@@ -410,7 +410,7 @@ anything catalog wrote into the empty graph meanwhile is replaced by the export.
    then the relationships, runs catalog's schema migration (which brings an
    export written by an older schema up to date) and releases the lease.
 3. Re-announce the live release, so the live topology is current again:
-   `kubectl -n continuo exec deploy/release-controller -- announce-topology --reannounce-current`.
+   `kubectl -n continuo exec deploy/release-controller -- announce-topology --reannounce-live`.
 
 `--yes` is the safeguard: `restore` deletes the tenant's graph, so without it
 the command exits 2 having changed nothing, and it exits 2 for a key that is

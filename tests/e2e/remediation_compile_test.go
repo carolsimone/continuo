@@ -50,7 +50,7 @@ import (
 //	  proposal is finalized → remediation.proposed:v1.
 //
 // Unlike the validation path, the compile leg is the FIRST leg and rejects
-// before any change-derivation, so no current_prod/service_prod baseline seeding
+// before any change-derivation, so no seeding of the live release or the production pointers
 // is required — the compile job runs `dbt compile` against the fixture image's
 // baked source and fails on the malformed model alone.
 //

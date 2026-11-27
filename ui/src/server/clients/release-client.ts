@@ -13,7 +13,7 @@ export interface ReleaseSubmission {
 export interface ReleaseClient {
   listReleases(query: Record<string, string>): Promise<any>;
   getRelease(id: string): Promise<any>;
-  getCurrentProd(): Promise<any>;
+  getLiveRelease(): Promise<any>;
   retryRemediation(id: string): Promise<{ status: number; body: unknown }>;
   getReleaseCheck(id: string): Promise<any>;
   listReleaseChecks(releaseId: string): Promise<any>;
@@ -46,8 +46,8 @@ export function createReleaseClient(baseUrl: string): ReleaseClient {
     getRelease(id) {
       return getJson(`/releases/${encodeURIComponent(id)}`);
     },
-    getCurrentProd() {
-      return getJson('/current-prod');
+    getLiveRelease() {
+      return getJson('/live-release');
     },
     getReleaseCheck(id) {
       return getJson(`/release-checks/${encodeURIComponent(id)}`);

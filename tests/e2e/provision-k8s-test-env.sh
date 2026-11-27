@@ -57,9 +57,9 @@ kind_load_pulled_image ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.1
 # Build each dbt project image, tag it by its own content digest (never :latest),
 # and load that tag into kind. The controller composes the dbt job image as
 # service-<n>:<image_tag>, so the kind image must be loaded under exactly the tag
-# the e2e seeds into service_prod. The per-project tags are written to the
+# the e2e seeds into the production pointers. The per-project tags are written to the
 # bind-mounted tests/e2e/.image-tags file (immutable setup metadata); the e2e
-# rebuilds the service_prod baseline from it before each consumer.
+# rebuilds the production pointers from it before each consumer.
 log_info "Building + loading dbt project images (content-hash tags)..."
 DBT_PER_PROJECT=""
 for project in service-1 service-2 service-3; do

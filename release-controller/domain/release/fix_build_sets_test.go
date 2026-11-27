@@ -18,7 +18,7 @@ func seedNode(id, hash string) release.Node { return release.Node{UniqueID: id, 
 //     still-unfixed failure another fix answers for -> neither (cloned)
 //   - svc2.skipped: changed vs prod, untouched, recorded not-ok because its
 //     upstream failed -> neither (cloned)
-//   - other.promoted: matches current_prod (another release promoted it since)
+//   - other.promoted: matches the live release (another release promoted it since)
 //     even though it differs from the rejected candidate -> not changed at all
 //   - finance.new_model: absent from both prod and the rejected candidate -> the
 //     fix added it -> scope

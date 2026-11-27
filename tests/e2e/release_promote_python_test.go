@@ -224,7 +224,7 @@ func pyFixtureBundle(t *testing.T, ctx context.Context, replace map[string]strin
 // including a python-csv node in the same mixed DAG — via a real
 // build_from_columns Job against the published runner image, promotes, swaps
 // the Neo4j topology, and records the python kind and the bundle pointer
-// on service_prod.
+// in the project's production pointer.
 func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -262,7 +262,7 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	// The promoted pointer records the python kind and the bundle.
 	var kind, s3Key string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT manifest_kind, manifest_s3_key FROM service_prod WHERE project_name = $1`,
+		`SELECT manifest_kind, manifest_s3_key FROM production_pointers WHERE project_name = $1`,
 		pyE2EProject).Scan(&kind, &s3Key))
 	assert.Equal(t, "python", kind)
 	assert.True(t, strings.HasSuffix(s3Key, "/"+odcsBundleName),
@@ -313,7 +313,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 // The cleanup is returned for the caller to defer, so it runs when the test
 // function returns, while releaseDB is still open: the cleanup setupClients
 // registered closes the pools only after every deferred call. A leftover
-// service_prod pointer would drag this project's contract into every later
+// production pointer would drag this project's contract into every later
 // test's assembled manifest set.
 func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap,
 	budget pythonReleaseBudget, bundle []byte, validationNodes []string, swapNode string) (string, func()) {
@@ -335,12 +335,12 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allProjects)
+	seedLiveRelease(t, ctx, clients, prodNodes)
+	seedProductionPointers(t, ctx, clients, allProjects)
 	cleanup := func() {
 		if _, err := clients.releaseDB.ExecContext(context.Background(),
-			`DELETE FROM service_prod WHERE project_name = $1`, pyE2EProject); err != nil {
-			t.Errorf("cleanup: delete %s service_prod row: %v", pyE2EProject, err)
+			`DELETE FROM production_pointers WHERE project_name = $1`, pyE2EProject); err != nil {
+			t.Errorf("cleanup: delete %s production pointer: %v", pyE2EProject, err)
 		}
 	}
 
