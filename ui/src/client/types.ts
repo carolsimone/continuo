@@ -570,7 +570,7 @@ export interface FixDTO {
   // release_check_id is the id of the first of release_checks; the
   // single-check view of them. Set while the try is 'verifying' and
   // still set on the 'proposed' or 'failed' row it became, so the release
-  // check that decided a try is always reachable from it. Empty on an
+  // check that decided a try is always reachable from it. Empty on a
   // try judged without one.
   release_check_id: string;
   // verify_error is why that release check rejected the fix — the reason a

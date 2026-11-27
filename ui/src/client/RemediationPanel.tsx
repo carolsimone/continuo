@@ -91,7 +91,7 @@ function StatusPill({ status }: { status: string }) {
 // ReleaseChecks lists one try's release checks — one per edited
 // project — as compact labelled lines, "<project> · <kind> · <phase> · since
 // <activated_at>", each linking to that release check's page. A legacy
-// try with only the singular release_check_id shows the one link; an
+// try with only the singular release_check_id shows the one link; a
 // try judged without a release check renders nothing.
 function ReleaseChecks({ fix }: { fix: FixDTO }) {
   const checks = fix.release_checks && fix.release_checks.length > 0

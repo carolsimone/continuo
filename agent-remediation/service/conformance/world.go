@@ -66,7 +66,7 @@ type World interface {
 	Clusters(id uuid.UUID) []remediation.Cluster
 	// Steps is every journal row of the remediation.
 	Steps(id uuid.UUID) []remediation.StepRun
-	// Tries is every fix row the store holds.
+	// FixRows is every fix row the store holds.
 	FixRows() []FixRow
 	// Outbox is every outbox entry the store holds.
 	Outbox() []outbox.Entry

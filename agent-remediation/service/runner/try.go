@@ -529,7 +529,7 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 	return r.submitGate(ctx, run, checked)
 }
 
-// settleTry records the try of a try that has nothing to verify, hands
+// settleTry records the fix row of a try that has nothing to verify, hands
 // over its nodes, fails the try and ends the remediation, in one transaction.
 // The try is skipped when every node was skipped, and failed as soon as one
 // node was attempted.
@@ -618,7 +618,7 @@ func (r *Runner) commitFlowStep(ctx context.Context, run tryRun, row remediation
 func (r *Runner) failTryOnFindings(ctx context.Context, u uow.UnitOfWork, run tryRun, checked []checkedCluster, name string, findings []remediation.Finding) error {
 	reason := findingsReason(findings)
 	r.logger.Warn("a check refused the try's drafts; the try fails",
-		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "try", run.snap.Try.Try,
+		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "round", run.trigger.Round,
 		"try", run.snap.Try.Try, "check", name, "reason", reason)
 	if err := r.recordRefusal(ctx, u, run, checked, reason); err != nil {
 		return err
@@ -630,7 +630,7 @@ func (r *Runner) failTryOnFindings(ctx context.Context, u uow.UnitOfWork, run tr
 	return nil
 }
 
-// recordRefusal records the try of the current try failed for reason, in
+// recordRefusal records the fix row of the current try failed for reason, in
 // u's transaction. The members of each checked cluster whose draft has an edit,
 // the drafts the refusing check judged, fail for reason with
 // unverifiable_edits; every other node keeps how its cluster ended
