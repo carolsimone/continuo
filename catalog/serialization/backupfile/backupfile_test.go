@@ -369,7 +369,7 @@ func TestBackupfile_RefusesAPlainJSONNumber(t *testing.T) {
 // version, not for the member.
 func TestBackupfile_RefusesAnOlderLayoutForItsVersion(t *testing.T) {
 	data := lines(
-		`{"format_version":1,"tenant_id":"t1","saved_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`,
+		`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`,
 		`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"}}`)
 	_, err := backupfile.Validate(bytes.NewReader(data), tenant)
 	if !errors.Is(err, graphbackup.ErrInvalidRecord) || !strings.Contains(err.Error(), "format version 1, want 2") {

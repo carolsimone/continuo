@@ -74,7 +74,7 @@ type CatalogQueryClient interface {
 	// is NOT_FOUND; a known unit with no recorded history returns an empty
 	// versions list.
 	GetCodeUnitVersions(ctx context.Context, in *GetCodeUnitVersionsRequest, opts ...grpc.CallOption) (*GetCodeUnitVersionsResponse, error)
-	// GetPrecedents returns past failure precedents matching an error signature — or,
+	// GetPrecedents returns the failure precedents matching an error signature — or,
 	// when signature is empty, a (category, reason) pair — resolved-first, then
 	// newest. Each entry carries the classified failure, the version that
 	// resolved it (when one exists) with a server-rendered diff against the
@@ -256,7 +256,7 @@ type CatalogQueryServer interface {
 	// is NOT_FOUND; a known unit with no recorded history returns an empty
 	// versions list.
 	GetCodeUnitVersions(context.Context, *GetCodeUnitVersionsRequest) (*GetCodeUnitVersionsResponse, error)
-	// GetPrecedents returns past failure precedents matching an error signature — or,
+	// GetPrecedents returns the failure precedents matching an error signature — or,
 	// when signature is empty, a (category, reason) pair — resolved-first, then
 	// newest. Each entry carries the classified failure, the version that
 	// resolved it (when one exists) with a server-rendered diff against the

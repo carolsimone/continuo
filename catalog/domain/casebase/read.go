@@ -17,7 +17,7 @@ type FixView struct {
 
 // EditedView is one provenance edit a merged fix PR made to a node, read from
 // the (:Fix)-[:EDITED]->(:Node) edge. NodeID is the edited node — which
-// may be an upstream ancestor of the failure precedent rather than the rejected node
+// may be an upstream ancestor of the failed node rather than the failed node
 // itself. Diff is the edge's stored proposed diff. When the edit was
 // Amended and a :NodeVersion was promoted after the PR closed, MergedPrior and
 // MergedVersion carry the versions straddling the merge so the service can

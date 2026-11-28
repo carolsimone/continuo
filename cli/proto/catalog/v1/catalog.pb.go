@@ -1418,7 +1418,7 @@ func (x *PrecedentEdit) GetDiffIsShipped() bool {
 	return false
 }
 
-// Precedent is one past failure precedent with its resolution.
+// Precedent is one failure precedent with its resolution.
 type Precedent struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	ReleaseId    string                 `protobuf:"bytes,1,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
