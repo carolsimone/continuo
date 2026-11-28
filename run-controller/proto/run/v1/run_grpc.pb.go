@@ -125,7 +125,7 @@ type RunServiceClient interface {
 	// exactly one task with no downstream pickup. The required metadata_source
 	// field of the request selects one of two modes:
 	//   - "latest": the node as the live release holds it.
-	//   - "snapshot_of_run": the node as the release of the source run holds it;
+	//   - "release_of_run": the node as the release of the source run holds it;
 	//     requires source_run_id.
 	//
 	// The run holds no schedule, so an active run of the node's schedule does
@@ -134,7 +134,7 @@ type RunServiceClient interface {
 	//
 	//	INVALID_ARGUMENT    - an empty project_name, schema_name or table_name,
 	//	                      an empty or unknown metadata_source,
-	//	                      "snapshot_of_run" without a UUID source_run_id,
+	//	                      "release_of_run" without a UUID source_run_id,
 	//	                      "latest" with a non-empty source_run_id, an
 	//	                      unknown operation, a full_refresh of a node
 	//	                      type that cannot be rebuilt from scratch, a run
@@ -147,7 +147,7 @@ type RunServiceClient interface {
 	//	                      does not exist; or no release is live for
 	//	                      "latest"; or the release holds no such node of
 	//	                      that project.
-	//	FAILED_PRECONDITION - "snapshot_of_run" with a source run that is not
+	//	FAILED_PRECONDITION - "release_of_run" with a source run that is not
 	//	                      terminal or names no release; or a test of a node
 	//	                      with no data tests; or a node type the node_type
 	//	                      vocabulary does not declare.
@@ -344,7 +344,7 @@ type RunServiceClient interface {
 	DeleteSchedule(ctx context.Context, in *DeleteScheduleRequest, opts ...grpc.CallOption) (*DeleteScheduleResponse, error)
 	// PreviewSchedule reads a cron in a timezone as UpsertSchedule would, with
 	// the same parser that fires it, and returns it in English words with its
-	// next three fire times from now. It writes nothing, and maintenance mode
+	// next three slots from now. It writes nothing, and maintenance mode
 	// does not refuse it. cron_words is empty for a cron the parser fires but
 	// the words cannot describe.
 	// Errors: INVALID_ARGUMENT (a cron or timezone the parser refuses; the
@@ -695,7 +695,7 @@ type RunServiceServer interface {
 	// exactly one task with no downstream pickup. The required metadata_source
 	// field of the request selects one of two modes:
 	//   - "latest": the node as the live release holds it.
-	//   - "snapshot_of_run": the node as the release of the source run holds it;
+	//   - "release_of_run": the node as the release of the source run holds it;
 	//     requires source_run_id.
 	//
 	// The run holds no schedule, so an active run of the node's schedule does
@@ -704,7 +704,7 @@ type RunServiceServer interface {
 	//
 	//	INVALID_ARGUMENT    - an empty project_name, schema_name or table_name,
 	//	                      an empty or unknown metadata_source,
-	//	                      "snapshot_of_run" without a UUID source_run_id,
+	//	                      "release_of_run" without a UUID source_run_id,
 	//	                      "latest" with a non-empty source_run_id, an
 	//	                      unknown operation, a full_refresh of a node
 	//	                      type that cannot be rebuilt from scratch, a run
@@ -717,7 +717,7 @@ type RunServiceServer interface {
 	//	                      does not exist; or no release is live for
 	//	                      "latest"; or the release holds no such node of
 	//	                      that project.
-	//	FAILED_PRECONDITION - "snapshot_of_run" with a source run that is not
+	//	FAILED_PRECONDITION - "release_of_run" with a source run that is not
 	//	                      terminal or names no release; or a test of a node
 	//	                      with no data tests; or a node type the node_type
 	//	                      vocabulary does not declare.
@@ -914,7 +914,7 @@ type RunServiceServer interface {
 	DeleteSchedule(context.Context, *DeleteScheduleRequest) (*DeleteScheduleResponse, error)
 	// PreviewSchedule reads a cron in a timezone as UpsertSchedule would, with
 	// the same parser that fires it, and returns it in English words with its
-	// next three fire times from now. It writes nothing, and maintenance mode
+	// next three slots from now. It writes nothing, and maintenance mode
 	// does not refuse it. cron_words is empty for a cron the parser fires but
 	// the words cannot describe.
 	// Errors: INVALID_ARGUMENT (a cron or timezone the parser refuses; the

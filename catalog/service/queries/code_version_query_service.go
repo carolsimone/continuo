@@ -69,7 +69,7 @@ type CodeVersionReader interface {
 	// pair. Ranking, the since filter, and the cap are all applied against
 	// this effective recency — max(newest version's promoted_at, the :CURRENT
 	// edge's own promoted_at) — before any version body is fetched, so a wide
-	// DAG never pays to load code for ancestors it is about to discard.
+	// topology never pays to load code for ancestors it is about to discard.
 	Ancestors(ctx context.Context, tenantID, uniqueID string, depth int32, since time.Time, cap int32) ([]codeversion.AncestorVersions, error)
 	// UnitVersions walks a shared-code unit's chain, newest first. An unknown
 	// unit_id returns ErrUnitNotFound; a known unit with no recorded history

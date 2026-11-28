@@ -23,10 +23,10 @@ func NewBuildCommand(factory RunClientFactory, cfg *config.Config, stdout, stder
 		Long: `Run dbt build for every model in the named schedule, using the schedule's
 current (latest) topology and manifest version.
 
-Use when the user asks to build an entire schedule (its whole DAG of models)
+Use when the user asks to build an entire schedule (its whole topology of models)
 now, as opposed to only testing it. dbt build both materializes (runs) and
 tests each node in one invocation. Unlike schedule test's flat fan-out, the
-whole-DAG build is dependency-ordered: nodes run in topological order, and
+whole-schedule build is dependency-ordered: nodes run in topological order, and
 if a node fails, its downstream descendants are cascade-skipped rather than
 attempted. A node with no tests defined is still built; there is no
 "no_tests" skip for build.

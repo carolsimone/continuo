@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/pkg/events"
@@ -16,7 +16,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-const nameHandOver workflow.StepName = "hand_over"
+const nameHandOver flow.StepName = "hand_over"
 
 // HandOver is the give-up output `hand_over`. It announces on
 // remediation.handed_over:v1 every node a remediation leaves to a human, each

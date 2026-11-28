@@ -172,7 +172,7 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 
 	assert.Equal(t, "svc.public.node_c", f.scalar(`MATCH (n:Node {tenant_id: $tenant_id}) WHERE n.active RETURN n.unique_id AS v`))
 	assert.Equal(t, false, f.scalar(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'svc.public.node_a'}) RETURN n.active AS v`),
-		"the dropped node is retired and kept")
+		"the retired node is kept")
 	assert.Equal(t, "rB-twor", f.scalar(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) RETURN m.release_id AS v`))
 }
 

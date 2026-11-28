@@ -13,7 +13,7 @@ import (
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 )
 
-// dailyGraph is the e2e DAG as the live release views the schedule "daily":
+// dailyGraph is the e2e topology as the live release views the schedule "daily":
 // seed_table_1 -> table_a -> table_d <- table_b <- seed_table_2, where
 // seed_table_2 belongs to the schedule "seeds".
 func dailyGraph() topology.ScheduleGraph {
@@ -82,9 +82,9 @@ func TestGetScheduleGraph_ReturnsAnUnknownExternalNodeAndItsEdge(t *testing.T) {
 		PromotionSeq: 3,
 		Nodes: []topology.ScheduleGraphNode{
 			{Node: topology.Node{Key: "analytics.table_a", ProjectName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"}},
-			{Node: topology.Node{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"}},
+			{Node: topology.Node{Key: "raw.external_probe", SchemaName: "raw", TableName: "external_probe", NodeType: "unknown-external"}},
 		},
-		Edges: []topology.Edge{{Upstream: "raw.ingest_probe", Downstream: "analytics.table_a"}},
+		Edges: []topology.Edge{{Upstream: "raw.external_probe", Downstream: "analytics.table_a"}},
 	})
 
 	resp, err := newServer(store).GetScheduleGraph(ctxOf(tenantA), &runv1.GetScheduleGraphRequest{ScheduleName: "daily"})
@@ -94,12 +94,12 @@ func TestGetScheduleGraph_ReturnsAnUnknownExternalNodeAndItsEdge(t *testing.T) {
 	unknownExternal := resp.GetNodes()[1]
 	assert.Equal(t, "", unknownExternal.GetProjectName())
 	assert.Equal(t, "raw", unknownExternal.GetSchemaName())
-	assert.Equal(t, "ingest_probe", unknownExternal.GetTableName())
+	assert.Equal(t, "external_probe", unknownExternal.GetTableName())
 	assert.Equal(t, "unknown-external", unknownExternal.GetNodeType())
 	assert.Equal(t, "", unknownExternal.GetScheduleName())
 	require.Len(t, resp.GetEdges(), 1)
 	assert.Equal(t, "svc-a.analytics.table_a", resp.GetEdges()[0].GetFromNodeId())
-	assert.Equal(t, ".raw.ingest_probe", resp.GetEdges()[0].GetToNodeId())
+	assert.Equal(t, ".raw.external_probe", resp.GetEdges()[0].GetToNodeId())
 }
 
 func TestGetScheduleGraph_AScheduleTheReleaseDoesNotHoldIsEmpty(t *testing.T) {
@@ -193,12 +193,12 @@ func TestGetScheduleGraph_SetsDormant(t *testing.T) {
 			{Node: topology.Node{Key: "analytics.dormant", ProjectName: "svc-a", SchemaName: "analytics", TableName: "dormant", NodeType: "dbt-model"}, LastRunAt: &ran},
 			{Node: topology.Node{Key: "analytics.never", ProjectName: "svc-a", SchemaName: "analytics", TableName: "never", NodeType: "dbt-snapshot"}},
 			{Node: topology.Node{Key: "analytics.table_a", ProjectName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"}},
-			{Node: topology.Node{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"}},
+			{Node: topology.Node{Key: "raw.external_probe", SchemaName: "raw", TableName: "external_probe", NodeType: "unknown-external"}},
 		},
 		Edges: []topology.Edge{
 			{Upstream: "analytics.dormant", Downstream: "analytics.table_a"},
 			{Upstream: "analytics.never", Downstream: "analytics.table_a"},
-			{Upstream: "raw.ingest_probe", Downstream: "analytics.table_a"},
+			{Upstream: "raw.external_probe", Downstream: "analytics.table_a"},
 		},
 	})
 

@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 )
 
 // remediationRepository is the in-memory repository.RemediationRepository. It
@@ -426,7 +426,7 @@ func (r *remediationRepository) SaveCluster(_ context.Context, c remediation.Clu
 		if _, ok := d.tries[tryKey{c.RemediationID, c.Try}]; !ok {
 			return fmt.Errorf("save cluster: try %d of remediation %s does not exist", c.Try, c.RemediationID)
 		}
-		if !slices.Contains([]workflow.ClusterKind{workflow.ClusterSingle, workflow.ClusterSharedUpstream, workflow.ClusterCrossProject}, c.Kind) {
+		if !slices.Contains([]flow.ClusterKind{flow.ClusterSingle, flow.ClusterSharedUpstream, flow.ClusterCrossProject}, c.Kind) {
 			return fmt.Errorf("cluster kind %q violates its check constraint", c.Kind)
 		}
 		if c.Cluster < 1 {

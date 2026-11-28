@@ -211,8 +211,8 @@ func TestRunner_NoRepositoryHandsEveryNodeOver(t *testing.T) {
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
 
-// Spent tries whose last try failed at the gate's runs: the escalated row
-// escalates every node the tries could not fix with tries_spent and the gate's
+// Spent tries whose last try failed at the gate's runs: the hand-over row
+// hands over every node the tries could not fix with tries_spent and the gate's
 // verify error, while a node handed over with a settled code or because its
 // drafts were spent keeps its outcome, and the event names them all.
 func TestRunner_TriesSpent(t *testing.T) {
@@ -238,22 +238,22 @@ func TestRunner_TriesSpent(t *testing.T) {
 	}
 
 	spent := fix.NodeOutcome{
-		Status: fix.StatusEscalated,
+		Status: fix.StatusHandedOver,
 		Reason: "tried 3 times; the last try failed: svc-a: still broken",
 		Code:   model.HandoverReasonTriesSpent,
 	}
 	draftsSpent := fix.NodeOutcome{Status: fix.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonDraftsSpent}
 	declined := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: noFileReason, Code: model.HandoverReasonDeclined}
 	classifier := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: detail, Code: model.HandoverReasonClassifierInfra}
-	escalated := h.fixRow(fix.HandOverTry).Fix
-	assert.Equal(t, fix.StatusEscalated, escalated.Status)
-	assert.Equal(t, id.String(), escalated.RemediationID)
+	handedOver := h.fixRow(fix.HandOverTry).Fix
+	assert.Equal(t, fix.StatusHandedOver, handedOver.Status)
+	assert.Equal(t, id.String(), handedOver.RemediationID)
 	assert.Equal(t, map[string]fix.NodeOutcome{
 		"svc-a": spent,
 		"svc-b": draftsSpent,
 		"core":  declined,
 		"svc-c": classifier,
-	}, escalated.NodeOutcomes)
+	}, handedOver.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 1, 3,
 		handedOverNode("core", declined),
 		handedOverNode("svc-a", spent),
@@ -266,7 +266,7 @@ func TestRunner_TriesSpent(t *testing.T) {
 }
 
 // Spent tries whose last try a check refused, a cross-cluster check or the gate
-// at submit: each drafted member is escalated with unverifiable_edits and the
+// at submit: each drafted member is handed over with unverifiable_edits and the
 // refusal as why the last try failed; a node handed over before any draft keeps
 // its outcome.
 func TestRunner_UnverifiableEdits(t *testing.T) {
@@ -288,19 +288,19 @@ func TestRunner_UnverifiableEdits(t *testing.T) {
 			}
 
 			unverifiable := fix.NodeOutcome{
-				Status: fix.StatusEscalated,
+				Status: fix.StatusHandedOver,
 				Reason: "tried 2 times; the last try failed: " + twoEditsReason,
 				Code:   model.HandoverReasonUnverifiableEdits,
 			}
 			noType := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: dbtTestReason, Code: model.HandoverReasonNoType}
 			require.Len(t, h.store.Tries(id), 2, "both tries ran")
-			escalated := h.fixRow(fix.HandOverTry).Fix
-			assert.Equal(t, fix.StatusEscalated, escalated.Status)
+			handedOver := h.fixRow(fix.HandOverTry).Fix
+			assert.Equal(t, fix.StatusHandedOver, handedOver.Status)
 			assert.Equal(t, map[string]fix.NodeOutcome{
 				"svc-a": unverifiable,
 				"core":  unverifiable,
 				"svc-b": noType,
-			}, escalated.NodeOutcomes)
+			}, handedOver.NodeOutcomes)
 			assert.Equal(t, handedOverOf(id, 1, 2,
 				handedOverNode("core", unverifiable),
 				handedOverNode("svc-a", unverifiable),
@@ -315,11 +315,11 @@ func TestRunner_UnverifiableEdits(t *testing.T) {
 
 // The round's hand-over row is try 0 of the trigger's round, whatever the
 // earlier rounds hold. With no try of its own, the remediation's nodes are
-// escalated with how many times the round was tried alone.
+// handed over with how many times the round was tried alone.
 func TestRunner_TheHandOverRowIsTryZeroOfItsRound(t *testing.T) {
 	h := newHarness(t)
 	h.tryWithNoRemediationInRound(1, 1, fix.StatusFailed)
-	h.tryWithNoRemediationInRound(1, fix.HandOverTry, fix.StatusEscalated)
+	h.tryWithNoRemediationInRound(1, fix.HandOverTry, fix.StatusHandedOver)
 	for try := 1; try <= 3; try++ {
 		h.tryWithNoRemediationInRound(2, try, fix.StatusFailed)
 	}
@@ -329,13 +329,13 @@ func TestRunner_TheHandOverRowIsTryZeroOfItsRound(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	spent := fix.NodeOutcome{Status: fix.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
-	escalated := h.fixRowIn(2, fix.HandOverTry).Fix
-	assert.Equal(t, fix.StatusEscalated, escalated.Status)
-	assert.Equal(t, 2, escalated.Round)
-	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, escalated.NodeOutcomes)
+	spent := fix.NodeOutcome{Status: fix.StatusHandedOver, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
+	handedOver := h.fixRowIn(2, fix.HandOverTry).Fix
+	assert.Equal(t, fix.StatusHandedOver, handedOver.Status)
+	assert.Equal(t, 2, handedOver.Round)
+	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, handedOver.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 2, 0, handedOverNode("svc-a", spent)), h.handedOverEvent())
-	assert.Equal(t, fix.StatusEscalated, h.fixRow(fix.HandOverTry).Fix.Status, "round 1's hand-over row is left as it was")
+	assert.Equal(t, fix.StatusHandedOver, h.fixRow(fix.HandOverTry).Fix.Status, "round 1's hand-over row is left as it was")
 	assert.Empty(t, h.store.Tries(id))
 	assert.Empty(t, h.store.Steps(id), "a remediation with no try records no output row")
 }
@@ -353,8 +353,8 @@ func TestRunner_TheHandOverRowLeavesATryInFlightAlone(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	require.Len(t, h.fixes(), 5, "the hand-over row is a row of its own")
-	escalated := h.fixRow(fix.HandOverTry).Fix
-	assert.Equal(t, fix.StatusEscalated, escalated.Status)
-	assert.Equal(t, id.String(), escalated.RemediationID)
+	handedOver := h.fixRow(fix.HandOverTry).Fix
+	assert.Equal(t, fix.StatusHandedOver, handedOver.Status)
+	assert.Equal(t, id.String(), handedOver.RemediationID)
 	assert.Equal(t, fix.StatusGenerating, h.fixRow(4).Fix.Status)
 }

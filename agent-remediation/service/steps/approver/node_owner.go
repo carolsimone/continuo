@@ -10,15 +10,15 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-const nameNodeOwner workflow.StepName = "node_owner"
+const nameNodeOwner flow.StepName = "node_owner"
 
 // NodeOwner is the approver step `node_owner`. Each node's approver is its
 // owner: the one the release's code bundle records, else the team.name of the
@@ -47,7 +47,7 @@ func (*NodeOwner) Meta() step.Meta {
 		Description: "Names each node's owner as its approver: the owner the release's code bundle records " +
 			"(a dbt node's config meta.owner, a python node's contract team.name), else the team.name of the " +
 			"node's ODCS contract file its cluster gathered, else none.",
-		Stages: []workflow.Stage{workflow.StageApprover},
+		Stages: []flow.Stage{flow.StageApprover},
 	}
 }
 

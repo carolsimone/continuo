@@ -312,7 +312,7 @@ func (c *runGRPCClient) ListNodeRuns(ctx context.Context, project, schema, table
 
 // singleNodeRequest builds a StartSingleNodeRun request. An empty
 // sourceRunID selects the "latest" metadata mode; a non-empty one selects
-// "snapshot_of_run", pinning the run to the metadata the given past run used.
+// "release_of_run", pinning the run to the metadata the given past run used.
 // run-controller rejects any other combination, so the CLI never sends one.
 func singleNodeRequest(requestID, project, schema, table, sourceRunID, operation string) *runv1.StartSingleNodeRunRequest {
 	req := &runv1.StartSingleNodeRunRequest{
@@ -324,7 +324,7 @@ func singleNodeRequest(requestID, project, schema, table, sourceRunID, operation
 		Operation:      operation,
 	}
 	if sourceRunID != "" {
-		req.MetadataSource = metadataSourceSnapshotOfRun
+		req.MetadataSource = metadataSourceReleaseOfRun
 		req.SourceRunId = sourceRunID
 	}
 	return req
@@ -334,8 +334,8 @@ func singleNodeRequest(requestID, project, schema, table, sourceRunID, operation
 // run-controller component's run.MetadataSource* constants, which the CLI cannot import
 // (public-gRPC-only rule), so the literals are duplicated here deliberately.
 const (
-	metadataSourceLatest        = "latest"
-	metadataSourceSnapshotOfRun = "snapshot_of_run"
+	metadataSourceLatest       = "latest"
+	metadataSourceReleaseOfRun = "release_of_run"
 )
 
 func (c *runGRPCClient) startSingleNode(ctx context.Context, req *runv1.StartSingleNodeRunRequest, actor string) (*runv1.StartSingleNodeRunResponse, error) {

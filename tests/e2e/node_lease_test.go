@@ -173,7 +173,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 
 	// ── The schedule run goes on and ends; nothing holds the node ───────────────
 	var allTables []string
-	for _, level := range getDAGLevels() {
+	for _, level := range getTopologyLevels() {
 		allTables = append(allTables, level...)
 	}
 	waitForAllTasksSucceeded(t, ctx, clients, scheduleRunID, allTables)

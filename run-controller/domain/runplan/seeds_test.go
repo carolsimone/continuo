@@ -9,20 +9,20 @@ import (
 )
 
 func TestSeeds_EverySeedIsAReadyTask(t *testing.T) {
-	plan, err := runplan.Seeds{Keys: keys("seed_table_3", "seed_table_1", "seed_table_3")}.Select(releaseGraph(e2eDAG))
+	plan, err := runplan.Seeds{Keys: keys("seed_table_3", "seed_table_1", "seed_table_3")}.Select(releaseGraph(e2eTopology))
 	require.NoError(t, err)
 	assert.Equal(t, planOf(pending("seed_table_1", "seed_table_3"), "seed_table_1", "seed_table_3"), plan)
 }
 
 func TestSeeds_AnEmptySetIsRefused(t *testing.T) {
-	_, err := runplan.Seeds{}.Select(releaseGraph(e2eDAG))
+	_, err := runplan.Seeds{}.Select(releaseGraph(e2eTopology))
 	assert.ErrorIs(t, err, runplan.ErrEmptySelection)
 }
 
 // A seed the release does not hold fails the whole selection rather than
 // shrinking it: the reconcile asked for every one of them.
 func TestSeeds_ASeedOutsideTheReleaseIsNotFound(t *testing.T) {
-	_, err := runplan.Seeds{Keys: keys("seed_table_1", "seed_table_9")}.Select(releaseGraph(e2eDAG))
+	_, err := runplan.Seeds{Keys: keys("seed_table_1", "seed_table_9")}.Select(releaseGraph(e2eTopology))
 	require.ErrorIs(t, err, runplan.ErrTargetNotFound)
 	assert.Contains(t, err.Error(), "e2e_schema.seed_table_9")
 }
@@ -35,6 +35,6 @@ func TestSeeds_AnUndeclaredNodeTypeIsRefused(t *testing.T) {
 // The seed reconcile names dbt seeds only, so a key that names an unknown-external
 // node is refused rather than run.
 func TestSeeds_AnUnknownExternalNodeIsRefused(t *testing.T) {
-	_, err := runplan.Seeds{Keys: append(keys("seed_table_1"), unknownExternalProbe)}.Select(withUnknownExternalUpstream(releaseGraph(e2eDAG), "table_a"))
+	_, err := runplan.Seeds{Keys: append(keys("seed_table_1"), unknownExternalProbe)}.Select(withUnknownExternalUpstream(releaseGraph(e2eTopology), "table_a"))
 	assert.ErrorIs(t, err, runplan.ErrExternalNode)
 }

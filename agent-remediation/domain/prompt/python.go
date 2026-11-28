@@ -42,7 +42,7 @@ type PythonEvidence struct {
 // noReadsSystemPrompt rewrites.
 const pythonContractDescription = `A python node is declared in its own ODCS contract file, contracts/<table>.odcs.yaml: one contract per node. Its id is "<schema>.<table>". Its continuo customProperties name the script that produces it and, under readQueries, the upstream relations it reads: each query is one SELECT that names every table it reads with its schema. The columns it promises to produce are the properties of its one schema object (schema[0].properties), each with a name, a physicalType and whether it is required.`
 
-const pythonContractFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python node whose contract failed blue/green validation.
+const pythonContractFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python node whose contract failed its release check.
 
 ` + pythonContractDescription + ` Validation runs the node's script against the candidate schema and checks that what it produced matches what the contract declares. It does NOT run the script's python source, which you are not shown and cannot change.
 

@@ -46,14 +46,14 @@ a single, portable contract to enforce and reason about.
 Today a candidate release is gated by compilation, manifest parsing, and schema
 validation before it can be promoted. The next gate is **data quality**: once a
 node materializes in the candidate release, run its data-quality expectations —
-row-level tests, freshness, and drift against the current production baseline —
+row-level tests, freshness, and drift against the live release —
 and block promotion on a breach. This catches data drift and quality
 regressions that compile and schema-validate cleanly but would still ship bad
 data.
 
 ### One control plane for streaming and batch
 
-A single view, with contract enforcement and lineage, for the streaming and
+A single view, with contract enforcement and topology, for the streaming and
 batch nodes continuo runs. A streaming node carries the same ODCS contract as a
 dbt or Python node and is enforced the same way.
 

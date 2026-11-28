@@ -226,7 +226,7 @@ func TestTaskDispatch_OnlyAnAttemptAboutToBeReportedLostIsReadLive(t *testing.T)
 // An acknowledged attempt with neither a record nor a Job, whose pod a live
 // read still shows running (its Job was deleted with orphan propagation), is
 // not reported lost: nothing is stored or reported, and run-controller asks again.
-func TestTaskDispatch_AnAcknowledgedAttemptWithAnOrphanPodIsNotReportedLost(t *testing.T) {
+func TestTaskDispatch_AnAcknowledgedAttemptWithAnUnfinishedPodIsNotReportedLost(t *testing.T) {
 	evt := acknowledgedDispatch()
 	started := time.Now()
 	live := &liveJobs{job: model.JobObservation{Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
@@ -248,7 +248,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptWithAnOrphanPodIsNotReportedLost(t *t
 // but a pod of it a live read shows running, is not answered stopped while
 // the pod can still write: nothing is stored or reported, and run-controller's next
 // cancel names the attempt again.
-func TestTaskDispatch_AFencedRunsAttemptWithAnOrphanPodIsLeftUnanswered(t *testing.T) {
+func TestTaskDispatch_AFencedRunsAttemptWithAnUnfinishedPodIsLeftUnanswered(t *testing.T) {
 	evt := acknowledgedDispatch()
 	started := time.Now()
 	live := &liveJobs{job: model.JobObservation{Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
@@ -407,7 +407,7 @@ func TestTaskDispatchHandler_AFullRefreshTheBlockNoLongerDefinesAdoptsItsSurvivi
 // A full refresh whose block no longer defines the command, with no Job of
 // the attempt but a pod of it a live read still shows running, is left
 // unanswered while the pod can write: nothing is stored or reported.
-func TestTaskDispatchHandler_AFullRefreshTheBlockNoLongerDefinesAwaitsAnOrphanPod(t *testing.T) {
+func TestTaskDispatchHandler_AFullRefreshTheBlockNoLongerDefinesAwaitsAnUnfinishedPod(t *testing.T) {
 	evt := fullRefreshDispatch(pkgmodel.NodeTypeDbtModel)
 	started := time.Now()
 	live := &liveJobs{job: model.JobObservation{Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,

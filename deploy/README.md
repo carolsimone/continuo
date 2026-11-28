@@ -21,7 +21,7 @@ reference.
 | Monitor continuo with my own Prometheus, Datadog or other tool | [OBSERVABILITY.md](OBSERVABILITY.md) — the metrics, the Job labels, example alert rules and what to leave out of them |
 | Control which hosts the assistant and the fix proposer can reach | [Outbound traffic](#outbound-traffic) — the egress proxy and its allowlist |
 | Back up the catalog graph, or restore it after Neo4j is lost | [Catalog backup and restore](continuo/README.md#5-catalog-backup-and-restore) — the nightly export to the bucket, `catalog-backup`, and the S3 actions the export needs |
-| Give the fix proposer my own remediation flow and types | [Remediation files](continuo/README.md#7-remediation-files) — `agentRemediation.workflows.files`, replacing a built-in, and `remediation-check files` in CI |
+| Give the fix proposer my own remediation flow and types | [Remediation files](continuo/README.md#7-remediation-files) — `agentRemediation.files`, replacing a built-in, and `remediation-check files` in CI |
 | Build a dbt image for my team's models | [dbt-image-contract.md](dbt-image-contract.md) |
 | Understand how releases are cut and verified | [Release flow and CI gates](continuo/README.md#6-release-flow-and-ci-gates) |
 

@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -21,19 +21,19 @@ const csvReadKey = "csv"
 
 // The names the checks of this file register under.
 const (
-	nameContractPathsInsideFolder workflow.StepName = "contract_paths_inside_folder"
-	nameYAMLReads                 workflow.StepName = "yaml_reads"
-	nameNodeIdentityUnchanged     workflow.StepName = "node_identity_unchanged"
-	nameReadsKept                 workflow.StepName = "reads_kept"
-	nameCSVReadKept               workflow.StepName = "csv_read_kept"
-	nameNoNewSecretRef            workflow.StepName = "no_new_secret_ref"
-	nameDeclaredOnce              workflow.StepName = "declared_once"
+	nameContractPathsInsideFolder flow.StepName = "contract_paths_inside_folder"
+	nameYAMLReads                 flow.StepName = "yaml_reads"
+	nameNodeIdentityUnchanged     flow.StepName = "node_identity_unchanged"
+	nameReadsKept                 flow.StepName = "reads_kept"
+	nameCSVReadKept               flow.StepName = "csv_read_kept"
+	nameNoNewSecretRef            flow.StepName = "no_new_secret_ref"
+	nameDeclaredOnce              flow.StepName = "declared_once"
 )
 
 var (
 	needsDraft        = []remediation.EvidenceKey{remediation.KeyDraft}
 	needsDraftAndFile = []remediation.EvidenceKey{remediation.KeyDraft, remediation.KeyContractFile}
-	preflightOnly     = []workflow.Stage{workflow.StagePreflight}
+	preflightOnly     = []flow.Stage{flow.StagePreflight}
 	errNoScratch      = errors.New("the check reads the pass's patched checkout, and the input holds none")
 	errNoContractFile = errors.New("the evidence holds no contract file")
 )
@@ -48,7 +48,7 @@ func proposedFiles(d remediation.Draft) []ports.ProposedFile {
 }
 
 // contractFileOf reads the contract file the context steps found.
-func contractFileOf(in step.CheckInput, name workflow.StepName) (remediation.ContractFile, error) {
+func contractFileOf(in step.CheckInput, name flow.StepName) (remediation.ContractFile, error) {
 	file, ok := remediation.Get[remediation.ContractFile](in.Evidence, remediation.KeyContractFile)
 	if !ok {
 		return remediation.ContractFile{}, fmt.Errorf("%s: %w", name, errNoContractFile)
@@ -57,7 +57,7 @@ func contractFileOf(in step.CheckInput, name workflow.StepName) (remediation.Con
 }
 
 // result wraps findings as the output of the check called name.
-func result(name workflow.StepName, findings []remediation.Finding) step.CheckOutput {
+func result(name flow.StepName, findings []remediation.Finding) step.CheckOutput {
 	return step.CheckOutput{Result: remediation.CheckResult{Check: string(name), Findings: findings}}
 }
 
@@ -629,7 +629,7 @@ func (c *DeclaredOnce) Check(ctx context.Context, in step.CheckInput) (step.Chec
 // goes on to read or package it. done is true when the check is already
 // answered: the draft names a path outside the checkout, so nothing was
 // applied, and out holds the path findings.
-func patchedRoot(ctx context.Context, in step.CheckInput, name workflow.StepName, file remediation.ContractFile) (root string, out step.CheckOutput, done bool, err error) {
+func patchedRoot(ctx context.Context, in step.CheckInput, name flow.StepName, file remediation.ContractFile) (root string, out step.CheckOutput, done bool, err error) {
 	if in.Scratch == nil {
 		return "", step.CheckOutput{}, false, fmt.Errorf("%s: %w", name, errNoScratch)
 	}

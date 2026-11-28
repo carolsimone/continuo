@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -178,14 +178,14 @@ func TestRunner_FallbackClustersAreAddedOnce(t *testing.T) {
 	clusters := h.store.Clusters(id)
 	require.Len(t, clusters, 3, "one cluster per member is added, once")
 	upstream := clusters[0]
-	assert.Equal(t, workflow.ClusterSharedUpstream, upstream.Kind)
+	assert.Equal(t, flow.ClusterSharedUpstream, upstream.Kind)
 	assert.Equal(t, "model.core.base", upstream.TargetNodeID)
 	assert.Equal(t, remediation.ClusterFellBack, upstream.Status)
 	assert.Nil(t, upstream.Outcome)
 	for i, member := range []string{"svc-a", "svc-b"} {
 		c := clusters[i+1]
 		assert.Equal(t, i+2, c.Cluster)
-		assert.Equal(t, workflow.ClusterSingle, c.Kind)
+		assert.Equal(t, flow.ClusterSingle, c.Kind)
 		assert.Equal(t, member, c.TargetNodeID)
 		assert.Equal(t, []string{member}, c.Members)
 		assert.Equal(t, "dbt-compile", c.TypeName)
@@ -206,7 +206,7 @@ func TestRunner_CrossProjectDeclineSkipsTheMembers(t *testing.T) {
 
 	clusters := h.store.Clusters(id)
 	require.Len(t, clusters, 1, "a cross-project cluster adds no member cluster")
-	assert.Equal(t, workflow.ClusterCrossProject, clusters[0].Kind)
+	assert.Equal(t, flow.ClusterCrossProject, clusters[0].Kind)
 	assert.Equal(t, remediation.ClusterFellBack, clusters[0].Status)
 	assert.Equal(t, &fix.NodeOutcome{
 		Status: fix.StatusSkipped,
@@ -554,18 +554,18 @@ func TestRunner_TriesSpentHandsOverOnce(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	var escalated []fix.Fix
+	var handedOver []fix.Fix
 	for _, p := range h.fixes() {
-		if p.Fix.Status == fix.StatusEscalated {
-			escalated = append(escalated, p.Fix)
+		if p.Fix.Status == fix.StatusHandedOver {
+			handedOver = append(handedOver, p.Fix)
 		}
 	}
-	require.Len(t, escalated, 1)
-	assert.Equal(t, fix.HandOverTry, escalated[0].Try)
-	assert.Equal(t, id.String(), escalated[0].RemediationID)
-	spent := fix.NodeOutcome{Status: fix.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
-	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, escalated[0].NodeOutcomes,
-		"with no try of its own, the node is escalated with how many times the round was tried")
+	require.Len(t, handedOver, 1)
+	assert.Equal(t, fix.HandOverTry, handedOver[0].Try)
+	assert.Equal(t, id.String(), handedOver[0].RemediationID)
+	spent := fix.NodeOutcome{Status: fix.StatusHandedOver, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
+	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, handedOver[0].NodeOutcomes,
+		"with no try of its own, the node is handed over with how many times the round was tried")
 	assert.Equal(t, handedOverOf(id, 1, 0, handedOverNode("svc-a", spent)), h.handedOverEvent(), "the hand-over emits once")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.store.Tries(id))
@@ -605,7 +605,7 @@ func TestRunner_ARoundTwoTriggerNumbersItsTriesFromOne(t *testing.T) {
 	assert.Equal(t, 1, tries[0].Try, "the round's first try is try 1")
 	assert.Equal(t, 2, h.fixRowIn(2, 1).Fix.Round)
 	for _, p := range h.fixes() {
-		assert.NotEqual(t, fix.StatusEscalated, p.Fix.Status)
+		assert.NotEqual(t, fix.StatusHandedOver, p.Fix.Status)
 	}
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 }

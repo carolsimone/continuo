@@ -75,7 +75,8 @@ function releaseCheckPhaseLabel(phase: string): string {
 // StatusPill renders a try's lifecycle status in the same small pill the
 // Releases list uses for a release status, coloured by fixPillClass so
 // the two surfaces share one vocabulary. A status still in flight (a fix
-// being generated or verified) is marked busy for assistive tech.
+// being generated or verified) is marked busy for assistive tech. The pill
+// reads the status in words, so handed_over reads "handed over".
 function StatusPill({ status }: { status: string }) {
   const busy = status === 'verifying' || status === 'generating';
   return (
@@ -83,7 +84,7 @@ function StatusPill({ status }: { status: string }) {
       className={`pill-sm ${fixPillClass(status).replace('pill--', 'pill-sm--')}`}
       aria-busy={busy ? 'true' : undefined}
     >
-      {status}
+      {status.replace(/_/g, ' ')}
     </span>
   );
 }

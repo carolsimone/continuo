@@ -152,7 +152,7 @@ func (s Rebase) Preview(g topology.Graph) (Preview, error) {
 		return Preview{}, err
 	}
 
-	plan := carryRebuilds(dagPlan(g, executed, succeededIn(g, s.Source.Tasks)), s.Source.Tasks, s.Source.Operation)
+	plan := carryRebuilds(topologyPlan(g, executed, succeededIn(g, s.Source.Tasks)), s.Source.Tasks, s.Source.Operation)
 	pv := Preview{Plan: plan, Changed: changed}
 	named := make(map[topology.NodeKey]bool, len(changed))
 	for _, c := range changed {

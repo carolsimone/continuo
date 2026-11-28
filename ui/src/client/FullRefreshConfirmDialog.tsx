@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 
 interface Props {
   fqn: string;
-  // Describes the past snapshot being rebuilt; absent when the latest version runs.
-  snapshot?: string;
+  // Describes the past release being rebuilt; absent when the latest version runs.
+  source?: string;
   // True for a seed: its full refresh also rebuilds the views that read it.
   seed?: boolean;
   // The objects the seed's last load stopped on (lowercased schema.name); each
@@ -18,7 +18,7 @@ interface Props {
 // is dropped and rebuilt, which also drops dependent views on Postgres. For a
 // seed whose last load stopped on objects it would have dropped, it lists them
 // so the operator can tick the ones this refresh may drop.
-export default function FullRefreshConfirmDialog({ fqn, snapshot, seed, objects, onConfirm, onClose }: Props) {
+export default function FullRefreshConfirmDialog({ fqn, source, seed, objects, onConfirm, onClose }: Props) {
   const listed = Array.from(new Set(objects ?? []));
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const toggle = (name: string) => setTicked(prev => {
@@ -54,7 +54,7 @@ export default function FullRefreshConfirmDialog({ fqn, snapshot, seed, objects,
             run again.
           </p>
         )}
-        {snapshot && <p className="dialog-subtitle">{snapshot}</p>}
+        {source && <p className="dialog-subtitle">{source}</p>}
         {listed.length > 0 && (
           <>
             <div className="info-strip info-strip--warning">

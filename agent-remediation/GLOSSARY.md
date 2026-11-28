@@ -19,7 +19,7 @@ A try that did no work and says why, such as maintenance mode or a heal trigger 
 _Avoid_: empty attempt, skipped attempt
 
 **Cluster**:
-The failing nodes one draft fixes together, because they fail the same way and share the changed node the fix belongs in.
+The failing nodes one draft fixes together at the changed node the fix belongs in: nodes that fail the same way below a node their own project changed, or nodes below a node another project changed whatever their error (a cross-project cluster). A failing node no other node joins is a cluster of its own.
 _Avoid_: group, batch, bucket
 
 **System failure**:

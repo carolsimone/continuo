@@ -17,7 +17,7 @@ const mkRun = (over: Partial<NodeRun>): NodeRun => ({
 });
 
 describe('RunSourcePickerDialog', () => {
-  it('collapses runs sharing a snapshot into one selectable row', () => {
+  it('collapses runs sharing an image into one selectable row', () => {
     const runs: NodeRun[] = [
       mkRun({ run_id: 'a1', image_tag: 'img-a', created_at: '2026-05-10T10:00:00Z' }),
       mkRun({ run_id: 'a2', image_tag: 'img-a', created_at: '2026-05-09T10:00:00Z' }),
@@ -39,7 +39,7 @@ describe('RunSourcePickerDialog', () => {
     expect(screen.queryByText('img-inflight')).toBeNull();
   });
 
-  it('picks the snapshot\'s most-recent terminal run', () => {
+  it('picks the image\'s most-recent terminal run', () => {
     const onPick = vi.fn();
     const runs: NodeRun[] = [
       mkRun({ run_id: 'older', image_tag: 'img', created_at: '2026-05-09T10:00:00Z' }),
@@ -77,7 +77,7 @@ describe('RunSourcePickerDialog', () => {
 
   it('renders a neutral info-strip empty state when no eligible runs', () => {
     render(<RunSourcePickerDialog runs={[]} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
-    const empty = screen.getByText(/no past snapshots available/i);
+    const empty = screen.getByText(/no past images available/i);
     expect(empty).toBeInTheDocument();
     expect(empty.closest('.info-strip--neutral')).toBeTruthy();
     expect(document.querySelectorAll('.pick-row')).toHaveLength(0);

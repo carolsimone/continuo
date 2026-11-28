@@ -1,6 +1,6 @@
 """Per-node candidate artifact: the object this node's validation Job fetches.
 
-Blue/green validation builds each changed node as an empty table in an isolated
+The release check builds each changed node as an empty table in an isolated
 candidate schema. What it needs in order to do that differs by runtime — a dbt
 node has compiled SQL to materialize empty, a python node has no SELECT at all
 and declares its output columns instead. Either way the object lives at the key

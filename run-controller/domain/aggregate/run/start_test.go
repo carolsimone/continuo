@@ -69,7 +69,7 @@ func createdByKey(tc *fakeTaskCollection) map[topology.NodeKey]run.Task {
 // upstream are dispatched when the run is created, and the run is running.
 func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	g := failureSchedule()
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 	r := newCronRun(t, model.OperationRun)
 	tc := newFakeTaskCollection()
@@ -137,7 +137,7 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 // dispatched.
 func TestStart_AWritingReadyTaskWithAHeldNodeWaits(t *testing.T) {
 	g := failureSchedule()
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 	r := newCronRun(t, model.OperationRun)
 	tc := newFakeTaskCollection()
@@ -255,7 +255,7 @@ func TestStart_APlanWithoutPendingTasksFinalizesSucceeded(t *testing.T) {
 // The run's operation reaches every task and every dispatch.
 func TestStart_StampsTheRunsOperation(t *testing.T) {
 	g := failureSchedule()
-	plan, err := runplan.WholeDAG{Operation: model.OperationBuild}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationBuild}.Select(g)
 	require.NoError(t, err)
 	r := newCronRun(t, model.OperationBuild)
 	tc := newFakeTaskCollection()
@@ -272,7 +272,7 @@ func TestStart_StampsTheRunsOperation(t *testing.T) {
 
 func TestStart_IsRefusedWithoutStoringAnything(t *testing.T) {
 	g := failureSchedule()
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 
 	t.Run("an empty plan", func(t *testing.T) {

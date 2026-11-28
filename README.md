@@ -12,7 +12,7 @@ Continuo is a control plane for data pipelines with built-in agentic
 remediation. It orchestrates independent data projects — dbt (data build
 tool) models, Python scripts, and CSV (comma-separated values) loads alike —
 without requiring them to know about each other, automatically stitching them
-into one dependency graph, and it heals broken pipelines by having an LLM
+into one dependency graph, and it heals broken releases by having an LLM
 (Large Language Model) propose a fix before anything reaches production.
 
 ## 🎯 Use it when
@@ -28,13 +28,13 @@ into one dependency graph, and it heals broken pipelines by having an LLM
 
 ## ✅ What it delivers
 
-- **No hand-written DAGs.** Dependencies are inferred from your SQL and
-  Python contracts. The DAG is a by-product of your code.
+- **No hand-written dependency graphs.** Dependencies are inferred from your
+  SQL and Python contracts. The topology is a by-product of your code.
 - **One graph across independent projects.** dbt and Python projects are
   stitched together without declaring each other, including edges that cross
   project boundaries in both directions (dbt → Python → dbt).
-- **Blue/green validation for data.** Every release runs in a temporary
-  candidate schema and is checked against its full downstream lineage. Only a
+- **A release check for data.** Every release runs in a temporary
+  candidate schema and is checked against its full downstream topology. Only a
   passing release becomes the production image.
 - **Production never runs a broken graph.** A rejected release leaves
   production on the last version that passed; schedules keep producing
@@ -69,8 +69,8 @@ batch under one control plane, performance regression detection — is in the
 
 ## ⚙️ How it works
 
-A DAG (Directed Acyclic Graph) is just the shape of your dependencies, and
-those are already written down in your SQL. Continuo reads the schema and
+A topology (the graph of which table reads which) is just the shape of your
+dependencies, and those are already written down in your SQL. Continuo reads the schema and
 table names each model reads and writes and stitches every project into one
 graph — dbt models and Python nodes ordered together — so no project has to
 know about any other. Onboarding is two steps at CD (Continuous Deployment)
@@ -82,11 +82,11 @@ token from the bundled Dex
 the project itself and derives the rest. (A Python project uploads its contract to object
 storage first — one extra `aws s3 cp` in your CD.)
 
-Every release is then validated the way blue/green validates a software
+Every release is then checked the way a careful team ships a software
 release: stand the new version up next to the current one, prove it is
 healthy, then cut over. Data does not move the way traffic does, so Continuo
-runs the new DAG in a second, temporary schema (a schema copy, not a data
-copy) and checks that the full downstream lineage still works. Only then does
+runs the new topology in a second, temporary schema (a schema copy, not a data
+copy) and checks that the full downstream topology still works. Only then does
 the new image become the production image. If validation fails, production
 keeps the last version that passed while a remediation agent proposes a fix
 for a human to review.
@@ -159,7 +159,7 @@ installs bringing your own datastores, see [deploy/README.md](deploy/README.md).
 
 The install above gets you an *empty* Continuo. Everything Continuo actually
 does — inferring one dependency graph across independent projects,
-validating a change against its full downstream lineage before promoting it,
+validating a change against its full downstream topology before promoting it,
 refusing a release that would break another team's model — only becomes visible
 once there are real projects on it.
 

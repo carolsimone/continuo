@@ -28,7 +28,7 @@ func independentNodes(t *testing.T, tables ...string) (runplan.Plan, topology.Gr
 		})
 	}
 	g := topology.NewGraph(nodes, nil)
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 	return plan, g
 }

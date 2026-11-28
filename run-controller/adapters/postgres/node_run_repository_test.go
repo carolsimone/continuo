@@ -692,8 +692,7 @@ func historyTask(t *testing.T, db *sqlx.DB, tenant, project, schema, table strin
 // nodes svc-a.an.orders (scheduled, ran), svc-a.an.customers and
 // svc-a.marts.customers (one name in two schemas), the dormant
 // svc-a.an.dormant_never that never ran, and svc-b.an.revenue; besides those
-// it holds a dbt test of svc-a, an unknown-external table and a legacy
-// ingested row. An older release that is not live holds svc-a.an.dropped,
+// it holds a dbt test of svc-a and an unknown-external table. An older release that is not live holds svc-a.an.dropped,
 // which ran, and svc-c.an.gone. It returns the tenant.
 func nameSuggestionTenant(t *testing.T, db *sqlx.DB) string {
 	t.Helper()
@@ -706,7 +705,6 @@ func nameSuggestionTenant(t *testing.T, db *sqlx.DB) string {
 		liveNode{project: "svc-a", schema: "an", table: "not_null_orders_id", nodeType: "dbt-test", testCount: intPtr(1)},
 		liveNode{project: "svc-t", schema: "an", table: "only_a_test", nodeType: "dbt-test", testCount: intPtr(1)},
 		liveNode{schema: "raw", table: "events", nodeType: "unknown-external"},
-		liveNode{schema: "raw", table: "legacy", nodeType: "ingested"},
 	)
 	storeLiveNodes(t, db, tenant, "rel-old", 1,
 		liveNode{project: "svc-a", schema: "an", table: "dropped", nodeType: "dbt-model", schedule: "daily"},
@@ -721,8 +719,7 @@ func nameSuggestionTenant(t *testing.T, db *sqlx.DB) string {
 // The name suggestions are the tables of the nodes the node list lists: every
 // node of the live release that continuo builds, a dormant node that never ran
 // included, one name per table across schemas, in byte order, of one project
-// when one is given. A dbt test, an unknown-external table, a legacy ingested
-// row and a node only an older release holds, whatever runs it had, are never
+// when one is given. A dbt test, an unknown-external table and a node only an older release holds, whatever runs it had, are never
 // suggested, and neither is another tenant's node.
 func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 	db := newTestDB(t)
@@ -1252,40 +1249,12 @@ func TestListNodes_LeavesOutUnknownExternalNodes(t *testing.T) {
 	assert.Empty(t, rows)
 }
 
-// A live release stored under the type's legacy name still reads its table no
-// node builds as one: the row is neither listed nor counted, on a page or
-// past it, and is not dormant.
-func TestListNodes_LeavesOutALegacyIngestedRow(t *testing.T) {
-	db := newTestDB(t)
-	tenant := nodeListTenant(t, db,
-		liveNode{table: "orders", nodeType: "dbt-model", schedule: "daily"},
-		liveNode{table: "raw_events", nodeType: "ingested"},
-	)
-	repo := postgres.NewNodeRunRepository(db, tenant, discardLogger())
-	ctx := context.Background()
-
-	rows, total, err := repo.ListNodes(ctx, "", "", model.OperationRun, false, 50, 0)
-	require.NoError(t, err)
-	assert.Equal(t, 1, total)
-	assert.Equal(t, []string{"orders"}, tablesOf(rows))
-
-	past, total, err := repo.ListNodes(ctx, "", "", model.OperationRun, false, 1, 1)
-	require.NoError(t, err)
-	assert.Empty(t, past)
-	assert.Equal(t, 1, total, "the total past the last page does not count the legacy row")
-
-	dormant, total, err := repo.ListNodes(ctx, "", "", model.OperationRun, true, 50, 0)
-	require.NoError(t, err)
-	assert.Zero(t, total)
-	assert.Empty(t, dormant)
-}
-
 // The dormant filter is model.IsDormant in SQL. The live release holds a
-// scheduled model, one node of no schedule of every declared node type and a
-// legacy ingested row of no schedule: the dormant filter lists exactly the
-// types IsDormant calls dormant, the full list adds the scheduled model, and
-// each row's dormant flag is IsDormant of its type and schedule. The dormant
-// node that ran comes first, with its stats.
+// scheduled model and one node of no schedule of every declared node type:
+// the dormant filter lists exactly the types IsDormant calls dormant, the full
+// list adds the scheduled model, and each row's dormant flag is IsDormant of
+// its type and schedule. The dormant node that ran comes first, with its
+// stats.
 func TestListNodes_DormantOnly(t *testing.T) {
 	db := newTestDB(t)
 	nodes := []liveNode{{table: "scheduled", nodeType: "dbt-model", schedule: "daily"}}
@@ -1301,7 +1270,6 @@ func TestListNodes_DormantOnly(t *testing.T) {
 			wantListed = append(wantListed, table)
 		}
 	}
-	nodes = append(nodes, liveNode{table: "legacy", nodeType: "ingested"})
 	require.NotEmpty(t, wantDormant)
 	scheduleOf := map[string]string{}
 	for _, n := range nodes {

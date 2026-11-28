@@ -85,7 +85,7 @@ stamp names the runtime and library versions, so it changes with them.
 - Each dbt project has one seed, and a `compile-extras.json` beside its manifest.
   The seed declares every column of its CSV header, so the release's header
   check passes.
-- Every dbt model and seed gets a generated contract, so the `contract_generation`
+- Every dbt model and seed gets a generated data contract, so the `contract_generation`
   and `contract_validation` stages run for the dbt projects as well as for
   `svc-py`.
 - Each manifest carries the macros of `fixtures/macros.json.gz`, which

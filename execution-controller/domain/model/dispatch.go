@@ -33,12 +33,12 @@ const (
 	// record nor its Job is held, and no pod of it is left; it is reported
 	// failed as attempt_lost.
 	ReportLost
-	// AwaitOrphanPod: run-controller knows the attempt as acknowledged, or the
+	// AwaitUnfinishedPod: run-controller knows the attempt as acknowledged, or the
 	// dbt-commands configuration refuses its command, and neither its record
 	// nor its Job is held, but a pod of it has not finished (its Job was
 	// deleted without its pods). Nothing is written: the pod may still write
 	// the table, and run-controller asks again.
-	AwaitOrphanPod
+	AwaitUnfinishedPod
 )
 
 // DecideDispatch decides what a dispatch leads to, from whether the attempt's
@@ -71,7 +71,7 @@ func DecideDispatch(held, laterHeld bool, problem, configRefusal pkgmodel.Failur
 	case knownStatus == pkgmodel.AttemptStatusDispatched && configRefusal == "":
 		return CreateAttempt
 	case podOfAttemptRunning:
-		return AwaitOrphanPod
+		return AwaitUnfinishedPod
 	case knownStatus == pkgmodel.AttemptStatusDispatched:
 		return RefuseInvalid
 	}

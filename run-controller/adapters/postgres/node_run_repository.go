@@ -524,7 +524,7 @@ func toNodeSummary(row nodeSummaryRow) *projection.NodeSummary {
 	if row.RunCount > 0 {
 		flakyPct = int(math.Round(float64(row.FlakyCount) / float64(row.RunCount) * 100))
 	}
-	nodeType := model.CanonicalNodeType(row.NodeType)
+	nodeType := model.NodeType(row.NodeType)
 	return &projection.NodeSummary{
 		ProjectName:    row.ProjectName,
 		SchemaName:     row.SchemaName,

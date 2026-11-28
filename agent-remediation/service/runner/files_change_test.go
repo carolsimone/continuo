@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -23,8 +23,8 @@ import (
 // from the rows they wrote, whatever the loaded files now list.
 
 // filesWith is a copy of files with change applied to the copy.
-func filesWith(files workflow.Set, change func(workflow.Set)) workflow.Set {
-	out := workflow.Set{Flows: map[string]workflow.Flow{}, Types: map[string]workflow.Type{}}
+func filesWith(files flow.Set, change func(flow.Set)) flow.Set {
+	out := flow.Set{Flows: map[string]flow.Flow{}, Types: map[string]flow.Type{}}
 	for k, v := range files.Flows {
 		out.Flows[k] = v
 	}
@@ -36,8 +36,8 @@ func filesWith(files workflow.Set, change func(workflow.Set)) workflow.Set {
 }
 
 // flowContext sets the flow's context steps to names.
-func flowContext(names ...string) func(workflow.Set) {
-	return func(s workflow.Set) {
+func flowContext(names ...string) func(flow.Set) {
+	return func(s flow.Set) {
 		flow := s.Flows["rejected-release"]
 		flow.Context = refs(names...)
 		s.Flows[flow.Name] = flow
@@ -45,8 +45,8 @@ func flowContext(names ...string) func(workflow.Set) {
 }
 
 // compilePreflight sets the dbt-compile type's pre-flight checks to names.
-func compilePreflight(names ...string) func(workflow.Set) {
-	return func(s workflow.Set) {
+func compilePreflight(names ...string) func(flow.Set) {
+	return func(s flow.Set) {
 		typ := s.Types["dbt-compile"]
 		typ.Preflight = refs(names...)
 		s.Types[typ.Name] = typ
@@ -150,7 +150,7 @@ func TestRunner_ACheckedClusterOfATypeTheFilesNoLongerDefineIsStillVerified(t *t
 	require.NoError(t, h.runner.Drive(ctx, id))
 	h.checks.answer(fix.PhasePassed, nil)
 
-	removed := filesWith(h.files, func(s workflow.Set) { delete(s.Types, "dbt-compile") })
+	removed := filesWith(h.files, func(s flow.Set) { delete(s.Types, "dbt-compile") })
 	require.NoError(t, h.pollWith(h.runnerOver(removed), id))
 
 	assert.Equal(t, fix.StatusProposed, h.fixRow(1).Fix.Status)
@@ -228,9 +228,9 @@ func TestRunner_AClusterInPreflightRunsItsPassOnTheDraftsPromptRowUnderFilesThat
 	require.ErrorIs(t, h.runner.Drive(dctx, id), context.Canceled)
 	require.Equal(t, 1, h.llm.calls())
 
-	renamed := filesWith(h.files, func(s workflow.Set) {
+	renamed := filesWith(h.files, func(s flow.Set) {
 		typ := s.Types["dbt-compile"]
-		typ.Agent.Prompt = workflow.StepRef{Name: "dbt-parse"}
+		typ.Agent.Prompt = flow.StepRef{Name: "dbt-parse"}
 		s.Types[typ.Name] = typ
 	})
 	h.reclaim(id)

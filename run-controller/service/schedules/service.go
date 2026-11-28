@@ -21,7 +21,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/service/ports"
 )
 
-// upcomingFires is how many fire times Upsert and Preview return.
+// upcomingFires is how many slots Upsert and Preview return.
 const upcomingFires = 3
 
 // lastWriteWinsTries is how many times Upsert reads and saves an edit that

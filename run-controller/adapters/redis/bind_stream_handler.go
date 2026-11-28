@@ -29,7 +29,7 @@ type streamBinding[E any] struct {
 	streamName string
 	// parse turns a raw Redis message into the typed event. A parse failure is
 	// permanent: bindStreamHandler wraps it with events.ErrPermanent so the
-	// consumer dead-letters the poison message.
+	// consumer dead-letters the message that keeps failing.
 	parse func(msg goredis.XMessage) (E, error)
 	// load, when set, completes the parsed event with input read from outside
 	// the database, such as an object-storage read, before any transaction

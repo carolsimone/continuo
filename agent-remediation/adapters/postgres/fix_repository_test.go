@@ -1547,7 +1547,7 @@ func TestFixRepository_KeepsTheNodeOutcomeCode(t *testing.T) {
 	repo := NewFixRepository(db, nil)
 
 	outcomes := map[string]fix.NodeOutcome{
-		"model.p.handed": {Status: fix.StatusEscalated, Reason: "the tries are spent", Code: model.HandoverReasonTriesSpent},
+		"model.p.handed": {Status: fix.StatusHandedOver, Reason: "the tries are spent", Code: model.HandoverReasonTriesSpent},
 		"model.p.fixed":  {Status: fix.StatusProposed},
 	}
 	id := seedFix(t, repo, db, fix.Fix{
@@ -2374,7 +2374,7 @@ func TestBeginPR_PerProjectClaimOverMemberlessEditsResolvesNoMembers(t *testing.
 // The UI reads node_outcomes[node].status in preference to the row status
 // (fixStatusForNode: `node_outcomes?.[node]?.status ?? status`), so a
 // per-node entry left at 'generating' keeps the FIX cell spinning and hides
-// "Try again" even though the row is failed — the exact orphan symptom this
+// "Try again" even though the row is failed — the exact stuck-row symptom this
 // recovery must clear. Any node already terminal is left as it was, its code
 // included.
 func TestFixRepositoryFailGenerating_FailsNodeOutcomes(t *testing.T) {

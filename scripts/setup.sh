@@ -227,7 +227,7 @@ echo "✓ dbt manifests compiled and uploaded to MinIO S3 (key: <project>/e2e-ba
 # S3 image-tag sidecar is needed.
 
 # Materialize dbt seeds into e2e_schema. The e2e topology is seeded directly
-# into Neo4j (no manifest.loaded ingest), and the standing "seed" schedule is
+# through release-controller's announce-topology (no release is parsed), and the standing "seed" schedule is
 # not run before the seed-dependent models (e.g. table_a = ref('seed_table_1')),
 # so their seed inputs must already exist in the shared dbt database. Only
 # service-1 ships seeds; dbt-compile-and-load shares continuo_dbt with the kind
@@ -236,20 +236,20 @@ echo "Materializing dbt seeds into e2e_schema..."
 docker exec dbt-compile-and-load bash -c "cd /app/projects/service-1 && dbt seed --profiles-dir ."
 echo "✓ dbt seeds materialized"
 
-# Create the table that service-1's ingest_probe_reader model reads and no model
+# Create the table that service-1's external_probe_reader model reads and no model
 # builds: the table an outside system loads. topology-controller turns that read
 # into an unknown-external node, and the unknown-external-node e2e test runs
 # the reader, whose Job selects from it. It is created as the warehouse's own
 # login, the one dbt and the run Jobs sign in as, so the reader may select from
 # it. The local warehouse is Postgres (WAREHOUSE_ENGINE=postgres, the dbt
 # profiles' type), and both statements are idempotent.
-echo "Creating the outside table e2e_raw.ingest_probe..."
+echo "Creating the outside table e2e_raw.external_probe..."
 docker compose exec -T -e PGPASSWORD=local-continuo_warehouse postgres \
   psql -v ON_ERROR_STOP=1 -U continuo_warehouse -d continuo_dbt <<'SQL'
 CREATE SCHEMA IF NOT EXISTS e2e_raw;
-CREATE TABLE IF NOT EXISTS e2e_raw.ingest_probe AS SELECT 1 AS id;
+CREATE TABLE IF NOT EXISTS e2e_raw.external_probe AS SELECT 1 AS id;
 SQL
-echo "✓ outside table e2e_raw.ingest_probe created"
+echo "✓ outside table e2e_raw.external_probe created"
 
 # Wait for control plane
 echo "Waiting for control plane..."

@@ -9,7 +9,7 @@
 # Keys: run / seed / snapshot (selected by node_type for operation=run),
 # test / build (node-agnostic operations), seed_build (candidate-schema seed leg;
 # schema routed via the DBT_TARGET_SCHEMA env var + generate_schema_name macro),
-# compile (validation-pipeline leg: command + absolute manifest_path, plus optional
+# compile (the release check's compile leg: command + absolute manifest_path, plus optional
 # partial_parse_path — must live in the same directory as manifest_path, since the
 # execution-controller mounts the parse-cache volume at that directory in the team container),
 # parse (parse-export/rehearsal leg; no placeholders). full_refresh (optional)

@@ -18,21 +18,21 @@ import (
 )
 
 const (
-	// ingestProbeSchedule is the schedule of service-1's ingest_probe_reader
+	// externalProbeSchedule is the schedule of service-1's external_probe_reader
 	// model, and of nothing else.
-	ingestProbeSchedule = "ingest-probe"
-	// ingestProbeReaderTable is the model that reads the outside table, and
-	// ingestProbeReaderKey its node key (<schema>.<table>, lower-case).
-	ingestProbeReaderTable = "ingest_probe_reader"
-	ingestProbeReaderKey   = seedSchemaName + "." + ingestProbeReaderTable
-	// ingestProbeReaderProject owns the reader. The schedule graph names a node
+	externalProbeSchedule = "external-probe"
+	// externalProbeReaderTable is the model that reads the outside table, and
+	// externalProbeReaderKey its node key (<schema>.<table>, lower-case).
+	externalProbeReaderTable = "external_probe_reader"
+	externalProbeReaderKey   = seedSchemaName + "." + externalProbeReaderTable
+	// externalProbeReaderProject owns the reader. The schedule graph names a node
 	// <project>.<schema>.<table>, so the reader's id carries it.
-	ingestProbeReaderProject = "service-1"
-	ingestProbeReaderGraphID = ingestProbeReaderProject + "." + ingestProbeReaderKey
+	externalProbeReaderProject = "service-1"
+	externalProbeReaderGraphID = externalProbeReaderProject + "." + externalProbeReaderKey
 	// The outside table the reader selects from: scripts/setup.sh creates it in
 	// the warehouse, and no model builds it.
 	unknownExternalSchema      = "e2e_raw"
-	unknownExternalTable       = "ingest_probe"
+	unknownExternalTable       = "external_probe"
 	unknownExternalKey         = unknownExternalSchema + "." + unknownExternalTable
 	unknownExternalGraphNodeID = "." + unknownExternalKey // an unknown-external node has no project, so its id starts with a dot
 )
@@ -42,15 +42,15 @@ const (
 // never run:
 //
 //  1. A bootstrap release of service-1 promotes. service-1's
-//     ingest_probe_reader model reads e2e_raw.ingest_probe, a table
+//     external_probe_reader model reads e2e_raw.external_probe, a table
 //     scripts/setup.sh creates in the warehouse and no model builds.
 //  2. run-controller's copy of the release holds a node for the table, of type
 //     unknown-external, with no project and no schedule, and an edge into the reader.
 //  3. catalog's live graph holds an active :Node of type unknown-external for it, and
 //     the reader's :DEPENDS_ON reaches it.
-//  4. The ui's schedule graph of ingest-probe lists the node, typed unknown-external
+//  4. The ui's schedule graph of external-probe lists the node, typed unknown-external
 //     and named without a project, and the edge from it to the reader.
-//  5. StartRun(ingest-probe) plans exactly the reader, which runs and
+//  5. StartRun(external-probe) plans exactly the reader, which runs and
 //     succeeds: the Job selects from the outside table. No Job is created for
 //     the table.
 //  6. A single-node run of the table is refused with InvalidArgument, with
@@ -59,7 +59,7 @@ const (
 //
 // The release leaves the live topology as service-1's alone and starts the
 // promote-seed runs of its seeds, so a deferred restore announces the default
-// e2e DAG again and waits for those runs to end, the way
+// e2e topology again and waits for those runs to end, the way
 // TestDroppedNodeKeepsItsHistory does.
 func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	if testing.Short() {
@@ -78,21 +78,21 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	releaseID := "e2e-ingest-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s changed_project=%s", releaseID, ingestProbeReaderProject)
+	releaseID := "e2e-external-" + uuid.NewString()[:8]
+	t.Logf("release_id=%s changed_project=%s", releaseID, externalProbeReaderProject)
 
 	allProjects := baselineProjects(t, ctx, clients)
 	require.NotEmpty(t, allProjects,
 		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	changedImageTag := allProjects[ingestProbeReaderProject].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", ingestProbeReaderProject)
+	changedImageTag := allProjects[externalProbeReaderProject].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", externalProbeReaderProject)
 	readerInBaseline := false
-	for _, n := range allProjects[ingestProbeReaderProject].nodes {
-		readerInBaseline = readerInBaseline || n.uniqueID == ingestProbeReaderKey
+	for _, n := range allProjects[externalProbeReaderProject].nodes {
+		readerInBaseline = readerInBaseline || n.uniqueID == externalProbeReaderKey
 	}
 	require.True(t, readerInBaseline,
 		"%s not found in %s's baseline manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?",
-		ingestProbeReaderKey, ingestProbeReaderProject)
+		externalProbeReaderKey, externalProbeReaderProject)
 
 	// ── 1. A bootstrap release of service-1 promotes ─────────────────────────
 	// From here the test moves the live topology, the live release and the production pointers.
@@ -106,7 +106,7 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	_, err = clients.releaseDB.ExecContext(ctx, "DELETE FROM production_pointers")
 	require.NoError(t, err, "clear production_pointers")
 
-	postRelease(t, clients, ingestProbeReaderProject, releaseID, changedImageTag, true)
+	postRelease(t, clients, externalProbeReaderProject, releaseID, changedImageTag, true)
 
 	pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
 		return neo4jScalarString(ctx, clients,
@@ -116,7 +116,7 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	// catalog and run-controller apply a promotion through groups of their own,
 	// so run-controller's copy is awaited too: its live release is this one, with
 	// a model of the schedule.
-	waitForRunControllerToApply(t, ctx, clients, releaseID, ingestProbeSchedule, 2*time.Minute)
+	waitForRunControllerToApply(t, ctx, clients, releaseID, externalProbeSchedule, 2*time.Minute)
 
 	// ── 2. run-controller stores the unknown-external node ───────────────────
 	var stored struct {
@@ -143,8 +143,8 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	require.NoError(t, clients.runControllerDB.GetContext(ctx, &readers, `
 		SELECT count(*) FROM topology_edges
 		 WHERE tenant_id = $1 AND release_id = $2 AND upstream_key = $3 AND downstream_key = $4`,
-		events.DefaultTenantID, releaseID, unknownExternalKey, ingestProbeReaderKey))
-	assert.Equal(t, 1, readers, "run-controller stores the edge from %s into %s", unknownExternalKey, ingestProbeReaderKey)
+		events.DefaultTenantID, releaseID, unknownExternalKey, externalProbeReaderKey))
+	assert.Equal(t, 1, readers, "run-controller stores the edge from %s into %s", unknownExternalKey, externalProbeReaderKey)
 	t.Logf("✅ run-controller stores %s as a %s node with no project and no schedule", unknownExternalKey, stored.NodeType)
 
 	// ── 3. catalog's graph holds it, and the reader depends on it ────────────
@@ -156,23 +156,23 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 		`MATCH (:Node {tenant_id: 'default', unique_id: $reader, active: true})-[:DEPENDS_ON]->
 		       (n:Node {tenant_id: 'default', unique_id: $uid, node_type: $type, active: true})
 		 RETURN n.unique_id AS v`,
-		map[string]any{"reader": ingestProbeReaderKey, "uid": unknownExternalKey, "type": string(model.NodeTypeUnknownExternal)}),
-		"%s depends on the unknown-external node %s in catalog's graph", ingestProbeReaderKey, unknownExternalKey)
-	t.Logf("✅ catalog holds the unknown-external :Node %s, and %s depends on it", unknownExternalKey, ingestProbeReaderKey)
+		map[string]any{"reader": externalProbeReaderKey, "uid": unknownExternalKey, "type": string(model.NodeTypeUnknownExternal)}),
+		"%s depends on the unknown-external node %s in catalog's graph", externalProbeReaderKey, unknownExternalKey)
+	t.Logf("✅ catalog holds the unknown-external :Node %s, and %s depends on it", unknownExternalKey, externalProbeReaderKey)
 
 	// ── 4. the ui's schedule graph draws it ──────────────────────────────────
-	graph := mustGetJSON(t, fmt.Sprintf("%s/api/schedules/%s/graph", clients.uiBase, ingestProbeSchedule))
+	graph := mustGetJSON(t, fmt.Sprintf("%s/api/schedules/%s/graph", clients.uiBase, externalProbeSchedule))
 	nodeTypes := uiGraphNodeTypes(t, graph)
 	require.Contains(t, nodeTypes, unknownExternalGraphNodeID,
-		"the graph of %s holds the unknown-external node, whose id has no project: %v", ingestProbeSchedule, nodeTypes)
+		"the graph of %s holds the unknown-external node, whose id has no project: %v", externalProbeSchedule, nodeTypes)
 	assert.Equal(t, string(model.NodeTypeUnknownExternal), nodeTypes[unknownExternalGraphNodeID])
-	require.Contains(t, nodeTypes, ingestProbeReaderGraphID, "the graph of %s holds the reader: %v", ingestProbeSchedule, nodeTypes)
+	require.Contains(t, nodeTypes, externalProbeReaderGraphID, "the graph of %s holds the reader: %v", externalProbeSchedule, nodeTypes)
 	// The ui sends an edge in execution order: from the node that runs first to
 	// the node that reads it.
-	assert.True(t, uiGraphHasEdge(t, graph, unknownExternalGraphNodeID, ingestProbeReaderGraphID),
-		"the graph of %s has the edge from %s to %s: %v", ingestProbeSchedule, unknownExternalGraphNodeID, ingestProbeReaderGraphID, graph["edges"])
+	assert.True(t, uiGraphHasEdge(t, graph, unknownExternalGraphNodeID, externalProbeReaderGraphID),
+		"the graph of %s has the edge from %s to %s: %v", externalProbeSchedule, unknownExternalGraphNodeID, externalProbeReaderGraphID, graph["edges"])
 	t.Logf("✅ ui /api/schedules/%s/graph draws %s (%s) with an edge into %s",
-		ingestProbeSchedule, unknownExternalGraphNodeID, nodeTypes[unknownExternalGraphNodeID], ingestProbeReaderGraphID)
+		externalProbeSchedule, unknownExternalGraphNodeID, nodeTypes[unknownExternalGraphNodeID], externalProbeReaderGraphID)
 
 	// The release planned the promote-seed runs of its seeds in the transaction
 	// that made it live. Wait for them, so the run below meets no Job of theirs
@@ -181,13 +181,13 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 
 	// ── 5. a run of the schedule plans the reader and never the table ────────
 	started, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{
-		RequestId: uuid.NewString(), ScheduleName: ingestProbeSchedule,
+		RequestId: uuid.NewString(), ScheduleName: externalProbeSchedule,
 	})
-	require.NoError(t, err, "StartRun(%s)", ingestProbeSchedule)
+	require.NoError(t, err, "StartRun(%s)", externalProbeSchedule)
 	runID, err := uuid.Parse(started.GetRunId())
 	require.NoError(t, err, "StartRun must return the run's id")
-	defer cleanupSingleNodeRun(t, ctx, clients, runID, ingestProbeSchedule)
-	t.Logf("StartRun(%s) created run %s", ingestProbeSchedule, runID)
+	defer cleanupSingleNodeRun(t, ctx, clients, runID, externalProbeSchedule)
+	t.Logf("StartRun(%s) created run %s", externalProbeSchedule, runID)
 
 	// run-controller writes every task of a run in the transaction that creates
 	// it, so the rows are all there are.
@@ -195,8 +195,8 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	require.NoError(t, clients.runControllerDB.SelectContext(ctx, &plannedKeys, `
 		SELECT coalesce(node_key, '') FROM tasks WHERE tenant_id = $1 AND run_id = $2 ORDER BY node_key`,
 		events.DefaultTenantID, runID))
-	require.Equal(t, []string{ingestProbeReaderKey}, plannedKeys,
-		"the run of %s holds one task, the reader's, and none for the unknown-external table", ingestProbeSchedule)
+	require.Equal(t, []string{externalProbeReaderKey}, plannedKeys,
+		"the run of %s holds one task, the reader's, and none for the unknown-external table", externalProbeSchedule)
 
 	var runStatus, failureReason string
 	pollUntilDescribed(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
@@ -214,34 +214,34 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 		return false, nil
 	}, func() string {
 		return fmt.Sprintf("timeout waiting for run %s of schedule %s to end: its last status is %q",
-			runID, ingestProbeSchedule, runStatus)
+			runID, externalProbeSchedule, runStatus)
 	})
-	attempts, attemptsErr := attemptRows(ctx, clients, taskOfRun(t, ctx, clients, runID, ingestProbeReaderTable))
+	attempts, attemptsErr := attemptRows(ctx, clients, taskOfRun(t, ctx, clients, runID, externalProbeReaderTable))
 	require.Equal(t, "succeeded", runStatus,
 		"the run of %s succeeds: its Job selects from the outside table %s (failure_reason %q, attempts %v, attempts read error %v)",
-		ingestProbeSchedule, unknownExternalKey, failureReason, attempts, attemptsErr)
+		externalProbeSchedule, unknownExternalKey, failureReason, attempts, attemptsErr)
 	verifyNoJobsDeployed(t, ctx, []string{unknownExternalTable})
 	t.Logf("✅ the run of %s planned only %s and succeeded; no Job was created for %s",
-		ingestProbeSchedule, ingestProbeReaderKey, unknownExternalKey)
+		externalProbeSchedule, externalProbeReaderKey, unknownExternalKey)
 
 	// ── 6. a single-node run of the table is refused ─────────────────────────
-	// With no project the request is incomplete: a node run names its project.
+	// With no project the request is incomplete: a single-node run names its project.
 	noProjectID := uuid.NewString()
 	_, err = clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 		RequestId: noProjectID, ProjectName: "", SchemaName: unknownExternalSchema, TableName: unknownExternalTable, MetadataSource: "latest",
 	})
-	require.Error(t, err, "a node run of %s with no project must be refused", unknownExternalKey)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a node run with no project is INVALID_ARGUMENT: %v", err)
+	require.Error(t, err, "a single-node run of %s with no project must be refused", unknownExternalKey)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a single-node run with no project is INVALID_ARGUMENT: %v", err)
 	assert.Zero(t, commandRecordsOf(t, ctx, clients, noProjectID), "a refused command stores no record")
 
 	// With the reader's project the request is complete, so the refusal is the
-	// planner's: a node run never names an unknown-external node.
+	// planner's: a single-node run never names an unknown-external node.
 	namedProjectID := uuid.NewString()
 	_, err = clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
-		RequestId: namedProjectID, ProjectName: ingestProbeReaderProject, SchemaName: unknownExternalSchema, TableName: unknownExternalTable, MetadataSource: "latest",
+		RequestId: namedProjectID, ProjectName: externalProbeReaderProject, SchemaName: unknownExternalSchema, TableName: unknownExternalTable, MetadataSource: "latest",
 	})
-	require.Error(t, err, "a node run of the unknown-external node %s must be refused", unknownExternalKey)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a node run of an unknown-external node is INVALID_ARGUMENT: %v", err)
+	require.Error(t, err, "a single-node run of the unknown-external node %s must be refused", unknownExternalKey)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a single-node run of an unknown-external node is INVALID_ARGUMENT: %v", err)
 	assert.Contains(t, status.Convert(err).Message(), "unknown-external", "the refusal names why: %v", err)
 	assert.Zero(t, commandRecordsOf(t, ctx, clients, namedProjectID), "a refused command stores no record")
 	t.Logf("✅ a single-node run of %s was refused with INVALID_ARGUMENT, with and without a project", unknownExternalKey)

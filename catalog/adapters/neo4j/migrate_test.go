@@ -46,7 +46,7 @@ var oldSchemaStatements = []string{
 }
 
 // bulkTables is how many plain :Table nodes the old shape adds beside the
-// e2e DAG's, more than one batch of the migration's batched statements.
+// e2e topology's, more than one batch of the migration's batched statements.
 const bulkTables = 1001
 
 // seedOldShapeCypher writes the graph as it was before tenants: :Table nodes

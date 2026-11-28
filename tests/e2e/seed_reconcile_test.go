@@ -18,12 +18,12 @@ import (
 // "<schema>.<table>", lowercased.
 const seedReconcileNodeKey = seedSchemaName + ".seed_table_1"
 
-// TestSeedReconcile_LoadsAChangedSeedOnce announces the e2e DAG with
+// TestSeedReconcile_LoadsAChangedSeedOnce announces the e2e topology with
 // seed_table_1 carrying a content hash run-controller has never loaded. run-controller plans one
 // promote-seed run for it and dispatches the seed in the transaction that
 // applies the announcement, the seed loads with service-1's image, and run-controller
 // records the hash it loaded. Announcing the same content again under a new release loads
-// nothing. The default e2e DAG, whose seeds carry no content hash, is restored
+// nothing. The default e2e topology, whose seeds carry no content hash, is restored
 // at the end.
 func TestSeedReconcile_LoadsAChangedSeedOnce(t *testing.T) {
 	if testing.Short() {
@@ -36,7 +36,7 @@ func TestSeedReconcile_LoadsAChangedSeedOnce(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 
 	// run-controller records the seeds its first promotion applies as already loaded.
-	// Applying the default DAG first makes the announcement below an ordinary
+	// Applying the default topology first makes the announcement below an ordinary
 	// one, even on a fresh stack.
 	base := seedTopology(t, ctx, clients)
 	waitForRunControllerLiveRelease(t, ctx, clients, base)
@@ -128,7 +128,7 @@ func readLoadedSeed(t *testing.T, ctx context.Context, clients *testClients) loa
 	return row
 }
 
-// restoreDefaultTopology re-announces the default e2e DAG, whose seeds carry no
+// restoreDefaultTopology re-announces the default e2e topology, whose seeds carry no
 // content hash, and deletes the version this test recorded for seed_table_1,
 // so later tests start from the topology they expect.
 func restoreDefaultTopology(t *testing.T, ctx context.Context, clients *testClients) {

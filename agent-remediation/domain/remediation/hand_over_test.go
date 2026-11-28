@@ -13,7 +13,7 @@ func TestHandOvers_NamesEveryNodeWithACodeSortedByNodeID(t *testing.T) {
 	got := HandOvers(map[string]fix.NodeOutcome{
 		"model.c": {Status: fix.StatusSkipped, Reason: "no remediation type matches this failure", Code: model.HandoverReasonNoType},
 		"model.b": {Status: fix.StatusProposed},
-		"model.a": {Status: fix.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent},
+		"model.a": {Status: fix.StatusHandedOver, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent},
 	})
 
 	assert.Equal(t, []HandOver{
@@ -33,7 +33,7 @@ func TestHandOvers_NoCodeNoHandOver(t *testing.T) {
 func TestHandOvers_MessagesAreCleaned(t *testing.T) {
 	const dirty = "dial postgres://etl:hunter2@db/x refused, contact ops@acme.com" //nolint:gosec // G101: a made-up password the cleaner must remove.
 	got := HandOvers(map[string]fix.NodeOutcome{
-		"model.a": {Status: fix.StatusEscalated, Reason: "tried 3 times; the last try failed: password=hunter2", Code: model.HandoverReasonTriesSpent},
+		"model.a": {Status: fix.StatusHandedOver, Reason: "tried 3 times; the last try failed: password=hunter2", Code: model.HandoverReasonTriesSpent},
 		"model.b": {Status: fix.StatusSkipped, Reason: dirty, Code: model.HandoverReasonClassifierInfra},
 	})
 

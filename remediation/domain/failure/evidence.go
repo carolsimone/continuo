@@ -31,7 +31,7 @@ const (
 // value object; the classifier never sees the originating event.
 type FailureEvidence struct {
 	// Source is the release check leg that produced the failure. Validation-time
-	// (blue/green) failures are classified; production-run failures enter
+	// (release check) failures are classified; production-run failures enter
 	// through a separate ingress adapter.
 	Source    model.RemediationSource
 	ReleaseID string

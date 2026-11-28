@@ -45,7 +45,7 @@ export default function RunSwimlane({
   const colors = buildProjectColors(projectOrder);
   // Status, lane roll-ups and the whole layout depend only on the graph, the
   // tasks, the project order and the collapse state; they are memoised so a
-  // large DAG is laid out once per poll rather than on every render. Each
+  // large topology is laid out once per poll rather than on every render. Each
   // node's status and wait are read through one index of the tasks by node.
   const { statusById, waitById, reasonById, rollups, layout, pos } = useMemo(() => {
     const taskByNode = tasksByNodeId(tasks);

@@ -942,7 +942,7 @@ func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {
 func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 	deps, store := seedToValidatingWithURIs(t, "rAnc")
 	// Rewire the seeded candidate topology so b depends on a, and record a
-	// live-release snapshot where a's content differs: a is the changed
+	// live release where a's content differs: a is the changed
 	// ancestor of the failing b.
 	r, err := store.GetRelease("rAnc")
 	require.NoError(t, err)

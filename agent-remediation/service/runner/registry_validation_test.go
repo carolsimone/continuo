@@ -6,9 +6,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
@@ -22,7 +22,7 @@ func TestRegistry_RegistersTheDBTValidationFamily(t *testing.T) {
 		"dbt-validation":         step.KindPrompt,
 	}
 	for name, kind := range want {
-		_, m, ok := r.Lookup(workflow.StepName(name))
+		_, m, ok := r.Lookup(flow.StepName(name))
 		require.True(t, ok, name)
 		assert.Equal(t, kind, m.Kind, name)
 	}

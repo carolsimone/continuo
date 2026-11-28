@@ -43,7 +43,7 @@ func TestNodeOutcomesAndReleaseChecksRoundTrip(t *testing.T) {
 // that an outcome with no code encodes without that key.
 func TestNodeOutcomesCodecCarriesTheCode(t *testing.T) {
 	outcomes := map[string]fix.NodeOutcome{
-		"s.a": {Status: fix.StatusEscalated, Reason: "no type matches", Code: model.HandoverReasonNoType},
+		"s.a": {Status: fix.StatusHandedOver, Reason: "no type matches", Code: model.HandoverReasonNoType},
 		"s.b": {Status: fix.StatusProposed},
 	}
 	raw, err := marshalNodeOutcomes(outcomes)

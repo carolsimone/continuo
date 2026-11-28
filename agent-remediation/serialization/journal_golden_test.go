@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
@@ -122,7 +122,7 @@ func sampleFailure() remediation.Failure {
 			CodeBundleURI: "s3://bundles/rel-1.tar.gz",
 			Nodes:         []remediation.TriggerNode{target},
 		},
-		Kind:         workflow.ClusterSharedUpstream,
+		Kind:         flow.ClusterSharedUpstream,
 		TargetNodeID: target.NodeID,
 		Target:       target,
 		Members:      []remediation.TriggerNode{target},

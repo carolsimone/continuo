@@ -8,8 +8,8 @@ import (
 	"path"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -46,7 +46,7 @@ func (*ModelRename) Meta() step.Meta {
 			"and gathers every file of its project that names it. Declines when the model declares no continuo.entity or continuo.grain while its project's other models do.",
 		Needs:    []remediation.EvidenceKey{remediation.KeySourceFiles},
 		Provides: []remediation.EvidenceKey{remediation.KeyModelRename},
-		Stages:   []workflow.Stage{workflow.StageContext},
+		Stages:   []flow.Stage{flow.StageContext},
 	}
 }
 

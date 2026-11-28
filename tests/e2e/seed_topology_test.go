@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// topoNode is one node of the fixed e2e DAG seeded into the topology.
+// topoNode is one node of the fixed e2e topology seeded into the topology.
 type topoNode struct {
 	table    string   // table_name; unique_id is "e2e_schema."+table
 	project  string   // service-1|2|3
@@ -18,9 +18,9 @@ type topoNode struct {
 	upstream []string // upstream table names (same schema)
 }
 
-// e2eDAG is the full topology the legacy graph-load path used to ingest. It is
-// the single source of truth for e2e topology now that the ingest path is gone.
-var e2eDAG = []topoNode{
+// e2eTopologyNodes is the full e2e topology, the single source of truth for
+// every test that announces it.
+var e2eTopologyNodes = []topoNode{
 	{"seed_table_1", "service-1", "seed", nil},
 	{"seed_table_2", "service-1", "seed", nil},
 	{"seed_table_3", "service-1", "seed", nil},
@@ -50,7 +50,7 @@ var e2eDAG = []topoNode{
 
 const seedSchemaName = "e2e_schema"
 
-// e2eTimeoutSeconds is the task timeout, in seconds, a node of the DAG declares
+// e2eTimeoutSeconds is the task timeout, in seconds, a node of the topology declares
 // (its model's meta.timeout_minutes): only the deadline fixture declares one.
 // Every other node gets the install's default.
 var e2eTimeoutSeconds = map[string]int{
@@ -68,14 +68,14 @@ var e2eTestCounts = map[string]int{
 	"seed_table_3": 1,
 }
 
-// e2eTopology returns the fixed e2e DAG as topology artifact nodes, plus the
+// e2eTopology returns the fixed e2e topology as topology artifact nodes, plus the
 // schedules it declares, sorted. Per-project image_tag is read from the
 // release-controller's production pointers so the nodes carry the
 // content-addressed tag the kind images actually have.
 func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]topologyartifact.Node, []string) {
 	t.Helper()
 
-	// A prior blue/green test may have mutated the production pointers; re-establish the
+	// A prior release test may have mutated the production pointers; re-establish the
 	// baseline pointers before reading each project's image tag.
 	seedBaselineProductionPointers(t, ctx, clients)
 
@@ -85,8 +85,8 @@ func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]top
 	}
 
 	scheduleSet := map[string]bool{}
-	nodes := make([]topologyartifact.Node, 0, len(e2eDAG))
-	for _, n := range e2eDAG {
+	nodes := make([]topologyartifact.Node, 0, len(e2eTopologyNodes))
+	for _, n := range e2eTopologyNodes {
 		scheduleSet[n.schedule] = true
 		ups := make([]string, 0, len(n.upstream))
 		for _, u := range n.upstream {
@@ -127,9 +127,9 @@ func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]top
 // path a promoted release takes — catalog's Neo4j :Node/:DEPENDS_ON and the
 // default tenant's :Meta, and run-controller's topology_nodes and the live release, from
 // which run-controller reads each schedule's models. It returns once both have applied
-// it and run-controller's live release has a model of every schedule the DAG declares.
+// it and run-controller's live release has a model of every schedule the topology declares.
 // It skips validation, so it can seed any topology, including the
-// intentionally failing ftable_* DAGs whose runs fail at execution time. It
+// intentionally failing ftable_* schedules whose runs fail at execution time. It
 // returns the announcement, whose promotion seq new runs carry.
 //
 // Seed *data* (e2e_schema.seed_table_*) is materialized separately by

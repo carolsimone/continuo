@@ -245,7 +245,7 @@ describe('groupFixes', () => {
 
   it('tie-breaks same created_at with the round\'s hand-over row after its tries', () => {
     const groups = groupFixes([
-      mk({ id: 'h', release_id: 'r1', round: 1, try: HAND_OVER_TRY, status: 'escalated', created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'h', release_id: 'r1', round: 1, try: HAND_OVER_TRY, status: 'handed_over', created_at: '2026-09-03T10:00:00Z' }),
       mk({ id: 't3', release_id: 'r1', round: 1, try: 3, created_at: '2026-09-03T10:00:00Z' }),
     ]);
     expect(groups[0].latest.id).toBe('h');
@@ -311,7 +311,7 @@ describe('fixPillClass', () => {
     ['verifying',  'pill--running'],
     ['generating', 'pill--pending'],
     ['failed',     'pill--failed'],
-    ['escalated',  'pill--failed'],
+    ['handed_over', 'pill--failed'],
     ['skipped',    'pill--skipped'],
   ])('maps the %s try status to %s', (status, cls) => {
     expect(fixPillClass(status)).toBe(cls);

@@ -79,7 +79,7 @@ type seedReloadNotice struct {
 //     the seed and rebuilds the view; the cascade drops the two objects.
 //
 // The cleanup drops the e2e_bi schema and the view and restores the default
-// topology whatever the outcome: on the default DAG the view is no node, so a
+// topology whatever the outcome: on the default topology the view is no node, so a
 // later full refresh of seed_table_1 would find it and stop.
 func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.T) {
 	if testing.Short() {
@@ -141,7 +141,7 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	// seed as loaded after this test sets its version.
 	waitForPromoteSeedRunsToEnd(t, ctx, clients, "", 5*time.Minute)
 	t.Cleanup(func() { cleanupSeedReload(t, clients, releaseID) })
-	// The default DAG's seeds carry no content hash, so no reconcile pass loads
+	// The default topology's seeds carry no content hash, so no reconcile pass loads
 	// seed_table_1 before the release promotes.
 	base := seedTopology(t, ctx, clients)
 	waitForRunControllerLiveRelease(t, ctx, clients, base)

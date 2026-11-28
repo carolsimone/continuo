@@ -62,16 +62,16 @@ def test_a_relation_matches_on_any_one_of_the_three_rules():
 def test_a_table_no_node_builds_becomes_one_unknown_external_node_with_an_edge_per_reader():
     a, b = _model("probe_reads_source"), _model("probe_reads_raw_name")
     out = unknown_external_nodes(
-        [a, b], {a.node_key: [_ref("raw.ingest_probe")], b.node_key: [_ref("raw.ingest_probe")]}, system=PG,
+        [a, b], {a.node_key: [_ref("raw.external_probe")], b.node_key: [_ref("raw.external_probe")]}, system=PG,
     )
-    assert [n.unique_id for n in out] == ["raw.ingest_probe"]
+    assert [n.unique_id for n in out] == ["raw.external_probe"]
     n = out[0]
     assert (
         n.node_type, n.runtime, n.project_name, n.schedule_name, n.content_hash,
         n.image_tag, n.original_file_path, n.test_count, n.upstream_deps,
     ) == (NodeType.UNKNOWN_EXTERNAL, NodeRuntime.EXTERNAL, "", "", "", "", "", 0, [])
-    assert n.resolved_relation_id == "raw.ingest_probe"
-    assert [d.unique_id for d in a.upstream_deps] == ["raw.ingest_probe"] == [d.unique_id for d in b.upstream_deps]
+    assert n.resolved_relation_id == "raw.external_probe"
+    assert [d.unique_id for d in a.upstream_deps] == ["raw.external_probe"] == [d.unique_id for d in b.upstream_deps]
 
 
 def test_a_table_a_dormant_model_writes_is_not_unknown_external():
@@ -100,14 +100,14 @@ def test_the_edge_an_unknown_external_table_gives_its_reader_names_no_project():
 def test_one_node_for_every_spelling_of_a_table():
     """referenced_tables lower-cases what it reads, and a catalog prefix does
     not make a second table."""
-    a = _model("reader_a", sql='SELECT * FROM "continuo_dbt"."RAW"."Ingest_Probe"')
-    b = _model("reader_b", sql="SELECT * FROM raw.ingest_probe")
-    c = _model("reader_c", sql='SELECT * FROM "other_db".raw."INGEST_PROBE"')
+    a = _model("reader_a", sql='SELECT * FROM "continuo_dbt"."RAW"."External_Probe"')
+    b = _model("reader_b", sql="SELECT * FROM raw.external_probe")
+    c = _model("reader_c", sql='SELECT * FROM "other_db".raw."EXTERNAL_PROBE"')
     reads = {n.node_key: referenced_tables(n, dialect="postgres") for n in (a, b, c)}
     out = unknown_external_nodes([a, b, c], reads, system=PG)
-    assert [(n.unique_id, n.schema_name, n.table_name) for n in out] == [("raw.ingest_probe", "raw", "ingest_probe")]
+    assert [(n.unique_id, n.schema_name, n.table_name) for n in out] == [("raw.external_probe", "raw", "external_probe")]
     for reader in (a, b, c):
-        assert [d.unique_id for d in reader.upstream_deps] == ["raw.ingest_probe"]
+        assert [d.unique_id for d in reader.upstream_deps] == ["raw.external_probe"]
 
 
 def test_a_reader_gets_one_edge_for_two_reads_of_the_same_table():

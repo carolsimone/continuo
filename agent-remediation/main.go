@@ -26,21 +26,21 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/postgres"
 	rredis "github.com/carolsimone/continuo/agent-remediation/adapters/redis"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/releasehttp"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/remediationfile"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/s3"
-	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/carolsimone/continuo/agent-remediation/config"
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/files"
 	"github.com/carolsimone/continuo/agent-remediation/service/fixes"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
-	"github.com/carolsimone/continuo/agent-remediation/workflows"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -307,12 +307,12 @@ func main() {
 		fixes:     fixRepo,
 		tries:     remediationRepo,
 	}, logger)
-	install, err := installFiles(cfg.WorkflowsDir)
+	install, err := installFiles(cfg.FilesDir)
 	if err != nil {
 		logger.Error("the install's remediation files cannot be read", "error", err)
 		os.Exit(1)
 	}
-	files, err := loadRunnerFiles(workflows.Builtin, install, collab, logger)
+	set, err := loadRunnerFiles(files.Builtin, install, collab, logger)
 	if err != nil {
 		logger.Error("the remediation files are refused", "error", err)
 		os.Exit(1)
@@ -326,7 +326,7 @@ func main() {
 	if stop, code := sweepAtStartup(ctx, fixRepo, logger); stop {
 		os.Exit(code)
 	}
-	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
+	accept := startRunner(ctx, cfg, collab, set, runnerWiring{
 		llm:     cachedLLM,
 		newUoW:  newUoW,
 		repo:    func() repository.RemediationRepository { return remediationRepo },
@@ -536,7 +536,7 @@ func failLegacyInFlight(ctx context.Context, repo repository.FixRepository, logg
 
 // startRunner builds the runner, starts its three loops with spawn and returns
 // the function that accepts a heal trigger as a remediation.
-func startRunner(ctx context.Context, cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring, spawn func(func())) func(context.Context, runner.Accepted) error {
+func startRunner(ctx context.Context, cfg config.Config, collab runner.Collaborators, files flow.Set, w runnerWiring, spawn func(func())) func(context.Context, runner.Accepted) error {
 	loops, accept := buildRunner(cfg, collab, files, w)
 	for _, l := range []loop{loops.worker, loops.poller, loops.sweeper} {
 		spawn(func() { l.Run(ctx) })
@@ -549,7 +549,7 @@ func startRunner(ctx context.Context, cfg config.Config, collab runner.Collabora
 // with the liveness registry: each beats as it works, and a loop that stops, or
 // stops beating, fails the pod's probes. The sweeper takes its own lease name,
 // so a worker and the sweeper of one process never share a lease.
-func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring) (runnerLoops, func(context.Context, runner.Accepted) error) {
+func buildRunner(cfg config.Config, collab runner.Collaborators, files flow.Set, w runnerWiring) (runnerLoops, func(context.Context, runner.Accepted) error) {
 	r := runner.New(newRunnerDeps(cfg, collab, files, w))
 	worker := runner.NewWorker(r, w.repo, w.owner, ports.SystemClock{}, w.logger)
 	poller := runner.NewGatePoller(r, w.repo, w.owner, cfg.ReleaseCheckPollInterval, worker.Wake, ports.SystemClock{}, w.logger)
@@ -686,7 +686,7 @@ func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logge
 // newRunnerDeps is what the runner works with. The registry is built from
 // collab, so the gate's budget is the one collab carries, and the verifying
 // try's deadline is built on the same RELEASE_CHECK_TIMEOUT.
-func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring) runner.Deps {
+func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files flow.Set, w runnerWiring) runner.Deps {
 	return runner.Deps{
 		NewUoW:              w.newUoW,
 		Registry:            runner.NewRegistry(collab),
@@ -746,11 +746,11 @@ func installFilesListing(dir string, list func(name string) ([]fs.DirEntry, erro
 // replace. Each flow no heal trigger runs is logged at Warn with the check's
 // warnings. Files without the trigger's flow stop startup, since every
 // remediation the runner accepted would follow a flow no file defines.
-func loadRunnerFiles(builtin, install fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, error) {
-	set, loaded, err := workflowfile.LoadInstall(builtin, install)
+func loadRunnerFiles(builtin, install fs.FS, collab runner.Collaborators, logger *slog.Logger) (flow.Set, error) {
+	set, loaded, err := remediationfile.LoadInstall(builtin, install)
 	if err != nil {
 		logRefusals(logger, err)
-		return workflow.Set{}, err
+		return flow.Set{}, err
 	}
 	for _, n := range loaded.Notes {
 		logger.Warn("remediation file", "warning", n)
@@ -765,7 +765,7 @@ func loadRunnerFiles(builtin, install fs.FS, collab runner.Collaborators, logger
 	}
 	if err != nil {
 		logRefusals(logger, err)
-		return workflow.Set{}, err
+		return flow.Set{}, err
 	}
 	return set, nil
 }

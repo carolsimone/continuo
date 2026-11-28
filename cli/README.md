@@ -88,10 +88,10 @@ A schedule is a group of models that run together, picked by their first dbt tag
 | `schedule test <name>` | Starts a run that runs `dbt test` for every model of the schedule. | yes |
 | `schedule build <name>` | Starts a run that runs `dbt build` for every model of the schedule. | yes |
 | `schedule cancel <name> <reason>` | Cancels the schedule's active run. Exits 4 if there is none. | yes |
-| `schedule set-cron <name> <cron> <timezone> [description]` | Sets when the schedule runs on its own. Give the five cron fields as one quoted argument. Prints the cron in words and the next three fire times. | yes |
+| `schedule set-cron <name> <cron> <timezone> [description]` | Sets when the schedule runs on its own. Give the five cron fields as one quoted argument. Prints the cron in words and the next three slots. | yes |
 | `schedule remove-cron <name>` | Removes the cron. The schedule then runs only when someone starts it. | yes |
 | `schedule pause <name>` | Stops the cron from starting runs. Prints `"changed":false` if it is already paused. Exits 3 if the schedule has no cron. | yes |
-| `schedule resume <name>` | Lets the cron start runs again and prints the next fire time. | yes |
+| `schedule resume <name>` | Lets the cron start runs again and prints the next slot. | yes |
 
 `set-cron`, `pause` and `resume` read the schedule first. If someone else saved a change in between, `pause` and `resume` exit 4, and `set-cron` reads again and saves once more.
 

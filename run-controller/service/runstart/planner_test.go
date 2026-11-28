@@ -995,7 +995,7 @@ func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.
 }
 
 // The objects an operator names reach the seed's dependents check, and the run is the
-// same DAG as a reload of the seed.
+// same topology as a reload of the seed.
 func TestPlanner_SingleNodeFullRefreshAllowsTheNamedObjects(t *testing.T) {
 	target := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
 	u, _ := fxUoW(nil)

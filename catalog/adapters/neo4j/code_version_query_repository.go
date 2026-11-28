@@ -28,7 +28,7 @@ import (
 // ordered by promoted_at, never version_seq:
 //
 //   - promoted_at is when the release that introduced this code was
-//     promoted — chronologically true however late the event was ingested.
+//     promoted — chronologically true however late the event arrived.
 //   - version_seq is a stable per-node handle for addressing one of a node's
 //     versions, not an ordering: it is assigned max+1 at ingestion time, so a
 //     late-arriving OLDER release receives the HIGHEST seq. Sorting by it
@@ -256,7 +256,7 @@ RETURN uid AS unique_id, v IS NOT NULL AS has_version, `
 // version's own timestamp here would rank a revert by its stale creation
 // date and let the since filter miss it entirely. This ranking, the since
 // filter, and the cap are all applied in idsQuery — before any version body
-// is fetched — so a wide DAG never pays to load code for ancestors it is
+// is fetched — so a wide topology never pays to load code for ancestors it is
 // about to discard.
 //
 // The two versions returned per ancestor are, in order: the version :CURRENT

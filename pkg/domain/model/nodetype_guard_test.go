@@ -148,11 +148,3 @@ func TestBuiltNodeTypes_FollowsDeclarationOrder(t *testing.T) {
 	}
 	assert.Equal(t, want, model.BuiltNodeTypes())
 }
-
-func TestCanonicalNodeType_ReadsIngestedAsUnknownExternal(t *testing.T) {
-	assert.Equal(t, model.NodeTypeUnknownExternal, model.CanonicalNodeType("ingested"))
-	assert.Equal(t, model.NodeTypeDbtModel, model.CanonicalNodeType("dbt-model"))
-	assert.Equal(t, model.NodeTypeUnknownExternal, model.CanonicalNodeType("unknown-external"))
-	assert.Equal(t, model.NodeType("x"), model.CanonicalNodeType("x"))
-	assert.Equal(t, model.NodeType(""), model.CanonicalNodeType(""))
-}

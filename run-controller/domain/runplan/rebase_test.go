@@ -13,7 +13,7 @@ import (
 
 func TestRebase_OnAnUnchangedReleaseSelectsWhatARerunSelects(t *testing.T) {
 	src := failedFailureRun()
-	plan, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eDAG, "e2e-schedule-failure"))
+	plan, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eTopology, "e2e-schedule-failure"))
 	require.NoError(t, err)
 	assert.Equal(t, planOf(append(
 		inherited("ftable_a", "ftable_b", "ftable_c", "ftable_d"),
@@ -26,7 +26,7 @@ func TestRebase_OnAnUnchangedReleaseSelectsWhatARerunSelects(t *testing.T) {
 // join it, ftable_i ready at once since ftable_d is inherited, ftable_j
 // waiting for ftable_e.
 func TestRebase_LeavesOutDroppedNodesAndRunsNewOnes(t *testing.T) {
-	live := changed(e2eDAG, []string{"ftable_h"},
+	live := changed(e2eTopology, []string{"ftable_h"},
 		fixtureNode{"ftable_i", "service-2", "e2e-schedule-failure", []string{"ftable_d"}},
 		fixtureNode{"ftable_j", "service-3", "e2e-schedule-failure", []string{"ftable_e"}},
 	)
@@ -44,7 +44,7 @@ func TestRebase_LeavesOutDroppedNodesAndRunsNewOnes(t *testing.T) {
 // reads a table the run builds anew must be built again after it. ftable_d
 // waits for the new ftable_x; ftable_f waits for both.
 func TestRebase_ANewUpstreamReRunsTheSuccessesBelowIt(t *testing.T) {
-	live := changed(e2eDAG, []string{"ftable_d"},
+	live := changed(e2eTopology, []string{"ftable_d"},
 		fixtureNode{"ftable_x", "service-1", "e2e-schedule-failure", nil},
 		fixtureNode{"ftable_d", "service-2", "e2e-schedule-failure", []string{"ftable_c", "ftable_x"}},
 	)
@@ -63,7 +63,7 @@ func TestRebase_OfTheLayeredSchedule(t *testing.T) {
 	src := sourceRun(model.OperationRun,
 		[]string{"seed_table_1", "seed_table_2", "seed_table_3", "table_a", "table_b", "table_c", "table_d", "table_e", "table_f", "table_h"},
 		[]string{"table_g", "table_i", "table_j"})
-	plan, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eDAG, "e2e-schedule"))
+	plan, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eTopology, "e2e-schedule"))
 	require.NoError(t, err)
 	assert.Equal(t, planOf(append(
 		inherited("seed_table_1", "seed_table_2", "seed_table_3", "table_a", "table_b", "table_c", "table_d", "table_e", "table_f", "table_h"),
@@ -77,7 +77,7 @@ func TestRebase_AnInheritedTaskKeepsItsRoot(t *testing.T) {
 	src.Tasks[1].InheritedFrom = root
 	require.Equal(t, key("ftable_b"), src.Tasks[1].Key)
 
-	plan, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eDAG, "e2e-schedule-failure"))
+	plan, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eTopology, "e2e-schedule-failure"))
 	require.NoError(t, err)
 	assert.Equal(t, runplan.PlannedTask{Key: key("ftable_b"), Inherited: true, InheritedFrom: root}, plan.Tasks[1])
 }
@@ -88,7 +88,7 @@ func TestRebase_ADroppedFailureLeavesNothingToRerun(t *testing.T) {
 	src := sourceRun(model.OperationRun,
 		[]string{"ftable_a", "ftable_b", "ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g"},
 		[]string{"ftable_h"})
-	live := changed(e2eDAG, []string{"ftable_h"})
+	live := changed(e2eTopology, []string{"ftable_h"})
 	_, err := runplan.Rebase{Source: src}.Select(scheduleGraph(live, "e2e-schedule-failure"))
 	assert.ErrorIs(t, err, runplan.ErrNothingToRerun)
 }
@@ -96,18 +96,18 @@ func TestRebase_ADroppedFailureLeavesNothingToRerun(t *testing.T) {
 func TestRebase_ASourceWhereEveryTaskSucceededHasNothingToRerun(t *testing.T) {
 	src := sourceRun(model.OperationRun,
 		[]string{"ftable_a", "ftable_b", "ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h"}, nil)
-	_, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eDAG, "e2e-schedule-failure"))
+	_, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eTopology, "e2e-schedule-failure"))
 	assert.ErrorIs(t, err, runplan.ErrNothingToRerun)
 }
 
 func TestRebase_OfATestRunIsRefused(t *testing.T) {
 	src := sourceRun(model.OperationTest, nil, []string{"seed_table_1"})
-	_, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eDAG, "seed"))
+	_, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eTopology, "seed"))
 	assert.ErrorIs(t, err, runplan.ErrRerunOfTestUnsupported)
 }
 
 func TestRebase_AnUndeclaredNodeTypeOnANewNodeIsRefused(t *testing.T) {
-	live := changed(e2eDAG, nil, fixtureNode{"ftable_i", "service-2", "e2e-schedule-failure", []string{"ftable_d"}})
+	live := changed(e2eTopology, nil, fixtureNode{"ftable_i", "service-2", "e2e-schedule-failure", []string{"ftable_d"}})
 	g := retyped(scheduleGraph(live, "e2e-schedule-failure"), "ftable_i", "dbt-macro")
 	_, err := runplan.Rebase{Source: failedFailureRun()}.Select(g)
 	require.ErrorIs(t, err, runplan.ErrInvalidNodeType)
@@ -119,7 +119,7 @@ func TestRebase_AnUndeclaredNodeTypeOnANewNodeIsRefused(t *testing.T) {
 // a full refresh say, into a schedule's.
 func TestRebase_ASingleNodeRunHasNothingToRebase(t *testing.T) {
 	src := sourceRun(model.OperationFullRefresh, nil, []string{"table_d"})
-	_, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eDAG, "single-node-run-1a2b3c4d"))
+	_, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eTopology, "single-node-run-1a2b3c4d"))
 	assert.ErrorIs(t, err, runplan.ErrNothingToRerun)
 }
 
@@ -130,7 +130,7 @@ func TestRebase_ASingleNodeRunHasNothingToRebase(t *testing.T) {
 // selects what it selects on the live release without the unknown-external node,
 // whether or not it widens to the changed nodes upstream.
 func TestRebase_LeavesAnUnknownExternalNodeOut(t *testing.T) {
-	older := scheduleGraph(e2eDAG, "e2e-schedule-failure")
+	older := scheduleGraph(e2eTopology, "e2e-schedule-failure")
 	live := withUnknownExternalUpstream(older, "ftable_d")
 	sourceGraphs := map[string]topology.Graph{sourceRelease: older}
 

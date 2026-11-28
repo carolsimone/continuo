@@ -143,11 +143,11 @@ func (al *ApplicationLifecycle) Shutdown(cancel context.CancelFunc, grace time.D
 		return
 	}
 	al.shuttingDown = true
-	// Snapshot the handler slice under the same lock that guards the
+	// Copy the handler slice under the same lock that guards the
 	// shuttingDown flag and RegisterShutdownHandler's append, so every append
-	// either happens-before this snapshot or is refused by
+	// either happens-before this copy or is refused by
 	// RegisterShutdownHandler outright — never racing this read. Iterating
-	// al.shutdownHandlers directly here (as opposed to this snapshot) would
+	// al.shutdownHandlers directly here (as opposed to this copy) would
 	// be an unsynchronized read racing that synchronized write.
 	handlers := make([]ShutdownHandler, len(al.shutdownHandlers))
 	copy(handlers, al.shutdownHandlers)

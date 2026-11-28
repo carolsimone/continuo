@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/cross"
 )
@@ -60,9 +60,9 @@ func TestMeta_PlacesTheThreeChecksAtTheCrossClusterStage(t *testing.T) {
 		"one_manifest_kind":      cross.NewOneManifestKind(repoPaths, nil),
 	} {
 		m := c.Meta()
-		assert.Equal(t, workflow.StepName(name), m.Name)
+		assert.Equal(t, flow.StepName(name), m.Name)
 		assert.Equal(t, step.KindCheck, m.Kind)
-		assert.Equal(t, []workflow.Stage{workflow.StageCrossCluster}, m.Stages)
+		assert.Equal(t, []flow.Stage{flow.StageCrossCluster}, m.Stages)
 		assert.False(t, m.MayStandAsGateRun)
 		assert.Empty(t, m.Needs, "the checks read optional evidence, so a flow need not provide it")
 		assert.NotEmpty(t, m.Description)

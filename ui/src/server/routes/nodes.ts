@@ -166,7 +166,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
 
   // POST /api/nodes/:project/:schema/:table/run
   // Body: { request_id } → latest mode; { request_id, source_run_id } →
-  // snapshot_of_run mode. request_id is the browser-minted UUID run-controller uses to
+  // release_of_run mode. request_id is the browser-minted UUID run-controller uses to
   // start one run for a repeated action. acknowledged_dependents (an array of
   // "<schema>.<name>") names the warehouse objects an operator accepts a seed's
   // full refresh dropping or leaving stale.
@@ -182,7 +182,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
       return res.status(400).json({ error: 'acknowledged_dependents must be an array of strings' });
     }
     const sourceRunID: string = (req.body?.source_run_id ?? '').trim();
-    const metadataSource = sourceRunID === '' ? 'latest' : 'snapshot_of_run';
+    const metadataSource = sourceRunID === '' ? 'latest' : 'release_of_run';
     runClient.startSingleNodeRun(
       {
         request_id:      requestId,
@@ -206,7 +206,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
   // test_count) used by the UI to gate single-node operations: "test" on a
   // zero-test node, and "full refresh" on a node type that cannot be rebuilt.
   // The lookup includes nodes no longer active in the topology (reported with
-  // inactive: true), because a full refresh from one of their old snapshots
+  // inactive: true), because a full refresh from one of their older releases
   // is still valid. For a python-csv node the response also carries
   // source_uri: the CSV file the node loads, recorded as the current version's
   // raw_code (a csv node has no script). The lookup is best-effort — the test

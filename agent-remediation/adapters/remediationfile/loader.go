@@ -1,0 +1,421 @@
+// Package remediationfile loads the remediation flows and types an install keeps
+// as YAML files into the plain values of domain/flow. It checks the shape
+// of every file (known fields, value types, a kind, unique names) and leaves
+// the meaning of the values to the runner's startup checks. Every problem it
+// reports names the file and the line.
+package remediationfile
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"path"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
+)
+
+// revisionLength is how many hex characters of a file's sha256 identify it.
+const revisionLength = 12
+
+// lineInMessage finds the line a YAML library message names ("line 3: ...",
+// "yaml: line 3: ...").
+var lineInMessage = regexp.MustCompile(`line (\d+)`)
+
+// Load reads every *.yaml and *.yml file under the root of fsys, recursively,
+// in path order, and skips every file and directory whose name starts with a
+// dot (a Kubernetes ConfigMap volume keeps its own bookkeeping under such
+// names, with a second copy of each file). A file may hold several documents
+// separated by `---`. A document with `kind: fixture` is skipped without
+// decoding its body; LoadFixtures reads those. Load returns every problem it
+// finds, joined, and an empty Set when there is one.
+func Load(fsys fs.FS) (flow.Set, error) {
+	l := loader{
+		set:      flow.Set{Flows: map[string]flow.Flow{}, Types: map[string]flow.Type{}},
+		flowFile: map[string]flow.Pos{},
+		typeFile: map[string]flow.Pos{},
+	}
+	if err := walkYAML(fsys, l.loadFile); err != nil {
+		l.errs = append(l.errs, err)
+	}
+	if len(l.errs) > 0 {
+		return flow.Set{}, errors.Join(l.errs...)
+	}
+	return l.set, nil
+}
+
+// walkYAML calls visit with the path and content of every *.yaml and *.yml
+// file under the root of fsys, recursively, in path order. A file or directory
+// whose name starts with a dot is left out, with everything under it. It
+// returns the first error reading the tree.
+func walkYAML(fsys fs.FS, visit func(file string, data []byte)) error {
+	return fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p != "." && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || (path.Ext(p) != ".yaml" && path.Ext(p) != ".yml") {
+			return nil
+		}
+		data, err := fs.ReadFile(fsys, p)
+		if err != nil {
+			return err
+		}
+		visit(p, data)
+		return nil
+	})
+}
+
+type loader struct {
+	set      flow.Set
+	errs     []error
+	flowFile map[string]flow.Pos
+	typeFile map[string]flow.Pos
+}
+
+func (l *loader) fail(file string, line int, format string, args ...any) {
+	l.errs = append(l.errs, fmt.Errorf("%s:%d: %s", file, line, fmt.Sprintf(format, args...)))
+}
+
+// failYAML reports an error of the YAML library with the line it names.
+func (l *loader) failYAML(file string, err error) {
+	var te *yaml.TypeError
+	if errors.As(err, &te) {
+		for _, msg := range te.Errors {
+			l.failMessage(file, msg)
+		}
+		return
+	}
+	l.failMessage(file, strings.TrimPrefix(err.Error(), "yaml: "))
+}
+
+func (l *loader) failMessage(file, msg string) {
+	line := 1
+	if m := lineInMessage.FindStringSubmatch(msg); m != nil {
+		line, _ = strconv.Atoi(m[1])
+		msg = strings.Replace(msg, m[0]+": ", "", 1)
+	}
+	l.fail(file, line, "%s", msg)
+}
+
+func (l *loader) loadFile(file string, data []byte) {
+	sum := sha256.Sum256(data)
+	revision := hex.EncodeToString(sum[:])[:revisionLength]
+
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var doc yaml.Node
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		if err != nil {
+			l.failYAML(file, err)
+			return
+		}
+		if len(doc.Content) == 0 {
+			continue
+		}
+		l.loadDocument(file, revision, doc.Content[0])
+	}
+}
+
+func (l *loader) loadDocument(file, revision string, root *yaml.Node) {
+	if root.Kind != yaml.MappingNode {
+		l.fail(file, root.Line, "a document must be a mapping with a kind")
+		return
+	}
+	kindNode := valueOf(root, "kind")
+	if kindNode == nil {
+		l.fail(file, root.Line, "document has no kind (flow, type or fixture)")
+		return
+	}
+	switch kindNode.Value {
+	case kindFixture:
+		return
+	case kindFlow, kindType:
+	default:
+		l.fail(file, kindNode.Line, "unknown kind %q (flow, type or fixture)", kindNode.Value)
+		return
+	}
+	// An alias would let a mapping reach the decoder without its keys being
+	// checked, so a flow or type file holds none.
+	if refuseAliases(l, file, root) {
+		return
+	}
+	if kindNode.Value == kindFlow {
+		l.loadFlow(file, revision, root)
+	} else {
+		l.loadType(file, revision, root)
+	}
+}
+
+func (l *loader) loadFlow(file, revision string, root *yaml.Node) {
+	before := len(l.errs)
+	l.checkKeys(file, root, flowKeys)
+	l.checkKeys(file, valueOf(root, "output"), outputKeys)
+	l.checkKeys(file, valueOf(valueOf(root, "output"), "on_pass"), outputOneKeys)
+	l.checkKeys(file, valueOf(valueOf(root, "output"), "on_give_up"), outputOneKeys)
+
+	var f flowFile
+	if err := root.Decode(&f); err != nil {
+		l.failYAML(file, err)
+	}
+	if len(l.errs) > before {
+		return
+	}
+
+	at := func(line int) flow.Pos { return flow.Pos{File: file, Line: line} }
+	pos := at(root.Line)
+	fl := flow.Flow{
+		Version:        f.Version,
+		Name:           f.Name,
+		Trigger:        f.Trigger,
+		Context:        l.refs(file, f.Context),
+		AcrossClusters: l.refs(file, f.AcrossCluster),
+		Gate:           l.refs(file, f.Gate),
+		Tries:          f.Tries,
+		OnPass:         flow.Output{Action: flow.OutputAction(f.Output.OnPass.Action), Emits: f.Output.OnPass.Emits, Pos: at(keyLine(valueOf(root, "output"), "on_pass", pos.Line))},
+		OnGiveUp:       flow.Output{Action: flow.OutputAction(f.Output.OnGiveUp.Action), Emits: f.Output.OnGiveUp.Emits, Pos: at(keyLine(valueOf(root, "output"), "on_give_up", pos.Line))},
+		Revision:       revision,
+		File:           file,
+		Pos:            pos,
+	}
+	fl.TypesPos = pos
+	switch {
+	case f.Types.Kind == 0 || f.Types.Tag == "!!null":
+	case f.Types.Kind != yaml.SequenceNode:
+		l.fail(file, f.Types.Line, "types must be a list of type names")
+	default:
+		fl.TypesPos = at(keyLine(root, "types", pos.Line))
+		for _, n := range f.Types.Content {
+			if n.Kind != yaml.ScalarNode {
+				l.fail(file, n.Line, "a type name must be a string")
+				continue
+			}
+			fl.Types = append(fl.Types, n.Value)
+		}
+	}
+	fl.ModelMaySeePos = pos
+	switch {
+	case f.ModelMaySee.Kind == 0 || f.ModelMaySee.Tag == "!!null":
+	case f.ModelMaySee.Kind != yaml.SequenceNode:
+		l.fail(file, f.ModelMaySee.Line, "model_may_see must be a list of data classes")
+	default:
+		fl.ModelMaySeePos = at(keyLine(root, "model_may_see", pos.Line))
+		for _, n := range f.ModelMaySee.Content {
+			if n.Kind != yaml.ScalarNode {
+				l.fail(file, n.Line, "a model_may_see entry must be the name of a data class")
+				continue
+			}
+			fl.ModelMaySee = append(fl.ModelMaySee, flow.DataClass(n.Value))
+		}
+	}
+	switch {
+	case f.Approver.Kind == 0 || f.Approver.Tag == "!!null":
+	case f.Approver.Kind != yaml.ScalarNode:
+		l.fail(file, f.Approver.Line, "approver must name one step")
+	default:
+		fl.Approver = flow.StepRef{Name: flow.StepName(f.Approver.Value), Pos: at(f.Approver.Line)}
+	}
+	fl.BasedOn = l.basedOn(file, root, f.BasedOn)
+	if len(l.errs) > before {
+		return
+	}
+	if fl.Name == "" {
+		l.fail(file, pos.Line, "flow has no name")
+		return
+	}
+	if prev, dup := l.flowFile[fl.Name]; dup {
+		l.fail(file, pos.Line, "flow %q is already defined at %s:%d", fl.Name, prev.File, prev.Line)
+		return
+	}
+	l.flowFile[fl.Name] = pos
+	l.set.Flows[fl.Name] = fl
+}
+
+func (l *loader) loadType(file, revision string, root *yaml.Node) {
+	before := len(l.errs)
+	l.checkKeys(file, root, typeKeys)
+	l.checkKeys(file, valueOf(root, "match"), matchKeys)
+	l.checkKeys(file, valueOf(root, "agent"), agentKeys)
+
+	var f typeFile
+	if err := root.Decode(&f); err != nil {
+		l.failYAML(file, err)
+	}
+	if len(l.errs) > before {
+		return
+	}
+
+	at := func(line int) flow.Pos { return flow.Pos{File: file, Line: line} }
+	pos := at(root.Line)
+	typ := flow.Type{
+		Version: f.Version,
+		Name:    f.Name,
+		Match: flow.Match{
+			Cluster: flow.ClusterKind(f.Match.Cluster),
+			Source:  f.Match.Source,
+			Pos:     at(keyLine(root, "match", pos.Line)),
+		},
+		Context: l.refs(file, f.Context),
+		Agent: flow.Agent{
+			Tools:  l.refs(file, f.Agent.Tools),
+			Drafts: f.Agent.Drafts,
+			Pos:    at(keyLine(root, "agent", pos.Line)),
+		},
+		Preflight: l.refs(file, f.Preflight),
+		Revision:  revision,
+		File:      file,
+		Pos:       pos,
+	}
+	if f.Agent.Prompt != "" {
+		typ.Agent.Prompt = flow.StepRef{
+			Name: flow.StepName(f.Agent.Prompt),
+			Pos:  at(keyLine(valueOf(root, "agent"), "prompt", pos.Line)),
+		}
+	}
+	if f.Match.NodeTypes.Kind == yaml.SequenceNode {
+		typ.Match.NodeTypes = []string{}
+		for _, n := range f.Match.NodeTypes.Content {
+			if n.Kind != yaml.ScalarNode {
+				l.fail(file, n.Line, "a node type must be a string")
+				continue
+			}
+			typ.Match.NodeTypes = append(typ.Match.NodeTypes, n.Value)
+		}
+	} else if f.Match.NodeTypes.Kind != 0 && f.Match.NodeTypes.Tag != "!!null" {
+		l.fail(file, f.Match.NodeTypes.Line, "node_types must be a list")
+	}
+	typ.BasedOn = l.basedOn(file, root, f.BasedOn)
+	l.checkMatchSource(file, root, f.Match.Source)
+	if len(l.errs) > before {
+		return
+	}
+	if typ.Name == "" {
+		l.fail(file, pos.Line, "type has no name")
+		return
+	}
+	if prev, dup := l.typeFile[typ.Name]; dup {
+		l.fail(file, pos.Line, "type %q is already defined at %s:%d", typ.Name, prev.File, prev.Line)
+		return
+	}
+	l.typeFile[typ.Name] = pos
+	l.set.Types[typ.Name] = typ
+}
+
+// basedOn returns the text of the based_on field of the flow or type mapping
+// root, whose value node is n: "" when the file has none. A value that is not
+// one name and one revision joined by an @ is refused at the line of the key.
+func (l *loader) basedOn(file string, root *yaml.Node, n yaml.Node) string {
+	if n.Kind == 0 {
+		return ""
+	}
+	name, revision, ok := strings.Cut(n.Value, "@")
+	if n.Kind != yaml.ScalarNode || !ok || name == "" || revision == "" || strings.Contains(revision, "@") {
+		l.fail(file, keyLine(root, "based_on", n.Line),
+			"based_on must be <name>@<revision>: the built-in the file was copied from and the revision of it that was copied")
+		return ""
+	}
+	return n.Value
+}
+
+// checkMatchSource refuses a match.source that is not a remediation source,
+// since no failure carries it and the type would never select a cluster. An
+// empty source is allowed and matches any source.
+func (l *loader) checkMatchSource(file string, root *yaml.Node, source string) {
+	if source == "" || model.RemediationSource(source).IsValid() {
+		return
+	}
+	valid := make([]string, 0, len(model.RemediationSources()))
+	for _, s := range model.RemediationSources() {
+		valid = append(valid, string(s))
+	}
+	l.fail(file, keyLine(valueOf(root, "match"), "source", root.Line),
+		"match.source %q is not a remediation source (valid: %s)", source, strings.Join(valid, ", "))
+}
+
+// refs maps a YAML list of step names to step references with their lines.
+func (l *loader) refs(file string, nodes []yaml.Node) []flow.StepRef {
+	var out []flow.StepRef
+	for _, n := range nodes {
+		if n.Kind != yaml.ScalarNode {
+			l.fail(file, n.Line, "a step must be named by a string")
+			continue
+		}
+		out = append(out, flow.StepRef{Name: flow.StepName(n.Value), Pos: flow.Pos{File: file, Line: n.Line}})
+	}
+	return out
+}
+
+// checkKeys refuses every key of the mapping n that is not in allowed. A nil or
+// non-mapping node is left to the decoder.
+func (l *loader) checkKeys(file string, n *yaml.Node, allowed []string) {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k := n.Content[i]
+		if !slices.Contains(allowed, k.Value) {
+			l.fail(file, k.Line, "field %q is not known here (allowed: %s)", k.Value, strings.Join(allowed, ", "))
+		}
+	}
+}
+
+// refuseAliases fails every alias node under n, with its line, and reports
+// whether it found one.
+func refuseAliases(l *loader, file string, n *yaml.Node) bool {
+	found := false
+	if n.Kind == yaml.AliasNode {
+		l.fail(file, n.Line, "YAML aliases are not supported (alias *%s)", n.Value)
+		found = true
+	}
+	for _, c := range n.Content {
+		if refuseAliases(l, file, c) {
+			found = true
+		}
+	}
+	return found
+}
+
+// valueOf returns the value node of key in the mapping n, or nil.
+func valueOf(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// keyLine returns the line of key in the mapping n, or fallback when it is
+// absent.
+func keyLine(n *yaml.Node, key string, fallback int) int {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return fallback
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i].Line
+		}
+	}
+	return fallback
+}

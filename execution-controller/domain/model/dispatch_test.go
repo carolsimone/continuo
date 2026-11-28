@@ -43,9 +43,9 @@ func TestDecideDispatch(t *testing.T) {
 // not reported lost: the pod may still write the table. Nothing is decided
 // until the pod is gone, and an attempt with a record or a Job is decided as
 // before.
-func TestDecideDispatch_AnOrphanPodIsAwaitedNotReportedLost(t *testing.T) {
+func TestDecideDispatch_AnUnfinishedPodIsAwaitedNotReportedLost(t *testing.T) {
 	for _, known := range []pkgmodel.AttemptStatus{pkgmodel.AttemptStatusQueued, pkgmodel.AttemptStatusRunning} {
-		assert.Equal(t, AwaitOrphanPod, DecideDispatch(false, false, "", "", false, true, known), known)
+		assert.Equal(t, AwaitUnfinishedPod, DecideDispatch(false, false, "", "", false, true, known), known)
 		assert.Equal(t, ReportLost, DecideDispatch(false, false, "", "", false, false, known), known)
 	}
 	assert.Equal(t, ResendReport, DecideDispatch(true, false, "", "", false, true, pkgmodel.AttemptStatusRunning))
@@ -70,8 +70,8 @@ func TestDecideDispatch_AConfigRefusalNeverPreemptsAJobOrAPod(t *testing.T) {
 	}{
 		{"its Job exists", "", true, false, pkgmodel.AttemptStatusDispatched, AdoptJob},
 		{"its Job exists, acknowledged", "", true, false, pkgmodel.AttemptStatusRunning, AdoptJob},
-		{"a pod of it has not finished", "", false, true, pkgmodel.AttemptStatusDispatched, AwaitOrphanPod},
-		{"a pod of it has not finished, acknowledged", "", false, true, pkgmodel.AttemptStatusRunning, AwaitOrphanPod},
+		{"a pod of it has not finished", "", false, true, pkgmodel.AttemptStatusDispatched, AwaitUnfinishedPod},
+		{"a pod of it has not finished, acknowledged", "", false, true, pkgmodel.AttemptStatusRunning, AwaitUnfinishedPod},
 		{"nothing of it runs", "", false, false, pkgmodel.AttemptStatusDispatched, RefuseInvalid},
 		{"nothing of an acknowledged attempt runs", "", false, false, pkgmodel.AttemptStatusRunning, ReportLost},
 		{"the command cannot run and its Job exists", pkgmodel.FailureReasonMalformedDispatch, true, true, pkgmodel.AttemptStatusDispatched, RefuseInvalid},

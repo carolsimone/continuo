@@ -139,7 +139,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	t.Log("TestSingleNodeRunLatest passed")
 }
 
-// TestSingleNodeRunStale verifies the single-node-run flow in "snapshot_of_run"
+// TestSingleNodeRunStale verifies the single-node-run flow in "release_of_run"
 // (stale) metadata mode:
 //
 //  1. Starts a run of the "seed" schedule with StartRun so that a real
@@ -147,7 +147,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 //  2. Waits for that source run to reach SUCCEEDED.
 //  3. Reads the source run's tasks row for the target node to capture
 //     the "old" image_tag.
-//  4. Calls StartSingleNodeRun with metadata_source="snapshot_of_run" and
+//  4. Calls StartSingleNodeRun with metadata_source="release_of_run" and
 //     source_run_id = the source run_id.
 //  5. Waits for the new single-node run to reach SUCCEEDED.
 //  6. Asserts that the new run inherits the source's image_tag,
@@ -179,7 +179,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// ── Step 1: Start the source run ──────────────────────────────────────────
-	t.Log("=== Step 1: Starting source seed run ===")
+	t.Log("=== Step 1: Starting the source single-node run of the seed ===")
 	srcResp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: srcSchedule,
 	})
@@ -202,12 +202,12 @@ func TestSingleNodeRunStale(t *testing.T) {
 	t.Logf("Source metadata: image_tag=%s", srcImage)
 
 	// ── Step 4: Start a single-node run in stale mode ───────────────────────
-	t.Log("=== Step 4: Starting single-node run in stale (snapshot_of_run) mode ===")
+	t.Log("=== Step 4: Starting single-node run in stale (release_of_run) mode ===")
 	resp, err := clients.runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
-		MetadataSource: "snapshot_of_run",
+		MetadataSource: "release_of_run",
 		SourceRunId:    srcResp.RunId,
 	})
 	require.NoError(t, err, "StartSingleNodeRun (stale) gRPC call failed")

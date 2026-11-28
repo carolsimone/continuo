@@ -76,7 +76,7 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	db := newTestDB(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	g := failureGraph()
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 	r := newStartRun(t, db, now)
 
@@ -137,7 +137,7 @@ func TestStartedRun_StoresARefusedTaskFailedAndSkipsWhatReadsIt(t *testing.T) {
 	db := newTestDB(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	g := failureGraph()
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 	for i, p := range plan.Tasks {
 		if p.Key == "e2e_schema.ftable_a" {
@@ -210,7 +210,7 @@ func TestStartedRun_TasksNeedTheRunRowFirst(t *testing.T) {
 	db := newTestDB(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	g := failureGraph()
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 	r := newStartRun(t, db, now)
 

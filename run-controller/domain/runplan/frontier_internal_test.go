@@ -28,17 +28,17 @@ func set(keys ...topology.NodeKey) map[topology.NodeKey]bool {
 	return out
 }
 
-func TestDagPlan_ReadyAreThePendingTasksWithoutAPendingUpstream(t *testing.T) {
-	plan := dagPlan(failureShape(), set("stg.a", "stg.b", "stg.c", "stg.d", "stg.g"), nil)
+func TestTopologyPlan_ReadyAreThePendingTasksWithoutAPendingUpstream(t *testing.T) {
+	plan := topologyPlan(failureShape(), set("stg.a", "stg.b", "stg.c", "stg.d", "stg.g"), nil)
 	assert.Equal(t, []PlannedTask{{Key: "stg.a"}, {Key: "stg.b"}, {Key: "stg.c"}, {Key: "stg.d"}, {Key: "stg.g"}}, plan.Tasks)
 	assert.Equal(t, []topology.NodeKey{"stg.a", "stg.b"}, plan.Ready)
 }
 
 // A task whose every upstream is inherited has nothing to wait for, so it is
 // dispatched when the run is created; a task whose upstream is pending waits.
-func TestDagPlan_InheritedUpstreamsDoNotHoldATaskBack(t *testing.T) {
+func TestTopologyPlan_InheritedUpstreamsDoNotHoldATaskBack(t *testing.T) {
 	a, b := uuid.New(), uuid.New()
-	plan := dagPlan(failureShape(), set("stg.c", "stg.d", "stg.g"), map[topology.NodeKey]uuid.UUID{"stg.a": a, "stg.b": b})
+	plan := topologyPlan(failureShape(), set("stg.c", "stg.d", "stg.g"), map[topology.NodeKey]uuid.UUID{"stg.a": a, "stg.b": b})
 	assert.Equal(t, []PlannedTask{
 		{Key: "stg.a", Inherited: true, InheritedFrom: a},
 		{Key: "stg.b", Inherited: true, InheritedFrom: b},
@@ -51,13 +51,13 @@ func TestDagPlan_InheritedUpstreamsDoNotHoldATaskBack(t *testing.T) {
 
 // An upstream that is no task of the run is never going to succeed in it, so
 // it does not hold its downstream back.
-func TestDagPlan_AnUpstreamOutsideThePlanDoesNotHoldATaskBack(t *testing.T) {
-	plan := dagPlan(failureShape(), set("stg.c", "stg.d"), nil)
+func TestTopologyPlan_AnUpstreamOutsideThePlanDoesNotHoldATaskBack(t *testing.T) {
+	plan := topologyPlan(failureShape(), set("stg.c", "stg.d"), nil)
 	assert.Equal(t, []topology.NodeKey{"stg.c"}, plan.Ready)
 }
 
-func TestDagPlan_AKeyBothPendingAndInheritedIsPending(t *testing.T) {
-	plan := dagPlan(failureShape(), set("stg.a"), map[topology.NodeKey]uuid.UUID{"stg.a": uuid.New()})
+func TestTopologyPlan_AKeyBothPendingAndInheritedIsPending(t *testing.T) {
+	plan := topologyPlan(failureShape(), set("stg.a"), map[topology.NodeKey]uuid.UUID{"stg.a": uuid.New()})
 	assert.Equal(t, []PlannedTask{{Key: "stg.a"}}, plan.Tasks)
 	assert.Equal(t, []topology.NodeKey{"stg.a"}, plan.Ready)
 }

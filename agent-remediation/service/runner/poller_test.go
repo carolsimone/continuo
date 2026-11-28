@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 )
 
@@ -166,9 +166,9 @@ func TestRunner_APollThatCannotReachTheGateCountsOnTheGateRow(t *testing.T) {
 		require.NoError(t, h.runner.Drive(ctx, id))
 
 		broken := h.files
-		flow := broken.Flows["rejected-release"]
-		flow.Gate = refs("release_check", "release_check")
-		broken.Flows = map[string]workflow.Flow{flow.Name: flow}
+		fl := broken.Flows["rejected-release"]
+		fl.Gate = refs("release_check", "release_check")
+		broken.Flows = map[string]flow.Flow{fl.Name: fl}
 		h.runner = h.runnerOver(broken)
 
 		require.Error(t, h.poll(id))

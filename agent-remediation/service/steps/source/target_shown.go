@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
@@ -27,7 +27,7 @@ func (TargetFileWasShown) Meta() step.Meta {
 		Kind:        step.KindCheck,
 		Description: "Fails a draft whose named target file is not exactly one of the source files the model was shown.",
 		Needs:       []remediation.EvidenceKey{remediation.KeyDraft, remediation.KeySourceFiles},
-		Stages:      []workflow.Stage{workflow.StagePreflight},
+		Stages:      []flow.Stage{flow.StagePreflight},
 	}
 }
 

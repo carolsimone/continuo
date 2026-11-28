@@ -508,7 +508,7 @@ validation:
   # namespace concept, not a postgres database.
   warehouseDatabase: continuo_dbt
 
-# Admission of Jobs in execution-controller. Every task, whole-DAG test,
+# Admission of Jobs in execution-controller. Every task, whole-schedule test,
 # validation, seed-build and compile Job counts against Job capacity from the
 # moment it is admitted until its outcome is recorded; maxConcurrentJobs is the
 # Job capacity, across every execution-controller replica, and further work
@@ -678,36 +678,35 @@ maintenance:
 
 # The remediation files agent-remediation runs.
 agentRemediation:
-  workflows:
-    # The install's own remediation flow, type and fixture files, as
-    # {<file name>: <file content>}. Keep them in your own git repository and
-    # pass each one with
-    #   --set-file agentRemediation.workflows.files.<name>\.yaml=<path>
-    # They become the ConfigMap <release>-agent-remediation-workflows, which
-    # agent-remediation mounts at /etc/continuo-workflows and loads over its
-    # built-in files at startup: a file of a built-in's kind and name replaces
-    # it whole, any other is added. A name is letters, digits, '.', '_' and '-',
-    # ends in .yaml or .yml and does not start with a dot. The mounted file
-    # holds the bytes given, so its revision is the file's own. A document
-    # whose kind is not flow, type or fixture, or whose version
-    # agent-remediation does not load, fails the render, naming the file, and
-    # so do a top-level kind or version line written twice, an empty document
-    # (a `---` that only blank lines or comments follow) and a directive
-    # (%YAML 1.1, %TAG) that no `---` follows; agent-remediation refuses every
-    # other duplicate key when it starts. With files set, the
-    # render also fails unless agent-remediation's components entry has the
-    # volume remediation-workflows as a ConfigMap volume with an empty
-    # configMap.name (the only form that mounts this ConfigMap with its digest
-    # on the pod template, so a changed file rolls the pod; a name, this
-    # ConfigMap's own included, is refused) and a volumeMounts entry of it,
-    # with no subPath, at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names
-    # (/etc/continuo-workflows when the entry does not set it), as the entry
-    # below has them. A change rolls agent-remediation
-    # only. Empty (the default) loads the built-in files alone.
-    # Upgrade with your values file or --reset-then-reuse-values, not
-    # --reuse-values, which keeps the components list of the chart a release was
-    # installed with. See "Remediation files" in the chart's README.
-    files: {}
+  # The install's own remediation flow, type and fixture files, as
+  # {<file name>: <file content>}. Keep them in your own git repository and
+  # pass each one with
+  #   --set-file agentRemediation.files.<name>\.yaml=<path>
+  # They become the ConfigMap <release>-agent-remediation-files, which
+  # agent-remediation mounts at /etc/continuo-remediation-files and loads over its
+  # built-in files at startup: a file of a built-in's kind and name replaces
+  # it whole, any other is added. A name is letters, digits, '.', '_' and '-',
+  # ends in .yaml or .yml and does not start with a dot. The mounted file
+  # holds the bytes given, so its revision is the file's own. A document
+  # whose kind is not flow, type or fixture, or whose version
+  # agent-remediation does not load, fails the render, naming the file, and
+  # so do a top-level kind or version line written twice, an empty document
+  # (a `---` that only blank lines or comments follow) and a directive
+  # (%YAML 1.1, %TAG) that no `---` follows; agent-remediation refuses every
+  # other duplicate key when it starts. With files set, the
+  # render also fails unless agent-remediation's components entry has the
+  # volume remediation-files as a ConfigMap volume with an empty
+  # configMap.name (the only form that mounts this ConfigMap with its digest
+  # on the pod template, so a changed file rolls the pod; a name, this
+  # ConfigMap's own included, is refused) and a volumeMounts entry of it,
+  # with no subPath, at the folder AGENT_REMEDIATION_FILES_DIR names
+  # (/etc/continuo-remediation-files when the entry does not set it), as the entry
+  # below has them. A change rolls agent-remediation
+  # only. Empty (the default) loads the built-in files alone.
+  # Upgrade with your values file or --reset-then-reuse-values, not
+  # --reuse-values, which keeps the components list of the chart a release was
+  # installed with. See "Remediation files" in the chart's README.
+  files: {}
 
 databaseInit:
   # Idempotently creates the 7 component databases, and with the bundled Postgres
@@ -911,9 +910,9 @@ defaultResources:
 #                                  ConfigMap for the components that have one;
 #                                  on agent-remediation, which has two, the one
 #                                  of the volume's name: project-repos, or
-#                                  remediation-workflows while the volume is
-#                                  mounted at AGENT_REMEDIATION_WORKFLOWS_DIR
-#                                  (/etc/continuo-workflows when unset); any
+#                                  remediation-files while the volume is
+#                                  mounted at AGENT_REMEDIATION_FILES_DIR
+#                                  (/etc/continuo-remediation-files when unset); any
 #                                  other volume mounts project-repos.
 # These keys are install-time only: they shape the Deployments and
 # ServiceAccounts, and no component reads them.
@@ -1196,17 +1195,17 @@ components:
       RELEASE_CHECK_TIMEOUT: "20m"
       RELEASE_CHECK_POLL_INTERVAL: "15s"
       # The folder of the install's remediation files
-      # (agentRemediation.workflows.files), mounted below.
-      AGENT_REMEDIATION_WORKFLOWS_DIR: /etc/continuo-workflows
+      # (agentRemediation.files), mounted below.
+      AGENT_REMEDIATION_FILES_DIR: /etc/continuo-remediation-files
     volumeMounts:
       - {name: project-repos, mountPath: /etc/continuo, readOnly: true}
-      - {name: remediation-workflows, mountPath: /etc/continuo-workflows, readOnly: true}
+      - {name: remediation-files, mountPath: /etc/continuo-remediation-files, readOnly: true}
     # agent-remediation reads project_repos.yaml and its remediation files only
     # at startup. An empty configMap.name mounts the chart's ConfigMap of the
     # volume's name: project-repos (projectRepos, or files/project_repos.yaml
-    # when that is empty), or agent-remediation-workflows
-    # (agentRemediation.workflows.files) while the volume is mounted at
-    # AGENT_REMEDIATION_WORKFLOWS_DIR; any other volume mounts project-repos.
+    # when that is empty), or agent-remediation-files
+    # (agentRemediation.files) while the volume is mounted at
+    # AGENT_REMEDIATION_FILES_DIR; any other volume mounts project-repos.
     # The digest of each is on the pod template, so
     # `helm upgrade` rolls agent-remediation when one changes. Helm cannot hash
     # a ConfigMap of your own named here: after editing it, run
@@ -1214,7 +1213,7 @@ components:
     volumes:
       - name: project-repos
         configMap: {name: ""}
-      - name: remediation-workflows
+      - name: remediation-files
         configMap: {name: ""}
 
   # dead-letter-controller stores every dead letter (stream consumer, outbox

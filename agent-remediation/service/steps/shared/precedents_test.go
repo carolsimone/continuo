@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
@@ -19,7 +19,7 @@ import (
 func precedentFailure() remediation.Failure {
 	return remediation.Failure{
 		Trigger: remediation.Trigger{ReleaseID: "rel-1"},
-		Kind:    workflow.ClusterSingle,
+		Kind:    flow.ClusterSingle,
 		Target: remediation.TriggerNode{
 			NodeID: "model.a", ErrorSignature: "sig-a", Category: "compile", Reason: "syntax",
 		},
@@ -100,7 +100,7 @@ func TestPrecedents_ALookupErrorProvidesNoPrecedents(t *testing.T) {
 func TestPrecedents_AnUpstreamClusterLooksUpItsFirstMember(t *testing.T) {
 	f := remediation.Failure{
 		Trigger:      remediation.Trigger{ReleaseID: "rel-1"},
-		Kind:         workflow.ClusterSharedUpstream,
+		Kind:         flow.ClusterSharedUpstream,
 		TargetNodeID: "model.anc",
 		Target:       remediation.TriggerNode{NodeID: "model.anc"},
 		Members: []remediation.TriggerNode{

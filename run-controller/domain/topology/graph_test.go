@@ -34,7 +34,7 @@ func diamond() topology.Graph {
 	)
 }
 
-// layered builds a synthetic layered DAG: level k holds nodes named nKK_IIII, and
+// layered builds a synthetic layered topology: level k holds nodes named nKK_IIII, and
 // each reads fanIn nodes of level k-1 (index, index+1, … modulo the level's
 // size). With failRoot, level 0 is the single node fail_root and the other
 // nodes fill the remaining levels.
@@ -195,7 +195,7 @@ func TestGraph_WalksIncludeAFromKeyOnlyWhenReached(t *testing.T) {
 	assert.Empty(t, g.Descendants(nil))
 }
 
-// A release is a DAG, but a walk must still end on a cycle: each node is
+// A release's topology is acyclic, but a walk must still end on a cycle: each node is
 // expanded once.
 func TestGraph_WalksStopOnACycle(t *testing.T) {
 	g := topology.NewGraph(
@@ -223,7 +223,7 @@ func TestGraph_DescendantsOfTheCascadeRootAreEveryOtherNode(t *testing.T) {
 
 // The dag-2000 benchmark shape: 20 levels of 100, fan-in 2. A level-19 node
 // reads d+1 nodes d levels up, so it has 2+3+…+20 = 209 ancestors.
-func TestGraph_AncestorsInTheLayeredDAG(t *testing.T) {
+func TestGraph_AncestorsInTheLayeredTopology(t *testing.T) {
 	nodes, edges := layered(2000, 20, 2, false)
 	g := topology.NewGraph(nodes, edges)
 	require.Equal(t, 2000, g.Len())

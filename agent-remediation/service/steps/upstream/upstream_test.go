@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -121,7 +121,7 @@ func failure(mod func(*remediation.Failure)) remediation.Failure {
 			CodeBundleURI: "s3://bundle/rel-1",
 			Nodes:         members,
 		},
-		Kind:         workflow.ClusterSharedUpstream,
+		Kind:         flow.ClusterSharedUpstream,
 		TargetNodeID: targetID,
 		Target:       remediation.TriggerNode{NodeID: targetID},
 		Members:      members,

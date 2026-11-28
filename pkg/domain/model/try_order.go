@@ -1,7 +1,7 @@
 package model
 
 // HandOverTry is the try number of a round's hand-over row in
-// agent-remediation: the escalated row written once the round's tries are
+// agent-remediation: the hand-over row written once the round's tries are
 // spent, which is no try of its own. A round has at most one, and it comes
 // after every try of its round (TryBefore).
 const HandOverTry = 0

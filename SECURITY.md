@@ -38,7 +38,7 @@ supposed to enforce:
 - Authentication or authorisation bypass in `ui`, including the operator
   role checks that gate starting runs, release promotion, and PR creation.
 - Any path that lets an unapproved change reach production, since the release
-  pipeline's core promise is that promotion is human-gated.
+  check's core promise is that promotion is human-gated.
 - Injection into generated dbt commands or SQL.
 - Escaping the Kubernetes Job sandbox that executes dbt models.
 - Leaking credentials through logs, events, API responses, or run artifacts.

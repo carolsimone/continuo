@@ -195,7 +195,7 @@ func TestWatch_ObserveRunReadsTheRunsJobsAndPodsInOnePass(t *testing.T) {
 	delete(legacy.Labels, batchv1.JobNameLabel)
 	cs := fake.NewClientset(
 		inRun(job("j-live"), "run-1"), inRun(pod("p-live", "j-live"), "run-1"),
-		inRun(pod("p-orphan", "j-gone"), "run-1"),
+		inRun(pod("p-jobless", "j-gone"), "run-1"),
 		inRun(legacy, "run-1"),
 		inRun(job("j-other"), "run-2"), inRun(pod("p-other", "j-other"), "run-2"),
 	)
@@ -215,10 +215,10 @@ func TestWatch_ObserveRunReadsTheRunsJobsAndPodsInOnePass(t *testing.T) {
 	assert.True(t, live.JobPresent)
 	assert.Equal(t, "run-1", live.JobRunID)
 	require.Len(t, live.Pods, 1)
-	orphan := got.Of("j-gone")
-	assert.False(t, orphan.JobPresent)
-	require.Len(t, orphan.Pods, 1)
-	assert.True(t, orphan.HasUnfinishedPod())
+	jobless := got.Of("j-gone")
+	assert.False(t, jobless.JobPresent)
+	require.Len(t, jobless.Pods, 1)
+	assert.True(t, jobless.HasUnfinishedPod())
 	assert.Len(t, got.Of("j-legacy").Pods, 1, "a pod carrying only the legacy label is held under its Job")
 	assert.Equal(t, model.JobObservation{}, got.Of("j-other"), "another run's Job is not read")
 }

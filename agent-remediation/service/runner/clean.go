@@ -10,8 +10,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/pkg/sanitize"
 )
@@ -278,10 +278,10 @@ func unknownFinding(message, token, file string) remediation.Finding {
 
 // codeTexts is every text of the evidence ev holds under a key of the data
 // class code, as classOf tells the class of each key.
-func codeTexts(ev remediation.Evidence, classOf func(remediation.EvidenceKey) (workflow.DataClass, bool)) []string {
+func codeTexts(ev remediation.Evidence, classOf func(remediation.EvidenceKey) (flow.DataClass, bool)) []string {
 	var texts []string
 	for _, k := range ev.Keys() {
-		if class, ok := classOf(k); !ok || class != workflow.ClassCode {
+		if class, ok := classOf(k); !ok || class != flow.ClassCode {
 			continue
 		}
 		v, _ := remediation.Get[any](ev, k)

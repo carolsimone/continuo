@@ -32,7 +32,7 @@ var _ ports.Observer = (*Metrics)(nil)
 func New(reg *pkgmetrics.Registry, backlog BacklogSource) *Metrics {
 	m := &Metrics{
 		recorded: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "continuo_dead_letters_total",
-			Help: "Dead letters stored, by source, stream, consumer group and failure kind."}, []string{"source", "stream", "group", "kind"}),
+			Help: "Dead letters stored, by source, stream, consumer group and dead-letter kind."}, []string{"source", "stream", "group", "kind"}),
 		redriven: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "continuo_dead_letters_redriven_total",
 			Help: "Dead letters redriven to their original stream."}, []string{"source", "stream"}),
 		expired: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "continuo_dead_letters_expired_total",

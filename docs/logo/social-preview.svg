@@ -53,9 +53,9 @@
     <text x="0" y="182" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="16" font-weight="400">Orchestrates dbt &amp; Python without declared dependencies, auto-fixing broken builds.</text>
     <g transform="translate(0, 235)">
       <rect x="0" y="0" width="156" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
-      <text x="14" y="22" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="500">⚡ Code-Inferred DAG</text>
+      <text x="14" y="22" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="500">⚡ Code-Inferred Topology</text>
       <rect x="166" y="0" width="168" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
-      <text x="180" y="22" fill="#A78BFA" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="500">🛡️ Blue/Green Validate</text>
+      <text x="180" y="22" fill="#A78BFA" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="500">🛡️ Release Check</text>
       <rect x="344" y="0" width="162" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
       <text x="358" y="22" fill="#818CF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="500">🤖 LLM Fixes</text>
       <rect x="516" y="0" width="138" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>

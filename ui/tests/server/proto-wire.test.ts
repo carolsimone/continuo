@@ -98,7 +98,7 @@ describe('proto wire: run.proto', () => {
   it('StartSingleNodeRun request round-trips request_id and the node identity', () => {
     const sent = {
       request_id: '5d21c0de-0000-4000-8000-000000000001', project_name: 'svc', schema_name: 'sch',
-      table_name: 'tbl', metadata_source: 'snapshot_of_run', source_run_id: 'run-1', operation: 'full_refresh',
+      table_name: 'tbl', metadata_source: 'release_of_run', source_run_id: 'run-1', operation: 'full_refresh',
       acknowledged_dependents: ['bi.fx_rates_report', 'bi.daily_totals'],
     };
     expect(requestRoundTrip('StartSingleNodeRun', sent)).toEqual(sent);

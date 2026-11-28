@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScheduleSummary, SchedulesResponse, ScheduleTopologySummary, TopologyListResponse } from './types';
 import SchedulerCard from './SchedulerCard';
-import SnapshotTile from './SnapshotTile';
+import ScheduleTile from './ScheduleTile';
 import DormantTile from './DormantTile';
 import Tabs, { useActiveTab } from './Tabs';
 import ReleasesPanel from './ReleasesPanel';
@@ -139,9 +139,9 @@ export default function DashboardPage() {
               </div>
             )}
             {!topologiesError && (topologies.length > 0 || dormantNodeCount > 0) && (
-              <div className="snapshot-tile-grid">
+              <div className="schedule-tile-grid">
                 {topologies.map((s) => (
-                  <SnapshotTile key={s.schedule_name} summary={s} />
+                  <ScheduleTile key={s.schedule_name} summary={s} />
                 ))}
                 {dormantNodeCount > 0 && <DormantTile count={dormantNodeCount} />}
               </div>

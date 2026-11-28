@@ -124,7 +124,7 @@ func TestRunner_CrossClusterFindingFailsTheTry(t *testing.T) {
 	assert.Equal(t, id.String(), p.RemediationID)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Len(t, h.store.Tries(id), 1, "the only try is spent")
-	assert.Equal(t, fix.StatusEscalated, h.fixRow(fix.HandOverTry).Fix.Status, "the tries being spent, the failing set is handed over")
+	assert.Equal(t, fix.StatusHandedOver, h.fixRow(fix.HandOverTry).Fix.Status, "the tries being spent, the failing set is handed over")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.checks.requests())
 
@@ -396,15 +396,15 @@ func TestRunner_TriesSpentHandsOver(t *testing.T) {
 		assert.Equal(t, fix.StatusFailed, p.Fix.Status, "try %d", try)
 		assert.Equal(t, "svc-a: still broken", p.VerifyError, "try %d", try)
 	}
-	escalated := h.fixRow(fix.HandOverTry).Fix
-	assert.Equal(t, fix.StatusEscalated, escalated.Status)
-	assert.Equal(t, id.String(), escalated.RemediationID)
+	handedOver := h.fixRow(fix.HandOverTry).Fix
+	assert.Equal(t, fix.StatusHandedOver, handedOver.Status)
+	assert.Equal(t, id.String(), handedOver.RemediationID)
 	spent := fix.NodeOutcome{
-		Status: fix.StatusEscalated,
+		Status: fix.StatusHandedOver,
 		Reason: "tried 3 times; the last try failed: svc-a: still broken",
 		Code:   model.HandoverReasonTriesSpent,
 	}
-	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, escalated.NodeOutcomes)
+	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent}, handedOver.NodeOutcomes)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Len(t, h.store.Tries(id), 3)
 	require.Len(t, h.flowRows(id, 3)["hand_over"], 1, "the hand-over is recorded on the last try")
@@ -517,7 +517,7 @@ func TestRunner_ACommitFailureAfterThePassEmitsOneProposedEvent(t *testing.T) {
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
 
-func TestRunner_ACommitFailureAfterTheHandOverWritesOneEscalatedRow(t *testing.T) {
+func TestRunner_ACommitFailureAfterTheHandOverWritesOneHandOverRow(t *testing.T) {
 	h := newHarness(t, withTries(1))
 	h.checks.answer(fix.PhaseFailed, map[string]string{"svc-a": "still broken"})
 	id := h.accept(trigger("compile", compileNode("svc-a")))
@@ -537,14 +537,14 @@ func TestRunner_ACommitFailureAfterTheHandOverWritesOneEscalatedRow(t *testing.T
 	require.NoError(t, h.drive(id))
 	require.NoError(t, h.drive(id))
 
-	var escalated []fix.Fix
+	var handedOver []fix.Fix
 	for _, p := range h.fixes() {
-		if p.Fix.Status == fix.StatusEscalated {
-			escalated = append(escalated, p.Fix)
+		if p.Fix.Status == fix.StatusHandedOver {
+			handedOver = append(handedOver, p.Fix)
 		}
 	}
-	require.Len(t, escalated, 1)
-	assert.Equal(t, fix.HandOverTry, escalated[0].Try)
+	require.Len(t, handedOver, 1)
+	assert.Equal(t, fix.HandOverTry, handedOver[0].Try)
 	assert.Len(t, h.handedOverEvents(), 1, "the hand-over emits once")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
@@ -701,7 +701,7 @@ func TestRunner_AGateRefusalWithNoTryLeftHandsOver(t *testing.T) {
 	assert.Equal(t, fix.StatusFailed, h.fixRow(1).Fix.Status)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Len(t, h.store.Tries(id), 1, "the only try is spent")
-	assert.Equal(t, fix.StatusEscalated, h.fixRow(fix.HandOverTry).Fix.Status, "the tries being spent, the failing set is handed over")
+	assert.Equal(t, fix.StatusHandedOver, h.fixRow(fix.HandOverTry).Fix.Status, "the tries being spent, the failing set is handed over")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.checks.requests())
 }

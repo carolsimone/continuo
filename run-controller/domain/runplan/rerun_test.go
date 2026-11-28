@@ -22,7 +22,7 @@ func sourceGraph(dag []fixtureNode, src runplan.Source) topology.Graph {
 // tasks.
 func TestRerun_ReExecutesTheFailuresAndTheirDescendants(t *testing.T) {
 	src := failedFailureRun()
-	plan, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	plan, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eTopology, src))
 	require.NoError(t, err)
 	assert.Equal(t, planOf(append(
 		inherited("ftable_a", "ftable_b", "ftable_c", "ftable_d"),
@@ -36,7 +36,7 @@ func TestRerun_ANodeWhoseUpstreamsAreAllInheritedIsReadyAtCreation(t *testing.T)
 	src := sourceRun(model.OperationRun,
 		[]string{"ftable_a", "ftable_b", "ftable_g", "ftable_h"},
 		[]string{"ftable_c", "ftable_d", "ftable_e", "ftable_f"})
-	plan, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	plan, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eTopology, src))
 	require.NoError(t, err)
 	assert.Equal(t, planOf(append(
 		inherited("ftable_a", "ftable_b", "ftable_g", "ftable_h"),
@@ -48,7 +48,7 @@ func TestRerun_OfTheLayeredSchedule(t *testing.T) {
 	src := sourceRun(model.OperationBuild,
 		[]string{"seed_table_1", "seed_table_2", "seed_table_3", "table_a", "table_b", "table_c", "table_d", "table_e", "table_f", "table_h"},
 		[]string{"table_g", "table_i", "table_j"})
-	plan, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	plan, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eTopology, src))
 	require.NoError(t, err)
 	assert.Equal(t, planOf(append(
 		inherited("seed_table_1", "seed_table_2", "seed_table_3", "table_a", "table_b", "table_c", "table_d", "table_e", "table_f", "table_h"),
@@ -60,10 +60,10 @@ func TestRerun_OfTheLayeredSchedule(t *testing.T) {
 // source never ran does not join it, however wide the slice it is given.
 func TestRerun_KeepsToTheSourceTasks(t *testing.T) {
 	src := failedFailureRun()
-	release := releaseGraph(changed(e2eDAG, nil, fixtureNode{"ftable_i", "service-2", "e2e-schedule-failure", []string{"ftable_e"}}))
+	release := releaseGraph(changed(e2eTopology, nil, fixtureNode{"ftable_i", "service-2", "e2e-schedule-failure", []string{"ftable_e"}}))
 	plan, err := runplan.Rerun{Source: src}.Select(release)
 	require.NoError(t, err)
-	want, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	want, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eTopology, src))
 	require.NoError(t, err)
 	assert.Equal(t, want, plan)
 	assert.NotContains(t, plan.Tasks, runplan.PlannedTask{Key: key("ftable_i")})
@@ -77,7 +77,7 @@ func TestRerun_AnInheritedTaskKeepsItsRoot(t *testing.T) {
 	src.Tasks[0].InheritedFrom = root
 	require.Equal(t, key("ftable_a"), src.Tasks[0].Key)
 
-	plan, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	plan, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eTopology, src))
 	require.NoError(t, err)
 	assert.Equal(t, runplan.PlannedTask{Key: key("ftable_a"), Inherited: true, InheritedFrom: root}, plan.Tasks[0])
 	assert.Equal(t, runplan.PlannedTask{Key: key("ftable_b"), Inherited: true, InheritedFrom: sourceTaskID("ftable_b")}, plan.Tasks[1])
@@ -85,16 +85,16 @@ func TestRerun_AnInheritedTaskKeepsItsRoot(t *testing.T) {
 
 func TestRerun_ASourceWithoutAnUnsucceededTaskHasNothingToRerun(t *testing.T) {
 	src := sourceRun(model.OperationRun, []string{"ftable_a", "ftable_b", "ftable_c"}, nil)
-	_, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	_, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eTopology, src))
 	assert.ErrorIs(t, err, runplan.ErrNothingToRerun)
 
-	_, err = runplan.Rerun{Source: runplan.Source{}}.Select(releaseGraph(e2eDAG))
+	_, err = runplan.Rerun{Source: runplan.Source{}}.Select(releaseGraph(e2eTopology))
 	assert.ErrorIs(t, err, runplan.ErrNothingToRerun)
 }
 
 func TestRerun_OfATestRunIsRefused(t *testing.T) {
 	src := sourceRun(model.OperationTest, nil, []string{"seed_table_1"})
-	_, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	_, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eTopology, src))
 	assert.ErrorIs(t, err, runplan.ErrRerunOfTestUnsupported)
 }
 
@@ -103,7 +103,7 @@ func TestRerun_OfATestRunIsRefused(t *testing.T) {
 func TestRerun_ASourceTaskOutsideItsReleaseIsNotFound(t *testing.T) {
 	src := failedFailureRun()
 	src.Tasks = append(src.Tasks, runplan.SourceTask{Key: key("ftable_z"), TaskID: sourceTaskID("ftable_z")})
-	_, err := runplan.Rerun{Source: src}.Select(releaseGraph(e2eDAG))
+	_, err := runplan.Rerun{Source: src}.Select(releaseGraph(e2eTopology))
 	require.ErrorIs(t, err, runplan.ErrTargetNotFound)
 	assert.Contains(t, err.Error(), "e2e_schema.ftable_z")
 }
@@ -112,10 +112,10 @@ func TestRerun_ASourceTaskOutsideItsReleaseIsNotFound(t *testing.T) {
 // it carries over it is never dispatched, so it is not.
 func TestRerun_AnUndeclaredNodeTypeIsRefusedOnlyOnATaskItExecutes(t *testing.T) {
 	src := failedFailureRun()
-	_, err := runplan.Rerun{Source: src}.Select(retyped(sourceGraph(e2eDAG, src), "ftable_f", "dbt-macro"))
+	_, err := runplan.Rerun{Source: src}.Select(retyped(sourceGraph(e2eTopology, src), "ftable_f", "dbt-macro"))
 	assert.ErrorIs(t, err, runplan.ErrInvalidNodeType)
 
-	_, err = runplan.Rerun{Source: src}.Select(retyped(sourceGraph(e2eDAG, src), "ftable_d", "dbt-macro"))
+	_, err = runplan.Rerun{Source: src}.Select(retyped(sourceGraph(e2eTopology, src), "ftable_d", "dbt-macro"))
 	assert.NoError(t, err)
 }
 
@@ -124,12 +124,12 @@ func TestRerun_AnUndeclaredNodeTypeIsRefusedOnlyOnATaskItExecutes(t *testing.T) 
 // way an undeclared node type is.
 func TestRerun_RefusesAnUnknownExternalNode(t *testing.T) {
 	src := failedFailureRun()
-	src.Tasks = append(src.Tasks, runplan.SourceTask{Key: unknownExternalProbe, TaskID: sourceTaskID("ingest_probe"), BuiltOn: sourceRelease})
-	g := withUnknownExternalUpstream(releaseGraph(e2eDAG), "ftable_e")
+	src.Tasks = append(src.Tasks, runplan.SourceTask{Key: unknownExternalProbe, TaskID: sourceTaskID("external_probe"), BuiltOn: sourceRelease})
+	g := withUnknownExternalUpstream(releaseGraph(e2eTopology), "ftable_e")
 
 	_, err := runplan.Rerun{Source: src}.Select(g)
 	require.ErrorIs(t, err, runplan.ErrExternalNode)
-	assert.Contains(t, err.Error(), "raw.ingest_probe")
+	assert.Contains(t, err.Error(), "raw.external_probe")
 }
 
 // The unknown-external node a release holds upstream of a source task is not a task of
@@ -137,9 +137,9 @@ func TestRerun_RefusesAnUnknownExternalNode(t *testing.T) {
 // release without it.
 func TestRerun_ReadsPastAnUnknownExternalUpstream(t *testing.T) {
 	src := failedFailureRun()
-	got, err := runplan.Rerun{Source: src}.Select(withUnknownExternalUpstream(releaseGraph(e2eDAG), "ftable_e"))
+	got, err := runplan.Rerun{Source: src}.Select(withUnknownExternalUpstream(releaseGraph(e2eTopology), "ftable_e"))
 	require.NoError(t, err)
-	want, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	want, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eTopology, src))
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
@@ -148,7 +148,7 @@ func TestRerun_ReadsPastAnUnknownExternalUpstream(t *testing.T) {
 // the source run's release: the plan holds its one task, ready at creation.
 func TestRerun_OfASingleNodeRunOfADormantNodeRunsItAgain(t *testing.T) {
 	src := sourceRun(model.OperationRun, nil, []string{"dormant_d"})
-	g := sourceGraph(dormantDAG, src)
+	g := sourceGraph(dormantTopology, src)
 	n, ok := g.Node(key("dormant_d"))
 	require.True(t, ok)
 	require.True(t, n.IsDormant(), "the fixture node is dormant")

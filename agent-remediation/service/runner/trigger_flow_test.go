@@ -6,14 +6,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 )
 
 // flowsNamed is a set of flows with the given names and no types.
-func flowsNamed(names ...string) workflow.Set {
-	set := workflow.Set{Flows: map[string]workflow.Flow{}, Types: map[string]workflow.Type{}}
+func flowsNamed(names ...string) flow.Set {
+	set := flow.Set{Flows: map[string]flow.Flow{}, Types: map[string]flow.Type{}}
 	for _, name := range names {
-		set.Flows[name] = workflow.Flow{Name: name}
+		set.Flows[name] = flow.Flow{Name: name}
 	}
 	return set
 }
@@ -35,5 +35,5 @@ func TestFlowsNoTriggerRuns_NotesEveryFlowButTheTriggers(t *testing.T) {
 
 func TestFlowsNoTriggerRuns_TheTriggersFlowAloneHasNoNote(t *testing.T) {
 	assert.Empty(t, FlowsNoTriggerRuns(flowsNamed(TriggerFlowName)))
-	assert.Empty(t, FlowsNoTriggerRuns(workflow.Set{}))
+	assert.Empty(t, FlowsNoTriggerRuns(flow.Set{}))
 }

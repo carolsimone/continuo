@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-// A preview list is the read-only sibling of the snapshot pick list: it shares
+// A preview list is the read-only sibling of the release pick list: it shares
 // the list, row box and row text rules by selector grouping, never by a copy
 // of their declarations, and its rows are not click targets. It sits in a
 // .dialog--wide next to option rows and counts, so the list is shorter than a

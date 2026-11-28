@@ -64,7 +64,7 @@ streams:
         group: execution-controller-run-cancelled
         const: ExecutionControllerRunCancelled
 
-  # ---------------- release-controller streams (dbt blue/green) ----------------
+  # ---------------- release-controller streams (the release check) ----------------
 
   - name: release.requested:v1
     const: ReleaseRequestedV1

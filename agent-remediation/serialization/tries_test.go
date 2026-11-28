@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
@@ -43,10 +43,10 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 		Remediation: remediation.Remediation{ID: uuid.New(), Round: 2, CurrentTry: 1},
 		Try:         &remediation.Try{Try: 1, Status: remediation.TryFailed},
 		Clusters: []remediation.Cluster{
-			{Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Draft: 2},
-			{Cluster: 2, Kind: workflow.ClusterSingle, TargetNodeID: "model.b", Members: []string{"model.b"}, TypeName: "dbt-validation",
+			{Cluster: 1, Kind: flow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Draft: 2},
+			{Cluster: 2, Kind: flow.ClusterSingle, TargetNodeID: "model.b", Members: []string{"model.b"}, TypeName: "dbt-validation",
 				Status: remediation.ClusterHandedOver, Draft: 1, Outcome: &fix.NodeOutcome{Status: fix.StatusSkipped, Reason: "the model declined"}},
-			{Cluster: 3, Kind: workflow.ClusterSingle, TargetNodeID: "model.c", Members: []string{"model.c"}, TypeName: "dbt-validation",
+			{Cluster: 3, Kind: flow.ClusterSingle, TargetNodeID: "model.c", Members: []string{"model.c"}, TypeName: "dbt-validation",
 				Status: remediation.ClusterHandedOver, Draft: 1, Outcome: &fix.NodeOutcome{
 					Status: fix.StatusSkipped, Reason: "the node's source is not in the release's code bundle", Code: model.HandoverReasonDeclined,
 				}},
@@ -131,7 +131,7 @@ func TestTryRecordOf_AMovedFileIsShownAsARename(t *testing.T) {
 		Remediation: remediation.Remediation{ID: uuid.New(), Round: 1, CurrentTry: 1},
 		Try:         &remediation.Try{Try: 1, Status: remediation.TryFailed},
 		Clusters: []remediation.Cluster{{
-			Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "analytics.table_b", Members: []string{"analytics.table_b"},
+			Cluster: 1, Kind: flow.ClusterSingle, TargetNodeID: "analytics.table_b", Members: []string{"analytics.table_b"},
 			TypeName: "duplicate-table", Status: remediation.ClusterChecked, Draft: 1,
 		}},
 		Steps: []remediation.StepRun{

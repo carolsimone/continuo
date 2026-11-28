@@ -42,7 +42,7 @@ const (
 //  5. GET /api/v1/releases/<id> answers "rebaseline": true.
 //
 // The release moves the live topology, so a deferred restore announces the
-// default e2e DAG again. It plans no promote-seed run, so the restore's wait for
+// default e2e topology again. It plans no promote-seed run, so the restore's wait for
 // them returns at once.
 func TestE2E_RebaselineRelease_AdoptsSeedsAndValidatesNothing(t *testing.T) {
 	if testing.Short() {

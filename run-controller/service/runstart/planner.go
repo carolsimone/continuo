@@ -85,7 +85,7 @@ func (p Planner) Schedule(ctx context.Context, u uow.UnitOfWork, tenantID, sched
 	if err != nil {
 		return sel, err
 	}
-	sel.Plan, err = runplan.WholeDAG{Operation: op}.Select(sel.Graph)
+	sel.Plan, err = runplan.WholeSchedule{Operation: op}.Select(sel.Graph)
 	if err != nil {
 		return sel, err
 	}

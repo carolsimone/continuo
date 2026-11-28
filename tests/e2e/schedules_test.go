@@ -62,7 +62,7 @@ func TestE2E_Schedules_UpsertPreviewAndDeleteOnAPausedSchedule(t *testing.T) {
 	verifyComponentsHealthy(t)
 
 	// Only a schedule's first cron needs a model of the live release with its
-	// tag; the announced e2e DAG has the models of e2e-schedule.
+	// tag; the announced e2e topology has the models of e2e-schedule.
 	seedTopology(t, ctx, clients)
 	wantModels := dagModelsOf(testScheduleName)
 
@@ -165,10 +165,10 @@ func TestE2E_Schedules_UpsertPreviewAndDeleteOnAPausedSchedule(t *testing.T) {
 		"saving a paused cron, previewing a cron and removing the cron start no run")
 }
 
-// dagModelsOf counts the nodes of the e2e DAG whose schedule is name.
+// dagModelsOf counts the nodes of the e2e topology whose schedule is name.
 func dagModelsOf(name string) int {
 	n := 0
-	for _, node := range e2eDAG {
+	for _, node := range e2eTopologyNodes {
 		if node.schedule == name {
 			n++
 		}

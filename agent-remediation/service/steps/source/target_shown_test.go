@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/source"
 )
@@ -21,7 +21,7 @@ func TestTargetFileWasShown_MetaIsAPreflightCheckOnTheDraftAndTheSourceFiles(t *
 	assert.NotEmpty(t, m.Description)
 	assert.Equal(t, []remediation.EvidenceKey{remediation.KeyDraft, remediation.KeySourceFiles}, m.Needs)
 	assert.Empty(t, m.Provides)
-	assert.Equal(t, []workflow.Stage{workflow.StagePreflight}, m.Stages)
+	assert.Equal(t, []flow.Stage{flow.StagePreflight}, m.Stages)
 }
 
 func TestTargetFileWasShown(t *testing.T) {

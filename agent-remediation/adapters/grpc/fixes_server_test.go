@@ -247,7 +247,7 @@ func TestFixesServer_MapsTheNodeOutcomeCode(t *testing.T) {
 		ID:        "p-code",
 		ReleaseID: "rel-code",
 		NodeOutcomes: map[string]fix.NodeOutcome{
-			"s.handed": {Status: fix.StatusEscalated, Reason: "no type matches", Code: model.HandoverReasonNoType},
+			"s.handed": {Status: fix.StatusHandedOver, Reason: "no type matches", Code: model.HandoverReasonNoType},
 			"s.fixed":  {Status: fix.StatusProposed},
 		},
 	}
@@ -257,7 +257,7 @@ func TestFixesServer_MapsTheNodeOutcomeCode(t *testing.T) {
 	got, err := s.GetFix(context.Background(), &remediationv1.GetFixRequest{Id: "p-code"})
 	require.NoError(t, err)
 	require.Len(t, got.NodeOutcomes, 2)
-	assert.Equal(t, "escalated", got.NodeOutcomes["s.handed"].Status)
+	assert.Equal(t, "handed_over", got.NodeOutcomes["s.handed"].Status)
 	assert.Equal(t, "no type matches", got.NodeOutcomes["s.handed"].Reason)
 	assert.Equal(t, string(model.HandoverReasonNoType), got.NodeOutcomes["s.handed"].Code)
 	assert.Empty(t, got.NodeOutcomes["s.fixed"].Code, "an outcome with no code carries an empty code")

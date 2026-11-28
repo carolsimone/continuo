@@ -159,7 +159,7 @@ func TestGetNode_IncludeInactiveReturnsDroppedNode(t *testing.T) {
 	assert.Equal(t, "dbt-model", resp.NodeType)
 
 	_, err = f.handler.GetNode(f.ctx, &catalogv1.GetNodeRequest{ProjectName: "svc", SchemaName: "analytics", TableName: retiredX})
-	assert.Equal(t, codes.NotFound, status.Code(err), "without include_inactive a dropped node is NOT_FOUND")
+	assert.Equal(t, codes.NotFound, status.Code(err), "without include_inactive a retired node is NOT_FOUND")
 }
 
 func TestGetNodeLocation_RetiredNodeIsNotFound(t *testing.T) {

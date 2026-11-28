@@ -6,10 +6,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 )
 
-// Remediation is the row of one remediation run: one per tenant, release and
+// Remediation is the row of one remediation: one per tenant, release and
 // round.
 type Remediation struct {
 	ID        uuid.UUID
@@ -45,7 +45,7 @@ type Remediation struct {
 	UpdatedAt time.Time
 }
 
-// Try is the row of one try of a remediation run.
+// Try is the row of one try of a remediation.
 type Try struct {
 	RemediationID uuid.UUID
 	// Try is the try's number in its round, from 1, which keys its fix row
@@ -65,7 +65,7 @@ type Cluster struct {
 	RemediationID uuid.UUID
 	Try           int
 	Cluster       int
-	Kind          workflow.ClusterKind
+	Kind          flow.ClusterKind
 	TargetNodeID  string
 	Members       []string
 	TypeName      string
@@ -142,7 +142,7 @@ func (s StepRun) ShownToLaterTries() bool {
 	return s.Kind == KindRunner && s.Step == StepPreflight
 }
 
-// Snapshot is one remediation run as stored: the run, one of its tries (its
+// Snapshot is one remediation as stored: the remediation, one of its tries (its
 // current try, unless the reader says otherwise), and the clusters and steps of
 // that try.
 type Snapshot struct {

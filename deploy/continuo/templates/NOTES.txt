@@ -110,7 +110,7 @@ and back on after it, whatever version you run: each time it trims while it
 still runs during the upgrade, that version's dead-letter-controller deletes
 every stream it holds as retired that this version uses again (on 0.24.0,
 task.status.updated:v1 and release.promoted:v1), with its consumer groups.
-If agentRemediation.workflows.files holds a flow file, set its trigger to
+If agentRemediation.files holds a flow file, set its trigger to
 heal.triggered before the upgrade: agent-remediation refuses to start on a
 flow with any other trigger.
 {{- end }}
@@ -123,7 +123,7 @@ a components entry whose env sets these two durations under their earlier
 names sets nothing, so rename them. The stream that says a release check ended
 is release_check.finished:v1; with your own Redis, apply the rules from
 deploy/redis-acl-rules.acl with the upgrade. A flow file of yours in
-agentRemediation.workflows.files names the gate step as release_check
+agentRemediation.files names the gate step as release_check
 (gate: [release_check]) and its pull_request output emits fix.proposed
 (emits: fix.proposed), or agent-remediation refuses to start.
 {{- end }}
@@ -131,7 +131,7 @@ agentRemediation.workflows.files names the gate step as release_check
 {{- if .Release.IsUpgrade }}
 
 BREAKING: a type file counts the drafts a cluster gets in one try with the
-key drafts. If agentRemediation.workflows.files holds a type file, rename its
+key drafts. If agentRemediation.files holds a type file, rename its
 agent.rounds to agent.drafts before the upgrade, and in a fixture write the
 trigger's round under the key round. agent-remediation refuses to start on a
 type file with rounds, naming the file and line, and remediation-check files

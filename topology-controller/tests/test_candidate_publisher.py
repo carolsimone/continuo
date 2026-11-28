@@ -230,7 +230,7 @@ def test_publish_failed_carries_the_durations():
     payload = _payload(redis_mock)
     assert (payload["parse_ms"], payload["contracts_ms"]) == (310, 45)
     assert all(type(payload[name]) is int for name in ("parse_ms", "contracts_ms"))
-    assert "contracts_by_family" not in payload, "a failed release wrote no bundle to count"
+    assert "contracts_by_family" not in payload, "a rejected release wrote no bundle to count"
 
 
 def test_both_outcomes_announce_the_library_version_the_publisher_was_built_with():

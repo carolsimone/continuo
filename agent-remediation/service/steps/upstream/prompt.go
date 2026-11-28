@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
@@ -103,7 +103,7 @@ func (p *Prompt) request(in step.PromptInput, target remediation.UpstreamTarget)
 		OwnChangeDiff: target.OwnChangeDiff,
 		Members:       members,
 		Precedents:    precedents,
-		CrossProject:  f.Kind == workflow.ClusterCrossProject,
+		CrossProject:  f.Kind == flow.ClusterCrossProject,
 	}), in.Evidence)
 }
 

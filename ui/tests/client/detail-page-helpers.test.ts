@@ -166,7 +166,7 @@ describe('detail page graph helpers', () => {
   });
 
   it('names an unknown-external node by its schema and table, skipping its empty project', () => {
-    expect(externalNodeName('.raw.ingest_probe')).toBe('raw.ingest_probe');
+    expect(externalNodeName('.raw.external_probe')).toBe('raw.external_probe');
   });
 
   it('hides the header drift chip in latest mode regardless of drift', () => {

@@ -245,11 +245,11 @@ func TestCommands_PassTheParsedParameters(t *testing.T) {
 
 	_, err = srv.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 		RequestId: requestID.String(), ProjectName: "service-1", SchemaName: "mart", TableName: "orders",
-		MetadataSource: "snapshot_of_run", SourceRunId: src.String(), Operation: "full_refresh",
+		MetadataSource: "release_of_run", SourceRunId: src.String(), Operation: "full_refresh",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, run.NodeID{ProjectName: "service-1", SchemaName: "mart", TableName: "orders"}, cmds.single.Target)
-	assert.Equal(t, run.MetadataSourceSnapshotOfRun, cmds.single.MetadataSource)
+	assert.Equal(t, run.MetadataSourceReleaseOfRun, cmds.single.MetadataSource)
 	require.NotNil(t, cmds.single.SourceRunID)
 	assert.Equal(t, src, *cmds.single.SourceRunID)
 	assert.Equal(t, model.OperationFullRefresh, cmds.single.Operation)
@@ -297,7 +297,7 @@ func TestCommands_RefuseMalformedParameters(t *testing.T) {
 		},
 		"StartSingleNodeRun without a project": func() error {
 			_, err := srv.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
-				RequestId: id, ProjectName: "", SchemaName: "e2e_raw", TableName: "ingest_probe", MetadataSource: "latest",
+				RequestId: id, ProjectName: "", SchemaName: "e2e_raw", TableName: "external_probe", MetadataSource: "latest",
 			})
 			return err
 		},
@@ -309,7 +309,7 @@ func TestCommands_RefuseMalformedParameters(t *testing.T) {
 		},
 		"StartSingleNodeRun of a snapshot without a source": func() error {
 			_, err := srv.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
-				RequestId: id, ProjectName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "snapshot_of_run",
+				RequestId: id, ProjectName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "release_of_run",
 			})
 			return err
 		},
@@ -343,12 +343,12 @@ func TestCommands_RefuseMalformedParameters(t *testing.T) {
 // refusal's own message, which names the node. It is the request that is
 // wrong, so no retry or other state of the system changes the answer.
 func TestCommandError_UnknownExternalNodeIsInvalidArgument(t *testing.T) {
-	refusal := fmt.Errorf("select: %w", fmt.Errorf("%w: raw.ingest_probe", runplan.ErrExternalNode))
+	refusal := fmt.Errorf("select: %w", fmt.Errorf("%w: raw.external_probe", runplan.ErrExternalNode))
 	cmds := &fakeCommands{err: refusal}
 	srv := newCommandServer(newStore(), cmds)
 
 	_, err := srv.StartSingleNodeRun(ctxOf(tenantA), &runv1.StartSingleNodeRunRequest{
-		RequestId: uuid.NewString(), ProjectName: "service-1", SchemaName: "raw", TableName: "ingest_probe", MetadataSource: "latest",
+		RequestId: uuid.NewString(), ProjectName: "service-1", SchemaName: "raw", TableName: "external_probe", MetadataSource: "latest",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))

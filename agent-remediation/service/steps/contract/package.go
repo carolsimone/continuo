@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -30,7 +30,7 @@ func NewContractPackages(packager ports.ContractPackager, images ports.ImagePack
 	return &ContractPackages{packager: packager, images: images, dialect: dialect}
 }
 
-const nameContractPackages workflow.StepName = "contract_packages"
+const nameContractPackages flow.StepName = "contract_packages"
 
 // Meta describes the step.
 func (*ContractPackages) Meta() step.Meta {

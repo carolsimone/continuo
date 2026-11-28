@@ -21,7 +21,7 @@ import DetailActions from './detail-page/DetailActions';
 import DetailHeader from './detail-page/DetailHeader';
 import LatestView from './detail-page/LatestView';
 import RunView from './detail-page/RunView';
-import SnapshotStrip from './detail-page/SnapshotStrip';
+import PastRunStrip from './detail-page/PastRunStrip';
 import { useLastRun } from './detail-page/useLastRun';
 import { useRunRows } from './detail-page/useRunRows';
 import { useScheduleGraph } from './detail-page/useScheduleGraph';
@@ -118,7 +118,7 @@ function ScheduleDetail({ name, mode, requestId }: {
     ? selectedRun.status || 'pending'
     : liveSchedulerStatus;
   const liveRunExists = !!lastRunId && !!scheduler && !isTerminalStatus(scheduler.status);
-  const snapshotRun = selectedRunId
+  const pastRun = selectedRunId
     ? selectedRun ?? { completed_at: null, created_at: null, status: null }
     : null;
   // The release of the run the page shows: a selected past run's own, which
@@ -204,8 +204,8 @@ function ScheduleDetail({ name, mode, requestId }: {
           />
         )}
 
-        {snapshotRun && (
-          <SnapshotStrip run={snapshotRun} liveRunExists={liveRunExists} onReturn={() => handleSelectRun(null)} />
+        {pastRun && (
+          <PastRunStrip run={pastRun} liveRunExists={liveRunExists} onReturn={() => handleSelectRun(null)} />
         )}
 
         {mode === 'latest' ? (
@@ -216,7 +216,7 @@ function ScheduleDetail({ name, mode, requestId }: {
               selectedRunId, runGraph, shouldRenderGraph, graphState, selectedRunGraphFailed: runGraphReadFailed,
             })}
             graphBadge={graphBadge}
-            graphBadgeClass={graphBadgeClass(graphBadge, snapshotRun?.status)}
+            graphBadgeClass={graphBadgeClass(graphBadge, pastRun?.status)}
             selectedNodeId={tree.selectedNodeId}
             selectedRunId={selectedRunId}
             lastRunId={lastRunId}

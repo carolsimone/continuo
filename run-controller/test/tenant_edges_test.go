@@ -193,7 +193,7 @@ func TestTenantEdges(t *testing.T) {
 		requireCode(t, err, codes.NotFound, "StartRebase")
 		_, err = runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{
 			RequestId: uuid.NewString(), ProjectName: project, SchemaName: schema, TableName: table,
-			MetadataSource: "snapshot_of_run", SourceRunId: runID,
+			MetadataSource: "release_of_run", SourceRunId: runID,
 		})
 		requireCode(t, err, codes.NotFound, "StartSingleNodeRun of another tenant's run")
 		_, err = runClient.StartSingleNodeRun(ctx, &runv1.StartSingleNodeRunRequest{

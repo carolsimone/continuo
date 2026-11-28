@@ -208,7 +208,7 @@ func TestRecordAttemptReport_ANonRetryableFailureFailsTheTaskWithBudgetLeft(t *t
 // With a budget of 0 a task fails on its first failure.
 func TestRecordAttemptReport_ABudgetOfZeroFailsOnTheFirstFailure(t *testing.T) {
 	g := failureSchedule()
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 	r := newCronRun(t, model.OperationRun)
 	tc := newFakeTaskCollection()

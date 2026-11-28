@@ -20,7 +20,7 @@ type FixSummary struct {
 	// Try is the try's number within its round, counting from 1. 0 is the
 	// round's hand-over row, written after the round's last try.
 	Try    int
-	Status string // generating | verifying | proposed | skipped | failed | escalated
+	Status string // generating | verifying | proposed | skipped | failed | handed_over
 	// PullRequests is one entry per owning project whose pull request has
 	// been claimed, in project order. Empty for a fix that never entered the
 	// pull-request lifecycle.

@@ -210,8 +210,8 @@ func (k Kind) IsValid() bool {
 type MetadataSource string
 
 const (
-	MetadataSourceLatest        MetadataSource = "latest"
-	MetadataSourceSnapshotOfRun MetadataSource = "snapshot_of_run"
+	MetadataSourceLatest       MetadataSource = "latest"
+	MetadataSourceReleaseOfRun MetadataSource = "release_of_run"
 )
 
 // NodeID is a triple identifying one materialised model in the topology.

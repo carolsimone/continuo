@@ -32,7 +32,7 @@ const (
 //
 // RemediationFixes serves the fix read-path and pull-request lifecycle
 // for the agent-remediation. The UI reads fixes via ListFixes/GetFix
-// and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
+// and drives a pull request through BeginPullRequest/RecordPullRequest/FailPullRequest.
 type RemediationFixesClient interface {
 	// ListFixes returns fixes filtered by status, pr_state, release_id,
 	// project, and limit.
@@ -112,7 +112,7 @@ func (c *remediationFixesClient) FailPullRequest(ctx context.Context, in *FailPu
 //
 // RemediationFixes serves the fix read-path and pull-request lifecycle
 // for the agent-remediation. The UI reads fixes via ListFixes/GetFix
-// and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
+// and drives a pull request through BeginPullRequest/RecordPullRequest/FailPullRequest.
 type RemediationFixesServer interface {
 	// ListFixes returns fixes filtered by status, pr_state, release_id,
 	// project, and limit.

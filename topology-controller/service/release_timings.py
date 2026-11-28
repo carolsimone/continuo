@@ -306,7 +306,7 @@ class ReleaseTimings:
 
     def log_fields(self) -> dict[str, object]:
         """The fields of the release's log line. `failure_kind` is present only
-        for a failed release, and `ontology_warnings` and `ontology_information`
+        for a rejected release, and `ontology_warnings` and `ontology_information`
         (the counts of the findings the ontology check left to the contract
         bundle) only when the release found some of that severity."""
         fields: dict[str, object] = {

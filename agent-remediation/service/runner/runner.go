@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -38,7 +38,7 @@ const leaseDuration = 5 * time.Minute
 type Deps struct {
 	NewUoW   func() uow.UnitOfWork
 	Registry *Registry
-	Files    workflow.Set
+	Files    flow.Set
 	LLM      ports.LLMProvider
 	Collab   Collaborators
 	Clock    ports.Clock
@@ -96,7 +96,7 @@ func New(d Deps) *Runner {
 // of its current try, and the metric samples the step earns once it commits.
 type tryRun struct {
 	snap    remediation.Snapshot
-	flow    workflow.Flow
+	flow    flow.Flow
 	trigger remediation.Trigger
 	journal journal
 	after   *afterCommit
@@ -223,7 +223,7 @@ func (r *Runner) readRun(ctx context.Context, id uuid.UUID) (run tryRun, running
 	if rem.Status != remediation.StatusRunning {
 		return tryRun{}, false, nil
 	}
-	flow, ok := r.d.Files.Flows[rem.Flow]
+	fl, ok := r.d.Files.Flows[rem.Flow]
 	if !ok {
 		return tryRun{}, false, fmt.Errorf("remediation %s follows flow %q, which the loaded files do not define", id, rem.Flow)
 	}
@@ -233,7 +233,7 @@ func (r *Runner) readRun(ctx context.Context, id uuid.UUID) (run tryRun, running
 	}
 	t.TenantID = rem.TenantID
 	t.Round = rem.Round
-	return tryRun{snap: snap, flow: flow, trigger: t, journal: newJournal(snap.Steps), after: &afterCommit{}}, true, nil
+	return tryRun{snap: snap, flow: fl, trigger: t, journal: newJournal(snap.Steps), after: &afterCommit{}}, true, nil
 }
 
 // nextOpenCluster returns the first cluster, in cluster order, that has not

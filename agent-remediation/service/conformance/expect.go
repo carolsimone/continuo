@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -61,7 +61,7 @@ func (e *expectation) ended() {
 
 // fixRows expects the release's fix rows, in the order they were written, to
 // have these statuses, and returns them. The tries are numbered from 1, and a
-// hand-over row, which only an escalated row is, comes last as
+// hand-over row, which only a handed_over row is, comes last as
 // fix.HandOverTry.
 func (e *expectation) fixRows(want ...fix.Status) []FixRow {
 	got := e.sr.w.FixRows()
@@ -69,7 +69,7 @@ func (e *expectation) fixRows(want ...fix.Status) []FixRow {
 	numbered := true
 	for i, a := range got {
 		statuses = append(statuses, a.Fix.Status)
-		if a.Fix.Status == fix.StatusEscalated {
+		if a.Fix.Status == fix.StatusHandedOver {
 			numbered = numbered && a.Fix.Try == fix.HandOverTry && i == len(got)-1
 		} else {
 			numbered = numbered && a.Fix.Try == i+1
@@ -337,7 +337,7 @@ func (e *expectation) fellBackToMembers(c remediation.Cluster) {
 	e.that(c.Status == remediation.ClusterFellBack, "cluster %d is %s, not fell_back", c.Cluster, c.Status)
 	var targets []string
 	for _, m := range e.clustersOfTry1() {
-		if m.Cluster > c.Cluster && m.Kind == workflow.ClusterSingle && slices.Contains(c.Members, m.TargetNodeID) {
+		if m.Cluster > c.Cluster && m.Kind == flow.ClusterSingle && slices.Contains(c.Members, m.TargetNodeID) {
 			e.that(slices.Equal(m.Members, []string{m.TargetNodeID}), "member cluster %d has members %v", m.Cluster, m.Members)
 			targets = append(targets, m.TargetNodeID)
 		}
@@ -352,14 +352,14 @@ func (e *expectation) fellBackToMembers(c remediation.Cluster) {
 // started fresh: its context steps run in its draft 1, its draft passed in
 // draft 1, and the model was called about it once for each of the member's
 // scripted answers. The try is proposed for every failing node.
-func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Cluster) {
+func (e *expectation) membersRanTheirTypes(files flow.Set, c remediation.Cluster) {
 	e.fellBackToMembers(c)
 	for _, m := range e.clustersOfTry1() {
 		if m.Cluster <= c.Cluster || !slices.Contains(c.Members, m.TargetNodeID) {
 			continue
 		}
 		typ, known := files.Types[m.TypeName]
-		e.that(known && typ.Match.Cluster == workflow.ClusterSingle, "member %s fell back to type %q", m.TargetNodeID, m.TypeName)
+		e.that(known && typ.Match.Cluster == flow.ClusterSingle, "member %s fell back to type %q", m.TargetNodeID, m.TypeName)
 		if !known {
 			continue
 		}
@@ -414,14 +414,14 @@ func (e *expectation) stepRow(try, cluster, draft int, step string) (remediation
 
 // reachedModel reports whether the first draft of cluster c's prompt step of
 // type typ ran.
-func (e *expectation) reachedModel(c remediation.Cluster, typ workflow.Type) bool {
+func (e *expectation) reachedModel(c remediation.Cluster, typ flow.Type) bool {
 	row, ok := e.stepRow(1, c.Cluster, 1, string(typ.Agent.Prompt.Name))
 	return ok && row.Status == remediation.StepDone
 }
 
 // contextOnlyInFirstDraft expects every context step of typ to have run in
 // cluster c's draft 1 and in no later draft.
-func (e *expectation) contextOnlyInFirstDraft(c remediation.Cluster, typ workflow.Type) {
+func (e *expectation) contextOnlyInFirstDraft(c remediation.Cluster, typ flow.Type) {
 	for _, ref := range typ.Context {
 		row, ok := e.stepRow(1, c.Cluster, 1, string(ref.Name))
 		e.that(ok && row.Status == remediation.StepDone, "cluster %d's context step %s did not run in draft 1", c.Cluster, ref.Name)
@@ -434,7 +434,7 @@ func (e *expectation) contextOnlyInFirstDraft(c remediation.Cluster, typ workflo
 
 // passedInDraft expects cluster c's draft to have passed pre-flight in draft
 // pass after every earlier draft's pre-flight refused its draft.
-func (e *expectation) passedInDraft(c remediation.Cluster, typ workflow.Type, pass int) {
+func (e *expectation) passedInDraft(c remediation.Cluster, typ flow.Type, pass int) {
 	e.that(c.Status == remediation.ClusterChecked, "cluster %d is %s, not checked", c.Cluster, c.Status)
 	e.that(c.Draft == pass, "cluster %d ended in draft %d, want %d", c.Cluster, c.Draft, pass)
 	for draft := 1; draft <= pass; draft++ {
@@ -452,7 +452,7 @@ func (e *expectation) passedInDraft(c remediation.Cluster, typ workflow.Type, pa
 // draftsSpent expects pre-flight to have refused cluster c's draft in every
 // draft typ allows, its prompt step to have run once per draft, and the model
 // to have been called about its target exactly calls times.
-func (e *expectation) draftsSpent(c remediation.Cluster, typ workflow.Type, calls int) {
+func (e *expectation) draftsSpent(c remediation.Cluster, typ flow.Type, calls int) {
 	drafts := typ.Agent.Drafts
 	e.that(c.Draft == drafts, "cluster %d ended in draft %d, want %d", c.Cluster, c.Draft, drafts)
 	for draft := 1; draft <= drafts; draft++ {
@@ -494,7 +494,7 @@ func (e *expectation) nextTryShownGateErrors(c remediation.Cluster, tryCalls int
 
 // firstFinding is the first finding of cluster c's pre-flight checks in the
 // cluster's last draft, in the order typ lists them.
-func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (remediation.Finding, bool) {
+func (e *expectation) firstFinding(c remediation.Cluster, typ flow.Type) (remediation.Finding, bool) {
 	rows := e.stepRows(1, c.Cluster, c.Draft)
 	for _, ref := range typ.Preflight {
 		if row, ok := rows[string(ref.Name)]; ok && len(row.Findings) > 0 {
@@ -510,7 +510,7 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 // draft's first finding as its reason and the code drafts_spent;
 // otherwise by a context step that declined, skipped with the code declined
 // and no model call.
-func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, draftsSpent bool) {
+func (e *expectation) singleHandedOver(c remediation.Cluster, typ flow.Type, draftsSpent bool) {
 	e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
 	want, code := fix.StatusFailed, model.HandoverReasonDraftsSpent
 	if draftsSpent {

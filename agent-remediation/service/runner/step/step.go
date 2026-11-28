@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
@@ -37,7 +37,7 @@ const (
 
 // Meta is how a step describes itself.
 type Meta struct {
-	Name        workflow.StepName
+	Name        flow.StepName
 	Kind        Kind
 	Description string
 	// Needs lists the evidence keys the step reads.
@@ -45,7 +45,7 @@ type Meta struct {
 	// Provides lists the evidence keys the step writes.
 	Provides []remediation.EvidenceKey
 	// Stages lists the stages the step may be placed at.
-	Stages []workflow.Stage
+	Stages []flow.Stage
 	// MayStandAsGateRun reports whether the step may stand in the flow's gate
 	// as the check that runs the release check.
 	MayStandAsGateRun bool

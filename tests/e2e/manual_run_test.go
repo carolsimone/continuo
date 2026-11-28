@@ -41,7 +41,7 @@ func TestManualRun_SeedRunAndRerun(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Announce the e2e DAG. seedTopology returns once run-controller's live release has
+	// Announce the e2e topology. seedTopology returns once run-controller's live release has
 	// the seed schedule's models, which is what StartRun needs to know it.
 	seedTopology(t, ctx, clients)
 

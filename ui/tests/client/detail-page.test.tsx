@@ -1391,7 +1391,7 @@ describe('DetailPage — historical run attempts', () => {
       fireEvent.click(container.querySelector('.run-row')!);
       fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
 
-      // The past run's rows come from run-controller, not from its graph snapshot:
+      // The past run's rows come from run-controller, not from its graph:
       // the task carries its own attempt, read as attempt+1 / max_retries+1.
       const nameCell = await screen.findByText('old_orders');
       const row = nameCell.closest('tr')!;
@@ -1417,7 +1417,7 @@ describe('DetailPage — historical run attempts', () => {
 
   it('never shows the latest run\'s rows while a chosen past run is still loading', async () => {
     // The past run's tasks never arrive: the Run tab must read as loading,
-    // not keep the latest run's rows under the past run's snapshot strip.
+    // not keep the latest run's rows under the past run strip.
     const fetchMock = mockFetchSequence({
       ...historicalRoutes(),
       [`/api/runs/${OLD_RUN_ID}/tasks`]: () => new Promise(() => {}),
@@ -1610,7 +1610,7 @@ describe('DetailPage — Run / Past runs tabs', () => {
 
     await screen.findByText('orders');
     expect(container.querySelector('.detail-graph-card')).toBeNull();
-    expect(container.querySelector('.dag-focus-legend')).toBeNull();
+    expect(container.querySelector('.graph-focus-legend')).toBeNull();
     // The Run tab defaults to the List view, so no graph is rendered there.
     expect(container.querySelector('.react-flow')).toBeNull();
   });

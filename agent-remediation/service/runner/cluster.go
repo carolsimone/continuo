@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
@@ -33,7 +33,7 @@ const artifactContentType = "text/plain"
 // plannedStep is one step a cluster runs, with the revision of the file that
 // lists it.
 type plannedStep struct {
-	name     workflow.StepName
+	name     flow.StepName
 	revision string
 }
 
@@ -41,7 +41,7 @@ type plannedStep struct {
 // the flow's context steps, the type's context steps, then in each draft the
 // type's prompt and the type's pre-flight checks in one pass.
 type clusterPlan struct {
-	typ       workflow.Type
+	typ       flow.Type
 	context   []plannedStep
 	prompt    plannedStep
 	preflight []plannedStep
@@ -479,14 +479,14 @@ func (r *Runner) writeArtifacts(ctx context.Context, d remediation.Draft) (remed
 // them to be grouped again in the next try.
 func (r *Runner) settle(run tryRun, c *remediation.Cluster, o fix.NodeOutcome) ([]remediation.Cluster, error) {
 	switch c.Kind {
-	case workflow.ClusterSharedUpstream:
+	case flow.ClusterSharedUpstream:
 		if err := moveCluster(c, remediation.ClusterFellBack); err != nil {
 			return nil, err
 		}
 		r.logger.Info("shared-upstream fix unavailable; each member falls back to its own source",
 			"release", run.trigger.ReleaseID, "target", c.TargetNodeID, "members", c.Members, "reason", o.Reason)
 		return r.memberClusters(run, *c), nil
-	case workflow.ClusterCrossProject:
+	case flow.ClusterCrossProject:
 		if err := moveCluster(c, remediation.ClusterFellBack); err != nil {
 			return nil, err
 		}
@@ -519,7 +519,7 @@ func (r *Runner) memberClusters(run tryRun, c remediation.Cluster) []remediation
 	out := make([]remediation.Cluster, 0, len(c.Members))
 	for i, m := range c.Members {
 		out = append(out, r.newCluster(run.snap.Remediation, *run.snap.Try, run.flow, run.trigger, last+i+1,
-			workflow.ClusterSingle, m, []string{m}))
+			flow.ClusterSingle, m, []string{m}))
 	}
 	return out
 }
@@ -528,7 +528,7 @@ func (r *Runner) memberClusters(run tryRun, c remediation.Cluster) []remediation
 // for reason: skipped, with the code declined. A step that gives no reason is
 // recorded as having declined the fix, so a hand-over never carries an empty
 // message.
-func declined(name workflow.StepName, reason string) fix.NodeOutcome {
+func declined(name flow.StepName, reason string) fix.NodeOutcome {
 	if strings.TrimSpace(reason) == "" {
 		reason = fmt.Sprintf("step %s declined the fix", name)
 	}
@@ -546,7 +546,7 @@ func moveCluster(c *remediation.Cluster, to remediation.ClusterStatus) error {
 }
 
 // lookup returns the step registered under name as the interface of kind.
-func lookup[T any](reg *Registry, name workflow.StepName, kind step.Kind) (T, error) {
+func lookup[T any](reg *Registry, name flow.StepName, kind step.Kind) (T, error) {
 	var zero T
 	s, _, ok := reg.Lookup(name)
 	if !ok {

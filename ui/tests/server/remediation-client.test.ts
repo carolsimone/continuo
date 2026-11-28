@@ -42,11 +42,11 @@ describe('proto wire: remediation.proto', () => {
     const result = getFixRoundTrip({
       id: 'p1',
       node_outcomes: {
-        's.handed': { status: 'escalated', reason: 'no type matches', code: 'no_type' },
+        's.handed': { status: 'handed_over', reason: 'no type matches', code: 'no_type' },
         's.fixed': { status: 'proposed', reason: '' },
       },
     });
-    expect(result.node_outcomes['s.handed']).toEqual({ status: 'escalated', reason: 'no type matches', code: 'no_type' });
+    expect(result.node_outcomes['s.handed']).toEqual({ status: 'handed_over', reason: 'no type matches', code: 'no_type' });
     expect(result.node_outcomes['s.fixed']).toEqual({ status: 'proposed', reason: '', code: '' });
   });
 

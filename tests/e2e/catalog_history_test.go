@@ -26,7 +26,7 @@ import (
 //	carries the release's code bundle
 //	→ catalog's topology group makes rel_probe active and its versions group
 //	  records the node's code version and points :CURRENT at it
-//	→ a second release, the e2e DAG without rel_probe, is promoted
+//	→ a second release, the e2e topology without rel_probe, is promoted
 //	→ catalog retires rel_probe instead of deleting it
 //
 // Through the gRPC CatalogQuery, rel_probe is then found by GetNode only when
@@ -36,8 +36,8 @@ import (
 //
 // The test changes the live topology of catalog and run-controller twice and
 // puts the live release on its own release. A deferred restore announces the
-// default e2e DAG again, which every test that needs the DAG does at its start
-// as well, so the next test finds the topology it expects: the e2e DAG live in
+// default e2e topology again, which every test that needs the topology does at its start
+// as well, so the next test finds the topology it expects: the e2e topology live in
 // catalog and run-controller, with rel_probe active again and the versions it
 // recorded. The restore also waits for the promote-seed runs the first release
 // planned, so no seed load of this test is in flight when the next test
@@ -118,10 +118,10 @@ func TestDroppedNodeKeepsItsHistory(t *testing.T) {
 	require.Equal(t, 1, currentVersions(before.GetVersions()), "exactly one version of a live node is current")
 	t.Logf("%s is live with %d recorded version(s), one current", probeUniqueID, len(before.GetVersions()))
 
-	// 2. A second release drops rel_probe: the e2e DAG without it.
+	// 2. A second release drops rel_probe: the e2e topology without it.
 	nodes, _ := e2eTopology(t, ctx, clients)
 	kept, keptSchedules := withoutNode(nodes, probeUniqueID)
-	require.Len(t, kept, len(nodes)-1, "the e2e DAG holds %s exactly once", probeUniqueID)
+	require.Len(t, kept, len(nodes)-1, "the e2e topology holds %s exactly once", probeUniqueID)
 	dropped := announceTopology(t, ctx, "e2e-drop-"+uuid.NewString()[:8], kept)
 	waitForAnnouncedTopology(t, ctx, clients, dropped, keptSchedules)
 
@@ -133,29 +133,29 @@ func TestDroppedNodeKeepsItsHistory(t *testing.T) {
 		retired, lastErr = clients.catalogClient.GetNode(ctx, probeNodeRequest(true))
 		return lastErr == nil && retired.GetInactive(), nil
 	}, func() string {
-		return fmt.Sprintf("timeout waiting for GetNode(include_inactive) of the dropped node %s to report it inactive: last response %v, last error %v",
+		return fmt.Sprintf("timeout waiting for GetNode(include_inactive) of the retired node %s to report it inactive: last response %v, last error %v",
 			probeUniqueID, retired, lastErr)
 	})
 
 	_, err = clients.catalogClient.GetNode(ctx, probeNodeRequest(false))
 	require.Equal(t, codes.NotFound, status.Code(err),
-		"GetNode of the dropped node without include_inactive must be NOT_FOUND, got: %v", err)
+		"GetNode of the retired node without include_inactive must be NOT_FOUND, got: %v", err)
 
 	// 4. Its history is intact, and none of it is current any more.
 	after, err := clients.catalogClient.GetNodeVersions(ctx, probeVersionsRequest(false))
-	require.NoError(t, err, "GetNodeVersions of the dropped node must still answer")
+	require.NoError(t, err, "GetNodeVersions of the retired node must still answer")
 	require.ElementsMatch(t, versionHashes(before.GetVersions()), versionHashes(after.GetVersions()),
-		"the dropped node keeps every version it had")
+		"the retired node keeps every version it had")
 	require.Zero(t, currentVersions(after.GetVersions()), "no version of a retired node is current")
 	currentOnly, err := clients.catalogClient.GetNodeVersions(ctx, probeVersionsRequest(true))
-	require.NoError(t, err, "GetNodeVersions(current_only) of the dropped node")
+	require.NoError(t, err, "GetNodeVersions(current_only) of the retired node")
 	require.Empty(t, currentOnly.GetVersions(), "current_only of a retired node returns an empty list")
 	t.Logf("✅ %s was retired by %s: found only with include_inactive (inactive), %d version(s) kept, none current",
 		probeUniqueID, dropped.ReleaseID, len(after.GetVersions()))
 }
 
 // restoreDefaultTopologyAfter puts the stack back the way the next test finds
-// it: the default e2e DAG is announced again, and the promote-seed runs the
+// it: the default e2e topology is announced again, and the promote-seed runs the
 // promotion of releaseID planned are waited for. It runs on a context of its
 // own, because the test's is cancelled by the time a cleanup runs.
 func restoreDefaultTopologyAfter(t *testing.T, clients *testClients, releaseID string) {

@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -69,7 +69,7 @@ func TestRunner_ClassifierInfra(t *testing.T) {
 
 	want := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: detail, Code: model.HandoverReasonClassifierInfra}
 	carried := h.clusterFor(id, 1, "svc-a")
-	assert.Equal(t, workflow.ClusterSingle, carried.Kind)
+	assert.Equal(t, flow.ClusterSingle, carried.Kind)
 	assert.Equal(t, []string{"svc-a"}, carried.Members)
 	assert.Equal(t, "", carried.TypeName, "no type is matched for a node the classifier marked unfixable")
 	assert.Equal(t, remediation.ClusterHandedOver, carried.Status)
@@ -499,7 +499,7 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 			}, h.fixRow(1).Fix.NodeOutcomes, "the failed gate fails the verifying node; the declined one keeps its outcome")
 			require.Equal(t, remediation.TryDrafting, h.try(id, 2).Status)
 			carried := h.clusterFor(id, 2, "svc-a")
-			assert.Equal(t, workflow.ClusterSingle, carried.Kind)
+			assert.Equal(t, flow.ClusterSingle, carried.Kind)
 			assert.Equal(t, []string{"svc-a"}, carried.Members)
 			assert.Equal(t, tc.typeName, carried.TypeName, "the carried cluster keeps the type of the cluster that settled the node")
 			assert.Equal(t, remediation.ClusterHandedOver, carried.Status)
@@ -618,7 +618,7 @@ func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 		id := h.accept(trig)
 		require.NoError(t, h.runner.Drive(ctx, id))
 		fellBack := clusterOf(h, id, 1, "svc-a")
-		require.Equal(t, workflow.ClusterCrossProject, fellBack.Kind)
+		require.Equal(t, flow.ClusterCrossProject, fellBack.Kind)
 		require.Equal(t, remediation.ClusterFellBack, fellBack.Status)
 		require.NotNil(t, fellBack.Outcome)
 		require.Equal(t, model.HandoverReasonDraftsSpent, fellBack.Outcome.Code)
@@ -632,7 +632,7 @@ func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 		h.failGate(id, "svc-b")
 
 		again := clusterOf(h, id, 2, "svc-a")
-		assert.Equal(t, workflow.ClusterCrossProject, again.Kind, "the members are grouped again")
+		assert.Equal(t, flow.ClusterCrossProject, again.Kind, "the members are grouped again")
 		assert.Equal(t, "cross-project-upstream", again.TypeName)
 		assert.Equal(t, remediation.ClusterGathering, again.Status)
 		assert.Nil(t, again.Outcome)

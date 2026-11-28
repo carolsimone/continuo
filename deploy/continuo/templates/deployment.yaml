@@ -21,7 +21,7 @@
       "execution-controller" (list (dict "volume" "dbt-commands" "name" "continuo.dbtCommandsConfigMapName" "checksum" "dbt-commands" "template" "dbt-commands-configmap.yaml"))
       "agent-remediation" (list
         (dict "volume" "project-repos" "name" "continuo.projectReposConfigMapName" "checksum" "project-repos" "template" "project-repos-configmap.yaml")
-        (dict "volume" "remediation-workflows" "name" "continuo.agentRemediationWorkflowsConfigMapName" "checksum" "agent-remediation-workflows" "template" "agent-remediation-workflows-configmap.yaml" "mountedAt" "continuo.agentRemediation.workflowsDir"))
+        (dict "volume" "remediation-files" "name" "continuo.agentRemediationFilesConfigMapName" "checksum" "agent-remediation-files" "template" "agent-remediation-files-configmap.yaml" "mountedAt" "continuo.agentRemediation.filesDir"))
       "ui" (list (dict "volume" "cancel-config" "name" "continuo.cancelConfigMapName")) }}
 {{- include "continuo.credentials.assertFiles" $ }}
 {{- range $svc := .Values.components }}
@@ -55,11 +55,11 @@
 {{- $_ := set $resolved $volume.name $entry }}
 {{- end }}
 {{- end }}
-{{- /* With agentRemediation.workflows.files set, the agent-remediation entry
+{{- /* With agentRemediation.files set, the agent-remediation entry
        must mount the chart's ConfigMap of the files at the folder
        agent-remediation reads, or the render fails naming what is missing. */}}
 {{- if eq $svc.name "agent-remediation" }}
-{{- include "continuo.agentRemediation.assertWorkflowsMount" (dict "root" $ "svc" $svc) }}
+{{- include "continuo.agentRemediation.assertFilesMount" (dict "root" $ "svc" $svc) }}
 {{- end }}
 {{- $isAgent := has $svc.name (list "agent-chat" "agent-remediation") }}
 {{- include "continuo.component.assertEnv" (dict "root" $ "svc" $svc) }}

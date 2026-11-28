@@ -1129,7 +1129,7 @@ func (x *FileEdit) GetRenamedFrom() string {
 }
 
 // NodeOutcome is how one failing node's try ended: verifying, proposed,
-// failed, skipped, or escalated, with the reason for that outcome. code is the
+// failed, skipped, or handed over, with the reason for that outcome. code is the
 // handover_reason vocabulary value that says why the node was handed over when
 // its outcome is not part of a verified fix, and is empty otherwise.
 type NodeOutcome struct {

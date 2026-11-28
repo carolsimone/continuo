@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir "dbt-core==1.12.0b1" "dbt-postgres==1.10.0" "dbt-
 WORKDIR /project
 
 # Shared dbt macros inherited by every project image (e.g. generate_schema_name,
-# which routes validation runs to the candidate schema via DBT_TARGET_SCHEMA).
+# which routes a release check's validation to the candidate schema via DBT_TARGET_SCHEMA).
 COPY macros/ /project/macros/
 
 COPY entrypoint.sh /entrypoint.sh

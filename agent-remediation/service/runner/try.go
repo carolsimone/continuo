@@ -10,11 +10,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/cluster"
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/domain/typology"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -285,7 +285,7 @@ func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try
 		RemediationID: rem.ID,
 		Try:           try.Try,
 		Cluster:       n,
-		Kind:          workflow.ClusterSingle,
+		Kind:          flow.ClusterSingle,
 		TargetNodeID:  nodeID,
 		Members:       []string{nodeID},
 		TypeName:      s.typeName,
@@ -298,29 +298,29 @@ func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try
 
 // giveUp hands the failing set over once the tries of the trigger's round are
 // spent, after tried terminal tries, in u's transaction: the round's hand-over
-// row (try fix.HandOverTry) is recorded escalated with how each node ends
-// (escalatedOutcomes), the nodes are handed over and the remediation is done. The give-up output therefore never
+// row (try fix.HandOverTry) is recorded handed_over with how each node ends
+// (handedOverOutcomes), the nodes are handed over and the remediation is done. The give-up output therefore never
 // runs twice: a remediation that is done is never driven again.
 func (r *Runner) giveUp(ctx context.Context, u uow.UnitOfWork, run tryRun, tried int) error {
-	outcomes, err := escalatedOutcomes(ctx, u, run, tried)
+	outcomes, err := handedOverOutcomes(ctx, u, run, tried)
 	if err != nil {
 		return err
 	}
 	r.logger.Info("remediation tries spent; handing over", "remediation", run.snap.Remediation.ID,
 		"release", run.trigger.ReleaseID, "round", run.trigger.Round, "tries", tried)
-	return r.endWithTry(ctx, u, run, fix.HandOverTry, fix.Fix{Status: fix.StatusEscalated, NodeOutcomes: outcomes})
+	return r.endWithTry(ctx, u, run, fix.HandOverTry, fix.Fix{Status: fix.StatusHandedOver, NodeOutcomes: outcomes})
 }
 
-// escalatedOutcomes is how each failing node ends once the tries of the
+// handedOverOutcomes is how each failing node ends once the tries of the
 // trigger's round are spent, after tried terminal tries. A node the
 // classifier marked unfixable keeps the classifier's outcome. Every other node
 // is judged by the outcome the remediation's last try recorded for it
 // (lastTry): one handed over with a settled code (settledCode), or because its
 // drafts were spent, keeps that outcome; a drafted member of a try a
-// check refused is escalated with unverifiable_edits; and every other node,
-// one a failed release check judged among them, is escalated with tries_spent.
-// Both escalated codes carry the message triedMessage builds.
-func escalatedOutcomes(ctx context.Context, u uow.UnitOfWork, run tryRun, tried int) (map[string]fix.NodeOutcome, error) {
+// check refused is handed over with unverifiable_edits; and every other node,
+// one a failed release check judged among them, is handed over with tries_spent.
+// Both hand-over codes carry the message triedMessage builds.
+func handedOverOutcomes(ctx context.Context, u uow.UnitOfWork, run tryRun, tried int) (map[string]fix.NodeOutcome, error) {
 	last, why, err := lastTry(ctx, u, run)
 	if err != nil {
 		return nil, err
@@ -337,9 +337,9 @@ func escalatedOutcomes(ctx context.Context, u uow.UnitOfWork, run tryRun, tried 
 		case settledCode(o.Code) || o.Code == pkg_model.HandoverReasonDraftsSpent:
 			out[n.NodeID] = o
 		case o.Code == pkg_model.HandoverReasonUnverifiableEdits:
-			out[n.NodeID] = fix.NodeOutcome{Status: fix.StatusEscalated, Reason: message, Code: pkg_model.HandoverReasonUnverifiableEdits}
+			out[n.NodeID] = fix.NodeOutcome{Status: fix.StatusHandedOver, Reason: message, Code: pkg_model.HandoverReasonUnverifiableEdits}
 		default:
-			out[n.NodeID] = fix.NodeOutcome{Status: fix.StatusEscalated, Reason: message, Code: pkg_model.HandoverReasonTriesSpent}
+			out[n.NodeID] = fix.NodeOutcome{Status: fix.StatusHandedOver, Reason: message, Code: pkg_model.HandoverReasonTriesSpent}
 		}
 	}
 	return out, nil
@@ -369,7 +369,7 @@ func lastTry(ctx context.Context, u uow.UnitOfWork, run tryRun) (outcomes map[st
 	return row.NodeOutcomes, why, nil
 }
 
-// triedMessage is the message of a node escalated once the tries are spent:
+// triedMessage is the message of a node handed over once the tries are spent:
 // how many times the round was tried and, when it is known, why the last try
 // failed.
 func triedMessage(tried int, why string) string {
@@ -415,7 +415,7 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, try
 	if len(handed) == 0 {
 		return nil
 	}
-	name := workflow.StepName(run.flow.OnGiveUp.Action)
+	name := flow.StepName(run.flow.OnGiveUp.Action)
 	out, err := lookup[step.GiveUpOutput](r.d.Registry, name, step.KindOutput)
 	if err != nil {
 		return err
@@ -560,7 +560,7 @@ func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
 // runCrossCheck runs one cross-cluster check over the drafts of the try's
 // checked clusters and commits its row. A finding fails the try with the
 // finding and fails the try in the same transaction.
-func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, checked []checkedCluster, name workflow.StepName) error {
+func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, checked []checkedCluster, name flow.StepName) error {
 	drafts := draftsOf(checked)
 	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowDraft, run.flow.Revision)
 	chk, err := lookup[step.CrossCheck](r.d.Registry, name, step.KindCheck)
@@ -725,8 +725,8 @@ func generatingFix(id uuid.UUID, t remediation.Trigger, try int, now time.Time, 
 // never a fix target whatever its failure. Any other cluster no type handles is
 // handed over at once with its members skipped for that reason. Both hand-overs
 // carry the code no_type.
-func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, flow workflow.Flow, t remediation.Trigger,
-	n int, kind workflow.ClusterKind, target string, members []string) remediation.Cluster {
+func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, fl flow.Flow, t remediation.Trigger,
+	n int, kind flow.ClusterKind, target string, members []string) remediation.Cluster {
 	c := remediation.Cluster{
 		RemediationID: rem.ID,
 		Try:           try.Try,
@@ -739,14 +739,14 @@ func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, fl
 		UpdatedAt:     r.clock.Now(),
 	}
 	var nodeType string
-	if kind == workflow.ClusterSingle {
+	if kind == flow.ClusterSingle {
 		if node, ok := nodeByID(t, target); ok {
 			nodeType = node.NodeType
 		}
 	}
 	reason := dbtTestSkipReason
 	if nodeType != string(pkg_model.NodeTypeDbtTest) {
-		typ, ok := r.d.Files.TypeFor(flow, kind, t.Source, nodeType)
+		typ, ok := r.d.Files.TypeFor(fl, kind, t.Source, nodeType)
 		if ok {
 			c.TypeName = typ.Name
 			return c
@@ -764,9 +764,9 @@ func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, fl
 // type it lists, by file name. A file name names one file: definitions read
 // from one file share its revision, and the install loader refuses an install
 // file at the path of a built-in file whose definitions stay loaded.
-func fileRevisions(set workflow.Set, flow workflow.Flow) map[string]string {
-	out := map[string]string{fileName(flow.File, flow.Name): flow.Revision}
-	for _, name := range flow.Types {
+func fileRevisions(set flow.Set, fl flow.Flow) map[string]string {
+	out := map[string]string{fileName(fl.File, fl.Name): fl.Revision}
+	for _, name := range fl.Types {
 		if t, ok := set.Types[name]; ok {
 			out[fileName(t.File, t.Name)] = t.Revision
 		}
@@ -787,11 +787,11 @@ func fileName(file, name string) string {
 // ancestor; nodes that fail the same way below one ancestor their own project
 // changed are fixed at that ancestor once; every other node is its own
 // cluster.
-func groupClusters(failing []remediation.TriggerNode) []typology.Cluster {
-	nodes := make([]typology.FailingNode, 0, len(failing))
-	dag := typology.DagView{ChangedAncestorsByNode: make(map[string][]typology.ChangedAncestor, len(failing))}
+func groupClusters(failing []remediation.TriggerNode) []cluster.Cluster {
+	nodes := make([]cluster.FailingNode, 0, len(failing))
+	view := cluster.TopologyView{ChangedAncestorsByNode: make(map[string][]cluster.ChangedAncestor, len(failing))}
 	for _, n := range failing {
-		nodes = append(nodes, typology.FailingNode{
+		nodes = append(nodes, cluster.FailingNode{
 			NodeID:         n.NodeID,
 			ErrorSignature: n.ErrorSignature,
 			Category:       n.Category,
@@ -799,13 +799,13 @@ func groupClusters(failing []remediation.TriggerNode) []typology.Cluster {
 			Project:        n.Project,
 			NodeType:       n.NodeType,
 		})
-		ancestors := make([]typology.ChangedAncestor, 0, len(n.ChangedAncestors))
+		ancestors := make([]cluster.ChangedAncestor, 0, len(n.ChangedAncestors))
 		for _, a := range n.ChangedAncestors {
-			ancestors = append(ancestors, typology.ChangedAncestor{NodeID: a.NodeID, Project: a.Project, Depth: a.Depth})
+			ancestors = append(ancestors, cluster.ChangedAncestor{NodeID: a.NodeID, Project: a.Project, Depth: a.Depth})
 		}
-		dag.ChangedAncestorsByNode[n.NodeID] = ancestors
+		view.ChangedAncestorsByNode[n.NodeID] = ancestors
 	}
-	return coalesceUpstream(typology.Group(nodes, dag, typology.CrossProjectCause{}, typology.SharedUpstreamCause{}))
+	return coalesceUpstream(cluster.Group(nodes, view, cluster.CrossProjectCause{}, cluster.SharedUpstreamCause{}))
 }
 
 // coalesceUpstream merges upstream clusters (shared or cross-project) that name
@@ -821,9 +821,9 @@ func groupClusters(failing []remediation.TriggerNode) []typology.Cluster {
 // the failing node itself, and a node appears in the failing set once. Order is
 // preserved (each merged cluster keeps the position of its first occurrence)
 // and members are sorted, so the result stays deterministic.
-func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
+func coalesceUpstream(clusters []cluster.Cluster) []cluster.Cluster {
 	at := map[string]int{}
-	out := make([]typology.Cluster, 0, len(clusters))
+	out := make([]cluster.Cluster, 0, len(clusters))
 	for _, c := range clusters {
 		if !isUpstreamKind(c.Kind) {
 			out = append(out, c)
@@ -841,8 +841,8 @@ func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
 		// A target reached across a project boundary by any member keeps the
 		// cross-project kind: its decline must never fall back to fixes in the
 		// members' own projects.
-		if c.Kind == typology.KindCrossProjectUpstream {
-			out[i].Kind = typology.KindCrossProjectUpstream
+		if c.Kind == cluster.KindCrossProjectUpstream {
+			out[i].Kind = cluster.KindCrossProjectUpstream
 		}
 	}
 	return out
@@ -850,19 +850,19 @@ func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
 
 // isUpstreamKind reports whether a cluster repairs a changed ancestor rather
 // than the failing node itself.
-func isUpstreamKind(k typology.Kind) bool {
-	return k == typology.KindSharedUpstream || k == typology.KindCrossProjectUpstream
+func isUpstreamKind(k cluster.Kind) bool {
+	return k == cluster.KindSharedUpstream || k == cluster.KindCrossProjectUpstream
 }
 
 // clusterKind is the flow's name for a grouping's cluster shape.
-func clusterKind(k typology.Kind) workflow.ClusterKind {
+func clusterKind(k cluster.Kind) flow.ClusterKind {
 	switch k {
-	case typology.KindSharedUpstream:
-		return workflow.ClusterSharedUpstream
-	case typology.KindCrossProjectUpstream:
-		return workflow.ClusterCrossProject
+	case cluster.KindSharedUpstream:
+		return flow.ClusterSharedUpstream
+	case cluster.KindCrossProjectUpstream:
+		return flow.ClusterCrossProject
 	default:
-		return workflow.ClusterSingle
+		return flow.ClusterSingle
 	}
 }
 

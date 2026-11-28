@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -154,7 +154,7 @@ func TestRunner_AnUpstreamClusterWhoseDraftsAreSpentFallsBack(t *testing.T) {
 	assert.Equal(t, 3, h.llm.calls(), "the upstream cluster runs every draft")
 	clusters := h.store.Clusters(id)
 	require.Len(t, clusters, 1, "a cross-project cluster adds no member cluster")
-	assert.Equal(t, workflow.ClusterCrossProject, clusters[0].Kind)
+	assert.Equal(t, flow.ClusterCrossProject, clusters[0].Kind)
 	assert.Equal(t, remediation.ClusterFellBack, clusters[0].Status)
 	require.NotNil(t, clusters[0].Outcome)
 	assert.Equal(t, fix.StatusSkipped, clusters[0].Outcome.Status)

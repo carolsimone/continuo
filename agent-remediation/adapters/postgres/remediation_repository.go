@@ -12,9 +12,9 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
@@ -154,7 +154,7 @@ func (row clusterRow) toDomain() (remediation.Cluster, error) {
 		RemediationID: row.RemediationID,
 		Try:           row.Try,
 		Cluster:       row.Cluster,
-		Kind:          workflow.ClusterKind(row.Kind),
+		Kind:          flow.ClusterKind(row.Kind),
 		TargetNodeID:  row.TargetNodeID,
 		Members:       members,
 		TypeName:      row.TypeName,

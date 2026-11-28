@@ -262,7 +262,7 @@ Rules:
 ## Info-strips
 
 One class, four colour variants. Used for any persistent or transient
-status notice (drift warnings, snapshot banners, error messages, info
+status notice (drift warnings, past-run banners, error messages, info
 hints inside dialogs).
 
 ```css
@@ -290,7 +290,7 @@ When in doubt:
 Compact inline use is allowed (e.g. drift chip in the topbar — same
 class, just sitting in a flex row).
 
-For chip-style usage (drift warning, topology version, etc.), apply the
+For chip-style usage (drift warning, release, etc.), apply the
 `.info-strip--inline` modifier in addition to the variant class:
 
 ```css
@@ -359,20 +359,20 @@ Row 2: actions                                        [Action]  [Action]  [Actio
   `.dialog-subtitle` (12px gray). One line; longer guidance is an
   `.info-strip` instead.
 
-### Snapshot pick list
+### Release pick list
 
 A **select-to-act** list inside a modal: each row is the action (clicking
 it commits the choice and closes), so the footer carries only `Cancel` —
-there is no confirming verb. The snapshot picker (`RunSourcePickerDialog`,
-opened by `Run with old snapshot`) is the reference: it collapses a node's
-runs into the distinct snapshots it can be re-run against — one row per
+there is no confirming verb. The release picker (`RunSourcePickerDialog`,
+opened by `Run on an older release`) is the reference: it collapses a node's
+runs into the distinct images it can be re-run with — one row per
 `image_tag` — and picking one runs the node
-against that snapshot's most-recent terminal run.
+on the release of that image's most-recent terminal run.
 
 ```jsx
 <div className="section-header">
   <div className="section-header__main">
-    <span className="section-header__title">Snapshots</span>
+    <span className="section-header__title">Images</span>
     <span className="section-header__count">8</span>
   </div>
   <div className="section-header__sub">35 runs total</div>
@@ -424,7 +424,7 @@ Rules:
 
 ### Preview list
 
-The **read-only** sibling of the snapshot pick list: a list inside a
+The **read-only** sibling of the release pick list: a list inside a
 modal that names what the confirming verb will touch, so the user can
 judge it before confirming. Rows are facts, not choices — nothing happens
 on click, and the footer keeps its confirming verb. The Rebase dialog is
@@ -488,7 +488,7 @@ Past twelve rows the list groups them by service; each group is one
 ```
 
 The list, the row box and the row's text share their rules with the
-snapshot pick list by selector grouping — one declaration block per
+release pick list by selector grouping — one declaration block per
 shared rule, never a copy. Only what differs is declared apart: a pick
 row's button behaviour (`cursor`, `:hover`, `:focus-visible`), each
 list's height, and the preview's own section, summary and group rules.
@@ -524,7 +524,7 @@ Rules:
   scrolls when a short viewport cannot hold it.
 - Rows are **not buttons**: a `.preview-row` is an `<li>` with no hover
   state, no pointer cursor and no click handler. If picking a row is the
-  action, use the snapshot pick list instead.
+  action, use the release pick list instead.
 - Precede the list with a `.section-header`: its title names what the
   rows are, its count pill is the number of rows, and its sub-line
   qualifies them when needed (e.g. `Left out of this rebase` when an
@@ -963,7 +963,7 @@ the status hues (indigo/green/red) — never use an accent to convey state,
 and never use a status hue as an identity accent.
 
 Accents render as a 10px rounded square dot (`.nodes-group-dot`,
-`.dag-service-vertex-dot`) and, on graph canvas nodes, as a 4–5px left
+`.graph-project-vertex-dot`) and, on graph canvas nodes, as a 4–5px left
 border. Because the color is data-driven (resolved per service at runtime)
 it is applied via the `style` attribute; this is the sanctioned exception
 to the no-inline-style rule, matching the React Flow canvas whose node API
@@ -993,7 +993,7 @@ Rules:
   service accent is for the service. It never conveys state; status keeps
   the fill/border, the service accent keeps the left bar.
 - It renders wherever a *single* node is shown: graph canvas node labels
-  (`.dag-node-label`, 14px), the DAG focus legend title (12px), the node
+  (`.graph-node-label`, 14px), the graph focus legend title (12px), the node
   detail header (15px). Aggregate surfaces — service vertices, the
   minimap — never carry it: a mixed-family aggregate would lie, and the
   minimap is too small to read it.
@@ -1024,10 +1024,10 @@ other.
 ```jsx
 {/* React Flow's node wrapper, which takes the title through the node's domAttributes */}
 <div className="react-flow__node" title="No schedule tag: you run it by hand. Last run 2h ago.">
-  <div className="dag-node-label">
+  <div className="graph-node-label">
     <NodeTypeIcon nodeType="dbt-model" />
     <span>orders_backfill</span>
-    <span className="dag-node-chip dag-node-chip--dormant">dormant</span>
+    <span className="graph-node-chip graph-node-chip--dormant">dormant</span>
     <button className="btn btn--secondary btn--icon nodrag" aria-label="Run orders_backfill"
             title="Run orders_backfill by hand">▶</button>
   </div>
@@ -1035,13 +1035,13 @@ other.
 ```
 
 ```css
-.dag-node-chip           { position: absolute; top: 0; right: 8px; transform: translateY(-50%);
+.graph-node-chip           { position: absolute; top: 0; right: 8px; transform: translateY(-50%);
                            z-index: 1; font-size: 9.5px; font-weight: 600; line-height: 12px;
                            padding: 0 6px; white-space: nowrap; background: #fff;
                            border: 1px solid; border-radius: 999px; box-shadow: 0 0 0 2px #fff; }
-.dag-node-chip--external { border-color: #94a3b8; color: #475569; }
-.dag-node-chip--dormant  { border-color: #64748b; color: #334155; }
-.dag-run-error           { margin: 8px 12px 0; flex-shrink: 0; }
+.graph-node-chip--external { border-color: #94a3b8; color: #475569; }
+.graph-node-chip--dormant  { border-color: #64748b; color: #334155; }
+.graph-run-error           { margin: 8px 12px 0; flex-shrink: 0; }
 ```
 
 | Kind | Fill | Border | Text | Label | Chip | Title |
@@ -1111,7 +1111,7 @@ Rules:
 - Node rows inside an expanded group keep the table's normal columns
   unchanged — grouping never alters row content.
 - Collapsed service vertices on the graph canvas mirror the header:
-  accent dot, service name, count pill (`.dag-service-vertex-*`), with the
+  accent dot, service name, count pill (`.graph-project-vertex-*`), with the
   vertex fill/border painted by rolled-up status.
 
 ### Nested child rows
@@ -1171,7 +1171,7 @@ Rules:
   `tryLabel`), a round's hand-over row `round 2, hand-over`.
 - Status pills for remediation tries come from `fixPillClass`
   (`release-helpers.ts`), not `releasePillClass`: `proposed` → succeeded,
-  `verifying` → running, `generating` → pending, `failed`/`escalated` →
+  `verifying` → running, `generating` → pending, `failed`/`handed_over` →
   failed, `skipped` → skipped. Do not map a new lifecycle vocabulary through
   the release fallback and let everything land on grey.
 
@@ -1362,7 +1362,7 @@ Rules:
   claim moves out of its retryable state (e.g. `pr_state` leaving `''` /
   `failed` for `opening`), or the item's own lifecycle field moves it off
   the actionable state (e.g. `status` leaving `proposed` for `skipped` or
-  `escalated`, or `pr_state` resolving further to `open`, `merged` /
+  `handed_over`, or `pr_state` resolving further to `open`, `merged` /
   `rejected`) — the row reverts to a normal compact row on the next render.
   No transition, no manual dismiss. Know which field on your domain object
   actually carries "resolved" — don't assume outcome and lifecycle state
@@ -1515,7 +1515,7 @@ out.
 Rules:
 
 - **The surface is `.detail-card`**, the card of the Nodes tab. Its hover is that
-  of the other clickable surfaces (`.snapshot-tile`, `.pick-row`).
+  of the other clickable surfaces (`.schedule-tile`, `.pick-row`).
 - **The status is a `.pill-sm`** through `taskPillClass`, with `taskStatusTitle` on
   hover: the last run's status, or `never run`. It sits beside the name, as on the
   run page's header. A stale run adds the drift chip after it, the same
@@ -1583,7 +1583,7 @@ Rules:
 - **No schedules** is an `.info-strip--neutral` saying how one appears, not a bare
   paragraph.
 
-## Snapshot tiles
+## Schedule tiles
 
 Used inside the homepage `Topology` tab. One tile per schedule
 with at least one active topology node, then one **Dormant** tile when the
@@ -1591,26 +1591,26 @@ live release has dormant nodes (nodes with no schedule tag). Clicking the
 tile navigates; the whole tile IS the click target.
 
 ```css
-.snapshot-tile-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.schedule-tile-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
 
-.snapshot-tile      { display: flex; flex-direction: column; align-items: flex-start;
+.schedule-tile      { display: flex; flex-direction: column; align-items: flex-start;
                       gap: 4px; min-width: 180px; padding: 12px 16px;
                       background: #fff; border: 1px solid #e2e8f0;
                       border-radius: 6px; cursor: pointer; text-align: left;
                       font: inherit;
                       transition: background .15s, border-color .15s; }
 
-.snapshot-tile:hover { background: #f8f9fa; border-color: #c7d2fe; }
+.schedule-tile:hover { background: #f8f9fa; border-color: #c7d2fe; }
 
-.snapshot-tile__name { font-weight: 600; font-size: 13px; color: #111827; }
-.snapshot-tile__meta { font-size: 12px; color: #6b7280; }
+.schedule-tile__name { font-weight: 600; font-size: 13px; color: #111827; }
+.schedule-tile__meta { font-size: 12px; color: #6b7280; }
 ```
 
 Content rules:
 
 - One bold title line (the schedule name).
 - Exactly one metadata line: `N nodes · updated Xm ago`.
-- The Dormant tile (`DormantTile`) is the same `.snapshot-tile`, last in the
+- The Dormant tile (`DormantTile`) is the same `.schedule-tile`, last in the
   grid: the title `Dormant` and the line `N dormant nodes · run by hand`
   (`1 dormant node` for one). It opens the Nodes tab filtered to dormant
   nodes (`/?tab=nodes&dormant=1`). With no dormant node there is no tile, not
@@ -1709,8 +1709,8 @@ Rules:
   from (`carriedFrom`: "production" for a candidate, whose other images come
   from the production pointers; for a release check, the
   release it verifies, since its image set is that release's with the fixed
-  service swapped in). When the changed service is the only one, the
-  sub-line stops after "is new in this release". Unknown changed service:
+  project swapped in). When the changed project is the only one, the
+  sub-line stops after "is new in this release". Unknown changed project:
   no chip, no sub-line.
 - The image tag is whatever the release recorded — a short tag or a full
   registry reference — in monospace, wrapping inside its tile.

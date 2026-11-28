@@ -37,7 +37,7 @@ import (
 const liveFolderRetry = time.Minute
 
 // topologyHandlerTimeout bounds the consumers whose one message covers a whole
-// DAG or release, which they write to Neo4j in one handler.
+// topology or release, which they write to Neo4j in one handler.
 const topologyHandlerTimeout = 5 * time.Minute
 
 func main() {

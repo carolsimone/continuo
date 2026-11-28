@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/contract"
@@ -181,7 +181,7 @@ func TestChecks_MetaIsAPreflightCheckOnTheDraft(t *testing.T) {
 			assert.NotEmpty(t, m.Description)
 			assert.Equal(t, c.needs, m.Needs)
 			assert.Equal(t, c.provides, m.Provides)
-			assert.Equal(t, []workflow.Stage{workflow.StagePreflight}, m.Stages)
+			assert.Equal(t, []flow.Stage{flow.StagePreflight}, m.Stages)
 		})
 	}
 }

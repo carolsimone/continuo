@@ -24,7 +24,7 @@ func NewTestCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr
 current (latest) topology and manifest version.
 
 Use when the user asks to test, validate, or check an entire schedule (its
-whole DAG of models) now, as opposed to running (building) it. Every node in
+whole topology of models) now, as opposed to running (building) it. Every node in
 the schedule that has dbt tests defined runs dbt test; nodes with no tests
 defined are skipped rather than failed.
 

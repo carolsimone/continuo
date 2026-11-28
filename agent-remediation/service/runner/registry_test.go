@@ -8,9 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
@@ -53,28 +53,28 @@ func TestRegistry_EveryProvidedKeyHasAClass(t *testing.T) {
 }
 
 func TestRegistry_EvidenceClassesAreTheDeclaredOnes(t *testing.T) {
-	want := map[remediation.EvidenceKey]workflow.DataClass{
-		remediation.KeySourceFiles:          workflow.ClassCode,
-		remediation.KeyCandidateSQL:         workflow.ClassCode,
-		remediation.KeyCodeBundleSource:     workflow.ClassCode,
-		remediation.KeyOwnChangeDiff:        workflow.ClassCode,
-		remediation.KeyChangedAncestorDiffs: workflow.ClassCode,
-		remediation.KeyUpstreamChanges:      workflow.ClassCode,
-		remediation.KeyContractFile:         workflow.ClassCode,
-		remediation.KeyContractEntry:        workflow.ClassCode,
-		remediation.KeyCurrentContract:      workflow.ClassCode,
-		remediation.KeyImagePackages:        workflow.ClassCode,
-		remediation.KeyUpstreamTarget:       workflow.ClassCode,
-		remediation.KeyPackagedContract:     workflow.ClassCode,
-		remediation.KeyModelRename:          workflow.ClassCode,
-		remediation.KeyDraft:                workflow.ClassCode,
-		remediation.KeyFailure:              workflow.ClassLogs,
-		remediation.KeyDBTLog:               workflow.ClassLogs,
-		remediation.KeyFailurePrecedents:    workflow.ClassLogs,
-		remediation.KeyPreviousTries:        workflow.ClassLogs,
+	want := map[remediation.EvidenceKey]flow.DataClass{
+		remediation.KeySourceFiles:          flow.ClassCode,
+		remediation.KeyCandidateSQL:         flow.ClassCode,
+		remediation.KeyCodeBundleSource:     flow.ClassCode,
+		remediation.KeyOwnChangeDiff:        flow.ClassCode,
+		remediation.KeyChangedAncestorDiffs: flow.ClassCode,
+		remediation.KeyUpstreamChanges:      flow.ClassCode,
+		remediation.KeyContractFile:         flow.ClassCode,
+		remediation.KeyContractEntry:        flow.ClassCode,
+		remediation.KeyCurrentContract:      flow.ClassCode,
+		remediation.KeyImagePackages:        flow.ClassCode,
+		remediation.KeyUpstreamTarget:       flow.ClassCode,
+		remediation.KeyPackagedContract:     flow.ClassCode,
+		remediation.KeyModelRename:          flow.ClassCode,
+		remediation.KeyDraft:                flow.ClassCode,
+		remediation.KeyFailure:              flow.ClassLogs,
+		remediation.KeyDBTLog:               flow.ClassLogs,
+		remediation.KeyFailurePrecedents:    flow.ClassLogs,
+		remediation.KeyPreviousTries:        flow.ClassLogs,
 	}
 	r := NewRegistry(Collaborators{})
-	got := map[remediation.EvidenceKey]workflow.DataClass{}
+	got := map[remediation.EvidenceKey]flow.DataClass{}
 	for k := range r.evidence {
 		got[k], _ = r.EvidenceClass(k)
 	}
@@ -124,19 +124,19 @@ func TestRegistry_LookupAndAllReturnRegisteredSteps(t *testing.T) {
 
 	s, m, ok := r.Lookup("a")
 	assert.True(t, ok)
-	assert.Equal(t, workflow.StepName("a"), m.Name)
+	assert.Equal(t, flow.StepName("a"), m.Name)
 	assert.Equal(t, fakeContext{fakeStep{m}}, s)
 
 	_, _, ok = r.Lookup("missing")
 	assert.False(t, ok)
 
-	var names []workflow.StepName
+	var names []flow.StepName
 	for _, m := range r.All() {
 		if m.Name == "a" || m.Name == "b" {
 			names = append(names, m.Name)
 		}
 	}
-	assert.Equal(t, []workflow.StepName{"a", "b"}, names)
+	assert.Equal(t, []flow.StepName{"a", "b"}, names)
 
 	all := r.All()
 	assert.True(t, slices.IsSortedFunc(all, func(x, y step.Meta) int { return strings.Compare(string(x.Name), string(y.Name)) }))
@@ -184,14 +184,14 @@ func TestRegistry_HoldsTheNodeOwnerApprover(t *testing.T) {
 	s, m, ok := NewRegistry(Collaborators{}).Lookup("node_owner")
 	assert.True(t, ok)
 	assert.Equal(t, step.KindApprover, m.Kind)
-	assert.Equal(t, []workflow.Stage{workflow.StageApprover}, m.Stages)
+	assert.Equal(t, []flow.Stage{flow.StageApprover}, m.Stages)
 	_, isApprover := s.(step.Approver)
 	assert.True(t, isApprover)
 }
 
 func TestRegistry_HoldsTheSharedSteps(t *testing.T) {
 	r := NewRegistry(Collaborators{})
-	for name, kind := range map[workflow.StepName]step.Kind{
+	for name, kind := range map[flow.StepName]step.Kind{
 		"dbt_log":            step.KindContext,
 		"failure_precedents": step.KindContext,
 		"upstream_changes":   step.KindContext,
@@ -219,7 +219,7 @@ func TestRegistry_EvidenceTypeKnowsTheSharedStepKeys(t *testing.T) {
 
 func TestRegistry_HoldsTheSourceFileSteps(t *testing.T) {
 	r := NewRegistry(Collaborators{})
-	for name, kind := range map[workflow.StepName]step.Kind{
+	for name, kind := range map[flow.StepName]step.Kind{
 		"failing_node_source":   step.KindContext,
 		"dbt-compile":           step.KindPrompt,
 		"dbt-parse":             step.KindPrompt,

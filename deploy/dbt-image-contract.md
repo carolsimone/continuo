@@ -82,7 +82,7 @@ Run context (scheduled runs only): `TASK_ID`, `SCHEDULE_ID`,
 Release legs (seed-build) receive `PROJECT_NAME`, `SCHEMA`, `TABLE_NAME`,
 `JOB_NAME` — not `TASK_ID`/`SCHEDULE_ID`/`SCHEDULE_NAME` — plus
 `RELEASE_ID`, `NODE_ID`, and `DBT_TARGET_SCHEMA` (the candidate schema for
-blue/green validation).
+the release check).
 
 Your image never receives S3 credentials. Compile-time manifest upload is
 performed by a continuo-owned sidecar container in the same Job (it reads
@@ -120,7 +120,7 @@ fingerprint needs and the manifest lacks: raw seed bytes and headers, the
 
 Your dbt project MUST route schema resolution through a `generate_schema_name`
 that honours `DBT_TARGET_SCHEMA`. dbt has no `--target-schema` flag, so
-continuo's blue/green release validation passes the candidate schema through
+continuo's release check passes the candidate schema through
 that variable; the macro must materialize into it when it is set. Without this,
 validation runs would write into production schemas.
 

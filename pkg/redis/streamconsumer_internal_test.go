@@ -64,7 +64,7 @@ func msgWithKey(id, keyField, keyVal string) goredis.XMessage {
 }
 
 // safeInvoke must convert a handler panic into a non-permanent error so a single
-// poison message cannot crash the consumer process; the message then stays in
+// message that always fails cannot crash the consumer process; the message then stays in
 // the PEL for the next sweep (transient path), it is not dead-lettered at once.
 func TestSafeInvoke_RecoversPanic(t *testing.T) {
 	c := testConsumer(func(context.Context, goredis.XMessage) error {

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -22,7 +22,7 @@ type picker func(res ports.ProposeResult, files remediation.SourceFiles) (target
 // sourcePrompt is a prompt step whose fix is one edited source file: it builds
 // one request, makes one model call and reads the answer into a one-edit draft.
 type sourcePrompt struct {
-	name        workflow.StepName
+	name        flow.StepName
 	description string
 	readsLog    bool
 	// suspectsRoot reports whether the answer may name the node it suspects of

@@ -14,7 +14,7 @@ def resolve_upstream_deps(
 
     registry is NodeRegistry.to_lookup(): a ref resolves through the relation
     it names, so a reference to an alias finds the node that writes it. A ref
-    whose (schema, relation) the registry does not hold is an external table
+    whose (schema, relation) the registry does not hold is a table no node builds
     or source no known project owns, and is skipped. dbt seeds are registered
     (the in-memory registry is built from every parsed node, seeds included),
     so a seed reference resolves to an upstream dep like any other node. The

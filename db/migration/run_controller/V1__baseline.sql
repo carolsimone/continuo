@@ -154,7 +154,7 @@ COMMENT ON COLUMN runs.last_progress_at IS 'The run''s progress clock: stamped w
 
 COMMENT ON COLUMN runs.kind IS 'Run discriminator. Allowed: cron, manual, rerun, rebase, single_node_run, promote_seed. Written once at activation time and immutable thereafter; a rerun/rebase mints a new row with its own kind rather than mutating the source.';
 
-COMMENT ON COLUMN runs.source_run_id IS 'Lineage pointer to the run this one derives from (rerun, rebase, stale-mode single_node_run). NULL for cron and manual runs. Not a foreign key — orphans are fine.';
+COMMENT ON COLUMN runs.source_run_id IS 'Pointer to the run this one derives from (rerun, rebase, stale-mode single_node_run). NULL for cron and manual runs. Not a foreign key — orphans are fine.';
 
 COMMENT ON COLUMN runs.initiated_by IS 'User who initiated the run, or ''system'' for cron / platform-initiated runs. Stamped at creation from the gRPC initiating-user metadata header; immutable thereafter.';
 
@@ -382,7 +382,7 @@ COMMENT ON COLUMN tasks.attempt IS 'Number of the task''s current attempt, 0-bas
 
 COMMENT ON COLUMN tasks.image_tag IS 'The image tag of the task''s node in the release its run builds, copied when the task is planned and never changed.';
 
-COMMENT ON COLUMN tasks.inherited_from_task_id IS 'Lineage marker for inherited tasks in rebase runs. NULL = task was actually executed in this run. Non-NULL = task projected as SUCCEEDED from a rebase parent; points to the ROOT executed task_id (resolve-to-root semantics — chain depth ≤ 1 even across rebase-of-rebase). Not a foreign key — orphaned pointers are fine.';
+COMMENT ON COLUMN tasks.inherited_from_task_id IS 'Marker for inherited tasks in rebase runs. NULL = task was actually executed in this run. Non-NULL = task projected as SUCCEEDED from a rebase parent; points to the ROOT executed task_id (resolve-to-root semantics — chain depth ≤ 1 even across rebase-of-rebase). Not a foreign key — orphaned pointers are fine.';
 
 COMMENT ON COLUMN tasks.operation IS 'dbt verb this task ran, denormalized from its run at dispatch: run (model) | test | build | full_refresh.';
 

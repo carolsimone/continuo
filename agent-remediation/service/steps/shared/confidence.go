@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
@@ -28,7 +28,7 @@ func (ConfidenceNotLow) Meta() step.Meta {
 		Kind:        step.KindCheck,
 		Description: "Fails a draft whose confidence the model gave as low, its signal that it could not find a safe fix.",
 		Needs:       []remediation.EvidenceKey{remediation.KeyDraft},
-		Stages:      []workflow.Stage{workflow.StagePreflight},
+		Stages:      []flow.Stage{flow.StagePreflight},
 	}
 }
 

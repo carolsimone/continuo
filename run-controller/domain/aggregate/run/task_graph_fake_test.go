@@ -98,7 +98,7 @@ func (m *memTaskGraph) PendingDescendants(_ context.Context, _ uuid.UUID, _ stri
 func startedFailureRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTaskGraph) {
 	t.Helper()
 	g := failureSchedule()
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(g)
 	require.NoError(t, err)
 	r := newCronRun(t, model.OperationRun)
 	tc := newFakeTaskCollection()
