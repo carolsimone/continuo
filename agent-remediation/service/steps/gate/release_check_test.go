@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/overlay"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -206,9 +206,9 @@ func untar(t *testing.T, gz string) map[string]string {
 
 func TestMeta(t *testing.T) {
 	m := newRig().step.Meta()
-	assert.Equal(t, workflow.StepName("release_check"), m.Name)
+	assert.Equal(t, flow.StepName("release_check"), m.Name)
 	assert.Equal(t, step.KindCheck, m.Kind)
-	assert.Equal(t, []workflow.Stage{workflow.StageGate}, m.Stages)
+	assert.Equal(t, []flow.Stage{flow.StageGate}, m.Stages)
 	assert.True(t, m.MayStandAsGateRun)
 	assert.Empty(t, m.Needs)
 }

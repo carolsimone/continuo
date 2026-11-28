@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -117,7 +117,7 @@ func (s Suite) runFlow(ctx context.Context, f Fixture, sc Scenario) ([]prompt.Pr
 }
 
 // expectFlow checks what flow scenario sc wrote.
-func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) error {
+func (sr *scenarioRun) expectFlow(files flow.Set, f Fixture, sc Scenario) error {
 	e := sr.expect(f.Trigger)
 	e.ended()
 	switch sc {
@@ -145,21 +145,21 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 		e.checks(2)
 		e.noHandedOver()
 	case FlowCrossClusterFails:
-		flow := files.Flows[f.Flow]
-		failed := slices.Repeat([]fix.Status{fix.StatusFailed}, flow.Tries)
-		as := e.fixRows(append(failed, fix.StatusEscalated)...)
-		e.crossClusterFailedEveryTry(flow, as[:min(flow.Tries, len(as))])
-		if len(as) == flow.Tries+1 {
-			e.handedOver(as[flow.Tries], flow.Tries, codes(model.HandoverReasonUnverifiableEdits, e.trigger.NodeIDs()...))
+		fl := files.Flows[f.Flow]
+		failed := slices.Repeat([]fix.Status{fix.StatusFailed}, fl.Tries)
+		as := e.fixRows(append(failed, fix.StatusHandedOver)...)
+		e.crossClusterFailedEveryTry(fl, as[:min(fl.Tries, len(as))])
+		if len(as) == fl.Tries+1 {
+			e.handedOver(as[fl.Tries], fl.Tries, codes(model.HandoverReasonUnverifiableEdits, e.trigger.NodeIDs()...))
 		}
 		e.proposedEvents(0)
 		e.checks(0)
 	case FlowSharedUpstreamDeclines:
-		if c, ok := e.firstOfKind(workflow.ClusterSharedUpstream); ok {
+		if c, ok := e.firstOfKind(flow.ClusterSharedUpstream); ok {
 			e.membersRanTheirTypes(files, c)
 		}
 	case FlowCrossProjectDeclines:
-		c, ok := e.firstOfKind(workflow.ClusterCrossProject)
+		c, ok := e.firstOfKind(flow.ClusterCrossProject)
 		if as := e.fixRows(fix.StatusSkipped); ok && len(as) == 1 {
 			e.membersSkipped(c, as[0], model.HandoverReasonDeclined)
 		}
@@ -191,8 +191,8 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 // onlyHandOverRan expects no step to have run in the remediation but the
 // flow's give-up output, which journals one flow-level row of try 1: no
 // cluster ran a step, and no cross-cluster check or gate ran.
-func (e *expectation) onlyHandOverRan(flow workflow.Flow) {
-	output, rows, others := string(flow.OnGiveUp.Action), 0, 0
+func (e *expectation) onlyHandOverRan(fl flow.Flow) {
+	output, rows, others := string(fl.OnGiveUp.Action), 0, 0
 	for _, row := range e.sr.w.Steps(e.sr.id) {
 		if row.Cluster == remediation.FlowCluster && row.Kind == string(step.KindOutput) && row.Step == output {
 			e.that(row.Try == firstTry && row.Status == remediation.StepDone, "the %s row is %s in try %d, want done in try %d", output, row.Status, row.Try, firstTry)
@@ -210,7 +210,7 @@ func (e *expectation) onlyHandOverRan(flow workflow.Flow) {
 // reason and detail in the remediation's first try, with no model call, no
 // step but the flow's give-up output, no release check and one skipped
 // try.
-func (e *expectation) unfixableHandedOver(flow workflow.Flow) {
+func (e *expectation) unfixableHandedOver(fl flow.Flow) {
 	want := map[string]model.HandoverReason{}
 	for _, n := range e.trigger.Nodes {
 		e.that(n.Unfixable != nil, "node %s of the trigger is not marked unfixable, so the fixture does not test the scenario", n.NodeID)
@@ -233,13 +233,13 @@ func (e *expectation) unfixableHandedOver(flow workflow.Flow) {
 	for _, c := range clusters {
 		e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
 	}
-	e.onlyHandOverRan(flow)
+	e.onlyHandOverRan(fl)
 	e.modelCalls(0)
 	e.checks(0)
 }
 
 // firstOfKind returns try 1's first cluster of kind k.
-func (e *expectation) firstOfKind(k workflow.ClusterKind) (remediation.Cluster, bool) {
+func (e *expectation) firstOfKind(k flow.ClusterKind) (remediation.Cluster, bool) {
 	for _, c := range e.clustersOfTry1() {
 		if c.Kind == k {
 			return c, true
@@ -269,11 +269,11 @@ func (sc Script) everyTry(tries int) Script {
 // cross-cluster checks, every try to have failed, the model to have made the
 // same calls in every try, and each later try's requests to show the finding
 // that failed the try before it.
-func (e *expectation) crossClusterFailedEveryTry(flow workflow.Flow, as []FixRow) {
-	e.everyTryFailed(flow.Tries)
+func (e *expectation) crossClusterFailedEveryTry(fl flow.Flow, as []FixRow) {
+	e.everyTryFailed(fl.Tries)
 	findings := make([][]remediation.Finding, len(as))
 	for i, a := range as {
-		findings[i] = e.crossClusterFindings(flow, i+1)
+		findings[i] = e.crossClusterFindings(fl, i+1)
 		e.that(len(findings[i]) > 0, "no cross-cluster check of try %d found anything", i+1)
 		e.nodes(a, fix.StatusFailed)
 		reason := findingMessages(findings[i])
@@ -281,12 +281,12 @@ func (e *expectation) crossClusterFailedEveryTry(flow workflow.Flow, as []FixRow
 	}
 
 	calls := e.sr.w.ModelCalls()
-	if len(calls) == 0 || len(calls)%flow.Tries != 0 {
-		e.that(false, "the model was called %d times, which %d tries do not divide evenly", len(calls), flow.Tries)
+	if len(calls) == 0 || len(calls)%fl.Tries != 0 {
+		e.that(false, "the model was called %d times, which %d tries do not divide evenly", len(calls), fl.Tries)
 		return
 	}
-	perTry := len(calls) / flow.Tries
-	for try := 2; try <= min(flow.Tries, len(findings)); try++ {
+	perTry := len(calls) / fl.Tries
+	for try := 2; try <= min(fl.Tries, len(findings)); try++ {
 		for _, call := range calls[(try-1)*perTry : try*perTry] {
 			user := call.Request.User
 			e.that(strings.Contains(user, "## Earlier tries at this failure"), "try %d's request about %s shows no earlier try", try, call.Target)
@@ -301,9 +301,9 @@ func (e *expectation) crossClusterFailedEveryTry(flow workflow.Flow, as []FixRow
 // crossClusterFindings is the findings of the first of the flow's
 // cross-cluster checks to find any in one try, in the order the flow lists
 // them. A flow-level row runs once per try, as draft 1 of the flow cluster.
-func (e *expectation) crossClusterFindings(flow workflow.Flow, try int) []remediation.Finding {
+func (e *expectation) crossClusterFindings(fl flow.Flow, try int) []remediation.Finding {
 	rows := e.stepRows(try, remediation.FlowCluster, 1)
-	for _, ref := range flow.AcrossClusters {
+	for _, ref := range fl.AcrossClusters {
 		if row, ok := rows[string(ref.Name)]; ok && len(row.Findings) > 0 {
 			return row.Findings
 		}

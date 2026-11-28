@@ -276,19 +276,19 @@ func TestVersionBatches_KeepANodeWithoutArtifactEntry(t *testing.T) {
 // swap is what creates the node.
 func TestPlanVersionWrite_WritesNoVersionForAnUnknownExternalNode(t *testing.T) {
 	nodes := append(nodesFixture(), topology.ReleasePromotedTopologyNode{
-		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external",
+		UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe", NodeType: "unknown-external",
 	})
 
 	in := planVersionWrite(inputFixture(true, false), bundleFixture(), nodes, versionsTestLogger())
 
 	require.Len(t, in.Nodes, 1)
 	assert.Equal(t, "analytics.revenue", in.Nodes[0].UniqueID)
-	assert.Contains(t, in.Topology, "raw.ingest_probe")
-	assert.Equal(t, "unknown-external", in.Topology["raw.ingest_probe"].NodeType)
+	assert.Contains(t, in.Topology, "raw.external_probe")
+	assert.Equal(t, "unknown-external", in.Topology["raw.external_probe"].NodeType)
 
 	batches := versionBatches(in, VersionsBatchSize)
 	require.Len(t, batches, 1)
-	assert.NotContains(t, batches[0].Topology, "raw.ingest_probe", "a node without a version has no entry in the version write")
+	assert.NotContains(t, batches[0].Topology, "raw.external_probe", "a node without a version has no entry in the version write")
 }
 
 func TestPlanVersionWrite_StoresHashedConfigWhenTheBundleHasIt(t *testing.T) {

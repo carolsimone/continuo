@@ -17,7 +17,7 @@ import (
 )
 
 // TestCancelMidwayAndStartAgain verifies the cancel → start-again recovery flow
-// using the standard happy-path DAG (e2e-schedule, all working nodes).
+// using the standard happy-path topology (e2e-schedule, all working nodes).
 //
 // Phase 1: Load graph, start a manual run via the UI HTTP endpoint, let level 0 (seeds) complete.
 // Phase 2: Cancel mid-way — before level 1 can finish.

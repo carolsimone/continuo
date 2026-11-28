@@ -594,16 +594,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "workflows": {
+        "files": {
           "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "files": {
-              "type": "object",
-              "propertyNames": {"pattern": "^[-_a-zA-Z0-9][-._a-zA-Z0-9]*\\.ya?ml$"},
-              "additionalProperties": {"type": "string"}
-            }
-          }
+          "propertyNames": {"pattern": "^[-_a-zA-Z0-9][-._a-zA-Z0-9]*\\.ya?ml$"},
+          "additionalProperties": {"type": "string"}
         }
       }
     },
@@ -821,7 +815,7 @@
           },
           "volumes": {
             "type": "array",
-            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the components that have one; on agent-remediation, which has two, the one of the volume's name (project-repos or remediation-workflows), and project-repos for a volume of any other name.",
+            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the components that have one; on agent-remediation, which has two, the one of the volume's name (project-repos or remediation-files), and project-repos for a volume of any other name.",
             "items": {
               "type": "object",
               "additionalProperties": {"type": "object"},

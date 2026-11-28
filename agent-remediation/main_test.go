@@ -26,13 +26,13 @@ import (
 
 	rametrics "github.com/carolsimone/continuo/agent-remediation/adapters/metrics"
 	"github.com/carolsimone/continuo/agent-remediation/config"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/files"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
-	"github.com/carolsimone/continuo/agent-remediation/workflows"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 )
@@ -241,7 +241,7 @@ func TestMain_RunnerLoopsStart(t *testing.T) {
 	cfg := config.Config{ReleaseCheckPollInterval: time.Hour}
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
-	accept := startRunner(ctx, cfg, runner.Collaborators{}, workflow.Set{}, runnerWiring{
+	accept := startRunner(ctx, cfg, runner.Collaborators{}, flow.Set{}, runnerWiring{
 		newUoW: func() uow.UnitOfWork { return nil },
 		repo:   func() repository.RemediationRepository { return repo },
 		owner:  "host:1",
@@ -261,7 +261,7 @@ func TestMain_RunnerLoopsStart(t *testing.T) {
 // before shutdown fails the probes.
 func TestMain_RunnerLoopsAreRegisteredWithLiveness(t *testing.T) {
 	live := liveness.NewRegistry()
-	_, _ = buildRunner(config.Config{}, runner.Collaborators{}, workflow.Set{}, runnerWiring{
+	_, _ = buildRunner(config.Config{}, runner.Collaborators{}, flow.Set{}, runnerWiring{
 		newUoW: func() uow.UnitOfWork { return nil },
 		repo:   func() repository.RemediationRepository { return &spyRepo{} },
 		owner:  "host:1",
@@ -305,7 +305,7 @@ func TestMain_RunnerGetsTheConfiguredReleaseCheckTimeout(t *testing.T) {
 	}
 	collab := runnerCollaborators(cfg, runnerAdapters{}, discardLogger())
 	counted := rametrics.NewRemediationMetrics(pkgmetrics.New(config.ComponentName))
-	deps := newRunnerDeps(cfg, collab, workflow.Set{}, runnerWiring{owner: "host:7", logger: discardLogger(), metrics: counted})
+	deps := newRunnerDeps(cfg, collab, flow.Set{}, runnerWiring{owner: "host:7", logger: discardLogger(), metrics: counted})
 
 	assert.Equal(t, 37*time.Minute, deps.ReleaseCheckTimeout)
 	assert.Equal(t, 37*time.Minute, deps.Collab.ReleaseCheckTimeout)
@@ -326,7 +326,7 @@ func TestMain_LeaseOwnerNamesHostAndProcess(t *testing.T) {
 // TestMain_BuiltinFilesLoadAndValidate: the files built into the binary load
 // and every flow and type of them runs against the registry.
 func TestMain_BuiltinFilesLoadAndValidate(t *testing.T) {
-	set, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	set, err := loadRunnerFiles(files.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	assert.Contains(t, set.Flows, "rejected-release")
 }
@@ -336,11 +336,11 @@ func TestMain_BuiltinFilesLoadAndValidate(t *testing.T) {
 func builtinRenamed(t *testing.T, name string) fstest.MapFS {
 	t.Helper()
 	out := fstest.MapFS{}
-	require.NoError(t, fs.WalkDir(workflows.Builtin, ".", func(p string, d fs.DirEntry, err error) error {
+	require.NoError(t, fs.WalkDir(files.Builtin, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		data, err := fs.ReadFile(workflows.Builtin, p)
+		data, err := fs.ReadFile(files.Builtin, p)
 		if err != nil {
 			return err
 		}
@@ -387,7 +387,7 @@ func TestMain_AFlowNoHealTriggerRunsIsLoggedAtWarn(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	set, err := loadRunnerFiles(workflows.Builtin, builtinRenamedInstall(t, "my-flow"), runner.Collaborators{}, logger)
+	set, err := loadRunnerFiles(files.Builtin, builtinRenamedInstall(t, "my-flow"), runner.Collaborators{}, logger)
 
 	require.NoError(t, err)
 	assert.Contains(t, set.Flows, "my-flow")
@@ -526,7 +526,7 @@ func logLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
 // builtinFile is the content of a built-in file.
 func builtinFile(t *testing.T, name string) string {
 	t.Helper()
-	data, err := fs.ReadFile(workflows.Builtin, name)
+	data, err := fs.ReadFile(files.Builtin, name)
 	require.NoError(t, err)
 	return string(data)
 }
@@ -551,7 +551,7 @@ func TestMain_InstallFilesFolder(t *testing.T) {
 	})
 
 	t.Run("a file is refused", func(t *testing.T) {
-		file := filepath.Join(t.TempDir(), "workflows")
+		file := filepath.Join(t.TempDir(), "remediation-files")
 		require.NoError(t, os.WriteFile(file, []byte("kind: type\n"), 0o600))
 
 		fsys, err := installFiles(file)
@@ -631,7 +631,7 @@ func TestMain_InstallFilesCanBeAKubernetesConfigMapMount(t *testing.T) {
 	install, err := installFiles(dir)
 	require.NoError(t, err)
 
-	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, discardLogger())
+	set, err := loadRunnerFiles(files.Builtin, install, runner.Collaborators{}, discardLogger())
 
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-compile.yaml", set.Types["dbt-compile"].File)
@@ -641,7 +641,7 @@ func TestMain_InstallFilesCanBeAKubernetesConfigMapMount(t *testing.T) {
 // heal trigger runs with a copy that lists one more type, and adds that type.
 // Both load, and the flow lists the install's type after the built-in ones.
 func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
-	builtin, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	builtin, err := loadRunnerFiles(files.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	builtinTypes := builtin.Flows["rejected-release"].Types
 	lastBuiltin := builtinTypes[len(builtinTypes)-1]
@@ -659,7 +659,7 @@ func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	set, err := loadRunnerFiles(files.Builtin, install, runner.Collaborators{}, logger)
 
 	require.NoError(t, err)
 	assert.Contains(t, set.Types, "dbt-test-validation")
@@ -687,7 +687,7 @@ func TestMain_AnInstallsReplacementIsLoggedBeforeTheFilesAreChecked(t *testing.T
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	_, err := loadRunnerFiles(files.Builtin, install, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	noteAt, refusalAt := -1, -1
@@ -711,7 +711,7 @@ func TestMain_ARefusedInstallFileStopsStartup(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	set, err := loadRunnerFiles(files.Builtin, install, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	assert.Empty(t, set.Flows)
@@ -728,12 +728,12 @@ func TestMain_ARefusedInstallFileStopsStartup(t *testing.T) {
 // TestMain_NoInstallFilesLoadsTheBuiltIns: with no install, and with an install
 // folder holding nothing, the built-in files load alone and nothing is logged.
 func TestMain_NoInstallFilesLoadsTheBuiltIns(t *testing.T) {
-	want, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	want, err := loadRunnerFiles(files.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	got, err := loadRunnerFiles(workflows.Builtin, fstest.MapFS{}, runner.Collaborators{}, logger)
+	got, err := loadRunnerFiles(files.Builtin, fstest.MapFS{}, runner.Collaborators{}, logger)
 
 	require.NoError(t, err)
 	assert.Equal(t, want, got)

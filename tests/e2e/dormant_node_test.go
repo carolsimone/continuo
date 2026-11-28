@@ -46,7 +46,7 @@ const (
 //     ListNodes without dormant_only lists as not dormant. Every node of the
 //     unfiltered dormant list is dormant, and the ui's node list
 //     (GET /api/nodes?dormant=1) lists it the same way. ListNodes lists no
-//     node of e2e_raw.ingest_probe, the release's unknown-external node.
+//     node of e2e_raw.external_probe, the release's unknown-external node.
 //     ListScheduleTopologies counts the release's dormant nodes as
 //     model.IsDormant counts them.
 //  4. StartRun with no schedule name is refused, and no schedule ListSchedules
@@ -63,7 +63,7 @@ const (
 //
 // The release leaves the live topology as service-1's alone and starts the
 // promote-seed runs of its seeds, so a deferred restore announces the default
-// e2e DAG again and waits for those runs to end, the way
+// e2e topology again and waits for those runs to end, the way
 // TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns does.
 func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T) {
 	if testing.Short() {
@@ -189,8 +189,8 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	}
 	assert.True(t, listed, "ListNodes(dormant_only) with no other filter lists %s: %v", dormantProbeKey, everyDormant.GetNodes())
 
-	// The live release holds e2e_raw.ingest_probe, the table service-1's
-	// ingest_probe_reader reads and no model builds, as an unknown-external
+	// The live release holds e2e_raw.external_probe, the table service-1's
+	// external_probe_reader reads and no model builds, as an unknown-external
 	// node, and the node list never lists it.
 	var externalType string
 	require.NoError(t, clients.runControllerDB.GetContext(ctx, &externalType, `
@@ -227,7 +227,7 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 		events.DefaultTenantID, releaseID))
 	dormantNodes := 0
 	for _, n := range releaseNodes {
-		if model.IsDormant(model.CanonicalNodeType(n.NodeType), n.ScheduleName) {
+		if model.IsDormant(model.NodeType(n.NodeType), n.ScheduleName) {
 			dormantNodes++
 		}
 	}

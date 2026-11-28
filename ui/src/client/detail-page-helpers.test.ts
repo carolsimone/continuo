@@ -75,8 +75,8 @@ describe('graphBadgeLabel', () => {
     expect(graphBadgeLabel({ mode: 'latest', selectedRun: run, liveRunExists: true, activeGraph: null })).toBe('catalog');
   });
 
-  it('is "snapshot" for a selected run, before a live run', () => {
-    expect(graphBadgeLabel({ mode: 'run', selectedRun: run, liveRunExists: true, activeGraph: graph })).toBe('snapshot');
+  it('is "past run" for a selected run, before a live run', () => {
+    expect(graphBadgeLabel({ mode: 'run', selectedRun: run, liveRunExists: true, activeGraph: graph })).toBe('past run');
   });
 
   it('is "live" while a run is active', () => {
@@ -196,10 +196,10 @@ describe('driftLabelOf', () => {
 });
 
 describe('graphBadgeClass', () => {
-  it('colours a snapshot badge by the snapshot run\'s status', () => {
-    expect(graphBadgeClass('snapshot', 'failed')).toBe('pill-sm pill-sm--failed');
-    expect(graphBadgeClass('snapshot', 'succeeded')).toBe('pill-sm pill-sm--succeeded');
-    expect(graphBadgeClass('snapshot', null)).toBe('pill-sm pill-sm--pending');
+  it('colours a past-run badge by the past run\'s status', () => {
+    expect(graphBadgeClass('past run', 'failed')).toBe('pill-sm pill-sm--failed');
+    expect(graphBadgeClass('past run', 'succeeded')).toBe('pill-sm pill-sm--succeeded');
+    expect(graphBadgeClass('past run', null)).toBe('pill-sm pill-sm--pending');
   });
 
   it('marks a live badge as current and every other badge as pending', () => {

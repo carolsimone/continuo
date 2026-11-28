@@ -1097,7 +1097,7 @@ def test_dbt_test_is_published_but_not_registered_or_bundled():
 
 
 # ---------------------------------------------------------------------------
-# wire-shape pin and mixed-DAG resolution
+# wire-shape pin and mixed-topology resolution
 # ---------------------------------------------------------------------------
 
 def test_the_dbt_artifact_entry_shape_is_frozen(handler_with_mocks):

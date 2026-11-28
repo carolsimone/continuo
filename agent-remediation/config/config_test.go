@@ -501,24 +501,24 @@ func TestLoad_IgnoresAgentRemediationEngine(t *testing.T) {
 	}
 }
 
-// TestLoad_WorkflowsDirDefault verifies that an install that never set
-// AGENT_REMEDIATION_WORKFLOWS_DIR looks for its remediation files in the
+// TestLoad_FilesDirDefault verifies that an install that never set
+// AGENT_REMEDIATION_FILES_DIR looks for its remediation files in the
 // folder the chart mounts them at.
-func TestLoad_WorkflowsDirDefault(t *testing.T) {
+func TestLoad_FilesDirDefault(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("AGENT_REMEDIATION_WORKFLOWS_DIR", "")
+	t.Setenv("AGENT_REMEDIATION_FILES_DIR", "")
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
-	assert.Equal(t, "/etc/continuo-workflows", cfg.WorkflowsDir)
+	assert.Equal(t, "/etc/continuo-remediation-files", cfg.FilesDir)
 }
 
-// TestLoad_WorkflowsDirOverride verifies the variable names another folder.
-func TestLoad_WorkflowsDirOverride(t *testing.T) {
+// TestLoad_FilesDirOverride verifies the variable names another folder.
+func TestLoad_FilesDirOverride(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("AGENT_REMEDIATION_WORKFLOWS_DIR", "/srv/remediation-files")
+	t.Setenv("AGENT_REMEDIATION_FILES_DIR", "/srv/remediation-files")
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
-	assert.Equal(t, "/srv/remediation-files", cfg.WorkflowsDir)
+	assert.Equal(t, "/srv/remediation-files", cfg.FilesDir)
 }

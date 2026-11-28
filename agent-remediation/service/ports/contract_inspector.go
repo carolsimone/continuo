@@ -27,7 +27,7 @@ type NodeIdentity struct {
 	// identity refuses that regardless of which prompt produced the answer.
 	Kind string
 	// Owner (the contract's team.name), Schedule, and Criticality are the
-	// operational fields a run is scheduled and escalated by; they belong to
+	// operational fields a run is scheduled and alerted on; they belong to
 	// whoever owns the node, not to whatever is being repaired in it.
 	Owner       string
 	Schedule    string

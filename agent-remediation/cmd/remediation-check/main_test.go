@@ -15,13 +15,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/remediationfile"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/files"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
-	"github.com/carolsimone/continuo/agent-remediation/workflows"
 )
 
 // wireReport is the JSON object `files` prints, as a reader decodes it.
@@ -39,7 +39,7 @@ type wireScenario struct {
 	Error    string `json:"error"`
 }
 
-const builtinDir = "../../workflows"
+const builtinDir = "../../files"
 
 // builtinYAMLFiles is how many *.yaml and *.yml files the built-in files hold
 // under dir ("." for all of them). It walks the files and does not load them,
@@ -48,7 +48,7 @@ const builtinDir = "../../workflows"
 func builtinYAMLFiles(t *testing.T, dir string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, fs.WalkDir(workflows.Builtin, dir, func(p string, d fs.DirEntry, err error) error {
+	require.NoError(t, fs.WalkDir(files.Builtin, dir, func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && (path.Ext(p) == ".yaml" || path.Ext(p) == ".yml") {
 			n++
 		}
@@ -383,7 +383,7 @@ func TestFiles_ATypeOfOneDraftPasses(t *testing.T) {
 // directory.
 func builtinText(t *testing.T, name string) string {
 	t.Helper()
-	data, err := fs.ReadFile(workflows.Builtin, name)
+	data, err := fs.ReadFile(files.Builtin, name)
 	require.NoError(t, err)
 	return string(data)
 }
@@ -685,7 +685,7 @@ func writeSecondFlow(t *testing.T, dir string, edit func(flow string) string) {
 	require.Contains(t, flow, "name: rejected-release\n")
 	writeInstallFile(t, dir, "second-flow.yaml", edit(strings.Replace(flow, "name: rejected-release\n", "name: second-flow\n", 1)))
 	const fixtures = "fixtures/flows/rejected-release"
-	entries, err := fs.ReadDir(workflows.Builtin, fixtures)
+	entries, err := fs.ReadDir(files.Builtin, fixtures)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	for _, e := range entries {
@@ -835,7 +835,7 @@ func TestFiles_AFileNeitherLoaderCanParseIsReportedOnce(t *testing.T) {
 // What the load notes of an install's files (a replacement, a based_on that no
 // longer matches) go to the report's warnings, before the validator's own.
 func TestFiles_AWarningFromTheLoadReachesTheReport(t *testing.T) {
-	builtin, err := workflowfile.Load(workflows.Builtin)
+	builtin, err := remediationfile.Load(files.Builtin)
 	require.NoError(t, err)
 	current := builtin.Types["dbt-compile"].Revision
 	dir := t.TempDir()
@@ -904,8 +904,8 @@ func TestSteps_ListsEveryRegisteredStep(t *testing.T) {
 func TestSteps_EveryEntryDescribesItself(t *testing.T) {
 	kinds := []string{string(step.KindContext), string(step.KindPrompt), string(step.KindCheck), string(step.KindApprover), string(step.KindOutput)}
 	stages := []string{
-		string(workflow.StageContext), string(workflow.StagePrompt), string(workflow.StagePreflight),
-		string(workflow.StageCrossCluster), string(workflow.StageGate), string(workflow.StageApprover), string(workflow.StageOutput),
+		string(flow.StageContext), string(flow.StagePrompt), string(flow.StagePreflight),
+		string(flow.StageCrossCluster), string(flow.StageGate), string(flow.StageApprover), string(flow.StageOutput),
 	}
 	seen := map[string]bool{}
 	for _, s := range printedSteps(t) {
@@ -930,7 +930,7 @@ func TestSteps_EveryEntryDescribesItself(t *testing.T) {
 func TestSteps_DataClassFollowsTheEvidenceClasses(t *testing.T) {
 	reg := runner.NewRegistry(runner.Collaborators{})
 	classesOf := func(keys ...[]remediation.EvidenceKey) []string {
-		held := map[workflow.DataClass]bool{}
+		held := map[flow.DataClass]bool{}
 		for _, ks := range keys {
 			for _, k := range ks {
 				if c, ok := reg.EvidenceClass(k); ok {
@@ -939,7 +939,7 @@ func TestSteps_DataClassFollowsTheEvidenceClasses(t *testing.T) {
 			}
 		}
 		out := []string{}
-		for _, c := range workflow.DataClasses() {
+		for _, c := range flow.DataClasses() {
 			if held[c] {
 				out = append(out, string(c))
 			}

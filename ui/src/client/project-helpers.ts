@@ -81,12 +81,12 @@ export interface ProjectDisplayGraph {
   edges: DisplayEdge[]; // deduped; endpoints are node ids or project vertex ids
 }
 
-// Maps the model-level DAG onto a mixed graph: collapsed projects become
+// Maps the model-level topology onto a mixed graph: collapsed projects become
 // single vertices, expanded projects keep their model nodes. Edges whose two
 // endpoints collapse into the same project vertex are dropped (self-loops);
 // the remaining edges are deduped. The resulting project-level graph may be
-// cyclic (svc A→B and B→A via different models) — callers must not assume a
-// DAG.
+// cyclic (svc A→B and B→A via different models) — callers must not assume
+// an acyclic graph.
 export function buildProjectDisplayGraph(
   graphNodes: GraphNode[],
   graphEdges: GraphEdge[],

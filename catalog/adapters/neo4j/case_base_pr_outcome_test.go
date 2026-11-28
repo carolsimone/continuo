@@ -131,7 +131,7 @@ func TestRecordPullRequestOutcome_EditedLinkSurvivesNodeRetirement(t *testing.T)
 
 	f.promoteAt("r2", 2, releaseOf(modelNode("analytics.table_a")), base.Add(2*time.Hour))
 	retired := f.node("analytics.table_e")
-	require.NotNil(t, retired, "the dropped node stays")
+	require.NotNil(t, retired, "the retired node stays")
 	assert.Equal(t, false, retired["active"])
 	assert.Equal(t, int64(1), f.count(editedOfE, nil), "the [:EDITED] link survives the node's retirement")
 

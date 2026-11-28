@@ -1,4 +1,4 @@
-// Package remediation holds the state of one remediation run: the run itself,
+// Package remediation holds the state of one remediation: the remediation itself,
 // each try it makes, each cluster of failing nodes in a try, and each step
 // that works on a cluster. Every level has a closed set of statuses and a
 // table of the moves between them.
@@ -6,7 +6,7 @@ package remediation
 
 import "slices"
 
-// RemediationStatus is the state of a whole remediation run.
+// RemediationStatus is the state of a whole remediation.
 type RemediationStatus string
 
 const (
@@ -24,7 +24,7 @@ var legalRemediationMoves = map[RemediationStatus][]RemediationStatus{
 	StatusSystemFailure: {StatusRunning},
 }
 
-// AllRemediationStatuses lists every status a remediation run can hold.
+// AllRemediationStatuses lists every status a remediation can hold.
 func AllRemediationStatuses() []RemediationStatus {
 	return []RemediationStatus{StatusRunning, StatusDone, StatusSystemFailure}
 }
@@ -34,7 +34,7 @@ func (s RemediationStatus) CanMoveTo(to RemediationStatus) bool {
 	return slices.Contains(legalRemediationMoves[s], to)
 }
 
-// TryStatus is the state of one try of a remediation run.
+// TryStatus is the state of one try of a remediation.
 type TryStatus string
 
 const (

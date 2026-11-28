@@ -16,13 +16,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUIWholeDAGTestOperation drives a whole-DAG `test` run through the
+// TestUIWholeScheduleTestOperation drives a whole-schedule `test` run through the
 // ui HTTP API — POST /api/schedules/:name/manual-run with a JSON
 // {"operation":"test"} body — the exact wire path the UI's operation selector
 // uses. It proves the operation survives the HTTP → gRPC StartRun hop
 // by asserting the resulting run's stored operation, covering the
-// ui HTTP layer on top of the gRPC-level whole-DAG test coverage.
-func TestUIWholeDAGTestOperation(t *testing.T) {
+// ui HTTP layer on top of the gRPC-level whole-schedule test coverage.
+func TestUIWholeScheduleTestOperation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -47,13 +47,13 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 	id, err := uuid.Parse(scheduleID)
 	require.NoError(t, err, "run_id must be a valid UUID")
 
-	t.Log("Waiting for the UI-started whole-DAG test run to reach 'succeeded'...")
+	t.Log("Waiting for the UI-started whole-schedule test run to reach 'succeeded'...")
 	verifySchedulerSucceeded(t, ctx, clients, id)
 
 	assert.Equal(t, "test", queryRunOperation(t, clients, id),
-		"the run's operation must be 'test' for a UI-started whole-DAG test run")
+		"the run's operation must be 'test' for a UI-started whole-schedule test run")
 
-	t.Log("TestUIWholeDAGTestOperation passed")
+	t.Log("TestUIWholeScheduleTestOperation passed")
 }
 
 // TestUISingleNodeBuildOperation drives a single-node `build` run through the

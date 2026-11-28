@@ -701,8 +701,8 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 // reader names and no node builds.
 func unknownExternalProbeNode() release.Node {
 	return release.Node{
-		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
-		ResolvedRelationID: "raw.ingest_probe", NodeType: "unknown-external",
+		UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe",
+		ResolvedRelationID: "raw.external_probe", NodeType: "unknown-external",
 		UpstreamUniqueIDs: []string{},
 	}
 }
@@ -720,7 +720,7 @@ func TestHandleParsedManifest_UnknownExternalUpstreamIsNotValidated(t *testing.T
 	topo := release.Topology{
 		unknownExternalProbeNode(),
 		{UniqueID: "a.m", SchemaName: "a", TableName: "m", ResolvedRelationID: "a.m", ProjectName: "svc-a", NodeType: "dbt-model",
-			ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+			ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.external_probe"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rA",
@@ -798,7 +798,7 @@ func TestHandleParsedManifest_UnknownExternalNodeAloneIsNothingToValidate(t *tes
 	reader := release.Node{UniqueID: "a.m", ProjectName: "svc-a", NodeType: "dbt-model", ContentHash: "h1", UpstreamUniqueIDs: []string{}}
 	seedProd(t, deps, store, "prev", release.Topology{reader}, time.Unix(50, 0).UTC())
 
-	reader.UpstreamUniqueIDs = []string{"raw.ingest_probe"}
+	reader.UpstreamUniqueIDs = []string{"raw.external_probe"}
 	topo := release.Topology{unknownExternalProbeNode(), reader}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rA",
@@ -833,7 +833,7 @@ func TestHandleParsedManifest_UnknownExternalNodeIsNotADuplicateOfABuiltTable(t 
 
 	topo := release.Topology{
 		unknownExternalProbeNode(),
-		{UniqueID: "a.m", SchemaName: "a", TableName: "m", ResolvedRelationID: "raw.ingest_probe", ProjectName: "svc-a", NodeType: "dbt-model",
+		{UniqueID: "a.m", SchemaName: "a", TableName: "m", ResolvedRelationID: "raw.external_probe", ProjectName: "svc-a", NodeType: "dbt-model",
 			ContentHash: "h", UpstreamUniqueIDs: []string{}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{

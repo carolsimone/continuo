@@ -5,14 +5,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 )
 
 func TestFailure_PrecedentSubjectIsTheFirstMemberOfAnUpstreamCluster(t *testing.T) {
 	target := TriggerNode{NodeID: "model.up"}
 	first := TriggerNode{NodeID: "model.a"}
 	second := TriggerNode{NodeID: "model.b"}
-	for _, kind := range []workflow.ClusterKind{workflow.ClusterSharedUpstream, workflow.ClusterCrossProject} {
+	for _, kind := range []flow.ClusterKind{flow.ClusterSharedUpstream, flow.ClusterCrossProject} {
 		f := Failure{Kind: kind, Target: target, Members: []TriggerNode{first, second}}
 		assert.Equal(t, first, f.PrecedentSubject(), kind)
 	}
@@ -20,13 +20,13 @@ func TestFailure_PrecedentSubjectIsTheFirstMemberOfAnUpstreamCluster(t *testing.
 
 func TestFailure_PrecedentSubjectIsTheTargetOfASingleCluster(t *testing.T) {
 	target := TriggerNode{NodeID: "model.a"}
-	f := Failure{Kind: workflow.ClusterSingle, Target: target, Members: []TriggerNode{target}}
+	f := Failure{Kind: flow.ClusterSingle, Target: target, Members: []TriggerNode{target}}
 	assert.Equal(t, target, f.PrecedentSubject())
 }
 
 func TestFailure_PrecedentSubjectFallsBackToTheTargetWithoutMembers(t *testing.T) {
 	target := TriggerNode{NodeID: "model.up"}
-	f := Failure{Kind: workflow.ClusterSharedUpstream, Target: target}
+	f := Failure{Kind: flow.ClusterSharedUpstream, Target: target}
 	assert.Equal(t, target, f.PrecedentSubject())
 }
 

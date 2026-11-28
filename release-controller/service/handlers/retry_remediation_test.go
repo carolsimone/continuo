@@ -38,7 +38,7 @@ func rejectedRelease(t *testing.T, id, payload string) *releasecheck.Check {
 func TestRetryRemediation_DeadEndStartsRoundTwo(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"release_id":"rel-1","stage":"compile","reason":"compile_failed"}`))
-	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 3, Status: "escalated", Round: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 3, Status: "handed_over", Round: 1}}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestRetryRemediation_WritesTheTypedRetry(t *testing.T) {
 	const rejection = `{"release_id":"rel-1","stage":"compile","reason":"compile_failed","per_node":[{"node_id":"finance","error":"boom"}]}`
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", rejection))
-	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 3, Status: "escalated", Round: 1}}}
+	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{NodeID: "finance", Try: 3, Status: "handed_over", Round: 1}}}
 
 	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
 	require.NoError(t, err)
@@ -236,7 +236,7 @@ func TestRetryRemediation_SecondPostBeforeNewRoundRowsIsRefused(t *testing.T) {
 	// Only round 1's terminal fix exists — the retry that bumped the
 	// release to round 2 has not yet produced round 2's first row.
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "escalated", Round: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "handed_over", Round: 1},
 	}}
 
 	_, err = handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -341,8 +341,8 @@ func TestRetryRemediation_NamesTheLowestNodeIDWhenSeveralAreOpen(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p-marketing", NodeID: "marketing", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/marketing"}}, Round: 1},
-		{ID: "p-finance", NodeID: "finance", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/finance"}}, Round: 1},
+		{ID: "p-marketing", NodeID: "marketing", Try: 1, Status: "handed_over", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/marketing"}}, Round: 1},
+		{ID: "p-finance", NodeID: "finance", Try: 1, Status: "handed_over", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/finance"}}, Round: 1},
 	}}
 
 	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -392,8 +392,8 @@ func TestRetryRemediation_OpenPRsInTwoRoundsNameTheLaterRound(t *testing.T) {
 	require.NoError(t, err)
 	store.SeedRelease(r)
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{
-		{ID: "p-r1-t3", NodeID: "finance", Try: 3, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/round-1"}}, Round: 1},
-		{ID: "p-r2-t1", NodeID: "finance", Try: 1, Status: "escalated", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/round-2"}}, Round: 2},
+		{ID: "p-r1-t3", NodeID: "finance", Try: 3, Status: "handed_over", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/round-1"}}, Round: 1},
+		{ID: "p-r2-t1", NodeID: "finance", Try: 1, Status: "handed_over", PullRequests: []ports.FixPR{{PRState: "open", PRURL: "https://x/pr/round-2"}}, Round: 2},
 	}}
 
 	_, err = handlers.RetryRemediation(context.Background(), deps, "rel-1")
@@ -407,12 +407,12 @@ func TestRetryRemediation_OpenPRsInTwoRoundsNameTheLaterRound(t *testing.T) {
 func TestRetryRemediation_MultiProjectMergedPRAcrossRoundsBlocks(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
-	// The try escalated (its status blocks nothing on the current-round
+	// The try was handed over (its status blocks nothing on the current-round
 	// check), but one of its per-project PRs merged while another was rejected.
 	// A merged fix already landed for a project, so a new round would
 	// duplicate it.
 	deps.Fixes = &fakeFixes{items: []ports.FixSummary{{
-		ID: "p1", NodeID: "finance", Try: 1, Status: "escalated",
+		ID: "p1", NodeID: "finance", Try: 1, Status: "handed_over",
 		PRProjects: []string{"a", "b"},
 		PullRequests: []ports.FixPR{
 			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},

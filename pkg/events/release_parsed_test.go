@@ -139,8 +139,8 @@ func TestReleaseParsedFields_FailedCarriesTheLibraryVersion(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(got["payload"].(string)), &payload))
 	assert.Equal(t, "0.2.0", payload["continuo_contracts"])
-	assert.NotContains(t, payload, "contract_bundle_uri", "a failed release writes no contract bundle")
-	assert.NotContains(t, payload, "contract_bundle_sha256", "a failed release writes no contract bundle")
+	assert.NotContains(t, payload, "contract_bundle_uri", "a rejected release writes no contract bundle")
+	assert.NotContains(t, payload, "contract_bundle_sha256", "a rejected release writes no contract bundle")
 }
 
 func TestReleaseParsed_DecodesTheParseTimings(t *testing.T) {

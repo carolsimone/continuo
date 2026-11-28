@@ -1,6 +1,6 @@
 """Produces the single declared column of e2e_schema.py_unqualified_read.
 
-Blue/green validation never executes this script: it bind-checks the read
+The release check never executes this script: it bind-checks the read
 queries of the node's ODCS contract (contracts/<table>.odcs.yaml) and then
 builds the empty typed table from the columns the contract's schema declares.
 The file still has to exist and stay readable, because the packaging tool folds

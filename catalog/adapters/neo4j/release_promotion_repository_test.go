@@ -312,7 +312,7 @@ func TestPromoteRelease_KeepsDroppedNode(t *testing.T) {
 	require.Equal(t, topology.PromotionApplied, f.promoteAt("r8", 8, releaseOf(modelNode(a), modelNode(b, a)), r8At))
 
 	dropped := f.node(d)
-	require.NotNil(t, dropped, "a dropped node stays in the graph")
+	require.NotNil(t, dropped, "a retired node stays in the graph")
 	assert.Equal(t, false, dropped["active"])
 	retiredAt, ok := dropped["retired_at"].(time.Time)
 	require.True(t, ok, "retired_at is a datetime, got %T", dropped["retired_at"])
@@ -534,10 +534,10 @@ func unknownExternalNode(uniqueID, schema, table string) topology.ReleasePromote
 // project, and each reader draws its :DEPENDS_ON to it.
 func TestPromoteRelease_StoresAnUnknownExternalNodeWithItsEdges(t *testing.T) {
 	f := newSwapFixture(t)
-	const probe = "raw.ingest_probe"
+	const probe = "raw.external_probe"
 
 	outcome := f.promote("rel-1", releaseOf(
-		unknownExternalNode(probe, "raw", "ingest_probe"),
+		unknownExternalNode(probe, "raw", "external_probe"),
 		modelNode("analytics.a", probe),
 		modelNode("analytics.b", probe),
 	), time.Now().UTC())
@@ -549,7 +549,7 @@ func TestPromoteRelease_StoresAnUnknownExternalNodeWithItsEdges(t *testing.T) {
 	assert.Equal(t, "unknown-external", n["node_type"])
 	assert.Equal(t, "", n["project_name"])
 	assert.Equal(t, "raw", n["schema_name"])
-	assert.Equal(t, "ingest_probe", n["table_name"])
+	assert.Equal(t, "external_probe", n["table_name"])
 	assert.NotContains(t, n, "retired_at")
 	assert.Equal(t, []string{"analytics.a", "analytics.b", probe}, f.activeIDs())
 	assert.Equal(t, []string{"analytics.a->" + probe, "analytics.b->" + probe}, f.edges(),
@@ -563,18 +563,18 @@ func TestPromoteRelease_StoresAnUnknownExternalNodeWithItsEdges(t *testing.T) {
 // that model in place: one :Node holds the id, its readers keep their edges.
 func TestPromoteRelease_TurnsAnUnknownExternalNodeIntoTheModelThatBuildsIt(t *testing.T) {
 	f := newSwapFixture(t)
-	const probe = "raw.ingest_probe"
+	const probe = "raw.external_probe"
 	now := time.Now().UTC()
 
 	f.promote("rel-1", releaseOf(
-		unknownExternalNode(probe, "raw", "ingest_probe"),
+		unknownExternalNode(probe, "raw", "external_probe"),
 		modelNode("analytics.a", probe),
 		modelNode("analytics.b", probe),
 	), now)
 	require.Equal(t, "unknown-external", f.node(probe)["node_type"])
 
 	built := topology.ReleasePromotedTopologyNode{
-		UniqueID: probe, SchemaName: "raw", TableName: "ingest_probe", ProjectName: "service-1",
+		UniqueID: probe, SchemaName: "raw", TableName: "external_probe", ProjectName: "service-1",
 		NodeType: "dbt-model", ContentHash: "sha256:probe", ImageTag: "img", Schedule: "daily",
 		UpstreamUniqueIDs: []string{},
 	}
@@ -603,11 +603,11 @@ func TestPromoteRelease_TurnsAnUnknownExternalNodeIntoTheModelThatBuildsIt(t *te
 // unknown-external node and the swap retires it like any node it drops.
 func TestPromoteRelease_RetiresAnUnknownExternalNodeNoOneReads(t *testing.T) {
 	f := newSwapFixture(t)
-	const probe = "raw.ingest_probe"
+	const probe = "raw.external_probe"
 	r1At := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
 
 	f.promote("rel-1", releaseOf(
-		unknownExternalNode(probe, "raw", "ingest_probe"),
+		unknownExternalNode(probe, "raw", "external_probe"),
 		modelNode("analytics.a", probe),
 		modelNode("analytics.b", probe),
 	), r1At)

@@ -506,64 +506,64 @@ volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
 annotations = pod["metadata"]["annotations"]
 sys.exit(0 if volumes["extra-config"].get("configMap") == {"name": "continuo-project-repos"}
          and "checksum/project-repos" in annotations
-         and "checksum/agent-remediation-workflows" not in annotations else 1)
+         and "checksum/agent-remediation-files" not in annotations else 1)
 PY
-# A volume named remediation-workflows mounts the ConfigMap of the remediation
+# A volume named remediation-files mounts the ConfigMap of the remediation
 # files only while it is mounted at the folder agent-remediation reads them
-# from (AGENT_REMEDIATION_WORKFLOWS_DIR, else /etc/continuo-workflows, compared
+# from (AGENT_REMEDIATION_FILES_DIR, else /etc/continuo-remediation-files, compared
 # without a trailing slash). Mounted anywhere else, or nowhere, it mounts
 # project-repos like a volume of any other name, so a components entry whose
 # volume of that name holds the project repository map at /etc/continuo keeps
 # it.
-echo "--- an empty-named remediation-workflows volume mounts the remediation files only at the folder agent-remediation reads"
+echo "--- an empty-named remediation-files volume mounts the remediation files only at the folder agent-remediation reads"
 # single_volume_components <volumeMounts JSON> [<env JSON>] prints a components
 # list of one agent-remediation entry whose one volume is an empty-named
-# ConfigMap volume called remediation-workflows.
+# ConfigMap volume called remediation-files.
 single_volume_components() {
   local env="${2-}"
   [ -n "$env" ] || env='{}'
-  printf '[{"name":"agent-remediation","enabled":true,"httpPort":8092,"grpcPort":50054,"env":%s,"volumeMounts":%s,"volumes":[{"name":"remediation-workflows","configMap":{"name":""}}]}]' \
+  printf '[{"name":"agent-remediation","enabled":true,"httpPort":8092,"grpcPort":50054,"env":%s,"volumeMounts":%s,"volumes":[{"name":"remediation-files","configMap":{"name":""}}]}]' \
     "$env" "$1"
 }
 for placement in \
-  "at /etc/continuo, the project-repos folder|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_components '[{"name":"remediation-workflows","mountPath":"/etc/continuo","readOnly":true}]')" \
-  "with no volumeMounts entry|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_components '[]')" \
-  "at the default folder of the remediation files|continuo-agent-remediation-workflows|agent-remediation-workflows|project-repos|$(single_volume_components '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows/","readOnly":true}]')" \
-  "at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names|continuo-agent-remediation-workflows|agent-remediation-workflows|project-repos|$(single_volume_components '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')" \
-  "at /etc/continuo-workflows while AGENT_REMEDIATION_WORKFLOWS_DIR names another folder|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_components '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files"}')"; do
+  "at /etc/continuo, the project-repos folder|continuo-project-repos|project-repos|agent-remediation-files|$(single_volume_components '[{"name":"remediation-files","mountPath":"/etc/continuo","readOnly":true}]')" \
+  "with no volumeMounts entry|continuo-project-repos|project-repos|agent-remediation-files|$(single_volume_components '[]')" \
+  "at the default folder of the remediation files|continuo-agent-remediation-files|agent-remediation-files|project-repos|$(single_volume_components '[{"name":"remediation-files","mountPath":"/etc/continuo-remediation-files/","readOnly":true}]')" \
+  "at the folder AGENT_REMEDIATION_FILES_DIR names|continuo-agent-remediation-files|agent-remediation-files|project-repos|$(single_volume_components '[{"name":"remediation-files","mountPath":"/opt/remediation-files","readOnly":true}]' '{"AGENT_REMEDIATION_FILES_DIR":"/opt/remediation-files/"}')" \
+  "at /etc/continuo-remediation-files while AGENT_REMEDIATION_FILES_DIR names another folder|continuo-project-repos|project-repos|agent-remediation-files|$(single_volume_components '[{"name":"remediation-files","mountPath":"/etc/continuo-remediation-files","readOnly":true}]' '{"AGENT_REMEDIATION_FILES_DIR":"/opt/remediation-files"}')"; do
   IFS='|' read -r label configmap hashed unhashed components <<< "$placement"
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${components}" > "${tmp}/placement.yaml" 2> "${tmp}/placement.err" \
-    || { echo "FAIL: a remediation-workflows volume ${label} failed the render:"; cat "${tmp}/placement.err"; exit 1; }
+    || { echo "FAIL: a remediation-files volume ${label} failed the render:"; cat "${tmp}/placement.err"; exit 1; }
   python3 - "${tmp}/placement.yaml" "$configmap" "$hashed" "$unhashed" <<'PY' \
-    || { echo "FAIL: a remediation-workflows volume ${label} does not mount ${configmap} with checksum/${hashed} alone"; exit 1; }
+    || { echo "FAIL: a remediation-files volume ${label} does not mount ${configmap} with checksum/${hashed} alone"; exit 1; }
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 pod = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "agent-remediation")["spec"]["template"]
 volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
 annotations = pod["metadata"]["annotations"]
-sys.exit(0 if volumes["remediation-workflows"].get("configMap") == {"name": sys.argv[2]}
+sys.exit(0 if volumes["remediation-files"].get("configMap") == {"name": sys.argv[2]}
          and "checksum/" + sys.argv[3] in annotations
          and "checksum/" + sys.argv[4] not in annotations else 1)
 PY
 done
 
-# An install's remediation files (agentRemediation.workflows.files) are the keys
-# of the ConfigMap <release>-agent-remediation-workflows, which agent-remediation
+# An install's remediation files (agentRemediation.files) are the keys
+# of the ConfigMap <release>-agent-remediation-files, which agent-remediation
 # mounts; the defaults render it with no key. The chart checks the kind and the
 # version of every document of every file, and a file agent-remediation would
 # refuse at startup fails the render, naming the file. A name starting with a
 # dot, which the loader skips, fails the schema.
-echo "--- agentRemediation.workflows.files: each file is a key of the mounted ConfigMap, a bad one fails the render"
-wf=scripts/install-test/fixtures/remediation-workflows
-grep -qE '^  name: continuo-agent-remediation-workflows$' "${tmp}/defaults.yaml" \
-  || { echo "FAIL: the defaults render has no agent-remediation-workflows ConfigMap"; exit 1; }
+echo "--- agentRemediation.files: each file is a key of the mounted ConfigMap, a bad one fails the render"
+wf=scripts/install-test/fixtures/remediation-files
+grep -qE '^  name: continuo-agent-remediation-files$' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the defaults render has no agent-remediation-files ConfigMap"; exit 1; }
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > "${tmp}/workflows.yaml" \
+  --set-file "agentRemediation.files.valid\.yaml=${wf}/valid.yaml" > "${tmp}/files.yaml" \
   || { echo "FAIL: a valid remediation file failed the render"; exit 1; }
-python3 - "${tmp}/workflows.yaml" "${wf}/valid.yaml" <<'PY' || { echo "FAIL: the remediation file did not reach the ConfigMap as written"; exit 1; }
+python3 - "${tmp}/files.yaml" "${wf}/valid.yaml" <<'PY' || { echo "FAIL: the remediation file did not reach the ConfigMap as written"; exit 1; }
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
-cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "continuo-agent-remediation-workflows")
+cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "continuo-agent-remediation-files")
 sys.exit(0 if cm["data"] == {"valid.yaml": open(sys.argv[2]).read()} else 1)
 PY
 # A file's revision is the sha256 of its bytes, so the mounted file must hold
@@ -573,8 +573,8 @@ PY
 # with |. Each is written here with printf, so no editor or Git setting changes
 # its bytes, and the ConfigMap the chart renders must give each one back byte
 # for byte. A name starting with - or _ stays the key as written.
-echo "--- agentRemediation.workflows.files: the mounted files hold the bytes of the files given"
-bytes_dir="${tmp}/workflow-bytes"
+echo "--- agentRemediation.files: the mounted files hold the bytes of the files given"
+bytes_dir="${tmp}/file-bytes"
 mkdir -p "$bytes_dir"
 printf 'kind: type\nversion: 1\nname: no-newline' > "${bytes_dir}/no-newline.yaml"
 printf 'kind: type\nversion: 1\nname: one-newline\n' > "${bytes_dir}/one-newline.yaml"
@@ -585,14 +585,14 @@ printf 'kind: fixture\nversion: 1\ntype: keep\nrepo_files:\n  models/a.sql: |+\n
 bytes_args=()
 for path in "${bytes_dir}"/*.yaml; do
   file="$(basename "$path")"
-  bytes_args+=(--set-file "agentRemediation.workflows.files.${file//./\\.}=${path}")
+  bytes_args+=(--set-file "agentRemediation.files.${file//./\\.}=${path}")
 done
-helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${bytes_args[@]}" > "${tmp}/workflow-bytes.yaml" 2> "${tmp}/workflows.err" \
-  || { echo "FAIL: remediation files of every ending failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
-python3 - "${tmp}/workflow-bytes.yaml" "$bytes_dir" <<'PY' || { echo "FAIL: a mounted remediation file does not hold the bytes of the file given"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${bytes_args[@]}" > "${tmp}/file-bytes.yaml" 2> "${tmp}/files.err" \
+  || { echo "FAIL: remediation files of every ending failed the render:"; cat "${tmp}/files.err"; exit 1; }
+python3 - "${tmp}/file-bytes.yaml" "$bytes_dir" <<'PY' || { echo "FAIL: a mounted remediation file does not hold the bytes of the file given"; exit 1; }
 import os, sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1], encoding="utf-8", newline="")) if d]
-cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "continuo-agent-remediation-workflows")
+cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "continuo-agent-remediation-files")
 want = {name: open(os.path.join(sys.argv[2], name), "rb").read().decode("utf-8") for name in os.listdir(sys.argv[2])}
 bad = [name for name in sorted(want) if cm["data"].get(name) != want[name]]
 for name in bad:
@@ -620,34 +620,34 @@ for bad in \
   'commented-separator.yaml| document 2: version 2 is not supported (supported: 1)' \
   'inline-separator.yaml| document 2: version 2 is not supported (supported: 1)' \
   'crlf-separator.yaml| document 2: version 2 is not supported (supported: 1)' \
-  'wrong-kind.yaml|: kind "workflow" is not flow, type or fixture' \
+  'wrong-kind.yaml|: kind "recipe" is not flow, type or fixture' \
   'not-yaml.yaml|: does not parse as a YAML mapping' \
   'not-a-mapping.yaml|: does not parse as a YAML mapping'; do
   file="${bad%%|*}"
-  want="agentRemediation.workflows.files[${file}]${bad#*|}"
+  want="agentRemediation.files[${file}]${bad#*|}"
   path="${wf}/${file}"
   [ -f "$path" ] || path="${tmp}/${file}"
   if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-       --set-file "agentRemediation.workflows.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/workflows.err"; then
+       --set-file "agentRemediation.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/files.err"; then
     echo "FAIL: the remediation file ${file} rendered; agent-remediation would refuse it at startup"; exit 1
   fi
-  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
+  grep -qF "$want" "${tmp}/files.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/files.err"; exit 1; }
 done
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-     --set-file 'agentRemediation.workflows.files.\.hidden\.yaml='"${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
+     --set-file 'agentRemediation.files.\.hidden\.yaml='"${wf}/valid.yaml" > /dev/null 2> "${tmp}/files.err"; then
   echo "FAIL: a remediation file named .hidden.yaml rendered; agent-remediation skips it"; exit 1
 fi
-grep -qF '.hidden.yaml' "${tmp}/workflows.err" || { echo "FAIL: unexpected error:"; cat "${tmp}/workflows.err"; exit 1; }
+grep -qF '.hidden.yaml' "${tmp}/files.err" || { echo "FAIL: unexpected error:"; cat "${tmp}/files.err"; exit 1; }
 # The chart reads every placement of `---` markers, blank lines and comments as
 # agent-remediation's loader does (TestLoad_EmptyDocuments in
-# agent-remediation/adapters/workflowfile pins the loader on the same shapes):
+# agent-remediation/adapters/remediationfile pins the loader on the same shapes):
 # text before the first marker that holds only blank lines and comments is no
 # document, and every marker starts one, so a marker that nothing, blank lines
 # and comments alone, or another marker follows is an empty document, which
 # fails the render naming the file and the document. A file named accepted-*
 # renders and one named refused-* fails; the shapes whose whitespace or line
 # ends an editor would change are written here.
-echo "--- agentRemediation.workflows.files: an empty YAML document fails the render, as the loader refuses it"
+echo "--- agentRemediation.files: an empty YAML document fails the render, as the loader refuses it"
 empty_docs="${wf}/empty-documents"
 printf '' > "${tmp}/accepted-empty.yaml"
 printf '\n\n' > "${tmp}/accepted-blank-lines.yaml"
@@ -662,8 +662,8 @@ for path in "${empty_docs}"/accepted-*.yaml "${tmp}/accepted-empty.yaml" "${tmp}
             "${tmp}/accepted-crlf-two-documents.yaml"; do
   file="$(basename "$path")"
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-    --set-file "agentRemediation.workflows.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/workflows.err" \
-    || { echo "FAIL: the remediation file ${file} failed the render; agent-remediation loads it:"; cat "${tmp}/workflows.err"; exit 1; }
+    --set-file "agentRemediation.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/files.err" \
+    || { echo "FAIL: the remediation file ${file} failed the render; agent-remediation loads it:"; cat "${tmp}/files.err"; exit 1; }
   accepted_shapes=$((accepted_shapes + 1))
 done
 refused_shapes=0
@@ -680,15 +680,15 @@ for bad in \
   'refused-marker-then-blank-lines.yaml|2' \
   'refused-trailing-marker-crlf.yaml|2'; do
   file="${bad%%|*}"
-  want="agentRemediation.workflows.files[${file}] document ${bad#*|} is empty: no content follows its --- marker"
+  want="agentRemediation.files[${file}] document ${bad#*|} is empty: no content follows its --- marker"
   path="${empty_docs}/${file}"
   [ -f "$path" ] || path="${tmp}/${file}"
   [ -f "$path" ] || { echo "FAIL: no fixture ${file}"; exit 1; }
   if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-       --set-file "agentRemediation.workflows.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/workflows.err"; then
+       --set-file "agentRemediation.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/files.err"; then
     echo "FAIL: the remediation file ${file} rendered; agent-remediation refuses its empty document at startup"; exit 1
   fi
-  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
+  grep -qF "$want" "${tmp}/files.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/files.err"; exit 1; }
   refused_shapes=$((refused_shapes + 1))
 done
 # Every refused-* fixture file has a case above, so a new one cannot go unchecked.
@@ -707,15 +707,15 @@ echo "${accepted_shapes} placements of markers render, ${refused_shapes} with an
 # before any document fail the render, naming the file. A file named
 # accepted-* renders and one named refused-* fails with the text its case
 # names.
-echo "--- agentRemediation.workflows.files: directives and end markers are read as the loader reads them"
+echo "--- agentRemediation.files: directives and end markers are read as the loader reads them"
 directive_docs="${wf}/directives"
 printf '%%YAML 1.1\r\n---\r\nkind: type\r\nversion: 1\r\nname: lint-probe\r\n' > "${tmp}/accepted-directive-crlf.yaml"
 accepted_shapes=0
 for path in "${directive_docs}"/accepted-*.yaml "${tmp}/accepted-directive-crlf.yaml"; do
   file="$(basename "$path")"
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-    --set-file "agentRemediation.workflows.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/workflows.err" \
-    || { echo "FAIL: the remediation file ${file} failed the render; agent-remediation loads it:"; cat "${tmp}/workflows.err"; exit 1; }
+    --set-file "agentRemediation.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/files.err" \
+    || { echo "FAIL: the remediation file ${file} failed the render; agent-remediation loads it:"; cat "${tmp}/files.err"; exit 1; }
   accepted_shapes=$((accepted_shapes + 1))
 done
 refused_shapes=0
@@ -735,14 +735,14 @@ for bad in \
   'refused-directive-then-marker.yaml| document 1 is empty' \
   'refused-directive-right-after-a-marker.yaml| document 2 is empty'; do
   file="${bad%%|*}"
-  want="agentRemediation.workflows.files[${file}]${bad#*|}"
+  want="agentRemediation.files[${file}]${bad#*|}"
   path="${directive_docs}/${file}"
   [ -f "$path" ] || { echo "FAIL: no fixture ${file}"; exit 1; }
   if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-       --set-file "agentRemediation.workflows.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/workflows.err"; then
+       --set-file "agentRemediation.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/files.err"; then
     echo "FAIL: the remediation file ${file} rendered; agent-remediation refuses it at startup"; exit 1
   fi
-  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
+  grep -qF "$want" "${tmp}/files.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/files.err"; exit 1; }
   refused_shapes=$((refused_shapes + 1))
 done
 for path in "${directive_docs}"/refused-*.yaml; do
@@ -756,111 +756,111 @@ echo "${accepted_shapes} placements of directives and end markers render, ${refu
 # below the top level, or a line of a block scalar, is indented and does not
 # count. Every other duplicate key is left to agent-remediation and
 # `remediation-check files`.
-echo "--- agentRemediation.workflows.files: a kind or version line defined twice fails the render"
+echo "--- agentRemediation.files: a kind or version line defined twice fails the render"
 duplicate_docs="${wf}/duplicate-keys"
 for path in "${duplicate_docs}"/accepted-*.yaml; do
   file="$(basename "$path")"
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-    --set-file "agentRemediation.workflows.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/workflows.err" \
-    || { echo "FAIL: the remediation file ${file} failed the render; agent-remediation loads it:"; cat "${tmp}/workflows.err"; exit 1; }
+    --set-file "agentRemediation.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/files.err" \
+    || { echo "FAIL: the remediation file ${file} failed the render; agent-remediation loads it:"; cat "${tmp}/files.err"; exit 1; }
 done
 for bad in \
   'refused-version-twice.yaml| document 1: version is defined 2 times' \
   'refused-kind-twice.yaml| document 1: kind is defined 2 times' \
   'refused-version-twice-in-the-second-document.yaml| document 2: version is defined 2 times'; do
   file="${bad%%|*}"
-  want="agentRemediation.workflows.files[${file}]${bad#*|}"
+  want="agentRemediation.files[${file}]${bad#*|}"
   path="${duplicate_docs}/${file}"
   [ -f "$path" ] || { echo "FAIL: no fixture ${file}"; exit 1; }
   if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-       --set-file "agentRemediation.workflows.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/workflows.err"; then
+       --set-file "agentRemediation.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/files.err"; then
     echo "FAIL: the remediation file ${file} rendered; agent-remediation refuses its duplicate key at startup"; exit 1
   fi
-  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
+  grep -qF "$want" "${tmp}/files.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/files.err"; exit 1; }
 done
 for path in "${duplicate_docs}"/refused-*.yaml; do
   grep -qF "'$(basename "$path")|" scripts/install-test/lint.sh || { echo "FAIL: ${path} has no case in lint.sh"; exit 1; }
 done
 # The company-files topology brings its own components list, whose
-# agent-remediation entry mounts no workflows volume: files set there would
+# agent-remediation entry mounts no remediation files volume: files set there would
 # reach no pod.
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-company-files.yaml \
-     --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
+     --set-file "agentRemediation.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/files.err"; then
   echo "FAIL: remediation files rendered with no agent-remediation volume to mount them"; exit 1
 fi
 for want in \
-  'agentRemediation.workflows.files is set, but components[agent-remediation] has no volume remediation-workflows, so' \
+  'agentRemediation.files is set, but components[agent-remediation] has no volume remediation-files, so' \
   "a release upgraded with --reuse-values keeps an older chart's components list, so upgrade once with your values file or --reset-then-reuse-values"; do
-  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
+  grep -qF "$want" "${tmp}/files.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/files.err"; exit 1; }
 done
 # With files set, an operator's own agent-remediation entry must mount the
-# chart's ConfigMap of the files through a remediation-workflows volume with an
+# chart's ConfigMap of the files through a remediation-files volume with an
 # empty configMap.name, the only form that puts the ConfigMap's digest on the
 # pod template (so a changed file rolls the pod), with no subPath, at the
-# folder agent-remediation reads: the entry's AGENT_REMEDIATION_WORKFLOWS_DIR,
-# else config.go's defaultWorkflowsDir, which the chart repeats (the case with
+# folder agent-remediation reads: the entry's AGENT_REMEDIATION_FILES_DIR,
+# else config.go's defaultFilesDir, which the chart repeats (the case with
 # no variable set pins the two). Each way an entry can miss that fails the
 # render with its own message, the chart's own ConfigMap named explicitly
 # among them; an entry that moves the variable and the mount together renders,
 # and without files nothing is checked.
-echo "--- agentRemediation.workflows.files: the files must be mounted where agent-remediation reads them"
-default_workflows_dir="$(sed -nE 's/^const defaultWorkflowsDir = "([^"]+)"$/\1/p' agent-remediation/config/config.go)"
-[ -n "$default_workflows_dir" ] || { echo "FAIL: agent-remediation/config/config.go declares no const defaultWorkflowsDir"; exit 1; }
-chart_workflows_volume='[{"name":"remediation-workflows","configMap":{"name":""}}]'
-default_workflows_mount='[{"name":"remediation-workflows","mountPath":"'"${default_workflows_dir}"'","readOnly":true}]'
-# workflows_components <volumeMounts JSON> <volumes JSON> [<env JSON>] prints a
+echo "--- agentRemediation.files: the files must be mounted where agent-remediation reads them"
+default_files_dir="$(sed -nE 's/^const defaultFilesDir = "([^"]+)"$/\1/p' agent-remediation/config/config.go)"
+[ -n "$default_files_dir" ] || { echo "FAIL: agent-remediation/config/config.go declares no const defaultFilesDir"; exit 1; }
+chart_files_volume='[{"name":"remediation-files","configMap":{"name":""}}]'
+default_files_mount='[{"name":"remediation-files","mountPath":"'"${default_files_dir}"'","readOnly":true}]'
+# files_components <volumeMounts JSON> <volumes JSON> [<env JSON>] prints a
 # components list of one agent-remediation entry.
-workflows_components() {
+files_components() {
   local env="${3-}"
   [ -n "$env" ] || env='{}'
   printf '[{"name":"agent-remediation","enabled":true,"httpPort":8092,"grpcPort":50054,"env":%s,"volumeMounts":%s,"volumes":%s}]' \
     "$env" "$1" "$2"
 }
 mount_problems=(
-  "no volumeMount|components[agent-remediation] has no volumeMounts entry for the volume remediation-workflows, so the files reach no container; mount it at ${default_workflows_dir}|$(workflows_components '[]' "$chart_workflows_volume")"
-  "a mount at another path|components[agent-remediation] mounts the volume remediation-workflows at /etc/elsewhere, and AGENT_REMEDIATION_WORKFLOWS_DIR is ${default_workflows_dir}, so|$(workflows_components '[{"name":"remediation-workflows","mountPath":"/etc/elsewhere"}]' "$chart_workflows_volume")"
-  "an operator-owned ConfigMap|components[agent-remediation].volumes[remediation-workflows] names the ConfigMap my-own-cm, your own, so the files reach no pod; leave its configMap.name empty|$(workflows_components "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"my-own-cm"}}]')"
-  "the chart's ConfigMap named explicitly|components[agent-remediation].volumes[remediation-workflows] names the chart's ConfigMap continuo-agent-remediation-workflows, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty|$(workflows_components "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"continuo-agent-remediation-workflows"}}]')"
-  "an emptyDir volume|components[agent-remediation].volumes[remediation-workflows] is not a ConfigMap volume, so the files reach no pod|$(workflows_components "$default_workflows_mount" '[{"name":"remediation-workflows","emptyDir":{}}]')"
-  "a variable naming another folder than the mount|components[agent-remediation] mounts the volume remediation-workflows at ${default_workflows_dir}, and AGENT_REMEDIATION_WORKFLOWS_DIR is /etc/other, so|$(workflows_components "$default_workflows_mount" "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/etc/other"}')"
+  "no volumeMount|components[agent-remediation] has no volumeMounts entry for the volume remediation-files, so the files reach no container; mount it at ${default_files_dir}|$(files_components '[]' "$chart_files_volume")"
+  "a mount at another path|components[agent-remediation] mounts the volume remediation-files at /etc/elsewhere, and AGENT_REMEDIATION_FILES_DIR is ${default_files_dir}, so|$(files_components '[{"name":"remediation-files","mountPath":"/etc/elsewhere"}]' "$chart_files_volume")"
+  "an operator-owned ConfigMap|components[agent-remediation].volumes[remediation-files] names the ConfigMap my-own-cm, your own, so the files reach no pod; leave its configMap.name empty|$(files_components "$default_files_mount" '[{"name":"remediation-files","configMap":{"name":"my-own-cm"}}]')"
+  "the chart's ConfigMap named explicitly|components[agent-remediation].volumes[remediation-files] names the chart's ConfigMap continuo-agent-remediation-files, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty|$(files_components "$default_files_mount" '[{"name":"remediation-files","configMap":{"name":"continuo-agent-remediation-files"}}]')"
+  "an emptyDir volume|components[agent-remediation].volumes[remediation-files] is not a ConfigMap volume, so the files reach no pod|$(files_components "$default_files_mount" '[{"name":"remediation-files","emptyDir":{}}]')"
+  "a variable naming another folder than the mount|components[agent-remediation] mounts the volume remediation-files at ${default_files_dir}, and AGENT_REMEDIATION_FILES_DIR is /etc/other, so|$(files_components "$default_files_mount" "$chart_files_volume" '{"AGENT_REMEDIATION_FILES_DIR":"/etc/other"}')"
 )
 for problem in "${mount_problems[@]}"; do
   label="${problem%%|*}"
   rest="${problem#*|}"
-  want="agentRemediation.workflows.files is set, but ${rest%%|*}"
+  want="agentRemediation.files is set, but ${rest%%|*}"
   components="${rest#*|}"
   if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${components}" \
-       --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
+       --set-file "agentRemediation.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/files.err"; then
     echo "FAIL: remediation files rendered with ${label}; they would reach no agent-remediation pod"; exit 1
   fi
-  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL (${label}): want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
-  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${components}" > /dev/null 2> "${tmp}/workflows.err" \
-    || { echo "FAIL: with no remediation files, a components list with ${label} failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
+  grep -qF "$want" "${tmp}/files.err" || { echo "FAIL (${label}): want '${want}', got:"; cat "${tmp}/files.err"; exit 1; }
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${components}" > /dev/null 2> "${tmp}/files.err" \
+    || { echo "FAIL: with no remediation files, a components list with ${label} failed the render:"; cat "${tmp}/files.err"; exit 1; }
 done
 # The schema refuses a subPath on any volumeMounts entry. The template refuses
 # one on the files' mount as well, for a render that skips the schema: a
 # subPath mounts one entry of the ConfigMap, never the folder of files.
-subpath_components="$(workflows_components '[{"name":"remediation-workflows","mountPath":"'"${default_workflows_dir}"'","subPath":"valid.yaml"}]' "$chart_workflows_volume")"
+subpath_components="$(files_components '[{"name":"remediation-files","mountPath":"'"${default_files_dir}"'","subPath":"valid.yaml"}]' "$chart_files_volume")"
 for check in \
   "|additional properties 'subPath' not allowed" \
-  "--skip-schema-validation|agentRemediation.workflows.files is set, but components[agent-remediation] mounts the volume remediation-workflows at ${default_workflows_dir} with subPath valid.yaml, which mounts one entry"; do
+  "--skip-schema-validation|agentRemediation.files is set, but components[agent-remediation] mounts the volume remediation-files at ${default_files_dir} with subPath valid.yaml, which mounts one entry"; do
   flags=()
   [ -z "${check%%|*}" ] || flags=("${check%%|*}")
   want="${check#*|}"
   if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" ${flags[@]+"${flags[@]}"} --set-json "components=${subpath_components}" \
-       --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
+       --set-file "agentRemediation.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/files.err"; then
     echo "FAIL: remediation files rendered with a subPath mount ${flags[*]-}; the files would reach no agent-remediation pod"; exit 1
   fi
-  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL (a subPath mount ${flags[*]-}): want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
+  grep -qF "$want" "${tmp}/files.err" || { echo "FAIL (a subPath mount ${flags[*]-}): want '${want}', got:"; cat "${tmp}/files.err"; exit 1; }
 done
-helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation --set-json "components=${subpath_components}" > /dev/null 2> "${tmp}/workflows.err" \
-  || { echo "FAIL: with no remediation files, a components list with a subPath mount failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation --set-json "components=${subpath_components}" > /dev/null 2> "${tmp}/files.err" \
+  || { echo "FAIL: with no remediation files, a components list with a subPath mount failed the render:"; cat "${tmp}/files.err"; exit 1; }
 # mounted_at <rendered manifest> <folder> checks that agent-remediation mounts
-# continuo-agent-remediation-workflows at the folder, with no subPath, reads
-# AGENT_REMEDIATION_WORKFLOWS_DIR from there (or from the default), and carries
+# continuo-agent-remediation-files at the folder, with no subPath, reads
+# AGENT_REMEDIATION_FILES_DIR from there (or from the default), and carries
 # the ConfigMap's digest on its pod template.
 mounted_at() {
-  python3 - "$1" "$2" "$default_workflows_dir" <<'PY'
+  python3 - "$1" "$2" "$default_files_dir" <<'PY'
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 template = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "agent-remediation")["spec"]["template"]
@@ -868,26 +868,26 @@ pod = template["spec"]
 volumes = {v["name"]: v for v in pod["volumes"]}
 container = pod["containers"][0]
 env = {e["name"]: e.get("value") for e in container.get("env") or []}
-folder = (env.get("AGENT_REMEDIATION_WORKFLOWS_DIR") or sys.argv[3]).rstrip("/")
-mounts = [m for m in container["volumeMounts"] if m["name"] == "remediation-workflows"]
-sys.exit(0 if volumes["remediation-workflows"].get("configMap") == {"name": "continuo-agent-remediation-workflows"}
-         and "checksum/agent-remediation-workflows" in template["metadata"].get("annotations", {})
+folder = (env.get("AGENT_REMEDIATION_FILES_DIR") or sys.argv[3]).rstrip("/")
+mounts = [m for m in container["volumeMounts"] if m["name"] == "remediation-files"]
+sys.exit(0 if volumes["remediation-files"].get("configMap") == {"name": "continuo-agent-remediation-files"}
+         and "checksum/agent-remediation-files" in template["metadata"].get("annotations", {})
          and folder == sys.argv[2].rstrip("/")
          and any(m["mountPath"].rstrip("/") == folder and "subPath" not in m for m in mounts) else 1)
 PY
 }
 for good in \
-  "${default_workflows_dir}|$(workflows_components "$default_workflows_mount" "$chart_workflows_volume")" \
-  "/opt/remediation-files|$(workflows_components '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files"}]' "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')"; do
+  "${default_files_dir}|$(files_components "$default_files_mount" "$chart_files_volume")" \
+  "/opt/remediation-files|$(files_components '[{"name":"remediation-files","mountPath":"/opt/remediation-files"}]' "$chart_files_volume" '{"AGENT_REMEDIATION_FILES_DIR":"/opt/remediation-files/"}')"; do
   folder="${good%%|*}"
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "components=${good#*|}" \
-    --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > "${tmp}/workflows-mount.yaml" 2> "${tmp}/workflows.err" \
-    || { echo "FAIL: remediation files mounted at ${folder} failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
-  mounted_at "${tmp}/workflows-mount.yaml" "$folder" \
-    || { echo "FAIL: the render does not mount continuo-agent-remediation-workflows at ${folder}, where agent-remediation reads, with its digest on the pod template"; exit 1; }
+    --set-file "agentRemediation.files.valid\.yaml=${wf}/valid.yaml" > "${tmp}/files-mount.yaml" 2> "${tmp}/files.err" \
+    || { echo "FAIL: remediation files mounted at ${folder} failed the render:"; cat "${tmp}/files.err"; exit 1; }
+  mounted_at "${tmp}/files-mount.yaml" "$folder" \
+    || { echo "FAIL: the render does not mount continuo-agent-remediation-files at ${folder}, where agent-remediation reads, with its digest on the pod template"; exit 1; }
 done
-mounted_at "${tmp}/workflows.yaml" "$default_workflows_dir" \
-  || { echo "FAIL: the defaults render does not mount the remediation files at ${default_workflows_dir}"; exit 1; }
+mounted_at "${tmp}/files.yaml" "$default_files_dir" \
+  || { echo "FAIL: the defaults render does not mount the remediation files at ${default_files_dir}"; exit 1; }
 # An install starts its own files from copies of the built-in ones, so the
 # chart accepts every built-in flow, type and fixture file as an install file.
 # A ConfigMap key holds no `/`, so each file is passed under its path with
@@ -896,14 +896,14 @@ mounted_at "${tmp}/workflows.yaml" "$default_workflows_dir" \
 echo "--- every built-in remediation file renders as an install file"
 builtin_files=0
 while IFS= read -r path; do
-  key="${path#agent-remediation/workflows/}"
+  key="${path#agent-remediation/files/}"
   key="${key//\//-}"
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-    --set-file "agentRemediation.workflows.files.${key//./\\.}=${path}" > /dev/null 2> "${tmp}/builtin-workflow.err" \
-    || { echo "FAIL: the built-in remediation file ${path} failed the render as ${key}:"; cat "${tmp}/builtin-workflow.err"; exit 1; }
+    --set-file "agentRemediation.files.${key//./\\.}=${path}" > /dev/null 2> "${tmp}/builtin-file.err" \
+    || { echo "FAIL: the built-in remediation file ${path} failed the render as ${key}:"; cat "${tmp}/builtin-file.err"; exit 1; }
   builtin_files=$((builtin_files + 1))
-done < <(find agent-remediation/workflows -type f \( -name '*.yaml' -o -name '*.yml' \) | sort)
-[ "$builtin_files" -gt 0 ] || { echo "FAIL: found no built-in remediation file under agent-remediation/workflows"; exit 1; }
+done < <(find agent-remediation/files -type f \( -name '*.yaml' -o -name '*.yml' \) | sort)
+[ "$builtin_files" -gt 0 ] || { echo "FAIL: found no built-in remediation file under agent-remediation/files"; exit 1; }
 echo "${builtin_files} built-in remediation files render as install files"
 
 # NOTES.txt tells an upgrading operator that schedules are no longer read from

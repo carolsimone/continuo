@@ -91,7 +91,7 @@ describe('DetailPage focus legend node type', () => {
     fireEvent.click(container.querySelector(`.react-flow__node[data-id="${CSV_NODE_ID}"]`)!);
 
     await waitFor(() => {
-      const legend = container.querySelector('.dag-focus-legend');
+      const legend = container.querySelector('.graph-focus-legend');
       expect(legend).not.toBeNull();
       expect(legend!.querySelector('[data-node-type-icon="python-csv"]')).not.toBeNull();
       expect(legend!.textContent).toContain('vendor_feed');
@@ -116,7 +116,7 @@ describe('DetailPage focus legend node type', () => {
 // An unknown-external node is a table a node reads and no node builds: it has no node
 // page, so a click only highlights the nodes it feeds.
 describe('DetailPage focus legend for an unknown-external node', () => {
-  const UNKNOWN_EXTERNAL_ID = '.raw.ingest_probe';
+  const UNKNOWN_EXTERNAL_ID = '.raw.external_probe';
   const READER_ID = 'svc1.public.reader';
   const unknownExternalRoutes = {
     ...routes,
@@ -143,12 +143,12 @@ describe('DetailPage focus legend for an unknown-external node', () => {
     const { container, queryByRole } = await renderAndSelect(UNKNOWN_EXTERNAL_ID);
 
     await waitFor(() => {
-      const legend = container.querySelector('.dag-focus-legend');
+      const legend = container.querySelector('.graph-focus-legend');
       expect(legend).not.toBeNull();
-      expect(legend!.textContent).toContain('ingest_probe');
+      expect(legend!.textContent).toContain('external_probe');
       expect(legend!.textContent).toContain('Required by (1)');
     });
-    expect(container.querySelector('.dag-focus-open-link')).toBeNull();
+    expect(container.querySelector('.graph-focus-open-link')).toBeNull();
     expect(queryByRole('link', { name: /open node detail/i })).toBeNull();
   });
 
@@ -156,10 +156,10 @@ describe('DetailPage focus legend for an unknown-external node', () => {
     const { container } = await renderAndSelect(UNKNOWN_EXTERNAL_ID);
 
     await waitFor(() => {
-      expect(container.querySelector('.dag-focus-legend-title')?.textContent).toBe('raw.ingest_probe');
+      expect(container.querySelector('.graph-focus-legend-title')?.textContent).toBe('raw.external_probe');
     });
     const canvasNode = container.querySelector(`.react-flow__node[data-id="${UNKNOWN_EXTERNAL_ID}"]`);
-    expect(canvasNode?.textContent).toContain('raw.ingest_probe');
+    expect(canvasNode?.textContent).toContain('raw.external_probe');
   });
 
   it('still offers the link for an ordinary node of the same graph', async () => {
@@ -167,7 +167,7 @@ describe('DetailPage focus legend for an unknown-external node', () => {
 
     const link = await findByRole('link', { name: /open node detail/i });
     expect(link.getAttribute('href')).toBe(`/node/${READER_ID}`);
-    expect(container.querySelector('.dag-focus-legend')?.textContent).toContain('Depends on (1)');
-    expect(container.querySelector('.dag-focus-legend-title')?.textContent).toBe('reader');
+    expect(container.querySelector('.graph-focus-legend')?.textContent).toContain('Depends on (1)');
+    expect(container.querySelector('.graph-focus-legend-title')?.textContent).toBe('reader');
   });
 });

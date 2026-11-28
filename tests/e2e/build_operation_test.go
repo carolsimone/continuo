@@ -68,14 +68,14 @@ func TestBuildOperationSingleNode(t *testing.T) {
 	t.Log("TestBuildOperationSingleNode passed")
 }
 
-// TestBuildOperationWholeDAGCascadeSkip verifies a whole-DAG `build` run keeps
-// the normal blocking-dependency DAG semantics (NOT the `test` operation's
+// TestBuildOperationWholeScheduleCascadeSkip verifies a whole-schedule `build` run keeps
+// the normal blocking-dependency semantics (NOT the `test` operation's
 // edgeless flat fan-out): a failing node's descendants are cascade-skipped,
 // never dispatched. It also carries the regression guard for Task 2's
 // downstream-unblock fix — a non-root node dispatched via the unblock path
 // must still run `dbt build`, not fall back to `dbt run`.
 //
-// DAG topology (see failure_test.go for the full diagram):
+// The topology (see failure_test.go for the full diagram):
 //
 //	ftable_a ─┬─ ftable_g (FAILS) ─ ftable_h ← cascade-skipped
 //	          └─┐
@@ -86,7 +86,7 @@ func TestBuildOperationSingleNode(t *testing.T) {
 // ftable_c is dispatched via the unblock path (it has upstreams ftable_a and
 // ftable_b), so inspecting its Job command proves the unblock dispatch
 // carried operation=build through to job assembly.
-func TestBuildOperationWholeDAGCascadeSkip(t *testing.T) {
+func TestBuildOperationWholeScheduleCascadeSkip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -128,7 +128,7 @@ func TestBuildOperationWholeDAGCascadeSkip(t *testing.T) {
 	verifySchedulerFailed(t, ctx, clients, runID)
 
 	assert.Equal(t, "build", queryRunOperation(t, clients, runID),
-		"the run's operation must be 'build' for a whole-DAG build run")
+		"the run's operation must be 'build' for a whole-schedule build run")
 
 	// Regression guard for Task 2's downstream/unblock dispatch fix: ftable_c
 	// is a non-root node reached via the unblock path (upstreams ftable_a and
@@ -143,11 +143,11 @@ func TestBuildOperationWholeDAGCascadeSkip(t *testing.T) {
 	assert.NotContains(t, cmd, "dbt run",
 		"downstream node must not fall back to dbt run under a build operation")
 
-	t.Log("TestBuildOperationWholeDAGCascadeSkip passed")
+	t.Log("TestBuildOperationWholeScheduleCascadeSkip passed")
 }
 
 // TestBuildOperationRerun verifies operation inheritance across a rerun: a
-// rerun of a failed whole-DAG build run must itself be a build run (proving
+// rerun of a failed whole-schedule build run must itself be a build run (proving
 // operation flows through DispatchDerivedRun's frontier), and a rebased node
 // re-dispatched by the rerun must carry operation=build in its Job command.
 func TestBuildOperationRerun(t *testing.T) {
@@ -169,7 +169,7 @@ func TestBuildOperationRerun(t *testing.T) {
 	t.Log("Seeding topology via announce-topology...")
 	seedTopology(t, ctx, clients)
 
-	// ── Drive a whole-DAG build run to FAILED ───────────────────────────────
+	// ── Drive a whole-schedule build run to FAILED ───────────────────────────────
 	t.Logf("StartRun operation=build on %q", failureTestScheduleName)
 	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: failureTestScheduleName,

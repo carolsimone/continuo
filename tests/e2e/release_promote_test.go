@@ -49,7 +49,7 @@ const e2eBaselineReleaseID = "e2e-baseline"
 // isolated candidate schema without depending on any production table.
 const probeUniqueID = "e2e_schema.rel_probe"
 
-// TestE2E_ReleasePromote_ValidatesAndSwapsTopology drives the blue/green
+// TestE2E_ReleasePromote_ValidatesAndSwapsTopology drives the
 // release check end-to-end through the production cutover path:
 //
 //	POST /releases → release.requested:v1 → topology-controller candidate parse
@@ -681,7 +681,7 @@ func canonicalManifestS3URI(project, releaseID string) string {
 // The map is used to seed the live release's topology and the production pointers.
 func baselineProjects(t *testing.T, ctx context.Context, clients *testClients) map[string]projectInfo {
 	t.Helper()
-	// Re-establish the per-project image pointers a prior blue/green test may
+	// Re-establish the per-project image pointers a prior release test may
 	// have mutated, so readProjectImageTag below sees the full baseline.
 	seedBaselineProductionPointers(t, ctx, clients)
 	// Discover all projects by listing objects under their baseline prefix.

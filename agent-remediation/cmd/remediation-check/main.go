@@ -1,4 +1,4 @@
-// remediation-check checks the workflow files of agent-remediation and lists
+// remediation-check checks the remediation files of agent-remediation and lists
 // the steps they may name. It ships in the image beside the component binary, for
 // an install to check its own files, and the repository's tests run it on the
 // built-in files.
@@ -73,15 +73,15 @@ import (
 	"sort"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/remediationfile"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/scripted"
-	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/files"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
-	"github.com/carolsimone/continuo/agent-remediation/workflows"
 )
 
 const usage = `usage: remediation-check files <dir>
@@ -92,7 +92,7 @@ const usage = `usage: remediation-check files <dir>
 const filesHelp = `remediation-check files <dir>
 
 Purpose
-  Checks the workflow files an install gives agent-remediation. It loads the
+  Checks the remediation files an install gives agent-remediation. It loads the
   files the component loads with <dir> as its install folder: the built-in flow,
   type and fixture files, then the ones under <dir> over them. An install file
   with the kind and name of a built-in replaces it whole, and any other file is
@@ -173,7 +173,7 @@ var subcommandHelp = map[string]string{"files": filesHelp, "steps": stepsHelp}
 
 // overviewHelp is the help of the whole command: what it is, then the block of
 // every subcommand.
-const overviewHelp = `remediation-check checks the workflow files of agent-remediation and lists the
+const overviewHelp = `remediation-check checks the remediation files of agent-remediation and lists the
 steps they may name.
 
 Usage:
@@ -321,13 +321,13 @@ func checkFiles(ctx context.Context, dir string) report {
 	rep := report{Errors: []string{}, Warnings: []string{}, Scenarios: []scenarioResult{}}
 	fsys := os.DirFS(dir)
 
-	set, loaded, loadErr := workflowfile.LoadInstall(workflows.Builtin, fsys)
-	builtinFixtures, installFixtures, fixtureErr := workflowfile.LoadInstallFixtures(workflows.Builtin, fsys)
+	set, loaded, loadErr := remediationfile.LoadInstall(files.Builtin, fsys)
+	builtinFixtures, installFixtures, fixtureErr := remediationfile.LoadInstallFixtures(files.Builtin, fsys)
 	rep.Files = countFiles(set, builtinFixtures, installFixtures)
 	rep.addErrors(messages(loadErr)...)
 	rep.addErrors(messages(fixtureErr)...)
 	if len(rep.Errors) == 0 {
-		rep.addErrors(messages(workflowfile.CheckInstallPaths(workflows.Builtin, fsys))...)
+		rep.addErrors(messages(remediationfile.CheckInstallPaths(files.Builtin, fsys))...)
 	}
 	if len(rep.Errors) > 0 {
 		return rep
@@ -392,7 +392,7 @@ func (r *report) addErrors(msgs ...string) {
 // type cannot remove that type's built-in fixture, and nothing would play it.
 // Every other built-in fixture is played. An install's own fixture is never
 // left out, so the suite fails one that tests a type no flow lists.
-func builtinFixturesToPlay(set workflow.Set, builtin []conformance.Fixture) (play []conformance.Fixture, warnings []string) {
+func builtinFixturesToPlay(set flow.Set, builtin []conformance.Fixture) (play []conformance.Fixture, warnings []string) {
 	listed := map[string]bool{}
 	for _, f := range set.Flows {
 		for _, t := range f.Types {
@@ -412,8 +412,8 @@ func builtinFixturesToPlay(set workflow.Set, builtin []conformance.Fixture) (pla
 // countFiles is the number of distinct files that hold a loaded flow, type or
 // fixture. When the report holds no error, an install file and a built-in file
 // never share a path while both hold something loaded, whatever its kind:
-// workflowfile.CheckInstallPaths refuses that.
-func countFiles(set workflow.Set, fixtures ...[]conformance.Fixture) int {
+// remediationfile.CheckInstallPaths refuses that.
+func countFiles(set flow.Set, fixtures ...[]conformance.Fixture) int {
 	seen := map[string]bool{}
 	for _, f := range set.Flows {
 		seen[f.Pos.File] = true
@@ -472,17 +472,17 @@ func listSteps() []stepEntry {
 }
 
 // dataClasses is the data classes of the evidence keys, each once, in the order
-// workflow.DataClasses lists them. A key the registry knows no class of adds
+// flow.DataClasses lists them. A key the registry knows no class of adds
 // none.
 func dataClasses(reg *runner.Registry, keys []remediation.EvidenceKey) []string {
-	held := map[workflow.DataClass]bool{}
+	held := map[flow.DataClass]bool{}
 	for _, k := range keys {
 		if class, ok := reg.EvidenceClass(k); ok {
 			held[class] = true
 		}
 	}
 	classes := []string{}
-	for _, class := range workflow.DataClasses() {
+	for _, class := range flow.DataClasses() {
 		if held[class] {
 			classes = append(classes, string(class))
 		}

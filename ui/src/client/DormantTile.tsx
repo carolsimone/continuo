@@ -13,9 +13,9 @@ interface Props {
 export default function DormantTile({ count }: Props) {
   const navigate = useNavigate();
   return (
-    <button type="button" className="snapshot-tile" onClick={() => navigate('/?tab=nodes&dormant=1')}>
-      <div className="snapshot-tile__name">Dormant</div>
-      <div className="snapshot-tile__meta">
+    <button type="button" className="schedule-tile" onClick={() => navigate('/?tab=nodes&dormant=1')}>
+      <div className="schedule-tile__name">Dormant</div>
+      <div className="schedule-tile__meta">
         {count} dormant {count === 1 ? 'node' : 'nodes'} · run by hand
       </div>
     </button>

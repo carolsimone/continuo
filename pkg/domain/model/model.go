@@ -64,21 +64,6 @@ func IsDormant(t NodeType, schedule string) bool {
 	return schedule == "" && t.IsBuilt()
 }
 
-// legacyIngested is the name under which stored rows and artifacts written
-// earlier still record NodeTypeUnknownExternal.
-const legacyIngested = "ingested"
-
-// CanonicalNodeType converts a node type read from storage or from an artifact
-// into the current NodeType: the legacy name of unknown-external becomes
-// NodeTypeUnknownExternal, and every other string is returned as it is, valid
-// or not, for ParseNodeType or IsValid to judge.
-func CanonicalNodeType(s string) NodeType {
-	if s == legacyIngested {
-		return NodeTypeUnknownExternal
-	}
-	return NodeType(s)
-}
-
 // ParseNodeType converts a raw string to NodeType. It returns an error naming
 // the value and every valid node type for an empty or undeclared value.
 func ParseNodeType(s string) (NodeType, error) {

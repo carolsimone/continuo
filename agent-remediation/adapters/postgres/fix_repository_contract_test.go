@@ -190,7 +190,7 @@ func TestFixRepository_KeepsApprovers(t *testing.T) {
 func TestFixRepository_CountTriesLeavesOutTheHandOverRow(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
-		for try, status := range map[int]fix.Status{1: fix.StatusFailed, 2: fix.StatusFailed, 3: fix.StatusVerifying, fix.HandOverTry: fix.StatusEscalated} {
+		for try, status := range map[int]fix.Status{1: fix.StatusFailed, 2: fix.StatusFailed, 3: fix.StatusVerifying, fix.HandOverTry: fix.StatusHandedOver} {
 			require.NoError(t, env.fixes.Upsert(ctx, fix.Fix{
 				Source: "validation", ReleaseID: "rel-count", Round: 1, NodeID: "model.a",
 				Try: try, Status: status, CreatedAt: contractBase,

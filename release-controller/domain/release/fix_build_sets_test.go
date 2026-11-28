@@ -87,9 +87,9 @@ func TestFixBuildSets_SortedAndDeduplicated(t *testing.T) {
 // node is in neither build set, however it differs from production and from the
 // rejected release: it has no content for a fix to touch or a release to prove.
 func TestFixBuildSets_NeverReturnsAnUnknownExternalNode(t *testing.T) {
-	unknownExternal := release.Node{UniqueID: "raw.ingest_probe", NodeType: "unknown-external"}
+	unknownExternal := release.Node{UniqueID: "raw.external_probe", NodeType: "unknown-external"}
 	reader := func(hash string) release.Node {
-		return release.Node{UniqueID: "a.m", NodeType: "dbt-model", ContentHash: hash, UpstreamUniqueIDs: []string{"raw.ingest_probe"}}
+		return release.Node{UniqueID: "a.m", NodeType: "dbt-model", ContentHash: hash, UpstreamUniqueIDs: []string{"raw.external_probe"}}
 	}
 	prod := release.Topology{reader("h1")}
 	rejected := release.Topology{reader("h2")}

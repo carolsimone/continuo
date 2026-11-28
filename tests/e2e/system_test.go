@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_HappyPath_FullDAGExecution tests a whole run of the 6-node DAG through every component
-func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
+// TestE2E_HappyPath_FullTopologyExecution tests a whole run of the 6-node topology through every component
+func TestE2E_HappyPath_FullTopologyExecution(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -56,9 +56,9 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	t.Log("Verifying run-controller dispatched the root nodes...")
 	verifyRootNodesDispatched(t, ctx, dispatchTap, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
-	// Verify complete DAG execution
-	t.Log("Verifying full DAG execution...")
-	verifyFullDAGExecution(t, ctx, clients, dispatchTap, schedulerID)
+	// Verify complete topology execution
+	t.Log("Verifying full topology execution...")
+	verifyFullTopologyExecution(t, ctx, clients, dispatchTap, schedulerID)
 
 	// Verify service-1 Jobs actually ran through the customname-dbt dialect and
 	// service-2/3 Jobs through the built-in dialect (pins the dbt-commands

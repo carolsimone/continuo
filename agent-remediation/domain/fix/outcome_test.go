@@ -16,10 +16,10 @@ const (
 // A coded outcome is a hand-over message: its reason is cleaned. An outcome with
 // no code keeps its reason as it is.
 func TestNodeOutcome_Cleaned(t *testing.T) {
-	coded := NodeOutcome{Status: StatusEscalated, Reason: dirtyReason, Code: model.HandoverReasonTriesSpent}
+	coded := NodeOutcome{Status: StatusHandedOver, Reason: dirtyReason, Code: model.HandoverReasonTriesSpent}
 	uncoded := NodeOutcome{Status: StatusFailed, Reason: dirtyReason}
 
-	assert.Equal(t, NodeOutcome{Status: StatusEscalated, Reason: cleanReason, Code: model.HandoverReasonTriesSpent}, coded.Cleaned())
+	assert.Equal(t, NodeOutcome{Status: StatusHandedOver, Reason: cleanReason, Code: model.HandoverReasonTriesSpent}, coded.Cleaned())
 	assert.Equal(t, uncoded, uncoded.Cleaned())
 	assert.Equal(t, coded.Cleaned(), coded.Cleaned().Cleaned(), "cleaning a cleaned outcome changes nothing")
 }

@@ -13,7 +13,7 @@ import (
 // (dbt/projects/service-*/profiles.yml).
 const e2eSchema = "e2e_schema"
 
-// fixtureNode is one node of the e2e suite's fixed DAG: the table it builds,
+// fixtureNode is one node of the e2e suite's fixed topology: the table it builds,
 // the project that owns it, its schedule and the tables it reads.
 type fixtureNode struct {
 	table    string
@@ -22,10 +22,10 @@ type fixtureNode struct {
 	upstream []string
 }
 
-// e2eDAG mirrors tests/e2e/seed_topology_test.go and the dbt projects under
-// dbt/projects: the seed schedule's three seeds, e2e-schedule's layered DAG
+// e2eTopology mirrors tests/e2e/seed_topology_test.go and the dbt projects under
+// dbt/projects: the seed schedule's three seeds, e2e-schedule's layered topology
 // over them, and e2e-schedule-failure, whose ftable_e and ftable_g fail.
-var e2eDAG = []fixtureNode{
+var e2eTopology = []fixtureNode{
 	{"seed_table_1", "service-1", "seed", nil},
 	{"seed_table_2", "service-1", "seed", nil},
 	{"seed_table_3", "service-1", "seed", nil},
@@ -140,13 +140,13 @@ func withNode(table, nodeType string, testCount *int) topology.Graph {
 
 // unknownExternalProbe is the key of the unknown-external table the fixtures use: a table
 // some node reads and no node builds.
-var unknownExternalProbe = topology.KeyOf("raw", "ingest_probe")
+var unknownExternalProbe = topology.KeyOf("raw", "external_probe")
 
 // unknownExternalNode is the unknown-external node as the release stores it: no project, no
 // schedule, no content hash, no image and no data test.
 func unknownExternalNode() topology.Node {
 	return topology.Node{
-		Key: unknownExternalProbe, UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
+		Key: unknownExternalProbe, UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe",
 		NodeType: "unknown-external", TestCount: count(0),
 	}
 }
@@ -169,8 +169,8 @@ func withUnknownExternalUpstream(g topology.Graph, tables ...string) topology.Gr
 	return topology.NewGraph(nodes, edges)
 }
 
-// dormantDAG is the e2e DAG with dormant_d, a model of service-3 that reads
+// dormantTopology is the e2e topology with dormant_d, a model of service-3 that reads
 // the table table_a and belongs to no schedule: a dormant node. It is no view
 // below a seed, so no seed reload rebuilds it, and only a run started by hand
 // executes it.
-var dormantDAG = changed(e2eDAG, nil, fixtureNode{"dormant_d", "service-3", "", []string{"table_a"}})
+var dormantTopology = changed(e2eTopology, nil, fixtureNode{"dormant_d", "service-3", "", []string{"table_a"}})

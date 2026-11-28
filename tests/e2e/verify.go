@@ -108,8 +108,8 @@ func verifyNextLevelDispatched(
 	t.Logf("✅ run-controller dispatched %d nodes", len(nextLevelTables))
 }
 
-// getDAGLevels returns happy-path DAG nodes grouped by execution level.
-func getDAGLevels() [][]string {
+// getTopologyLevels returns happy-path topology nodes grouped by execution level.
+func getTopologyLevels() [][]string {
 	return [][]string{
 		{"seed_table_1", "seed_table_2", "seed_table_3"},
 		{"table_a", "table_b", "table_c"},
@@ -119,15 +119,15 @@ func getDAGLevels() [][]string {
 	}
 }
 
-// verifyFullDAGExecution verifies all 4 levels execute in order
-func verifyFullDAGExecution(
+// verifyFullTopologyExecution verifies all 4 levels execute in order
+func verifyFullTopologyExecution(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
 	dispatchTap *streamTap,
 	scheduleID uuid.UUID,
 ) {
-	levels := getDAGLevels()
+	levels := getTopologyLevels()
 
 	for i, level := range levels {
 		t.Logf("Verifying level %d: %v", i, level)
@@ -144,7 +144,7 @@ func verifyFullDAGExecution(
 		}
 	}
 
-	t.Log("✅ Full DAG execution completed successfully")
+	t.Log("✅ Full topology execution completed successfully")
 }
 
 // verifyDialectRouting asserts that production dbt Jobs are actually routed
@@ -160,7 +160,7 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 
 	// "!mode" excludes seed_build/compile/validation Jobs (which carry a mode
 	// label) so only plain production query/seed Jobs — the ones this test's
-	// DAG actually deploys — are inspected.
+	// topology actually deploys — are inspected.
 	service1Jobs, err := getK8sJobs(ctx, "app=dbt-job,project_name=service-1,!mode")
 	require.NoError(t, err, "Failed to query K8s jobs for service-1")
 	require.NotEmpty(t, service1Jobs.Items, "Expected at least one service-1 job to assert dialect routing on")

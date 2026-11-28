@@ -62,8 +62,8 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	assert.Equal(t, g1, s1Seq, "Run 1's promotion_seq must equal G1=%d, got %d", g1, s1Seq)
 
 	// Step 8: Announce the topology again while S1 is still in flight (fresh
-	// release_id, same DAG): the announcement takes G2 > G1.
-	t.Log("=== Step 8: seedTopology mid-run (fresh release_id, same DAG) — announcing G2 ===")
+	// release_id, same topology): the announcement takes G2 > G1.
+	t.Log("=== Step 8: seedTopology mid-run (fresh release_id, same topology) — announcing G2 ===")
 	g2 := seedTopology(t, ctx, clients).PromotionSeq
 
 	// Step 9: G2 is later than G1, and the live pointer carries it.

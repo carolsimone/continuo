@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 )
@@ -19,7 +19,7 @@ type assembler func(prompt.PythonEvidence) prompt.ProposeRequest
 // one model call and reads the answer into a draft with one edit per answered
 // file. The three prompts differ only in the request they build.
 type contractPrompt struct {
-	name        workflow.StepName
+	name        flow.StepName
 	description string
 	assemble    assembler
 }

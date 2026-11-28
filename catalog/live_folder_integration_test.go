@@ -174,7 +174,7 @@ func TestLiveFolder_ANewNodeAndADroppedNodeChangeTheFolderInTheSamePromotion(t *
 		f.release("rel-2", 42, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c", "analytics.py_new": "sha256:c0de"})))
 
 	_, ok = f.object("analytics.py_weekly.odcs.yaml")
-	assert.False(t, ok, "the dropped node's file is deleted while the node is still active")
+	assert.False(t, ok, "the file of a node the release dropped is deleted while the node is still active")
 	assert.Equal(t, true,
 		f.value(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'analytics.py_weekly'}) RETURN n.active AS v`))
 	file, ok := f.object("analytics.py_new.odcs.yaml")
@@ -285,7 +285,7 @@ func (f *liveFolderFixture) serverSchema(uniqueID string) any {
 
 // A dbt model built in a quoted schema is declared in "Analytics" on its :Node
 // while its contract id is lower case, and its file's servers entry names the
-// declared spelling, the physical schema a consumer binds to. A node the
+// declared spelling, the declared schema a consumer binds to. A node the
 // contracts group created before any topology swap has no declared schema and
 // falls back to the id's. The next promotion, whose topology swap changes only
 // the case of the schema, puts the file again, though the contract is the same.

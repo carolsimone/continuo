@@ -4,8 +4,8 @@ import (
 	"sort"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
@@ -24,7 +24,7 @@ const maxRationaleUpstream = 3
 func rationaleFactsFor(t remediation.Trigger, c remediation.Cluster, d remediation.Draft) fix.RationaleFacts {
 	f := fix.RationaleFacts{
 		TargetNodeID:  c.TargetNodeID,
-		CrossProject:  c.Kind == workflow.ClusterCrossProject,
+		CrossProject:  c.Kind == flow.ClusterCrossProject,
 		ModelNote:     d.Rationale,
 		UpstreamKnown: t.Source == "validation",
 	}

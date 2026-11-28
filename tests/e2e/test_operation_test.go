@@ -162,13 +162,13 @@ func requireTestOfNodeRefused(t *testing.T, ctx context.Context, clients *testCl
 	assert.Equal(t, before, countRunsOfKind(t, clients, "single_node_run"), "a refused start creates no run")
 }
 
-// TestWholeDAGTestOperation verifies whole-DAG "flat fan-out" test runs. The
+// TestWholeScheduleTestOperation verifies whole-schedule "flat fan-out" test runs. The
 // "seed" schedule holds seed_table_1 (test_count=2), seed_table_2 (0), and
 // seed_table_3 (1). A StartRun with operation="test" dispatches ONLY the
 // nodes that have tests, each independently: seed_table_1 and seed_table_3 run
 // their tests and the run finalizes 'succeeded', while seed_table_2 (no tests)
 // is omitted from the projection entirely.
-func TestWholeDAGTestOperation(t *testing.T) {
+func TestWholeScheduleTestOperation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -198,7 +198,7 @@ func TestWholeDAGTestOperation(t *testing.T) {
 	scheduleID, err := uuid.Parse(resp.RunId)
 	require.NoError(t, err, "run_id must be a valid UUID")
 
-	t.Log("Waiting for the whole-DAG test run to reach 'succeeded'...")
+	t.Log("Waiting for the whole-schedule test run to reach 'succeeded'...")
 	verifySchedulerSucceeded(t, ctx, clients, scheduleID)
 
 	// Flat fan-out: only the tested nodes get a task; seed_table_2 (no tests) is
@@ -217,22 +217,22 @@ func TestWholeDAGTestOperation(t *testing.T) {
 	require.NoError(t, rows.Err())
 
 	assert.ElementsMatch(t, []string{"seed_table_1", "seed_table_3"}, tables,
-		"whole-DAG test run must dispatch exactly the nodes with tests (test_count>0), omitting seed_table_2")
+		"whole-schedule test run must dispatch exactly the nodes with tests (test_count>0), omitting seed_table_2")
 
 	// The run was created as a test run.
 	assert.Equal(t, "test", queryRunOperation(t, clients, scheduleID),
-		"the run's operation must be 'test' for a whole-DAG test run")
+		"the run's operation must be 'test' for a whole-schedule test run")
 
-	t.Log("TestWholeDAGTestOperation passed")
+	t.Log("TestWholeScheduleTestOperation passed")
 }
 
-// TestWholeDAGTestOperationNoTestsFinalizesSkipped is the regression guard for a
-// whole-DAG Test run over a schedule whose nodes all have no tests. Every node of
+// TestWholeScheduleTestOperationNoTestsFinalizesSkipped is the regression guard for a
+// whole-schedule Test run over a schedule whose nodes all have no tests. Every node of
 // e2e-schedule-failure defaults to test_count=0 (absent from e2eTestCounts), so a
 // StartRun with operation="test" selects no node, and run-controller records the
 // run 'skipped' — a benign non-failure — rather than 'failed'. No Job is
 // dispatched, so no tasks row exists.
-func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
+func TestWholeScheduleTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -262,7 +262,7 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	scheduleID, err := uuid.Parse(resp.RunId)
 	require.NoError(t, err, "run_id must be a valid UUID")
 
-	t.Log("Waiting for the all-gated whole-DAG test run to finalize 'skipped'...")
+	t.Log("Waiting for the all-gated whole-schedule test run to finalize 'skipped'...")
 	verifySchedulerSkipped(t, ctx, clients, scheduleID)
 
 	// No node had tests, so no Job was dispatched — zero tasks rows.
@@ -270,9 +270,9 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	err = clients.runControllerDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, scheduleID).Scan(&taskCount)
 	require.NoError(t, err, "failed to count tasks rows")
-	assert.Equal(t, 0, taskCount, "no tasks rows must exist for an all-gated whole-DAG test run")
+	assert.Equal(t, 0, taskCount, "no tasks rows must exist for an all-gated whole-schedule test run")
 
-	t.Log("TestWholeDAGTestOperationNoTestsFinalizesSkipped passed")
+	t.Log("TestWholeScheduleTestOperationNoTestsFinalizesSkipped passed")
 }
 
 // TestNodeCatalogOperationScoping verifies the UI-facing node list

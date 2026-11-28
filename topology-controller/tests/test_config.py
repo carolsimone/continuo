@@ -189,7 +189,7 @@ def test_release_requested_stream_constant_sourced_from_contract():
 
 def test_every_failure_kind_the_handler_can_publish_is_in_the_contract():
     """The handler names kinds by enum member, so an undeclared kind cannot
-    compile; this pins the members it relies on to the generated contract so
+    compile; this pins the members it relies on to the generated data contract so
     a regenerated vocabulary that drops one fails here, not in production."""
     import re
     from pathlib import Path

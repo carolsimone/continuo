@@ -240,7 +240,7 @@ func TestPreviousTries_LeavesOutATryTheStartupSweepFailed(t *testing.T) {
 }
 
 // TestPreviousTries_LeavesOutARoundsHandOverRow: a round's hand-over row
-// (fix.HandOverTry), written escalated once the round's tries are spent, is no
+// (fix.HandOverTry), written handed_over once the round's tries are spent, is no
 // try of its own, so a row of it that belongs to no remediation is not shown to
 // the model as an earlier try, while the round's tries are.
 func TestPreviousTries_LeavesOutARoundsHandOverRow(t *testing.T) {
@@ -250,7 +250,7 @@ func TestPreviousTries_LeavesOutARoundsHandOverRow(t *testing.T) {
 			VerifyError: "judged and still broken",
 		},
 		{
-			Try: fix.HandOverTry, Round: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusEscalated,
+			Try: fix.HandOverTry, Round: 1, ResolvedNodeIDs: []string{"model.a"}, Status: fix.StatusHandedOver,
 		},
 	}}
 

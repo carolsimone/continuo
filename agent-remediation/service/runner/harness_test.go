@@ -15,18 +15,18 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/remediationfile"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
-	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/files"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
-	"github.com/carolsimone/continuo/agent-remediation/workflows"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -434,57 +434,57 @@ func baseName(stream string) string {
 	return name
 }
 
-func refs(names ...string) []workflow.StepRef {
-	out := make([]workflow.StepRef, 0, len(names))
+func refs(names ...string) []flow.StepRef {
+	out := make([]flow.StepRef, 0, len(names))
 	for _, n := range names {
-		out = append(out, workflow.StepRef{Name: workflow.StepName(n)})
+		out = append(out, flow.StepRef{Name: flow.StepName(n)})
 	}
 	return out
 }
 
 // testFiles is a flow with four of the built-in types: a compile type, the
 // validation type, and the two upstream types.
-func testFiles(tries int) workflow.Set {
-	flow := workflow.Flow{
-		Version:        workflow.SupportedVersion,
+func testFiles(tries int) flow.Set {
+	fl := flow.Flow{
+		Version:        flow.SupportedVersion,
 		Name:           "rejected-release",
 		Trigger:        baseName(streams.HealTriggeredV1),
 		Types:          []string{"dbt-compile", "dbt-validation", "shared-upstream", "cross-project-upstream"},
 		AcrossClusters: refs("edits_map_to_a_project", "no_path_edited_twice", "one_manifest_kind"),
 		Gate:           refs("release_check"),
 		Tries:          tries,
-		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.FixProposedV1)},
-		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
-		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
-		Approver:       workflow.StepRef{Name: "node_owner"},
+		OnPass:         flow.Output{Action: flow.OutputPullRequest, Emits: baseName(streams.FixProposedV1)},
+		OnGiveUp:       flow.Output{Action: flow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
+		ModelMaySee:    []flow.DataClass{flow.ClassCode, flow.ClassLogs},
+		Approver:       flow.StepRef{Name: "node_owner"},
 		Revision:       flowRevision,
 		File:           flowFile,
 	}
-	typ := func(name string, m workflow.Match, context []string, promptStep string, preflight []string) workflow.Type {
-		return workflow.Type{
-			Version:   workflow.SupportedVersion,
+	typ := func(name string, m flow.Match, context []string, promptStep string, preflight []string) flow.Type {
+		return flow.Type{
+			Version:   flow.SupportedVersion,
 			Name:      name,
 			Match:     m,
 			Context:   refs(context...),
-			Agent:     workflow.Agent{Prompt: workflow.StepRef{Name: workflow.StepName(promptStep)}, Tools: []workflow.StepRef{}, Drafts: 1},
+			Agent:     flow.Agent{Prompt: flow.StepRef{Name: flow.StepName(promptStep)}, Tools: []flow.StepRef{}, Drafts: 1},
 			Preflight: refs(preflight...),
 			Revision:  "rev-" + name,
 			File:      "types/" + name + ".yaml",
 		}
 	}
-	types := []workflow.Type{
-		typ("dbt-compile", workflow.Match{Cluster: workflow.ClusterSingle, Source: "compile"},
+	types := []flow.Type{
+		typ("dbt-compile", flow.Match{Cluster: flow.ClusterSingle, Source: "compile"},
 			[]string{"failing_node_source", "dbt_log", "failure_precedents"}, "dbt-compile",
 			[]string{"target_file_was_shown", "content_changed", "confidence_not_low"}),
-		typ("dbt-validation", workflow.Match{Cluster: workflow.ClusterSingle, Source: "validation", NodeTypes: []string{"dbt-model", "dbt-seed", "dbt-snapshot", "none"}},
+		typ("dbt-validation", flow.Match{Cluster: flow.ClusterSingle, Source: "validation", NodeTypes: []string{"dbt-model", "dbt-seed", "dbt-snapshot", "none"}},
 			[]string{"candidate_sql", "dbt_log", "code_bundle_source", "own_change_diff", "upstream_changes", "changed_ancestor_diffs", "failure_precedents"},
 			"dbt-validation", []string{"content_changed", "confidence_not_low"}),
-		typ("shared-upstream", workflow.Match{Cluster: workflow.ClusterSharedUpstream},
+		typ("shared-upstream", flow.Match{Cluster: flow.ClusterSharedUpstream},
 			[]string{"upstream_target", "failure_precedents"}, "upstream", []string{"content_changed", "confidence_not_low"}),
-		typ("cross-project-upstream", workflow.Match{Cluster: workflow.ClusterCrossProject},
+		typ("cross-project-upstream", flow.Match{Cluster: flow.ClusterCrossProject},
 			[]string{"upstream_target", "failure_precedents"}, "upstream", []string{"content_changed", "confidence_not_low"}),
 	}
-	set := workflow.Set{Flows: map[string]workflow.Flow{flow.Name: flow}, Types: map[string]workflow.Type{}}
+	set := flow.Set{Flows: map[string]flow.Flow{fl.Name: fl}, Types: map[string]flow.Type{}}
 	for _, t := range types {
 		set.Types[t.Name] = t
 	}
@@ -504,7 +504,7 @@ type harness struct {
 	checks      *fakeReleaseChecks
 	llm         *scriptedLLM
 	cache       *memCache
-	files       workflow.Set
+	files       flow.Set
 	maintenance bool
 	stepTimeout time.Duration
 	// archive and packager are the repository checkout and the contract
@@ -618,7 +618,7 @@ func withPreflight(typeName string, checks ...string) option {
 // withBuiltinFiles runs the flows and types built into the binary.
 func withBuiltinFiles() option {
 	return func(h *harness) {
-		set, err := workflowfile.Load(workflows.Builtin)
+		set, err := remediationfile.Load(files.Builtin)
 		require.NoError(h.t, err)
 		h.files = set
 	}
@@ -722,13 +722,13 @@ func (h *harness) replaceStep(s any) {
 }
 
 // runnerOver is a runner over the harness's store and fakes that runs files.
-func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
+func (h *harness) runnerOver(files flow.Set) *runner.Runner {
 	return h.runnerOwnedBy(files, workerOwner)
 }
 
 // runnerOwnedBy is a runner over the harness's store and fakes that runs files
 // and holds its leases as owner.
-func (h *harness) runnerOwnedBy(files workflow.Set, owner string) *runner.Runner {
+func (h *harness) runnerOwnedBy(files flow.Set, owner string) *runner.Runner {
 	return runner.New(runner.Deps{
 		NewUoW:              func() uow.UnitOfWork { return hookedUoW{UnitOfWork: memory.NewUnitOfWork(h.store), h: h} },
 		Registry:            h.registry(),

@@ -14,15 +14,15 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/overlay"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
-const nameReleaseCheck workflow.StepName = "release_check"
+const nameReleaseCheck flow.StepName = "release_check"
 
 var (
 	errNoEdits      = errors.New("the try has no edit to verify")
@@ -75,7 +75,7 @@ func (*ReleaseCheck) Meta() step.Meta {
 		Kind: step.KindCheck,
 		Description: "Submits one release check per edited project to release-controller and waits for their verdict. " +
 			"A failed check gives a finding per failing node, and a check that does not answer in time fails the try.",
-		Stages:            []workflow.Stage{workflow.StageGate},
+		Stages:            []flow.Stage{flow.StageGate},
 		MayStandAsGateRun: true,
 	}
 }

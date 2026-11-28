@@ -1,7 +1,7 @@
 # Python image contract
 
 What a domain team's python image must provide to run under continuo.
-execution-controller launches your image as a Kubernetes Job for scheduled runs
+execution-controller launches your image as a Kubernetes Job for every run
 of your `python-node` nodes; this page is continuo's side of that contract.
 
 The normative specification of what the image must *do* with the environment
@@ -35,7 +35,7 @@ all of the project's nodes — the harness selects the right one at run time.
 The engine is part of the image **name**, not the tag, so the tag position
 stays free for an immutable `<version>@sha256:<digest>` pin.
 
-The base is dual-role: the same image serves the blue/green validation Jobs
+The base is dual-role: the same image serves the release check's validation Jobs
 (which execution-controller runs with an explicit `validation-op` command) and your
 domain image (which uses the base's default command, the node harness). You
 never set a command yourself.
@@ -54,7 +54,7 @@ bypasses that sole write sink.
 |---|---|
 | `NODE_ID` | The node's identity, `<schema>.<table>`. The harness matches its trailing two dot-separated segments against the contract files in your image. |
 | `TABLE_NAME` | The target table. Must match the selected node's `table`. |
-| `TARGET_SCHEMA` | The target schema. Must match the selected node's `schema`. There is **no fallback** — `SCHEMA` and `DBT_TARGET_SCHEMA` are dbt names and are deliberately not set. |
+| `TARGET_SCHEMA` | The node's declared schema. Must match the selected node's `schema`. There is **no fallback** — `SCHEMA` and `DBT_TARGET_SCHEMA` are dbt names and are deliberately not set. |
 
 Plus the warehouse connection: the operator-owned warehouse Secret
 (`validation.warehouseSecret`, the company's warehouse login; in the bundled

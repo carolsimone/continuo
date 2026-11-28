@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
@@ -37,7 +37,7 @@ const (
 // contract, a flow with no approver or one that names a step that is not an
 // approver, an unsupported version or trigger, and two listed types that can
 // select the same failure. A type no flow lists is only a warning.
-func Validate(set workflow.Set, reg *Registry) (warnings []string, err error) {
+func Validate(set flow.Set, reg *Registry) (warnings []string, err error) {
 	v := &validator{set: set, reg: reg, seen: map[string]bool{}}
 	for _, name := range sortedKeys(set.Flows) {
 		v.flow(set.Flows[name])
@@ -62,14 +62,14 @@ func Validate(set workflow.Set, reg *Registry) (warnings []string, err error) {
 }
 
 type validator struct {
-	set  workflow.Set
+	set  flow.Set
 	reg  *Registry
 	errs []error
 	seen map[string]bool
 }
 
 // refuse records one refusal, once per distinct text.
-func (v *validator) refuse(p workflow.Pos, format string, args ...any) {
+func (v *validator) refuse(p flow.Pos, format string, args ...any) {
 	msg := fmt.Sprintf("%s:%d: %s", p.File, p.Line, fmt.Sprintf(format, args...))
 	if v.seen[msg] {
 		return
@@ -78,9 +78,9 @@ func (v *validator) refuse(p workflow.Pos, format string, args ...any) {
 	v.errs = append(v.errs, errors.New(msg))
 }
 
-func (v *validator) flow(f workflow.Flow) {
-	if f.Version != workflow.SupportedVersion {
-		v.refuse(f.Pos, "flow %q has version %d, and only version %d is supported", f.Name, f.Version, workflow.SupportedVersion)
+func (v *validator) flow(f flow.Flow) {
+	if f.Version != flow.SupportedVersion {
+		v.refuse(f.Pos, "flow %q has version %d, and only version %d is supported", f.Name, f.Version, flow.SupportedVersion)
 	}
 	if want := baseName(streams.HealTriggeredV1); f.Trigger != want {
 		v.refuse(f.Pos, "flow %q has trigger %q, and the only trigger is %q", f.Name, f.Trigger, want)
@@ -92,7 +92,7 @@ func (v *validator) flow(f workflow.Flow) {
 	if len(f.Types) == 0 {
 		v.refuse(f.TypesPos, "flow %q has no types", f.Name)
 	}
-	var listed []workflow.Type
+	var listed []flow.Type
 	for _, name := range f.Types {
 		t, ok := v.set.Types[name]
 		if !ok {
@@ -104,9 +104,9 @@ func (v *validator) flow(f workflow.Flow) {
 	v.overlaps(f, listed)
 
 	v.modelMaySee(f)
-	v.stage(f.Context, workflow.StageContext, fieldContext)
-	v.stage(f.AcrossClusters, workflow.StageCrossCluster, fieldAcrossClusters)
-	gate := v.stage(f.Gate, workflow.StageGate, fieldGate)
+	v.stage(f.Context, flow.StageContext, fieldContext)
+	v.stage(f.AcrossClusters, flow.StageCrossCluster, fieldAcrossClusters)
+	gate := v.stage(f.Gate, flow.StageGate, fieldGate)
 	switch {
 	case len(f.Gate) == 0:
 		v.refuse(f.Pos, "flow %q has no gate", f.Name)
@@ -116,12 +116,12 @@ func (v *validator) flow(f workflow.Flow) {
 		v.refuse(f.Pos, "flow %q has a gate with no step that runs the release check", f.Name)
 	}
 
-	v.output(f.OnPass, "on_pass", workflow.OutputPullRequest)
-	v.output(f.OnGiveUp, "on_give_up", workflow.OutputHandOver)
+	v.output(f.OnPass, "on_pass", flow.OutputPullRequest)
+	v.output(f.OnGiveUp, "on_give_up", flow.OutputHandOver)
 	if f.Approver.Name == "" {
 		v.refuse(f.Pos, "flow %q has no approver, and a flow names the step that works out who approves its fixes (approver: node_owner)", f.Name)
 	} else {
-		v.stage([]workflow.StepRef{f.Approver}, workflow.StageApprover, fieldApprover)
+		v.stage([]flow.StepRef{f.Approver}, flow.StageApprover, fieldApprover)
 	}
 
 	v.classes(f, fmt.Sprintf("flow %q", f.Name), f.Context)
@@ -135,8 +135,8 @@ func (v *validator) flow(f workflow.Flow) {
 
 // modelMaySee refuses a flow that lists no data class for the model, or one
 // that names a class that does not exist.
-func (v *validator) modelMaySee(f workflow.Flow) {
-	all := joinClasses(workflow.DataClasses())
+func (v *validator) modelMaySee(f flow.Flow) {
+	all := joinClasses(flow.DataClasses())
 	if len(f.ModelMaySee) == 0 {
 		v.refuse(f.ModelMaySeePos, "flow %q has no model_may_see, and a flow lists the classes of content the model may see (%s)", f.Name, all)
 	}
@@ -151,14 +151,14 @@ func (v *validator) modelMaySee(f workflow.Flow) {
 // the data classes of its steps: it lists at least one class and every class
 // it lists exists. A flow whose list is not usable is refused once, by
 // modelMaySee, and its steps are not checked against the list.
-func holdsClasses(f workflow.Flow) bool {
-	return len(f.ModelMaySee) > 0 && !slices.ContainsFunc(f.ModelMaySee, func(c workflow.DataClass) bool { return !c.IsValid() })
+func holdsClasses(f flow.Flow) bool {
+	return len(f.ModelMaySee) > 0 && !slices.ContainsFunc(f.ModelMaySee, func(c flow.DataClass) bool { return !c.IsValid() })
 }
 
 // classes refuses every context step of owner (a flow or a type) that provides
 // evidence the flow does not let the model see: a key of a data class the
 // flow's model_may_see leaves out, or a key with no class at all.
-func (v *validator) classes(f workflow.Flow, owner string, refs []workflow.StepRef) {
+func (v *validator) classes(f flow.Flow, owner string, refs []flow.StepRef) {
 	if !holdsClasses(f) {
 		return
 	}
@@ -176,7 +176,7 @@ func (v *validator) classes(f workflow.Flow, owner string, refs []workflow.StepR
 // promptClasses refuses the prompt step of a type, at its line, for every
 // evidence key it reads that the flow does not let the model see. The prompt
 // builds the model's request from its keys, so the failure itself is among them.
-func (v *validator) promptClasses(f workflow.Flow, owner string, prompt workflow.StepRef) {
+func (v *validator) promptClasses(f flow.Flow, owner string, prompt flow.StepRef) {
 	if !holdsClasses(f) || prompt.Name == "" {
 		return
 	}
@@ -192,7 +192,7 @@ func (v *validator) promptClasses(f workflow.Flow, owner string, prompt workflow
 // holdToClasses refuses, at the line of r, a step of owner whose evidence key
 // has no data class or one that the flow's model_may_see leaves out. verb says
 // whether the step provides the key or reads it.
-func (v *validator) holdToClasses(f workflow.Flow, owner string, r workflow.StepRef, verb string, key remediation.EvidenceKey) {
+func (v *validator) holdToClasses(f flow.Flow, owner string, r flow.StepRef, verb string, key remediation.EvidenceKey) {
 	class, known := v.reg.EvidenceClass(key)
 	switch {
 	case !known:
@@ -205,7 +205,7 @@ func (v *validator) holdToClasses(f workflow.Flow, owner string, r workflow.Step
 
 // overlaps refuses two listed types whose matches can select the same failure,
 // naming the later type's match.
-func (v *validator) overlaps(f workflow.Flow, listed []workflow.Type) {
+func (v *validator) overlaps(f flow.Flow, listed []flow.Type) {
 	for i, a := range listed {
 		for _, b := range listed[i+1:] {
 			if a.Name != b.Name && a.Match.Overlaps(b.Match) {
@@ -215,7 +215,7 @@ func (v *validator) overlaps(f workflow.Flow, listed []workflow.Type) {
 	}
 }
 
-func (v *validator) output(o workflow.Output, field string, want workflow.OutputAction) {
+func (v *validator) output(o flow.Output, field string, want flow.OutputAction) {
 	switch {
 	case o.Action == "":
 		v.refuse(o.Pos, "output.%s is missing", field)
@@ -227,12 +227,12 @@ func (v *validator) output(o workflow.Output, field string, want workflow.Output
 	}
 }
 
-func (v *validator) typ(t workflow.Type) {
-	if t.Version != workflow.SupportedVersion {
-		v.refuse(t.Pos, "type %q has version %d, and only version %d is supported", t.Name, t.Version, workflow.SupportedVersion)
+func (v *validator) typ(t flow.Type) {
+	if t.Version != flow.SupportedVersion {
+		v.refuse(t.Pos, "type %q has version %d, and only version %d is supported", t.Name, t.Version, flow.SupportedVersion)
 	}
 	switch t.Match.Cluster {
-	case workflow.ClusterSingle, workflow.ClusterSharedUpstream, workflow.ClusterCrossProject:
+	case flow.ClusterSingle, flow.ClusterSharedUpstream, flow.ClusterCrossProject:
 	default:
 		v.refuse(t.Match.Pos, "type %q has match.cluster %q (single, shared_upstream or cross_project)", t.Name, t.Match.Cluster)
 	}
@@ -246,18 +246,18 @@ func (v *validator) typ(t workflow.Type) {
 		v.refuse(tool.Pos, "type %q lists agent.tools, which is reserved and must be empty", t.Name)
 	}
 
-	v.stage(t.Context, workflow.StageContext, fieldContext)
+	v.stage(t.Context, flow.StageContext, fieldContext)
 	if t.Agent.Prompt.Name == "" {
 		v.refuse(t.Agent.Pos, "type %q has no agent.prompt", t.Name)
 	} else {
-		v.stage([]workflow.StepRef{t.Agent.Prompt}, workflow.StagePrompt, fieldPrompt)
+		v.stage([]flow.StepRef{t.Agent.Prompt}, flow.StagePrompt, fieldPrompt)
 	}
-	v.stage(t.Preflight, workflow.StagePreflight, fieldPreflight)
+	v.stage(t.Preflight, flow.StagePreflight, fieldPreflight)
 }
 
 // stage checks that every ref names a registered step that may stand at stage,
 // and returns the Meta of those that do.
-func (v *validator) stage(refs []workflow.StepRef, stage workflow.Stage, field string) []step.Meta {
+func (v *validator) stage(refs []flow.StepRef, stage flow.Stage, field string) []step.Meta {
 	var metas []step.Meta
 	for _, r := range refs {
 		_, m, ok := v.reg.Lookup(r.Name)
@@ -279,20 +279,20 @@ func (v *validator) stage(refs []workflow.StepRef, stage workflow.Stage, field s
 }
 
 // kindOf is the Kind of step that may stand at stage.
-func kindOf(stage workflow.Stage) step.Kind {
+func kindOf(stage flow.Stage) step.Kind {
 	switch stage {
-	case workflow.StageContext:
+	case flow.StageContext:
 		return step.KindContext
-	case workflow.StagePrompt:
+	case flow.StagePrompt:
 		return step.KindPrompt
-	case workflow.StageApprover:
+	case flow.StageApprover:
 		return step.KindApprover
 	default:
 		return step.KindCheck
 	}
 }
 
-func joinClasses(classes []workflow.DataClass) string {
+func joinClasses(classes []flow.DataClass) string {
 	names := make([]string, len(classes))
 	for i, c := range classes {
 		names[i] = string(c)
@@ -300,7 +300,7 @@ func joinClasses(classes []workflow.DataClass) string {
 	return strings.Join(names, ", ")
 }
 
-func joinStages(stages []workflow.Stage) string {
+func joinStages(stages []flow.Stage) string {
 	names := make([]string, len(stages))
 	for i, s := range stages {
 		names[i] = string(s)
@@ -312,9 +312,9 @@ func joinStages(stages []workflow.Stage) string {
 // runner runs them, and refuses a step that reads an evidence key no earlier
 // step provides. The runner puts `failure` in first and `draft` in once the
 // prompt has answered.
-func (v *validator) chain(f workflow.Flow, t workflow.Type) {
+func (v *validator) chain(f flow.Flow, t flow.Type) {
 	provided := map[remediation.EvidenceKey]bool{remediation.KeyFailure: true}
-	walk := func(refs []workflow.StepRef) {
+	walk := func(refs []flow.StepRef) {
 		for _, r := range refs {
 			_, m, ok := v.reg.Lookup(r.Name)
 			if !ok {
@@ -333,7 +333,7 @@ func (v *validator) chain(f workflow.Flow, t workflow.Type) {
 	walk(f.Context)
 	walk(t.Context)
 	if t.Agent.Prompt.Name != "" {
-		walk([]workflow.StepRef{t.Agent.Prompt})
+		walk([]flow.StepRef{t.Agent.Prompt})
 	}
 	provided[remediation.KeyDraft] = true
 	walk(t.Preflight)

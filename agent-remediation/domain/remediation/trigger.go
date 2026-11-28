@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
@@ -135,7 +135,7 @@ func (t Trigger) Projects() []string {
 // belongs to.
 type Failure struct {
 	Trigger      Trigger
-	Kind         workflow.ClusterKind
+	Kind         flow.ClusterKind
 	TargetNodeID string
 	Target       TriggerNode
 	Members      []TriggerNode
@@ -155,7 +155,7 @@ func (f Failure) ArtifactPrefix(nodeID string) string {
 // first member of an upstream cluster (the target is a changed ancestor with no
 // failure of its own), otherwise the target.
 func (f Failure) PrecedentSubject() TriggerNode {
-	if f.Kind != workflow.ClusterSingle && len(f.Members) > 0 {
+	if f.Kind != flow.ClusterSingle && len(f.Members) > 0 {
 		return f.Members[0]
 	}
 	return f.Target

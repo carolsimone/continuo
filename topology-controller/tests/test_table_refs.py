@@ -17,8 +17,8 @@ def _node(*sqls: str, schema: str = "analytics", table: str = "m") -> ManifestNo
 
 
 def test_every_named_table_lower_cased_in_first_seen_order():
-    refs = referenced_tables(_node('SELECT * FROM "continuo_dbt"."RAW"."Ingest_Probe" JOIN raw.b ON 1=1'), dialect="postgres")
-    assert [(r.catalog, r.schema, r.table) for r in refs] == [("continuo_dbt", "raw", "ingest_probe"), ("", "raw", "b")]
+    refs = referenced_tables(_node('SELECT * FROM "continuo_dbt"."RAW"."External_Probe" JOIN raw.b ON 1=1'), dialect="postgres")
+    assert [(r.catalog, r.schema, r.table) for r in refs] == [("continuo_dbt", "raw", "external_probe"), ("", "raw", "b")]
 
 
 def test_a_table_named_twice_across_sqls_is_returned_once():

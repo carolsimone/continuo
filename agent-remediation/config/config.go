@@ -59,11 +59,11 @@ type Config struct {
 	GRPCPort    string
 	CatalogAddr string
 
-	// WorkflowsDir is AGENT_REMEDIATION_WORKFLOWS_DIR: the folder of an
+	// FilesDir is AGENT_REMEDIATION_FILES_DIR: the folder of an
 	// install's own flow, type and fixture files, which are loaded over the
 	// built-in ones. A folder that does not exist means the install has none;
 	// one that exists but cannot be read stops start-up.
-	WorkflowsDir string
+	FilesDir string
 
 	// ProjectRepoMapPath is the path to the project→repo YAML file. When empty
 	// or missing, ProjectRepoPaths is an empty map and Step-2 source resolution
@@ -128,9 +128,9 @@ type projectReposFile struct {
 // the cache adds to the shared, noeviction Redis instance.
 const defaultLLMCacheTTL = time.Hour
 
-// defaultWorkflowsDir is the folder the chart mounts an install's remediation
+// defaultFilesDir is the folder the chart mounts an install's remediation
 // files at.
-const defaultWorkflowsDir = "/etc/continuo-workflows"
+const defaultFilesDir = "/etc/continuo-remediation-files"
 
 // defaultPRPollInterval paces the PR-outcome reconciler; one minute keeps the
 // fix table at most one poll behind GitHub without pressuring rate limits.
@@ -220,7 +220,7 @@ func Load(v *pkgconfig.Validator) Config {
 		PROpeningGracePeriod: v.DurationOrDefault("REMEDIATION_PR_OPENING_GRACE_PERIOD", defaultPROpeningGracePeriod),
 		HTTPPort:             pkgconfig.EnvOrDefault("AGENT_REMEDIATION_HTTP_PORT", "8092"),
 		GRPCPort:             pkgconfig.EnvOrDefault("AGENT_REMEDIATION_GRPC_PORT", "50054"),
-		WorkflowsDir:         pkgconfig.EnvOrDefault("AGENT_REMEDIATION_WORKFLOWS_DIR", defaultWorkflowsDir),
+		FilesDir:             pkgconfig.EnvOrDefault("AGENT_REMEDIATION_FILES_DIR", defaultFilesDir),
 		CatalogAddr:          pkgconfig.EnvOrDefault("CONTINUO_CATALOG_ADDR", "catalog:50052"),
 		ProjectRepoMapPath:   pkgconfig.EnvOrDefault("PROJECT_REPO_MAP_PATH", ""),
 		ReleaseControllerURL: pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_URL", defaultReleaseControllerURL),

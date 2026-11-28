@@ -6,7 +6,7 @@ option go_package = "github.com/carolsimone/continuo/agent-remediation/api/remed
 
 // RemediationFixes serves the fix read-path and pull-request lifecycle
 // for the agent-remediation. The UI reads fixes via ListFixes/GetFix
-// and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
+// and drives a pull request through BeginPullRequest/RecordPullRequest/FailPullRequest.
 service RemediationFixes {
   // ListFixes returns fixes filtered by status, pr_state, release_id,
   // project, and limit.
@@ -220,7 +220,7 @@ message FileEdit {
 }
 
 // NodeOutcome is how one failing node's try ended: verifying, proposed,
-// failed, skipped, or escalated, with the reason for that outcome. code is the
+// failed, skipped, or handed over, with the reason for that outcome. code is the
 // handover_reason vocabulary value that says why the node was handed over when
 // its outcome is not part of a verified fix, and is empty otherwise.
 message NodeOutcome {

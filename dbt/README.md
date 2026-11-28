@@ -11,7 +11,7 @@ and ship them as their own project image built on this base.
 
 The images built from `base/` and `projects/*` are not long-running components
 (see the [top-level README](../README.md) for those) — `execution-controller`
-dispatches each as a one-shot Kubernetes `Job` per scheduled run, setting the
+dispatches each as a one-shot Kubernetes `Job` per attempt of a task, setting the
 container's `Command` explicitly from
 [`deploy/continuo/files/dbt-commands.yaml`](../deploy/continuo/files/dbt-commands.yaml)
 (via execution-controller's `CommandResolver` — the default dialect, or a per-team
@@ -249,7 +249,7 @@ docker exec \
 
 `dbt_upload` compiles a dbt project and uploads its filtered manifest to the
 canonical S3 key `s3://<bucket>/<project>/<release_id>/manifest.json`. Uploading
-the manifest is one step of shipping a change through continuo's blue/green
+the manifest is one step of shipping a change through continuo's
 release check; it does not, by itself, promote anything. To register the change,
 build and push the project image, upload the manifest, then `POST /api/v1/releases`
 on continuo's public API. Only one object is uploaded per release — the

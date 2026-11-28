@@ -270,7 +270,7 @@ export default function NodeDetailPage() {
 
   // latestHasNoTests reflects the LATEST topology's test_count only. It gates the
   // latest-mode button (which the backend evaluates against latest metadata) but
-  // NOT the old-snapshot path: a snapshot_of_run test is validated against the
+  // NOT the older-release path: a release_of_run test is validated against the
   // source run's own pinned test_count, which this page does not know, so testing
   // an older version stays available and the backend's no_tests check is the
   // backstop there. Only a KNOWN, positive test_count is runnable: a known zero
@@ -280,8 +280,8 @@ export default function NodeDetailPage() {
   const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
   // The newest run in the history that a press of this page could have made:
-  // a single-node run. A scheduled run of the node is not the outcome of a
-  // press, so it does not end the wait for one. While the history is not
+  // a single-node run. Any other run of the node (a cron or manual run, a
+  // rerun) is not the outcome of a press, so it does not end the wait for one. While the history is not
   // known (a read in flight or failed) the page observes nothing; a history
   // with no single-node run in its window observes none.
   const newestNodeRunId = runsKnown ? (runs.find(r => r.kind === 'single_node_run')?.run_id ?? null) : undefined;
@@ -293,7 +293,7 @@ export default function NodeDetailPage() {
     fetchNodeSummary();
   }, [fetchRuns, fetchNodeSummary]);
 
-  // A press is one action while the history shows no node run newer than the
+  // A press is one action while the history shows no single-node run newer than the
   // one the press saw.
   const { runState, runError, postRun } = useSingleNodeRun(
     { project, schema, table },
@@ -319,8 +319,8 @@ export default function NodeDetailPage() {
   }, [postRun, pendingSource]);
 
   const pendingRun = pendingSource ? runs.find(r => r.run_id === pendingSource) : undefined;
-  const snapshotLine = pendingRun
-    ? `Rebuilds from the snapshot of the run on ${formatTime(pendingRun.created_at)} (image ${pendingRun.image_tag}).`
+  const sourceLine = pendingRun
+    ? `Rebuilds from the release of the run on ${formatTime(pendingRun.created_at)} (image ${pendingRun.image_tag}).`
     : undefined;
 
   const stats = computeNodeStats(runs);
@@ -335,12 +335,12 @@ export default function NodeDetailPage() {
 
   // A node no longer active in the latest topology has no latest version to
   // run, so every latest-mode operation is unavailable for it; only the
-  // old-snapshot button remains.
+  // older-release button remains.
   const latestUnavailable = inactive;
 
   // The latest-mode test button is also gated by latest test metadata; the
-  // old-snapshot button is never blocked here (see latestHasNoTests). For an
-  // inactive node the inactive strip already explains why latest is unavailable.
+  // older-release button is never blocked here (see latestHasNoTests). For a
+  // retired node the inactive strip already explains why latest is unavailable.
   const latestTestBlocked = operation === 'test' && latestHasNoTests && !inactive;
 
   // Until the node's type is known a full refresh cannot be validated, so both
@@ -362,7 +362,7 @@ export default function NodeDetailPage() {
       {confirmOpen && createPortal(
         <FullRefreshConfirmDialog
           fqn={fqn ?? ''}
-          snapshot={snapshotLine}
+          source={sourceLine}
           seed={nodeType === DBT_SEED}
           objects={runs[0]?.blocking_objects}
           onConfirm={handleConfirmFullRefresh}
@@ -444,13 +444,13 @@ export default function NodeDetailPage() {
           onClick={() => setPickerOpen(true)}
           title="Run this node with the image_tag from a past run"
         >
-          Run with old snapshot…
+          Run on an older release…
         </button>
       </div>
 
       {latestTestBlocked && (
         <div className="info-strip info-strip--info">
-          The latest version of this node has no tests. Run with an old snapshot to test a version that did, or choose another operation.
+          The latest version of this node has no tests. Run on an older release to test a version that did, or choose another operation.
         </div>
       )}
 
@@ -458,7 +458,7 @@ export default function NodeDetailPage() {
         <div className="info-strip info-strip--info">
           <span className="info-strip__icon">ℹ</span>
           This node is no longer active in the topology, so it cannot run from its latest version.
-          Use “Run with old snapshot…” to run a version it had.
+          Use “Run on an older release…” to run a version it had.
         </div>
       )}
 

@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
@@ -87,7 +87,7 @@ func TestPrompt_MakesItsRequestWithOneModelCall(t *testing.T) {
 func TestPrompt_ACrossProjectClusterGetsTheCrossProjectClause(t *testing.T) {
 	model := &fakeModel{res: answer(fixedSource, "high")}
 
-	proposeUpstream(t, failure(func(f *remediation.Failure) { f.Kind = workflow.ClusterCrossProject }), upstreamEvidence(), model)
+	proposeUpstream(t, failure(func(f *remediation.Failure) { f.Kind = flow.ClusterCrossProject }), upstreamEvidence(), model)
 
 	assert.Equal(t, expectedRequest(true), model.reqs[0])
 	assert.NotEqual(t, expectedRequest(false).System, model.reqs[0].System)

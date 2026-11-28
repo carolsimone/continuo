@@ -205,73 +205,72 @@ app.kubernetes.io/name: {{ .name }}
 {{- printf "%s-ci-auth" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "continuo.agentRemediationWorkflowsConfigMapName" -}}
-{{- printf "%s-agent-remediation-workflows" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "continuo.agentRemediationFilesConfigMapName" -}}
+{{- printf "%s-agent-remediation-files" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{/* agentRemediation.workflows.files, the install's remediation files as
+{{/* agentRemediation.files, the install's remediation files as
      {<file name>: <content>}: an empty map when none is set, also for a
-     release without a workflows block (helm upgrade --reuse-values from an
-     older chart) or with `files: null`. JSON object. */}}
-{{- define "continuo.agentRemediation.workflowFiles" -}}
-{{- $workflows := dig "workflows" dict (.Values.agentRemediation | default dict) | default dict -}}
-{{- toJson (get $workflows "files" | default dict) -}}
+     release without an agentRemediation block (helm upgrade --reuse-values
+     from an older chart) or with `files: null`. JSON object. */}}
+{{- define "continuo.agentRemediation.files" -}}
+{{- toJson (get (.Values.agentRemediation | default dict) "files" | default dict) -}}
 {{- end -}}
 
 {{/* The folder agent-remediation reads the install's remediation files from,
      for its components entry (the argument): the entry's
-     AGENT_REMEDIATION_WORKFLOWS_DIR, else agent-remediation's
-     defaultWorkflowsDir (lint.sh reads it from config.go and renders a mount
+     AGENT_REMEDIATION_FILES_DIR, else agent-remediation's
+     defaultFilesDir (lint.sh reads it from config.go and renders a mount
      there with no variable set), without a trailing slash, so that a
      mountPath compares to it once its own trailing slash is trimmed.
-     Call: include "continuo.agentRemediation.workflowsDir" $svc */}}
-{{- define "continuo.agentRemediation.workflowsDir" -}}
-{{- toString (get (.env | default dict) "AGENT_REMEDIATION_WORKFLOWS_DIR") | default "/etc/continuo-workflows" | trimSuffix "/" -}}
+     Call: include "continuo.agentRemediation.filesDir" $svc */}}
+{{- define "continuo.agentRemediation.filesDir" -}}
+{{- toString (get (.env | default dict) "AGENT_REMEDIATION_FILES_DIR") | default "/etc/continuo-remediation-files" | trimSuffix "/" -}}
 {{- end -}}
 
-{{/* Fails the render when agentRemediation.workflows.files is set and the
+{{/* Fails the render when agentRemediation.files is set and the
      agent-remediation components entry svc would not show the files to the
      component, naming the entry and what is wrong. The files reach the component
-     only when the entry has a volume remediation-workflows that is a
+     only when the entry has a volume remediation-files that is a
      ConfigMap volume with an empty configMap.name, which mounts the chart's
      own ConfigMap and is the only form that puts the ConfigMap's digest
-     (checksum/agent-remediation-workflows) on the pod template: with any name,
+     (checksum/agent-remediation-files) on the pod template: with any name,
      the chart's own included, a changed file would not roll agent-remediation,
      which would keep serving the files it read at startup. It also needs a
      volumeMounts entry of that volume with no subPath at the folder
-     agent-remediation reads ("continuo.agentRemediation.workflowsDir"). An
+     agent-remediation reads ("continuo.agentRemediation.filesDir"). An
      operator's own components list, or an older chart's list that `helm upgrade
      --reuse-values` keeps, may miss any of these; without files set nothing is
      checked, so such a list still renders.
-     Call: include "continuo.agentRemediation.assertWorkflowsMount" (dict "root" $ "svc" $svc) */}}
-{{- define "continuo.agentRemediation.assertWorkflowsMount" -}}
+     Call: include "continuo.agentRemediation.assertFilesMount" (dict "root" $ "svc" $svc) */}}
+{{- define "continuo.agentRemediation.assertFilesMount" -}}
 {{- $root := .root -}}
 {{- $svc := .svc -}}
-{{- if (include "continuo.agentRemediation.workflowFiles" $root | fromJson) -}}
-{{- $volumeName := "remediation-workflows" -}}
-{{- $set := "agentRemediation.workflows.files is set, but" -}}
+{{- if (include "continuo.agentRemediation.files" $root | fromJson) -}}
+{{- $volumeName := "remediation-files" -}}
+{{- $set := "agentRemediation.files is set, but" -}}
 {{- $volume := dict -}}
 {{- $found := false -}}
 {{- range $svc.volumes }}{{ if eq .name $volumeName }}{{ $volume = . }}{{ $found = true }}{{ end }}{{ end }}
 {{- if not $found -}}
-{{- fail (printf "%s components[%s] has no volume %s, so agent-remediation would never read the files; a release upgraded with --reuse-values keeps an older chart's components list, so upgrade once with your values file or --reset-then-reuse-values; with your own components list, add that volume, its volumeMounts entry and AGENT_REMEDIATION_WORKFLOWS_DIR as the chart's values.yaml has them" $set $svc.name $volumeName) -}}
+{{- fail (printf "%s components[%s] has no volume %s, so agent-remediation would never read the files; a release upgraded with --reuse-values keeps an older chart's components list, so upgrade once with your values file or --reset-then-reuse-values; with your own components list, add that volume, its volumeMounts entry and AGENT_REMEDIATION_FILES_DIR as the chart's values.yaml has them" $set $svc.name $volumeName) -}}
 {{- end -}}
 {{- if not (hasKey $volume "configMap") -}}
 {{- fail (printf "%s components[%s].volumes[%s] is not a ConfigMap volume, so the files reach no pod; make it configMap: {name: \"\"}, which mounts the chart's ConfigMap of the files" $set $svc.name $volumeName) -}}
 {{- end -}}
-{{- $chartConfigMap := include "continuo.agentRemediationWorkflowsConfigMapName" $root -}}
+{{- $chartConfigMap := include "continuo.agentRemediationFilesConfigMapName" $root -}}
 {{- $configMap := toString (get ($volume.configMap | default dict) "name") -}}
 {{- if eq $configMap $chartConfigMap -}}
 {{- fail (printf "%s components[%s].volumes[%s] names the chart's ConfigMap %s, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty, which mounts the same ConfigMap with its digest" $set $svc.name $volumeName $configMap) -}}
 {{- end -}}
 {{- if $configMap -}}
-{{- fail (printf "%s components[%s].volumes[%s] names the ConfigMap %s, your own, so the files reach no pod; leave its configMap.name empty to mount the chart's ConfigMap of the files, or keep your files in %s and leave agentRemediation.workflows.files empty" $set $svc.name $volumeName $configMap $configMap) -}}
+{{- fail (printf "%s components[%s].volumes[%s] names the ConfigMap %s, your own, so the files reach no pod; leave its configMap.name empty to mount the chart's ConfigMap of the files, or keep your files in %s and leave agentRemediation.files empty" $set $svc.name $volumeName $configMap $configMap) -}}
 {{- end -}}
-{{- $dir := include "continuo.agentRemediation.workflowsDir" $svc -}}
+{{- $dir := include "continuo.agentRemediation.filesDir" $svc -}}
 {{- $mounts := list -}}
 {{- range $svc.volumeMounts }}{{ if eq .name $volumeName }}{{ $mounts = append $mounts . }}{{ end }}{{ end }}
 {{- if not $mounts -}}
-{{- fail (printf "%s components[%s] has no volumeMounts entry for the volume %s, so the files reach no container; mount it at %s, the folder AGENT_REMEDIATION_WORKFLOWS_DIR names" $set $svc.name $volumeName $dir) -}}
+{{- fail (printf "%s components[%s] has no volumeMounts entry for the volume %s, so the files reach no container; mount it at %s, the folder AGENT_REMEDIATION_FILES_DIR names" $set $svc.name $volumeName $dir) -}}
 {{- end -}}
 {{- $mounted := false -}}
 {{- $subPath := "" -}}
@@ -290,7 +289,7 @@ app.kubernetes.io/name: {{ .name }}
 {{- if $subPath -}}
 {{- fail (printf "%s components[%s] mounts the volume %s at %s with subPath %s, which mounts one entry of the ConfigMap rather than the folder of files; remove the subPath" $set $svc.name $volumeName $dir $subPath) -}}
 {{- end -}}
-{{- fail (printf "%s components[%s] mounts the volume %s at %s, and AGENT_REMEDIATION_WORKFLOWS_DIR is %s, so agent-remediation would never read the files; mount the volume at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names, or set the variable to the mount's path" $set $svc.name $volumeName (join ", " $paths) $dir) -}}
+{{- fail (printf "%s components[%s] mounts the volume %s at %s, and AGENT_REMEDIATION_FILES_DIR is %s, so agent-remediation would never read the files; mount the volume at the folder AGENT_REMEDIATION_FILES_DIR names, or set the variable to the mount's path" $set $svc.name $volumeName (join ", " $paths) $dir) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -325,7 +324,7 @@ app.kubernetes.io/name: {{ .name }}
      Every other document must parse as a YAML mapping whose kind is flow,
      type or fixture and whose version is a number in $supportedVersions, the
      versions agent-remediation loads (pkg/deploycheck pins them to its
-     workflow.SupportedVersion). fromYaml reads a number as float64 and a
+     flow.SupportedVersion). fromYaml reads a number as float64 and a
      quoted "1" as a string, so the version is compared as a number only when
      it is one. fromYaml also keeps the last of two keys of one mapping, which
      the loader refuses, so the lines of each document that start with kind or
@@ -337,15 +336,15 @@ app.kubernetes.io/name: {{ .name }}
      agent-remediation at startup and by `remediation-check files`. The
      loader's reading of each of these shapes is pinned by
      TestLoad_EmptyDocuments, TestLoad_Directives and
-     TestLoad_RefusesADuplicateKey in agent-remediation/adapters/workflowfile;
+     TestLoad_RefusesADuplicateKey in agent-remediation/adapters/remediationfile;
      lint.sh renders the same shapes, and TestLoad_AgreesWithTheChartsFixtures
      loads its fixture files.
-     Call: include "continuo.agentRemediation.assertWorkflowFiles" $ */}}
-{{- define "continuo.agentRemediation.assertWorkflowFiles" -}}
+     Call: include "continuo.agentRemediation.assertRemediationFiles" $ */}}
+{{- define "continuo.agentRemediation.assertRemediationFiles" -}}
 {{- $supportedVersions := list 1 -}}
 {{- $supported := join ", " $supportedVersions -}}
-{{- range $name, $content := (include "continuo.agentRemediation.workflowFiles" . | fromJson) -}}
-{{- $file := printf "agentRemediation.workflows.files[%s]" $name -}}
+{{- range $name, $content := (include "continuo.agentRemediation.files" . | fromJson) -}}
+{{- $file := printf "agentRemediation.files[%s]" $name -}}
 {{- $fragments := regexSplit "(?m)^---(?:[ \t\r]|$)" (toString $content) -1 -}}
 {{- $docs := list -}}
 {{- $carry := "" -}}

@@ -293,7 +293,7 @@ def _issues_failure(
     name: str, node_id: str, node: dict, resource_type: str, issues: list[Issue], header_issues: list[str],
     timings: ReleaseTimings,
 ) -> FailedNode:
-    """The invalid contract of a node whose generated contract fails its checks,
+    """The invalid contract of a node whose generated data contract fails its checks,
     or of a seed whose declared columns differ from its CSV header: every issue,
     each counted by its reason.
 
@@ -324,7 +324,7 @@ def _topology_facts(node_id: str, facts: dbt.RunFacts) -> tuple[NodeType, int | 
 
 
 def _id_issue(node: dict, document: Mapping[str, Any]) -> Issue | None:
-    """The issue of a generated contract whose id is not the unique_id continuo gives
+    """The issue of a generated data contract whose id is not the unique_id continuo gives
     its node, or None when the two are equal.
 
     The library lowers `<schema>.<table>` as one string, while the node's unique_id

@@ -77,7 +77,7 @@ func TestApplySeedReloads_SetsAnOperationOnlyWhereItDiffersFromTheRuns(t *testin
 
 func TestApplySeedReloads_ARefusedSeedIsNotReadyAndNeitherIsAnythingBelowIt(t *testing.T) {
 	g := fxGraph() // fx_transactions_eur reads the seed
-	p := ApplySeedReloads(dagPlan(g, set(seed, table), nil), g, model.OperationRun, []SeedReload{{Seed: seed, Plan: seedreload.Plan{
+	p := ApplySeedReloads(topologyPlan(g, set(seed, table), nil), g, model.OperationRun, []SeedReload{{Seed: seed, Plan: seedreload.Plan{
 		Load: seedreload.Load{Operation: model.OperationFullRefresh, Refusal: model.FailureReasonSeedFullRefreshDisabled, Reason: "columns changed; +full_refresh: false keeps the table, so no command can apply the change"}}}})
 	assert.Equal(t, model.FailureReasonSeedFullRefreshDisabled, taskOf(p, seed).Refusal)
 	assert.Empty(t, p.Ready)
@@ -97,7 +97,7 @@ func TestApplySeedReloads_ATaskBelowARefusedSeedThroughANodeWithoutATaskIsNotRea
 func TestApplySeedReloads_AnInheritedViewBelowAReloadedSeedRunsAgain(t *testing.T) {
 	g := fxGraph()
 	root := uuid.New()
-	p := ApplySeedReloads(dagPlan(g, set(seed), map[topology.NodeKey]uuid.UUID{current: root}), g, model.OperationRun, []SeedReload{{Seed: seed, Plan: seedreload.Plan{
+	p := ApplySeedReloads(topologyPlan(g, set(seed), map[topology.NodeKey]uuid.UUID{current: root}), g, model.OperationRun, []SeedReload{{Seed: seed, Plan: seedreload.Plan{
 		Load:     seedreload.Load{Operation: model.OperationRun, DropsTable: true},
 		Rebuilds: []seedreload.Rebuild{{Key: string(current), Operation: model.OperationRun, Reason: "r"}}}}})
 	assert.False(t, taskOf(p, current).Inherited)

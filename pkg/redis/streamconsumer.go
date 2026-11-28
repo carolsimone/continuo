@@ -351,7 +351,7 @@ const (
 )
 
 // safeInvoke calls the handler once under the handler deadline, with panic
-// recovery: a recovered panic becomes a plain error, so one poison message
+// recovery: a recovered panic becomes a plain error, so one message that always fails
 // cannot crash the process. deadlineHit reports that the handler's own
 // deadline ended the call while the consumer's context was still live.
 func (c *StreamConsumer) safeInvoke(ctx context.Context, msg goredis.XMessage) (deadlineHit bool, err error) {

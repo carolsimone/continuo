@@ -288,7 +288,7 @@ func TestRunner_AHandedOverFixRowStoresItsNodesApprovers(t *testing.T) {
 				}
 			},
 			trigger: func() remediation.Trigger { return trigger("compile", compileNode("svc-b"), compileNode("svc-a")) },
-			try:     fix.HandOverTry, status: fix.StatusEscalated, code: model.HandoverReasonTriesSpent,
+			try:     fix.HandOverTry, status: fix.StatusHandedOver, code: model.HandoverReasonTriesSpent,
 		},
 		"a try with nothing to verify": {
 			trigger: func() remediation.Trigger { return trigger("compile", noFile("svc-b"), noFile("svc-a")) },

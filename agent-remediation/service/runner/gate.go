@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -21,13 +21,13 @@ import (
 // gateStep returns the flow's gate: one long check, which starts the
 // release checks of a try and answers later. The name of the gate's first step
 // is returned with any error, for the failure to be counted on its row.
-func (r *Runner) gateStep(flow workflow.Flow) (workflow.StepName, step.LongCheck, error) {
-	if len(flow.Gate) == 0 {
-		return "", nil, fmt.Errorf("flow %q has no gate", flow.Name)
+func (r *Runner) gateStep(fl flow.Flow) (flow.StepName, step.LongCheck, error) {
+	if len(fl.Gate) == 0 {
+		return "", nil, fmt.Errorf("flow %q has no gate", fl.Name)
 	}
-	name := flow.Gate[0].Name
-	if len(flow.Gate) > 1 {
-		return name, nil, fmt.Errorf("flow %q has %d gate steps, and the runner runs a gate of one long check", flow.Name, len(flow.Gate))
+	name := fl.Gate[0].Name
+	if len(fl.Gate) > 1 {
+		return name, nil, fmt.Errorf("flow %q has %d gate steps, and the runner runs a gate of one long check", fl.Name, len(fl.Gate))
 	}
 	g, err := lookup[step.LongCheck](r.d.Registry, name, step.KindCheck)
 	return name, g, err
@@ -195,7 +195,7 @@ func (r *Runner) pollGate(ctx context.Context, id uuid.UUID) error {
 // no row yet gets a failed one, and a gate with a row keeps its status. A flow
 // with no gate step has no name to count on, so the row is the flow's
 // "gate". The error is returned.
-func (r *Runner) countGateFailure(ctx context.Context, run tryRun, name workflow.StepName, cause error) error {
+func (r *Runner) countGateFailure(ctx context.Context, run tryRun, name flow.StepName, cause error) error {
 	if name == "" {
 		name = flowGateRowName
 	}
@@ -335,7 +335,7 @@ func (r *Runner) concluded(row remediation.StepRun, res remediation.CheckResult)
 // try's fix row is no longer verifying, no output runs: the try fails
 // and the remediation ends.
 func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepRun, try fix.View, checked []checkedCluster, verdict step.GateVerdict) error {
-	outName := workflow.StepName(run.flow.OnPass.Action)
+	outName := flow.StepName(run.flow.OnPass.Action)
 	out, err := lookup[step.PassOutput](r.d.Registry, outName, step.KindOutput)
 	if err != nil {
 		return r.countFailure(ctx, row, err)

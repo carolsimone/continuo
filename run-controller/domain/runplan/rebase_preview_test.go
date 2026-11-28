@@ -329,7 +329,7 @@ func TestRebasePreview_AChangedLeafBelowAChangedNodeIsDownstream(t *testing.T) {
 // which feeds ftable_e, rebuilds ftable_c and therefore ftable_d, a success
 // that reads it; ftable_a and ftable_b stay inherited.
 func TestRebasePreview_OfTheFailureSchedule(t *testing.T) {
-	sourceGraph := scheduleGraph(e2eDAG, "e2e-schedule-failure")
+	sourceGraph := scheduleGraph(e2eTopology, "e2e-schedule-failure")
 	live := rehashed(sourceGraph, "ftable_c")
 
 	pv, err := runplan.Rebase{Source: failedFailureRun(), SourceGraphs: onSource(sourceGraph), IncludeChangedUpstream: true}.Preview(live)
@@ -380,7 +380,7 @@ func TestRebasePreview_AnUndeclaredNodeTypeTheOptionPullsInIsRefused(t *testing.
 
 // Preview refuses what Select refuses.
 func TestRebasePreview_Refusals(t *testing.T) {
-	_, err := runplan.Rebase{Source: sourceRun(model.OperationTest, nil, []string{"seed_table_1"})}.Preview(scheduleGraph(e2eDAG, "seed"))
+	_, err := runplan.Rebase{Source: sourceRun(model.OperationTest, nil, []string{"seed_table_1"})}.Preview(scheduleGraph(e2eTopology, "seed"))
 	assert.ErrorIs(t, err, runplan.ErrRerunOfTestUnsupported)
 
 	all := sourceRun(model.OperationRun, []string{"x", "y", "z", "p", "q"}, nil)

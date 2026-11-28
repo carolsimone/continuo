@@ -1,7 +1,7 @@
 """Rewrite a node's candidate SQL so its schema-qualified references point at the
-blue/green candidate schema instead of production.
+candidate schema instead of production.
 
-Blue/green validation builds a changed node's full upstream closure as empty
+The release check builds a changed node's full upstream closure as empty
 tables in an isolated candidate schema, in dependency order, then builds the node
 against them — touching nothing in production. The models are never edited: every
 schema-qualified reference that resolves to a known graph node (the same registry

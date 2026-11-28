@@ -53,7 +53,7 @@ func nodeTargetArgs(verb string, stdout, stderr io.Writer) cobra.PositionalArgs 
 // the optional fourth positional argument and the errors it can add.
 const sourceRunArgDoc = `  [source-run-id]  Optional. The id of a past run of this node, as listed by
                    "node history". When given, the new run reuses the image
-                   and manifest version that run used ("snapshot_of_run"
+                   and manifest version that run used ("release_of_run"
                    metadata) instead of the latest topology. The source run
                    must have finished (succeeded, failed or cancelled) and
                    must have included this node. Omit the argument for

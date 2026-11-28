@@ -17,16 +17,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/remediationfile"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/scripted"
-	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/files"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
-	"github.com/carolsimone/continuo/agent-remediation/workflows"
 	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
@@ -38,13 +38,13 @@ var ctx = context.Background()
 // real repofs contract locator and inspector and worlds over the memory store.
 func builtinSuite(t *testing.T) conformance.Suite {
 	t.Helper()
-	files, err := workflowfile.Load(workflows.Builtin)
+	loaded, err := remediationfile.Load(files.Builtin)
 	require.NoError(t, err)
-	fixtures, err := workflowfile.LoadFixtures(workflows.Builtin)
+	fixtures, err := remediationfile.LoadFixtures(files.Builtin)
 	require.NoError(t, err)
 	locator := repofs.NewLocator(slog.New(slog.DiscardHandler))
 	return conformance.Suite{
-		Files:           files,
+		Files:           loaded,
 		Fixtures:        fixtures,
 		Locator:         locator,
 		Inspector:       locator,
@@ -55,9 +55,9 @@ func builtinSuite(t *testing.T) conformance.Suite {
 
 // onlyTypes narrows the suite's flow to the named types, in that order.
 func onlyTypes(s conformance.Suite, names ...string) conformance.Suite {
-	flow := s.Files.Flows[flowName]
-	flow.Types = names
-	files := workflow.Set{Flows: map[string]workflow.Flow{flowName: flow}, Types: s.Files.Types}
+	fl := s.Files.Flows[flowName]
+	fl.Types = names
+	files := flow.Set{Flows: map[string]flow.Flow{flowName: fl}, Types: s.Files.Types}
 	s.Files = files
 	return s
 }
@@ -73,7 +73,7 @@ func withoutFixture(s conformance.Suite, typeName string) conformance.Suite {
 func builtinTypeFiles(t *testing.T) int {
 	t.Helper()
 	var n int
-	require.NoError(t, fs.WalkDir(workflows.Builtin, "types", func(p string, d fs.DirEntry, err error) error {
+	require.NoError(t, fs.WalkDir(files.Builtin, "types", func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && (path.Ext(p) == ".yaml" || path.Ext(p) == ".yml") {
 			n++
 		}
@@ -182,13 +182,13 @@ func TestSuite_AFixtureForAFlowNoFileDefinesFails(t *testing.T) {
 // built-in flow that lists types, in that order and with tries tries, and every
 // built-in flow fixture copied to play it. The built-in flow is left as it is.
 func withSecondFlow(s conformance.Suite, name string, tries int, types ...string) conformance.Suite {
-	flow := s.Files.Flows[flowName]
-	flow.Name = name
-	flow.Types = types
-	flow.Tries = tries
+	fl := s.Files.Flows[flowName]
+	fl.Name = name
+	fl.Types = types
+	fl.Tries = tries
 	flows := maps.Clone(s.Files.Flows)
-	flows[name] = flow
-	s.Files = workflow.Set{Flows: flows, Types: s.Files.Types}
+	flows[name] = fl
+	s.Files = flow.Set{Flows: flows, Types: s.Files.Types}
 	fixtures := slices.Clone(s.Fixtures)
 	for _, f := range s.Fixtures {
 		if f.Flow == flowName {
@@ -373,7 +373,7 @@ func TestSuite_AnAnswerPreflightRefusesFailsTheScenariosThatExpectAFix(t *testin
 		conformance.PreflightRevisionPasses: "the script holds 2 " + unscripted + "3",
 		conformance.GateFailsNextTryLearns:  "the script holds 2 " + unscripted + "3",
 		// Three refused answers spend the first try's three drafts.
-		conformance.TriesSpent:    "the tries are [failed], want [failed failed failed escalated]",
+		conformance.TriesSpent:    "the tries are [failed], want [failed failed failed handed_over]",
 		conformance.ModelDeclines: "the script holds 2 " + unscripted + "3",
 		conformance.Redelivery:    "the script holds 2 " + unscripted + "3",
 	} {
@@ -489,14 +489,14 @@ func TestSuite_AFailureNamesItsProjectsAndNodesInSortedOrder(t *testing.T) {
 // withDrafts is the suite with every type allowing drafts drafts
 // and the flow making tries tries.
 func withDrafts(s conformance.Suite, drafts, tries int) conformance.Suite {
-	types := make(map[string]workflow.Type, len(s.Files.Types))
+	types := make(map[string]flow.Type, len(s.Files.Types))
 	for name, typ := range s.Files.Types {
 		typ.Agent.Drafts = drafts
 		types[name] = typ
 	}
-	flow := s.Files.Flows[flowName]
-	flow.Tries = tries
-	s.Files = workflow.Set{Flows: map[string]workflow.Flow{flowName: flow}, Types: types}
+	fl := s.Files.Flows[flowName]
+	fl.Tries = tries
+	s.Files = flow.Set{Flows: map[string]flow.Flow{flowName: fl}, Types: types}
 	return s
 }
 

@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 )
 
@@ -20,8 +20,8 @@ const remediationFailureLimit = 5
 
 // withoutTheFlow is the harness's files with no flow, so no remediation the
 // harness accepted can be loaded: each follows a flow the files do not define.
-func (h *harness) withoutTheFlow() workflow.Set {
-	return workflow.Set{Flows: map[string]workflow.Flow{}, Types: h.files.Types}
+func (h *harness) withoutTheFlow() flow.Set {
+	return flow.Set{Flows: map[string]flow.Flow{}, Types: h.files.Types}
 }
 
 // A remediation whose flow the loaded files do not define cannot be loaded, so

@@ -67,7 +67,7 @@ class CsvRead(ReadsRule):
 
 class NoReads(ReadsRule):
     """An empty mapping: the node's script fetches its own data, so it has no
-    upstream query and is a DAG root."""
+    upstream query and is a topology root."""
 
     def parse(self, raw, label: str) -> ParsedReads:
         if not isinstance(raw, dict) or raw:

@@ -6,21 +6,21 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/remediationfile"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
+	"github.com/carolsimone/continuo/agent-remediation/files"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
-	"github.com/carolsimone/continuo/agent-remediation/workflows"
 )
 
 // TestEveryRegisteredStepIsUsedByABuiltinFile: a step the registry builds but
 // no built-in flow or type names is never run and never checked by the
 // conformance suite, so each registered name must appear in some built-in file.
 func TestEveryRegisteredStepIsUsedByABuiltinFile(t *testing.T) {
-	set, err := workflowfile.Load(workflows.Builtin)
+	set, err := remediationfile.Load(files.Builtin)
 	require.NoError(t, err)
 
-	used := map[workflow.StepName]bool{}
-	mark := func(refs ...workflow.StepRef) {
+	used := map[flow.StepName]bool{}
+	mark := func(refs ...flow.StepRef) {
 		for _, r := range refs {
 			used[r.Name] = true
 		}
@@ -31,8 +31,8 @@ func TestEveryRegisteredStepIsUsedByABuiltinFile(t *testing.T) {
 		mark(f.Gate...)
 		mark(f.Approver)
 		// An output step is named by the action of the flow's output.
-		used[workflow.StepName(f.OnPass.Action)] = true
-		used[workflow.StepName(f.OnGiveUp.Action)] = true
+		used[flow.StepName(f.OnPass.Action)] = true
+		used[flow.StepName(f.OnGiveUp.Action)] = true
 	}
 	for _, ty := range set.Types {
 		mark(ty.Context...)
@@ -54,7 +54,7 @@ func TestEveryRegisteredStepIsUsedByABuiltinFile(t *testing.T) {
 // TestBuiltinFilesValidate: the files built into the binary pass every check
 // of Validate against the registry, with no warning.
 func TestBuiltinFilesValidate(t *testing.T) {
-	set, err := workflowfile.Load(workflows.Builtin)
+	set, err := remediationfile.Load(files.Builtin)
 	require.NoError(t, err)
 
 	warnings, err := runner.Validate(set, runner.NewRegistry(runner.Collaborators{}))
@@ -65,12 +65,12 @@ func TestBuiltinFilesValidate(t *testing.T) {
 // TestBuiltinFlowLetsTheModelSeeCodeAndLogs: the built-in flow shows the model
 // source code and the text failures and tools report, and no rows of data.
 func TestBuiltinFlowLetsTheModelSeeCodeAndLogs(t *testing.T) {
-	set, err := workflowfile.Load(workflows.Builtin)
+	set, err := remediationfile.Load(files.Builtin)
 	require.NoError(t, err)
 
-	flow, ok := set.Flows["rejected-release"]
+	fl, ok := set.Flows["rejected-release"]
 	require.True(t, ok)
-	require.Equal(t, []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs}, flow.ModelMaySee)
+	require.Equal(t, []flow.DataClass{flow.ClassCode, flow.ClassLogs}, fl.ModelMaySee)
 }
 
 // TestBuiltinTypesCheckSiblingsBeforeImagePackages: a python or csv cluster
@@ -79,7 +79,7 @@ func TestBuiltinFlowLetsTheModelSeeCodeAndLogs(t *testing.T) {
 // type that runs both steps runs failing_siblings before image_packages, and
 // the reason recorded is the sibling's.
 func TestBuiltinTypesCheckSiblingsBeforeImagePackages(t *testing.T) {
-	set, err := workflowfile.Load(workflows.Builtin)
+	set, err := remediationfile.Load(files.Builtin)
 	require.NoError(t, err)
 
 	checked := 0

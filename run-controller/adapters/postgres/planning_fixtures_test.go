@@ -140,7 +140,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 	defer u.Rollback()
 	g, err := u.Topology().ScheduleGraph(ctx, tenant, "rel-1", schedule)
 	require.NoError(tb, err)
-	plan, err := runplan.WholeDAG{Operation: op}.Select(g)
+	plan, err := runplan.WholeSchedule{Operation: op}.Select(g)
 	require.NoError(tb, err)
 	require.NoError(tb, u.Run().SaveRun(ctx, r))
 	events, err := r.Start(ctx, u.TaskCollection(tenant), plan, g, testTaskDefaults, now)

@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -97,16 +97,16 @@ func withContractType(drafts int, packager ports.ContractPackager) option {
 	return func(h *harness) {
 		h.archive = &checkoutOf{dir: h.t.TempDir(), files: map[string]string{contractYAML: brokenContract}}
 		h.packager = packager
-		flow := h.files.Flows["rejected-release"]
-		flow.Types = append(flow.Types, "python-validation")
-		h.files.Flows[flow.Name] = flow
-		h.files.Types["python-validation"] = workflow.Type{
-			Version: workflow.SupportedVersion,
+		fl := h.files.Flows["rejected-release"]
+		fl.Types = append(fl.Types, "python-validation")
+		h.files.Flows[fl.Name] = fl
+		h.files.Types["python-validation"] = flow.Type{
+			Version: flow.SupportedVersion,
 			Name:    "python-validation",
-			Match:   workflow.Match{Cluster: workflow.ClusterSingle, Source: "validation", NodeTypes: []string{"python-node"}},
+			Match:   flow.Match{Cluster: flow.ClusterSingle, Source: "validation", NodeTypes: []string{"python-node"}},
 			Context: refs("contract_file", "failing_siblings", "image_packages", "dbt_log", "contract_entry", "current_contract", "upstream_changes", "failure_precedents"),
-			Agent: workflow.Agent{
-				Prompt: workflow.StepRef{Name: "python-contract"}, Tools: []workflow.StepRef{}, Drafts: drafts,
+			Agent: flow.Agent{
+				Prompt: flow.StepRef{Name: "python-contract"}, Tools: []flow.StepRef{}, Drafts: drafts,
 			},
 			Preflight: refs("contract_packages"),
 			Revision:  "rev-python-validation",
@@ -289,13 +289,13 @@ func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) 
 	assert.Equal(t, map[string]fix.NodeOutcome{contractNodeID: refused}, p.NodeOutcomes)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status, "the only try being spent, the remediation ends")
-	escalated := h.fixRow(fix.HandOverTry).Fix
-	assert.Equal(t, fix.StatusEscalated, escalated.Status, "the failing set is handed over")
+	handedOver := h.fixRow(fix.HandOverTry).Fix
+	assert.Equal(t, fix.StatusHandedOver, handedOver.Status, "the failing set is handed over")
 	unverifiable := fix.NodeOutcome{
-		Status: fix.StatusEscalated,
+		Status: fix.StatusHandedOver,
 		Reason: "tried 1 time; the last try failed: " + reason,
 		Code:   model.HandoverReasonUnverifiableEdits,
 	}
-	assert.Equal(t, map[string]fix.NodeOutcome{contractNodeID: unverifiable}, escalated.NodeOutcomes)
+	assert.Equal(t, map[string]fix.NodeOutcome{contractNodeID: unverifiable}, handedOver.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode(contractNodeID, unverifiable)), h.handedOverEvent())
 }

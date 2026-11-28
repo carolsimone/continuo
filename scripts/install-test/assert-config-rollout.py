@@ -19,12 +19,12 @@ The same cases then run against a render whose component volumes name
 operator-owned ConfigMaps (configMap.name set): no workload consumes the
 chart's copies there, so a change to them must roll nothing. A case whose
 values the chart refuses while a volume it names is operator-owned is left out
-of that render: the chart fails the render when agentRemediation.workflows.files
-is set and the remediation-workflows volume names any ConfigMap, since an
+of that render: the chart fails the render when agentRemediation.files
+is set and the remediation-files volume names any ConfigMap, since an
 operator-owned one leaves the files out of the pod and a named one carries no
 digest. They run once more against a render where
 only agent-remediation's project-repos volume names an operator-owned
-ConfigMap: its other volume, the remediation workflows, keeps its digest, so
+ConfigMap: its other volume, the remediation files, keeps its digest, so
 each volume of a component decides its own.
 
 It also checks that:
@@ -85,11 +85,11 @@ CASES = [
      "args": ["--set-string", "ciAuth.bindings.core[0].repositoryId=812345678"]},
     # The chart refuses a remediation file without a supported version, so the
     # probe file carries one; --set-json is what puts a newline in the value.
-    # With files set, the chart refuses a remediation-workflows volume that names
+    # With files set, the chart refuses a remediation-files volume that names
     # a ConfigMap: only an empty name mounts the files with their digest.
-    {"name": "agentRemediation.workflows value", "configmap": "agent-remediation-workflows",
-     "args": ["--set-json", 'agentRemediation.workflows.files.probe\\.yaml="kind: type\\nversion: 1\\n"'],
-     "needs_chart_volume": "remediation-workflows"},
+    {"name": "agentRemediation.files value", "configmap": "agent-remediation-files",
+     "args": ["--set-json", 'agentRemediation.files.probe\\.yaml="kind: type\\nversion: 1\\n"'],
+     "needs_chart_volume": "remediation-files"},
     {"name": "files/cancel-config.json", "configmap": "cancel-config",
      "file": "files/cancel-config.json", "edit": add_cancellation_reason,
      "reread_by": {"ui"}},
@@ -236,7 +236,7 @@ def check(source_chart: pathlib.Path, kube_version: str, failures: list) -> None
                                 f"the values override did not take effect")
 
         # agent-remediation mounts two chart ConfigMaps. With only its
-        # project-repos volume operator-owned, a workflows change still rolls
+        # project-repos volume operator-owned, a remediation files change still rolls
         # it and a project-repos change rolls nothing: each volume decides its
         # own digest.
         mixed_values, mixed_volumes = operator_owned_values(source_chart, workdir, only={"project-repos"})
@@ -244,9 +244,9 @@ def check(source_chart: pathlib.Path, kube_version: str, failures: list) -> None
                                      mixed_volumes)
         if f"{RELEASE}-project-repos" in mixed_users:
             failures.append(f"the render with an operator-owned project-repos volume still mounts {RELEASE}-project-repos")
-        if "agent-remediation" not in mixed_users.get(f"{RELEASE}-agent-remediation-workflows", {}):
+        if "agent-remediation" not in mixed_users.get(f"{RELEASE}-agent-remediation-files", {}):
             failures.append(f"the render with an operator-owned project-repos volume no longer mounts "
-                            f"{RELEASE}-agent-remediation-workflows into agent-remediation")
+                            f"{RELEASE}-agent-remediation-files into agent-remediation")
 
 
 def main() -> int:

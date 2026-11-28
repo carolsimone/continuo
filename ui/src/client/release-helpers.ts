@@ -29,10 +29,10 @@ export function releasePillClass(status: string): string {
 
 // fixPillClass maps a remediation try's lifecycle status to a pill
 // variant. The try vocabulary (proposed/verifying/generating/failed/
-// escalated/skipped) is distinct from the release one, so each status is
+// handed_over/skipped) is distinct from the release one, so each status is
 // mapped on purpose: a proposed fix is the good outcome (green), a try
 // still being verified is in progress (the running hue), one still being
-// generated is waiting (grey), and both failed and escalated are dead ends
+// generated is waiting (grey), and both failed and handed_over are dead ends
 // that need a human (red). Anything else falls back to releasePillClass.
 export function fixPillClass(status: string): string {
   switch (status) {
@@ -40,7 +40,7 @@ export function fixPillClass(status: string): string {
     case 'verifying':  return 'pill--running';
     case 'generating': return 'pill--pending';
     case 'failed':     return 'pill--failed';
-    case 'escalated':  return 'pill--failed';
+    case 'handed_over': return 'pill--failed';
     case 'skipped':    return 'pill--skipped';
   }
   return releasePillClass(status);
@@ -233,7 +233,7 @@ export function effectiveRound(p: FixDTO): number {
   return p.round && p.round > 0 ? p.round : 1;
 }
 
-// HAND_OVER_TRY is the try number of a round's hand-over row: the escalated
+// HAND_OVER_TRY is the try number of a round's hand-over row: the hand-over
 // row written once the round's tries are spent, which is no try of its own.
 export const HAND_OVER_TRY = 0;
 

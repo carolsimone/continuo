@@ -232,7 +232,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 			t.Logf("fix %s/%s: try=%d status=%s", releaseID, ftableEUniqueID, row.Try, row.Status)
 			last = row.Status
 		}
-		return row.Status == "proposed" || row.Status == "failed" || row.Status == "skipped" || row.Status == "escalated", nil
+		return row.Status == "proposed" || row.Status == "failed" || row.Status == "skipped" || row.Status == "handed_over", nil
 	}, fmt.Sprintf("timeout waiting for a parse fix for release %s", releaseID))
 	require.Equal(t, "parse", row.Source)
 	require.Equal(t, "proposed", row.Status,

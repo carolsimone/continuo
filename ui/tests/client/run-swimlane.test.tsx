@@ -47,7 +47,7 @@ describe('RunSwimlane', () => {
   });
 
   it('renders a graph node with no matching task as pending', () => {
-    const g = { nodes: [node('core.a.orphan')], edges: [] as GraphEdge[] };
+    const g = { nodes: [node('core.a.alone')], edges: [] as GraphEdge[] };
     const { container } = render(
       <RunSwimlane graph={g} tasks={[]} projectOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
     );

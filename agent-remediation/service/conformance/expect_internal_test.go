@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
@@ -35,7 +35,7 @@ func TestExpectation_ReadsTheRowOfTheDraftItAsksForInEitherOrder(t *testing.T) {
 	const prompt = "dbt-compile"
 	draft1 := remediation.StepRun{RemediationID: id, Try: 1, Cluster: 1, Draft: 1, Step: prompt, Status: remediation.StepDone, Failures: 1}
 	draft2 := remediation.StepRun{RemediationID: id, Try: 1, Cluster: 1, Draft: 2, Step: prompt, Status: remediation.StepFailed, Failures: 3}
-	typ := workflow.Type{Agent: workflow.Agent{Prompt: workflow.StepRef{Name: prompt}}}
+	typ := flow.Type{Agent: flow.Agent{Prompt: flow.StepRef{Name: prompt}}}
 
 	for _, rows := range [][]remediation.StepRun{{draft1, draft2}, {draft2, draft1}} {
 		e := (&scenarioRun{w: rowsWorld{rows: rows}, id: id}).expect(remediation.Trigger{})
@@ -78,7 +78,7 @@ func journalRow(id uuid.UUID, cluster int, name, kind string) remediation.StepRu
 // is a problem.
 func TestExpectation_OnlyTheHandOverMayRunWhenEveryNodeIsHandedOver(t *testing.T) {
 	id := uuid.New()
-	flow := workflow.Flow{OnGiveUp: workflow.Output{Action: "hand_over"}}
+	flow := flow.Flow{OnGiveUp: flow.Output{Action: "hand_over"}}
 	handOver := journalRow(id, remediation.FlowCluster, "hand_over", string(step.KindOutput))
 	for name, tc := range map[string]struct {
 		rows []remediation.StepRun

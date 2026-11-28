@@ -178,20 +178,20 @@ func TestPointerOutcome_String(t *testing.T) {
 // it, and the node that reads it has an edge from it.
 func TestNewRelease_KeepsAnUnknownExternalNode(t *testing.T) {
 	unknownExternal := topology.NodeSpec{
-		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external", TestCount: count(0),
+		UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe", NodeType: "unknown-external", TestCount: count(0),
 	}
 	rel, err := topology.NewRelease("default", "rel-1", 1, "u", "s", []topology.NodeSpec{
-		spec("stg", "orders", "dbt-model", "raw.ingest_probe"),
+		spec("stg", "orders", "dbt-model", "raw.external_probe"),
 		unknownExternal,
 	})
 	require.NoError(t, err)
 
 	require.Len(t, rel.Nodes, 2)
 	assert.Equal(t, topology.Node{
-		Key: "raw.ingest_probe", UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
+		Key: "raw.external_probe", UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe",
 		NodeType: "unknown-external", TestCount: count(0),
 	}, rel.Nodes[0], "empty project name, content hash, image tag and schedule name are kept empty")
-	assert.Equal(t, []topology.Edge{{Upstream: "raw.ingest_probe", Downstream: "stg.orders"}}, rel.Edges)
+	assert.Equal(t, []topology.Edge{{Upstream: "raw.external_probe", Downstream: "stg.orders"}}, rel.Edges)
 }
 
 func TestNewRelease_CopiesSeedColumnsHash(t *testing.T) {

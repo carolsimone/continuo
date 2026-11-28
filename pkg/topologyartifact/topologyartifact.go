@@ -199,9 +199,7 @@ func Encode(d Document) ([]byte, string, error) {
 
 // Decode verifies gz against wantSHA256, then gunzips and parses it. Every
 // error wraps ErrChecksumMismatch or ErrMalformed; neither goes away on a
-// re-read, so a consumer treats both as permanent. An artifact is immutable, so
-// an older one can name the unknown-external type "ingested"; Decode returns
-// every node under its current type name (model.CanonicalNodeType).
+// re-read, so a consumer treats both as permanent.
 func Decode(gz []byte, wantSHA256 string) (Document, error) {
 	if len(gz) > MaxObjectBytes {
 		return Document{}, fmt.Errorf("%w: object is %d bytes, the limit is %d", ErrMalformed, len(gz), MaxObjectBytes)
@@ -235,7 +233,6 @@ func Decode(gz []byte, wantSHA256 string) (Document, error) {
 		if d.Nodes[i].UniqueID == "" {
 			return Document{}, fmt.Errorf("%w: node %d has no unique_id", ErrMalformed, i)
 		}
-		d.Nodes[i].NodeType = string(model.CanonicalNodeType(d.Nodes[i].NodeType))
 	}
 	return d, nil
 }

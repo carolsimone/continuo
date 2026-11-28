@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -20,10 +20,10 @@ const TriggerFlowName = "rejected-release"
 // TriggerFlow returns the flow of set that every accepted heal trigger runs. It
 // is an error when set does not define it: every remediation Accept records
 // would then follow a flow no file defines, and could never be driven.
-func TriggerFlow(set workflow.Set) (workflow.Flow, error) {
+func TriggerFlow(set flow.Set) (flow.Flow, error) {
 	f, ok := set.Flows[TriggerFlowName]
 	if !ok {
-		return workflow.Flow{}, fmt.Errorf("no file defines flow %q, which every heal trigger runs", TriggerFlowName)
+		return flow.Flow{}, fmt.Errorf("no file defines flow %q, which every heal trigger runs", TriggerFlowName)
 	}
 	return f, nil
 }
@@ -32,7 +32,7 @@ func TriggerFlow(set workflow.Set) (workflow.Flow, error) {
 // returns, in name order, as "flow <name>: no heal trigger runs it". Such a
 // flow is loaded and validated like any other, and remediation-check plays it,
 // but no remediation ever follows it.
-func FlowsNoTriggerRuns(set workflow.Set) []string {
+func FlowsNoTriggerRuns(set flow.Set) []string {
 	var notes []string
 	for _, name := range sortedKeys(set.Flows) {
 		if name != TriggerFlowName {

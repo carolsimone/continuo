@@ -52,7 +52,7 @@ func requireClean(t *testing.T, text, what string) {
 	assert.NotContains(t, text, rawEmail, what)
 }
 
-// A node escalated once the tries are spent is handed over with the last try's
+// A node handed over once the tries are spent is handed over with the last try's
 // verify error, and a node the classifier marked unfixable with its key error
 // line: neither the try's row nor the event holds a credential or an email
 // address, each replaced by its fixed marker.
@@ -69,14 +69,14 @@ func TestRunner_HandOverMessagesAreCleaned(t *testing.T) {
 	}
 
 	spent := fix.NodeOutcome{
-		Status: fix.StatusEscalated,
+		Status: fix.StatusHandedOver,
 		Reason: "tried 3 times; the last try failed: svc-a: connect failed, password=[redacted:secret]",
 		Code:   model.HandoverReasonTriesSpent,
 	}
 	classifier := fix.NodeOutcome{Status: fix.StatusSkipped, Reason: cleanDetail, Code: model.HandoverReasonClassifierInfra}
-	escalated := h.fixRow(fix.HandOverTry).Fix
-	assert.Equal(t, fix.StatusEscalated, escalated.Status)
-	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent, "svc-c": classifier}, escalated.NodeOutcomes)
+	handedOver := h.fixRow(fix.HandOverTry).Fix
+	assert.Equal(t, fix.StatusHandedOver, handedOver.Status)
+	assert.Equal(t, map[string]fix.NodeOutcome{"svc-a": spent, "svc-c": classifier}, handedOver.NodeOutcomes)
 	assert.Equal(t, handedOverOf(id, 1, 3,
 		handedOverNode("svc-a", spent),
 		handedOverNode("svc-c", classifier),

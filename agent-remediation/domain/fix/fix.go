@@ -28,11 +28,11 @@ const (
 	// The gate poller polls the check and finalizes the try to 'proposed' (the
 	// fix verified) or 'failed' (with the check's error recorded as evidence for
 	// the next try).
-	StatusVerifying Status = "verifying"
-	StatusProposed  Status = "proposed"
-	StatusSkipped   Status = "skipped"
-	StatusFailed    Status = "failed"
-	StatusEscalated Status = "escalated"
+	StatusVerifying  Status = "verifying"
+	StatusProposed   Status = "proposed"
+	StatusSkipped    Status = "skipped"
+	StatusFailed     Status = "failed"
+	StatusHandedOver Status = "handed_over"
 )
 
 // NoRemediationInFlightReason is the reason the startup sweep fails a try
@@ -78,7 +78,7 @@ type FileEdit struct {
 }
 
 // NodeOutcome is how one failing node's try ended: verifying, proposed,
-// failed, skipped, or escalated, with the reason for that outcome.
+// failed, skipped, or handed over, with the reason for that outcome.
 type NodeOutcome struct {
 	Status Status
 	// Reason is the human-readable message for the outcome.
@@ -189,7 +189,7 @@ const (
 	ConfidenceHigh   Confidence = "high"
 )
 
-// HandOverTry is the try number of a round's hand-over row: the escalated row
+// HandOverTry is the try number of a round's hand-over row: the hand-over row
 // written once the round's tries are spent, which is no try of its own. A
 // round has at most one, and it comes after every try of its round
 // (model.TryBefore).

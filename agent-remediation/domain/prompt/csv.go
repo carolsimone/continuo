@@ -44,7 +44,7 @@ type CsvEvidence struct {
 	NoReads bool
 }
 
-const csvContractFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python-csv node whose contract failed blue/green validation.
+const csvContractFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python-csv node whose contract failed its release check.
 
 A python-csv node is contract-only: its own ODCS contract file, contracts/<table>.odcs.yaml: one contract per node. Its id is "<schema>.<table>". Its continuo customProperties set its kind (python-csv) and its csvSource, the uri of the CSV file the node loads; it has no script and no readQueries. The columns it promises that file to carry are the properties of its one schema object (schema[0].properties), each with a name, a physicalType and whether it is required. There is NO script: nothing runs to produce the relation. Validation fetches the CSV file's header line and rejects the release when a declared column is missing from it.
 

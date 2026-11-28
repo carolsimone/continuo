@@ -6,14 +6,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
 func TestRegistry_HoldsTheContractChecks(t *testing.T) {
 	r := NewRegistry(Collaborators{})
-	for _, name := range []workflow.StepName{
+	for _, name := range []flow.StepName{
 		"contract_paths_inside_folder",
 		"yaml_reads",
 		"node_identity_unchanged",
@@ -26,7 +26,7 @@ func TestRegistry_HoldsTheContractChecks(t *testing.T) {
 		_, m, ok := r.Lookup(name)
 		require.True(t, ok, name)
 		assert.Equal(t, step.KindCheck, m.Kind, name)
-		assert.Equal(t, []workflow.Stage{workflow.StagePreflight}, m.Stages, name)
+		assert.Equal(t, []flow.Stage{flow.StagePreflight}, m.Stages, name)
 	}
 }
 

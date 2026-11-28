@@ -17,13 +17,13 @@ import (
 
 const (
 	// missingImageTable is a node the missing-image test adds to the default
-	// DAG. Its image tag names an image no registry holds, so no attempt of it
+	// topology. Its image tag names an image no registry holds, so no attempt of it
 	// reaches a container and no dbt project needs a model of it.
 	missingImageTable = "missing_image_probe"
 	// missingImageSchedule is that node's schedule and nothing else's.
 	missingImageSchedule = "e2e-missing-image"
 
-	// startTimeoutTable is the default DAG's node the start-timeout test runs:
+	// startTimeoutTable is the default topology's node the start-timeout test runs:
 	// a model that succeeds whenever its pod starts.
 	startTimeoutTable = "ftable_a"
 
@@ -66,7 +66,7 @@ func TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, "single-node-run")
 
-	// The default DAG plus the node whose image does not exist. The default DAG
+	// The default topology plus the node whose image does not exist. The default topology
 	// is announced again at the end, so no later test sees the node.
 	nodes, schedules := e2eTopology(t, ctx, clients)
 	missingTag := "e2e-missing-" + uuid.NewString()[:8]

@@ -221,7 +221,7 @@ func pyFixtureBundle(t *testing.T, ctx context.Context, replace map[string]strin
 // TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes proves the
 // python release path end to end: a Python release skips the compile
 // leg, reads every ODCS contract of its bundle, validates every node —
-// including a python-csv node in the same mixed DAG — via a real
+// including a python-csv node in the same mixed topology — via a real
 // build_from_columns Job against the published runner image, promotes, swaps
 // the Neo4j topology, and records the python kind and the bundle pointer
 // in the project's production pointer.
@@ -363,7 +363,7 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 // rows in the warehouse through the harness, the non-conforming one fails
 // with the harness's deterministic error class reaching the control plane as
 // structured JSON rather than scraped text, and the python-csv node — a
-// scriptless node in the same mixed DAG — fetches its declared S3 source
+// scriptless node in the same mixed topology — fetches its declared S3 source
 // itself and materializes the csv's rows with the declared column types.
 // Finally the python-api node runs twice: with its continuo-api-* Secret
 // present the script sees the Secret's key as an env var, and with the Secret

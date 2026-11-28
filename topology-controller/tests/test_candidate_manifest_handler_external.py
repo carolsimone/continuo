@@ -20,12 +20,12 @@ from tests.fakes import (
 )
 from tests.odcs_fixtures import bundle_file, python_node
 
-QUOTED_SOURCE_READ = 'SELECT * FROM "continuo_dbt"."raw"."ingest_probe"'
-RAW_NAME_READ = "SELECT * FROM raw.ingest_probe"
+QUOTED_SOURCE_READ = 'SELECT * FROM "continuo_dbt"."raw"."external_probe"'
+RAW_NAME_READ = "SELECT * FROM raw.external_probe"
 
 
 def _probe_release(tmp_path, *, reverse=False):
-    """Two models reading raw.ingest_probe, one by the source's quoted three-part
+    """Two models reading raw.external_probe, one by the source's quoted three-part
     name and one by its bare two-part name."""
     a = dbt_node("probe_reads_source") | {"compiled_code": QUOTED_SOURCE_READ}
     b = dbt_node("probe_reads_raw_name") | {"compiled_code": RAW_NAME_READ}
@@ -42,14 +42,14 @@ def _topology(source, **handler_options):
 
 def test_the_probe_release_writes_one_unknown_external_node_and_two_edges(tmp_path):
     by_id = _topology(_probe_release(tmp_path))
-    assert by_id["raw.ingest_probe"] == {
-        "unique_id": "raw.ingest_probe", "schema_name": "raw", "table_name": "ingest_probe",
-        "resolved_relation_id": "raw.ingest_probe", "project_name": "", "node_type": "unknown-external",
+    assert by_id["raw.external_probe"] == {
+        "unique_id": "raw.external_probe", "schema_name": "raw", "table_name": "external_probe",
+        "resolved_relation_id": "raw.external_probe", "project_name": "", "node_type": "unknown-external",
         "test_count": 0, "content_hash": "", "image_tag": "", "original_file_path": "",
         "upstream_unique_ids": [], "schedule": "",
     }
-    assert by_id["test_schema.probe_reads_source"]["upstream_unique_ids"] == ["raw.ingest_probe"]
-    assert by_id["test_schema.probe_reads_raw_name"]["upstream_unique_ids"] == ["raw.ingest_probe"]
+    assert by_id["test_schema.probe_reads_source"]["upstream_unique_ids"] == ["raw.external_probe"]
+    assert by_id["test_schema.probe_reads_raw_name"]["upstream_unique_ids"] == ["raw.external_probe"]
     assert len(by_id) == 3
 
 
@@ -71,13 +71,13 @@ def test_a_reader_of_an_unknown_external_table_still_reads_it_where_it_is(tmp_pa
     uploader = make_uploader()
     build_handler(_probe_release(tmp_path), MagicMock(), uploader).handle(release_id="rel-1")
     for call in uploader.upload.call_args_list:
-        assert "ingest_probe" in call.kwargs["sql"]
+        assert "external_probe" in call.kwargs["sql"]
         assert "_candidate_rel_1" not in call.kwargs["sql"]
 
 
 def test_an_unknown_external_node_never_takes_an_image_tag(tmp_path):
     by_id = _topology(_probe_release(tmp_path), image_tags={"service-1": "registry/service-1:abc"})
-    assert by_id["raw.ingest_probe"]["image_tag"] == ""
+    assert by_id["raw.external_probe"]["image_tag"] == ""
     assert by_id["test_schema.probe_reads_source"]["image_tag"] == "registry/service-1:abc"
 
 
@@ -167,11 +167,11 @@ def test_a_schema_qualified_function_call_is_no_unknown_external_node(tmp_path):
     """public.my_fn(1) is a function call, not a table: it makes no node and no
     edge, beside a real table the same model reads."""
     reader = dbt_node("reader") | {
-        "compiled_code": "SELECT * FROM public.my_fn(1) f JOIN raw.ingest_probe p ON true",
+        "compiled_code": "SELECT * FROM public.my_fn(1) f JOIN raw.external_probe p ON true",
     }
     by_id = _topology(source_with_nodes(tmp_path, reader))
-    assert sorted(by_id) == ["raw.ingest_probe", "test_schema.reader"]
-    assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["raw.ingest_probe"]
+    assert sorted(by_id) == ["raw.external_probe", "test_schema.reader"]
+    assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["raw.external_probe"]
 
 
 def test_a_model_reading_only_a_schema_qualified_function_call_has_no_upstream(tmp_path):
@@ -370,8 +370,8 @@ def test_one_python_node_naming_a_table_two_ways_gets_one_unknown_external_node_
     one with no catalog and in lower case: the release holds one unknown-external node
     for it and the python node has one edge to it."""
     node = python_node(reads={
-        "with_catalog": "select id from continuo_dbt.RAW.Ingest_Probe",
-        "without_catalog": "select id from raw.ingest_probe",
+        "with_catalog": "select id from continuo_dbt.RAW.External_Probe",
+        "without_catalog": "select id from raw.external_probe",
     })
     source = source_of(bundle_file(tmp_path, [node]))
     writer = RecordingArtifactWriter()
@@ -379,9 +379,9 @@ def test_one_python_node_naming_a_table_two_ways_gets_one_unknown_external_node_
         source, MagicMock(), spec_uploader=make_uploader("s3://x.json"), artifact_writer=writer,
     ).handle(release_id="rel-1")
     by_id = {n["unique_id"]: n for n in writer.nodes}
-    assert sorted(by_id) == ["raw.ingest_probe", "test_schema.py_metrics"]
-    assert by_id["raw.ingest_probe"]["node_type"] == "unknown-external"
-    assert by_id["test_schema.py_metrics"]["upstream_unique_ids"] == ["raw.ingest_probe"]
+    assert sorted(by_id) == ["raw.external_probe", "test_schema.py_metrics"]
+    assert by_id["raw.external_probe"]["node_type"] == "unknown-external"
+    assert by_id["test_schema.py_metrics"]["upstream_unique_ids"] == ["raw.external_probe"]
 
 
 def test_a_python_csv_node_makes_no_unknown_external_node(tmp_path):
@@ -428,4 +428,4 @@ def test_the_same_release_always_writes_the_same_bytes(tmp_path):
     first, second, reordered = written_bytes(reverse=False), written_bytes(reverse=False), written_bytes(reverse=True)
     assert first == second == reordered
     ids = [n["unique_id"] for n in json.loads(first)["nodes"]]
-    assert ids == ["raw.ingest_probe", "test_schema.probe_reads_raw_name", "test_schema.probe_reads_source"]
+    assert ids == ["raw.external_probe", "test_schema.probe_reads_raw_name", "test_schema.probe_reads_source"]

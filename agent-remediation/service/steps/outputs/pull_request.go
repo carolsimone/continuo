@@ -10,8 +10,8 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -20,7 +20,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-const namePullRequest workflow.StepName = "pull_request"
+const namePullRequest flow.StepName = "pull_request"
 
 // PullRequest is the pass output `pull_request`. It marks a verified fix
 // proposed and announces it on fix.proposed:v1, which is what puts it

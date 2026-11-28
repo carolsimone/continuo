@@ -133,7 +133,7 @@ describe('DashboardPage — tabs', () => {
     renderAt(['/?tab=topology']);
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /topology/i })).toHaveClass('tabs__tab--active');
-      expect(document.querySelector('.snapshot-tile-grid')).toBeInTheDocument();
+      expect(document.querySelector('.schedule-tile-grid')).toBeInTheDocument();
     });
   });
 
@@ -199,8 +199,8 @@ describe('DashboardPage — tabs', () => {
     renderAt(['/?tab=topology']);
     const tile = (await screen.findByText('3 dormant nodes · run by hand')).closest('button') as HTMLElement;
     // The Dormant tile comes after the schedule tiles.
-    const tiles = Array.from(document.querySelectorAll('.snapshot-tile'));
-    expect(tiles.map(t => t.querySelector('.snapshot-tile__name')?.textContent)).toEqual(['a', 'Dormant']);
+    const tiles = Array.from(document.querySelectorAll('.schedule-tile'));
+    expect(tiles.map(t => t.querySelector('.schedule-tile__name')?.textContent)).toEqual(['a', 'Dormant']);
 
     fireEvent.click(tile);
     await waitFor(() => {
@@ -223,11 +223,5 @@ describe('DashboardPage — tabs', () => {
     renderAt(['/?tab=topology']);
     expect(await screen.findByText('2 dormant nodes · run by hand')).toBeInTheDocument();
     expect(screen.queryByText(/No topology loaded yet/)).toBeNull();
-  });
-
-  it('no longer renders the standalone "DAG Latest Snapshot" h2 heading', async () => {
-    renderAt(['/']);
-    await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole('heading', { name: /dag latest snapshot/i })).toBeNull();
   });
 });

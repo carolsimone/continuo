@@ -547,7 +547,7 @@ export interface FixDTO {
   // fix yet: 'generating' while the fix is being produced, and 'verifying'
   // while a release check judges the produced fix through every stage a
   // release passes. The rest are terminal: 'proposed' (a fix ready for
-  // review), 'skipped', 'failed', 'escalated'.
+  // review), 'skipped', 'failed', 'handed_over'.
   status: string;
   confidence: string;
   rationale: string;

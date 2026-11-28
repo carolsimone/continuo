@@ -66,7 +66,7 @@ Output (stdout, JSON):
   its dependency.
   A node of type "unknown-external" is a table continuo reads and does not build:
   its "project_name" is empty, so its node id starts with a dot
-  (".raw.ingest_probe"), nothing runs it, and "continuo node" commands cannot
+  (".raw.external_probe"), nothing runs it, and "continuo node" commands cannot
   address it.
   "dormant" is true for a node continuo builds that belongs to no schedule: it
   is in this graph as an upstream of a node that reads it, and a run started by

@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react';
 import { useNavigate } from 'react-router';
 import { ReactFlowProvider } from '@xyflow/react';
-import DAGPanel from '../DAGPanel';
+import GraphPanel from '../GraphPanel';
 import NodeTypeIcon, { isExternalNodeType } from '../NodeTypeIcon';
 import PastRunsPanel from '../PastRunsPanel';
 import { externalNodeName, parseNodeId, type GraphState } from '../detail-page-helpers';
@@ -23,7 +23,7 @@ export default function LatestView({
   selectedRunId: string | null;
   lastRunId: string | null | undefined;
   expandedProjects: Set<string>;
-  projectColors: ComponentProps<typeof DAGPanel>['projectColors'];
+  projectColors: ComponentProps<typeof GraphPanel>['projectColors'];
   onNodeSelect: (nodeId: string | null) => void;
   onProjectToggle: (project: string) => void;
   pastRuns: ComponentProps<typeof PastRunsPanel>;
@@ -58,11 +58,11 @@ export default function LatestView({
           Dependency Graph
           <span className={graphBadgeClass}>{graphBadge}</span>
         </div>
-        <div className="dag-card-body">
+        <div className="graph-card-body">
           {graphCardState === 'ready' && activeGraph ? (
             <>
               <ReactFlowProvider>
-                <DAGPanel
+                <GraphPanel
                   graphNodes={activeGraph.nodes}
                   graphEdges={activeGraph.edges}
                   tasks={[]}
@@ -76,32 +76,32 @@ export default function LatestView({
                 />
               </ReactFlowProvider>
               {selectedNodeId && !selectedRunId && lastRunId && (
-                <div className="dag-focus-legend">
-                  <div className="dag-focus-legend-title">
+                <div className="graph-focus-legend">
+                  <div className="graph-focus-legend-title">
                     <NodeTypeIcon nodeType={selectedNodeType} size={12} />
                     {isExternalNodeType(selectedNodeType)
                       ? externalNodeName(selectedNodeId)
                       : parseNodeId(selectedNodeId).table_name}
                   </div>
-                  <div className="dag-focus-legend-row">
-                    <div className="dag-focus-dot dag-focus-dot--selected" /> Selected
+                  <div className="graph-focus-legend-row">
+                    <div className="graph-focus-dot graph-focus-dot--selected" /> Selected
                   </div>
-                  <div className="dag-focus-legend-row">
-                    <div className="dag-focus-dot dag-focus-dot--parent" />
+                  <div className="graph-focus-legend-row">
+                    <div className="graph-focus-dot graph-focus-dot--parent" />
                     Depends on ({legendParentIds.size})
                   </div>
-                  <div className="dag-focus-legend-row">
-                    <div className="dag-focus-dot dag-focus-dot--child" />
+                  <div className="graph-focus-legend-row">
+                    <div className="graph-focus-dot graph-focus-dot--child" />
                     Required by ({legendChildIds.size})
                   </div>
-                  <div className="dag-focus-legend-row">
-                    <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
+                  <div className="graph-focus-legend-row">
+                    <div className="graph-focus-dot graph-focus-dot--dim" /> Unrelated
                   </div>
                   {/* An unknown-external node has no node page: a click on it only
                       highlights the nodes it feeds. */}
                   {selectedNodeId && name && !isExternalNodeType(selectedNodeType) && (
                     <a
-                      className="dag-focus-open-link"
+                      className="graph-focus-open-link"
                       href={`/node/${encodeURIComponent(selectedNodeId)}`}
                       onClick={e => {
                         e.preventDefault();
@@ -124,7 +124,7 @@ export default function LatestView({
             </div>
           ) : graphCardState === 'empty' ? (
             <div className="graph-empty-state">
-              <p className="graph-empty-title">No DAG to display</p>
+              <p className="graph-empty-title">No topology to display</p>
               <p className="graph-empty-copy">{graphEmptyMessage}</p>
             </div>
           ) : (

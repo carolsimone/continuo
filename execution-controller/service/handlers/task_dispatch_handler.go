@@ -127,7 +127,7 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 		return h.add(ctx, u, model.NewAdoptedDeployment(cmd, procID, now), pkgmodel.AttemptStatusQueued, "")
 	case model.CreateAttempt:
 		return h.add(ctx, u, model.NewDeployment(cmd, procID, now), pkgmodel.AttemptStatusQueued, "")
-	case model.AwaitOrphanPod:
+	case model.AwaitUnfinishedPod:
 		h.logger.Error("An attempt with no record and no Job has a pod that has not finished — "+
 			"nothing is reported until the pod is gone; run-controller asks again",
 			"task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName, "known_status", evt.KnownStatus)

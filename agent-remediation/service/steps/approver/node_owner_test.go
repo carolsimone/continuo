@@ -14,8 +14,8 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/approver"
@@ -86,9 +86,9 @@ func contractCluster(schema, table, yaml string, members ...string) step.Cluster
 
 func TestNodeOwner_Meta(t *testing.T) {
 	m := newNodeOwner(&fakeBundle{}).Meta()
-	assert.Equal(t, workflow.StepName("node_owner"), m.Name)
+	assert.Equal(t, flow.StepName("node_owner"), m.Name)
 	assert.Equal(t, step.KindApprover, m.Kind)
-	assert.Equal(t, []workflow.Stage{workflow.StageApprover}, m.Stages)
+	assert.Equal(t, []flow.Stage{flow.StageApprover}, m.Stages)
 	assert.Empty(t, m.Needs, "the step reads the contract file when a cluster has one, and needs nothing")
 	assert.NotEmpty(t, m.Description)
 }

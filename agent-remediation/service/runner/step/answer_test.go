@@ -83,14 +83,14 @@ func TestFindingLines_NamesTheCodeAndMessage(t *testing.T) {
 		{Code: "content_changed", Message: "the answer left the file unchanged"},
 		{Code: "yaml_reads", Message: "mapping values are not allowed here", File: "contracts/a.yml", Line: 3},
 		{Code: "confidence_not_low", Message: "the model is not sure", File: "models/b.sql"},
-		{Code: "orphan_line", Message: "a line without a file", Line: 7},
+		{Code: "stray_line", Message: "a line without a file", Line: 7},
 	})
 
 	assert.Equal(t, []string{
 		"content_changed: the answer left the file unchanged",
 		"yaml_reads: mapping values are not allowed here (contracts/a.yml:3)",
 		"confidence_not_low: the model is not sure (models/b.sql)",
-		"orphan_line: a line without a file",
+		"stray_line: a line without a file",
 	}, got)
 }
 

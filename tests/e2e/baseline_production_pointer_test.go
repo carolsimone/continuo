@@ -19,7 +19,7 @@ const baselineImageTagsFile = ".image-tags"
 // seedBaselineProductionPointers (re)establishes every project's production
 // pointer from the immutable deploy metadata. It is called before every consumer
 // that reads per-project image tags (seedTopology, baselineProjects) so a prior
-// blue/green test's change to the production pointers — promotion rewriting a pointer, or the
+// release test's change to the production pointers — promotion rewriting a pointer, or the
 // bootstrap test wiping the table — cannot break a later test's read. The
 // baseline is rebuilt from setup metadata, never captured from the (test-mutated)
 // table.

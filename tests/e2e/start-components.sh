@@ -30,7 +30,7 @@ check_health "catalog" 8087 || exit 1
 # Uncomment if you started execution-controller:
 # check_health "execution-controller" 8084 || exit 1
 
-# release-controller (blue/green release API + stream consumers) runs in
+# release-controller (release API + stream consumers) runs in
 # docker-compose alongside the other stream components. The e2e release-promote
 # test reaches its HTTP API at release-controller:8088 over the compose network,
 # and its consumers drive the candidate-parse → validation → promotion loop. It

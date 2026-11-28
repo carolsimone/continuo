@@ -236,8 +236,8 @@ func TestChangedAncestors_DepthIsTheMinimumHopCount(t *testing.T) {
 // reader names and no node builds: no content, no project, no upstreams.
 func unknownExternalProbe() release.Node {
 	return release.Node{
-		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
-		ResolvedRelationID: "raw.ingest_probe", NodeType: "unknown-external",
+		UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe",
+		ResolvedRelationID: "raw.external_probe", NodeType: "unknown-external",
 		UpstreamUniqueIDs: []string{},
 	}
 }
@@ -248,7 +248,7 @@ func unknownExternalProbe() release.Node {
 func TestDerivedChangedNodeIDs_NeverReturnsAnUnknownExternalNode(t *testing.T) {
 	cand := release.Topology{
 		unknownExternalProbe(),
-		{UniqueID: "a.m", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+		{UniqueID: "a.m", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{"raw.external_probe"}},
 	}
 
 	assert.Equal(t, []string{"a.m"}, release.DerivedChangedNodeIDs(cand, nil), "a new unknown-external node is not a seed")
@@ -263,9 +263,9 @@ func TestDerivedChangedNodeIDs_NeverReturnsAnUnknownExternalNode(t *testing.T) {
 // unknown-external node, the candidate node is a real node with content and is changed.
 func TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged(t *testing.T) {
 	prod := release.Topology{unknownExternalProbe()}
-	cand := release.Topology{{UniqueID: "raw.ingest_probe", NodeType: "dbt-model", ProjectName: "svc", ContentHash: "h"}}
+	cand := release.Topology{{UniqueID: "raw.external_probe", NodeType: "dbt-model", ProjectName: "svc", ContentHash: "h"}}
 
-	assert.Equal(t, []string{"raw.ingest_probe"}, release.DerivedChangedNodeIDs(cand, prod))
+	assert.Equal(t, []string{"raw.external_probe"}, release.DerivedChangedNodeIDs(cand, prod))
 }
 
 // TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged pins the
@@ -284,11 +284,11 @@ func TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged(t *testing.T
 func TestFullAncestorsClosure_StopsAtAnUnknownExternalNode(t *testing.T) {
 	topo := release.Topology{
 		unknownExternalProbe(),
-		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.external_probe"}},
 	}
 
 	assert.Equal(t, []string{"a.m"}, release.FullAncestorsClosure(topo, []string{"a.m"}))
-	assert.Empty(t, release.FullAncestorsClosure(topo, []string{"raw.ingest_probe"}),
+	assert.Empty(t, release.FullAncestorsClosure(topo, []string{"raw.external_probe"}),
 		"an unknown-external seed yields nothing to build")
 }
 
@@ -299,7 +299,7 @@ func TestFullAncestorsClosure_ReachesAnAncestorBeyondTheUnknownExternalEdge(t *t
 	topo := release.Topology{
 		unknownExternalProbe(),
 		{UniqueID: "a.up", NodeType: "dbt-model"},
-		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe", "a.up"}},
+		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.external_probe", "a.up"}},
 	}
 
 	assert.Equal(t, []string{"a.up", "a.m"}, release.FullAncestorsClosure(topo, []string{"a.m"}))
@@ -312,7 +312,7 @@ func TestFullAncestorsClosure_ReachesAnAncestorBeyondTheUnknownExternalEdge(t *t
 func TestChangedAncestors_NeverNamesAnUnknownExternalNode(t *testing.T) {
 	cand := release.Topology{
 		unknownExternalProbe(),
-		{UniqueID: "a.m", NodeType: "dbt-model", ProjectName: "svcA", OriginalFilePath: "models/m.sql", ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+		{UniqueID: "a.m", NodeType: "dbt-model", ProjectName: "svcA", OriginalFilePath: "models/m.sql", ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.external_probe"}},
 		{UniqueID: "a.x", NodeType: "dbt-model", ProjectName: "svcA", ContentHash: "hx", UpstreamUniqueIDs: []string{"a.m"}},
 	}
 	changed := map[string]bool{}
@@ -324,9 +324,9 @@ func TestChangedAncestors_NeverNamesAnUnknownExternalNode(t *testing.T) {
 
 	assert.Equal(t, []release.ChangedAncestor{
 		{NodeID: "a.m", FilePath: "models/m.sql", Project: "svcA", Depth: 1},
-	}, got, "only the reader a.m: the unknown-external node raw.ingest_probe sits two hops up and is never changed")
+	}, got, "only the reader a.m: the unknown-external node raw.external_probe sits two hops up and is never changed")
 	for _, a := range got {
-		assert.NotEqual(t, "raw.ingest_probe", a.NodeID)
+		assert.NotEqual(t, "raw.external_probe", a.NodeID)
 	}
 }
 
@@ -336,7 +336,7 @@ func TestChangedAncestors_NeverNamesAnUnknownExternalNode(t *testing.T) {
 func TestUnbuildableCrossProjectUpstreams_AnUnknownExternalUpstreamIsKnown(t *testing.T) {
 	topo := release.Topology{
 		unknownExternalProbe(),
-		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.external_probe"}},
 	}
 
 	assert.Empty(t, release.UnbuildableCrossProjectUpstreams(topo, []string{"a.m"}))

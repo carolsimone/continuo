@@ -166,7 +166,7 @@ func TestTopologyRepository_AnUnknownExternalUpstreamLeavesRebaseAndWholeSchedul
 		assert.Empty(t, pv.Changed)
 	}
 
-	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(live)
+	plan, err := runplan.WholeSchedule{Operation: model.OperationRun}.Select(live)
 	require.NoError(t, err)
 	assert.Equal(t, runplan.Plan{
 		Tasks: []runplan.PlannedTask{{Key: "a.m"}, {Key: "a.up"}},
@@ -223,7 +223,7 @@ func TestScheduleGraph_NeverHoldsADormantUpstream(t *testing.T) {
 	}
 
 	for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationTest} {
-		plan, err := runplan.WholeDAG{Operation: op}.Select(g)
+		plan, err := runplan.WholeSchedule{Operation: op}.Select(g)
 		require.NoError(t, err, "operation %q", op)
 		for _, task := range plan.Tasks {
 			assert.NotContains(t, []topology.NodeKey{"stg.dormant_m", "stg.dormant_s"}, task.Key, "operation %q", op)

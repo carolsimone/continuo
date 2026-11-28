@@ -420,8 +420,8 @@ describes.
 ### Bootstrap the first project
 
 One word before the first call. **Production**, here and everywhere in this
-guide, is continuo's term for the promoted side of its blue/green release
-pair — the set of tables the schedules serve, the thing a release is validated
+guide, is continuo's term for what the live release builds — the
+set of tables the schedules serve, the thing a release is validated
 against and promoted into. It is not a claim about where you are: on your
 laptop, production is a schema in the bundled Postgres, and nothing in this
 walkthrough leaves your machine. In a real install it is your warehouse, and
@@ -466,7 +466,7 @@ curl -s -X POST $API/releases \
 {"release_id": "rel-core-v1", "status": "received"}
 ```
 
-💡 Note what you did *not* send: no manifest, no list of models, no DAG, no S3
+💡 Note what you did *not* send: no manifest, no list of models, no topology, no S3
 upload. One project, one image tag. continuo derives the rest. The `repo` and
 `commit_sha` fields say where the release came from; with your own token you
 supply them, while a GitHub Actions token carries them itself.
@@ -553,7 +553,7 @@ production to build from. This chapter is the last time you will pass
 💡 Order among the remaining three does not matter. Every release reparses the
 *full* set of promoted manifests plus its own, so the edge between two projects
 appears as soon as both have been released — whichever release comes last
-completes the DAG.
+completes the topology.
 
 Releases run a **FIFO queue**: one is active at a time, and each terminal
 outcome advances the next. Post them one at a time and wait for each to reach
@@ -731,7 +731,7 @@ line.
 ### python-api nodes
 
 A `python-api` node's script fetches its own data, usually over HTTP. It
-declares no `readQueries`, so it has no upstream edges and runs first in its DAG.
+declares no `readQueries`, so it has no upstream edges and runs first in its topology.
 
 ```yaml
 # contracts/fx_eur_usd_rates.odcs.yaml
@@ -887,7 +887,7 @@ curl -s -X POST $API/releases \
 
 The stages are the same ones every release walks — but this time `validating`
 is not instant. It runs for a minute or two, and this is the
-blue/green mechanism at work: continuo created a temporary candidate schema,
+release check at work: continuo created a temporary candidate schema,
 built the release's seeds into it, **built the unchanged upstream tables the
 change reads, empty, from their production tables** — this is why chapter 4 had to bootstrap —
 rewrote the in-scope models' compiled SQL to read from that schema instead of
@@ -927,7 +927,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 💡 **Read that list again.** You added one model to marketing. continuo put
 sixteen of the graph's twenty-two nodes in scope: your new node and its entire
-upstream lineage — `ltv_per_user` from finance, `revenue_per_user` and
+upstream topology — `ltv_per_user` from finance, `revenue_per_user` and
 `daily_transactions` from core, and the seeds under all of them. You changed
 marketing; continuo worked out from the SQL that proving the change requires
 two other teams' models, built them empty from their production tables, and ran your model
@@ -1295,7 +1295,7 @@ at a model in a *different* project — see the cross-project rule in chapter 1.
 exist`.** The release was validated before the tables it reads physically
 existed — usually a cold install where a project was released with
 `"bootstrap": false` before the first full run. Bootstrap every project first
-(chapter 4), run the DAG once (chapter 5), then re-release with a new
+(chapter 4), run the schedule once (chapter 5), then re-release with a new
 `release_id`.
 
 ---

@@ -142,7 +142,7 @@ describe('RemediationPanel — group list', () => {
         id: 't2', release_id: 'rel-x', round: 2, try: 2, status: 'skipped', confidence: '',
         rationale: 'maintenance mode is on', created_at: '2026-06-24T11:00:00Z',
       }),
-      makeFix({ id: 'h', release_id: 'rel-x', round: 2, try: 0, status: 'escalated', confidence: '', created_at: '2026-06-24T11:00:00Z' }),
+      makeFix({ id: 'h', release_id: 'rel-x', round: 2, try: 0, status: 'handed_over', confidence: '', created_at: '2026-06-24T11:00:00Z' }),
     ]);
     renderPanel();
     await waitFor(() => screen.getByText('rel-x'));
@@ -234,7 +234,7 @@ describe('RemediationPanel — status pills', () => {
   it.each([
     ['proposed',   'pill-sm--succeeded'],
     ['failed',     'pill-sm--failed'],
-    ['escalated',  'pill-sm--failed'],
+    ['handed_over', 'pill-sm--failed'],
     ['skipped',    'pill-sm--skipped'],
     ['generating', 'pill-sm--pending'],
   ])('renders the %s status as a %s pill in the Latest status column', async (status, cls) => {
@@ -242,7 +242,7 @@ describe('RemediationPanel — status pills', () => {
     // so the only status text on screen is the group row's.
     mockFetchFixes.mockResolvedValue([makeFix({ status, source_resolved: false })]);
     renderPanel();
-    const pill = await screen.findByText(status);
+    const pill = await screen.findByText(status.replace(/_/g, ' '));
     expect(pill).toHaveClass('pill-sm', cls);
   });
 
@@ -537,7 +537,7 @@ describe('RemediationPanel — an actionable fix', () => {
 
   it.each([
     ['skipped', { status: 'skipped', source_resolved: true, pr_url: '' }],
-    ['escalated', { status: 'escalated', source_resolved: true, pr_url: '' }],
+    ['handed_over', { status: 'handed_over', source_resolved: true, pr_url: '' }],
   ])('keeps a %s group collapsed until clicked', async (_label, overrides) => {
     const fix = makeFix({ rationale: 'Adds the missing GROUP BY column.', ...overrides });
     mockFetchFixes.mockResolvedValue([fix]);

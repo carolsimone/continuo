@@ -277,7 +277,7 @@ func TestRetryRemediationHandler_Accepted(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["rel-1"] = rejectedReleaseForRetry(t, "rel-1", now)
 	deps.Fixes = &fakeFixReader{items: []ports.FixSummary{
-		{ID: "p1", NodeID: "finance", Try: 1, Status: "escalated", Round: 1},
+		{ID: "p1", NodeID: "finance", Try: 1, Status: "handed_over", Round: 1},
 	}}
 
 	rec := postRetryRemediation(newTestServer(deps), "rel-1")

@@ -3,8 +3,8 @@ package shared
 import (
 	"context"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
@@ -26,7 +26,7 @@ func (ContentChanged) Meta() step.Meta {
 		Kind:        step.KindCheck,
 		Description: "Fails a draft that has no edit, or whose edit is empty or, for an edit that moves no file, equal to the file it was read from.",
 		Needs:       []remediation.EvidenceKey{remediation.KeyDraft},
-		Stages:      []workflow.Stage{workflow.StagePreflight},
+		Stages:      []flow.Stage{flow.StagePreflight},
 	}
 }
 

@@ -109,14 +109,14 @@ func (s *Server) StartSingleNodeRun(ctx context.Context, req *runv1.StartSingleN
 		if req.GetSourceRunId() != "" {
 			return nil, status.Error(codes.InvalidArgument, "source_run_id must be empty when metadata_source is 'latest'")
 		}
-	case run.MetadataSourceSnapshotOfRun:
+	case run.MetadataSourceReleaseOfRun:
 		id, perr := parseUUID("source_run_id", req.GetSourceRunId())
 		if perr != nil {
 			return nil, perr
 		}
 		sourceID = &id
 	default:
-		return nil, status.Errorf(codes.InvalidArgument, "metadata_source must be 'latest' or 'snapshot_of_run', got %q", req.GetMetadataSource())
+		return nil, status.Errorf(codes.InvalidArgument, "metadata_source must be 'latest' or 'release_of_run', got %q", req.GetMetadataSource())
 	}
 	operation, err := model.ParseOperation(req.GetOperation())
 	if err != nil {

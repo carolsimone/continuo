@@ -41,7 +41,7 @@ describe('RunView', () => {
     expect(screen.queryByTestId('run-progress-pct')).toBeNull();
   });
 
-  it('renders "Loading run…" for state loading, and names the snapshot of a chosen run', () => {
+  it('renders "Loading run…" for state loading, and names the past run it loads', () => {
     const { unmount } = renderRunView({ state: 'loading', tasks: [] });
     expect(screen.getByText('Loading run…')).toBeInTheDocument();
     expect(screen.getByText('Fetching the latest run…')).toBeInTheDocument();
@@ -136,7 +136,7 @@ describe('RunView', () => {
     });
     expect(view).toHaveClass('fail');
     expect(view.getAttribute('title')).toBe(`svc1.public.rates_view — ${reason}`);
-    expect(container.querySelector('.dag-node-chip--dormant')).toBeNull();
+    expect(container.querySelector('.graph-node-chip--dormant')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Run rates_view' })).toBeNull();
   });
 });

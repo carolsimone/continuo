@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import type { NodeRun } from './types';
 import type { NodeOperation } from '../server/shared/operation';
-import { groupRunsBySnapshot } from './node-helpers';
+import { groupRunsByImage } from './node-helpers';
 
 interface Props {
   runs: NodeRun[];
@@ -10,7 +10,7 @@ interface Props {
   onClose: () => void;
 }
 
-// Compact absolute date for a snapshot's last run, e.g. "11 Sep 2026".
+// Compact absolute date for an image's last run, e.g. "11 Sep 2026".
 function formatWhen(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -26,9 +26,9 @@ export default function RunSourcePickerDialog({ runs, operation, onPick, onClose
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const snapshots = groupRunsBySnapshot(runs);
+  const images = groupRunsByImage(runs);
   const opWord = operation === 'test' ? 'test' : operation === 'build' ? 'build' : operation === 'full_refresh' ? 'fully refresh' : 'run';
-  const totalRuns = snapshots.reduce((n, s) => n + s.runCount, 0);
+  const totalRuns = images.reduce((n, s) => n + s.runCount, 0);
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
@@ -39,31 +39,31 @@ export default function RunSourcePickerDialog({ runs, operation, onPick, onClose
         aria-labelledby="run-source-picker-title"
         onClick={e => e.stopPropagation()}
       >
-        <h2 id="run-source-picker-title" className="dialog-title">Run with an old snapshot</h2>
+        <h2 id="run-source-picker-title" className="dialog-title">Run on an older release</h2>
         <p className="dialog-subtitle">
-          {`Pick a snapshot to ${opWord} this node against — it runs with that snapshot's image.`}
+          {`Pick an image to ${opWord} this node with — it runs on the release of that image's latest run.`}
         </p>
 
-        {snapshots.length === 0 ? (
+        {images.length === 0 ? (
           <div className="info-strip info-strip--neutral">
             <span className="info-strip__icon">–</span>
-            No past snapshots available for this node yet.
+            No past images available for this node yet.
           </div>
         ) : (
           <>
             <div className="section-header">
               <div className="section-header__main">
-                <span className="section-header__title">Snapshots</span>
-                <span className="section-header__count">{snapshots.length}</span>
+                <span className="section-header__title">Images</span>
+                <span className="section-header__count">{images.length}</span>
               </div>
               <div className="section-header__sub">
                 {totalRuns} run{totalRuns === 1 ? '' : 's'} total
               </div>
             </div>
             <ul className="pick-list">
-              {snapshots.map(s => {
+              {images.map(s => {
                 const ariaLabel = [
-                  `${s.imageTag || 'unknown image'} snapshot`,
+                  `${s.imageTag || 'unknown'} image`,
                   `${s.runCount} run${s.runCount === 1 ? '' : 's'}`,
                   `last run ${s.status}`,
                 ].filter(Boolean).join(', ');

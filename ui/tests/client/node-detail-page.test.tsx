@@ -92,11 +92,11 @@ describe('NodeDetailPage', () => {
     expect(screen.queryByRole('columnheader', { name: /manifest/i })).not.toBeInTheDocument();
   });
 
-  it('renders Run-this-node and Run-with-old-snapshot buttons', async () => {
+  it('renders Run-this-node and Run-on-an-older-release buttons', async () => {
     mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     renderPage();
     expect(await screen.findByRole('button', { name: /run this node/i })).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: /run with old snapshot/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /run on an older release/i })).toBeInTheDocument();
   });
 
   it('latest button POSTs /api/nodes/svc/schema/tbl/run with empty body', async () => {
@@ -149,14 +149,14 @@ describe('NodeDetailPage', () => {
     expect(await screen.findByText(/50% succeeded/i)).toBeInTheDocument();
   });
 
-  it('"Run with old snapshot" opens the picker dialog', async () => {
+  it('"Run on an older release" opens the picker dialog', async () => {
     mockFetch.mockImplementation(() => jsonResp({
       tasks: [mkRun({ run_id: 'pick-me' })],
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /run on an older release/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: /v1 snapshot/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /v1 image/i })).toBeInTheDocument();
   });
 
   it('picking a source run POSTs with source_run_id', async () => {
@@ -168,8 +168,8 @@ describe('NodeDetailPage', () => {
       return jsonResp({ tasks: [mkRun({ run_id: 'pick-me' })] });
     });
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /run on an older release/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /v1 image/i }));
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const postCall = calls.find(c => String(c[0]).includes('/api/nodes/svc/schema/tbl/run') && c[1]?.method === 'POST');
@@ -201,7 +201,7 @@ describe('NodeDetailPage', () => {
     });
   });
 
-  it('gates only the latest button (not the option or old-snapshot) when the latest topology has known-zero tests', async () => {
+  it('gates only the latest button (not the option or older-release) when the latest topology has known-zero tests', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
@@ -209,21 +209,21 @@ describe('NodeDetailPage', () => {
     });
     renderPage();
     const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
-    // Test stays selectable — an old-snapshot test may still be valid.
+    // Test stays selectable — an older-release test may still be valid.
     expect((screen.getByRole('option', { name: /test/i }) as HTMLOptionElement).disabled).toBe(false);
 
     fireEvent.change(select, { target: { value: 'test' } });
     // The latest "Test this node" button is disabled and a hint appears...
     await waitFor(() => expect(screen.getByRole('button', { name: /test this node/i })).toBeDisabled());
     expect(document.querySelector('.info-strip--info')).toBeInTheDocument();
-    // ...but the old-snapshot button stays available.
-    expect(screen.getByRole('button', { name: /run with old snapshot/i })).not.toBeDisabled();
+    // ...but the older-release button stays available.
+    expect(screen.getByRole('button', { name: /run on an older release/i })).not.toBeDisabled();
   });
 
-  it('allows an old-snapshot test even when the latest topology has no tests', async () => {
-    // Regression: the latest test_count must NOT gate the snapshot_of_run path.
-    // The backend validates a snapshot_of_run test against the source run's own
-    // pinned test_count, so an old-snapshot test stays available (and POSTs
+  it('allows an older-release test even when the latest topology has no tests', async () => {
+    // Regression: the latest test_count must NOT gate the release_of_run path.
+    // The backend validates a release_of_run test against the source run's own
+    // pinned test_count, so an older-release test stays available (and POSTs
     // operation:test) even when the latest node version has zero tests.
     mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -233,10 +233,10 @@ describe('NodeDetailPage', () => {
     });
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
-    const oldSnap = await screen.findByRole('button', { name: /run with old snapshot/i });
-    expect(oldSnap).not.toBeDisabled();
-    fireEvent.click(oldSnap);
-    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+    const olderRelease = await screen.findByRole('button', { name: /run on an older release/i });
+    expect(olderRelease).not.toBeDisabled();
+    fireEvent.click(olderRelease);
+    fireEvent.click(await screen.findByRole('button', { name: /v1 image/i }));
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
@@ -247,7 +247,7 @@ describe('NodeDetailPage', () => {
   it('gates the latest test button and shows a hint when test_count is unknown', async () => {
     // An unset test_count (a node predating test_count capture) has no known
     // tests, so it gates the latest test button exactly like a known zero — only
-    // a known, positive test_count is runnable. The old-snapshot path stays open.
+    // a known, positive test_count is runnable. The older-release path stays open.
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: false });
@@ -257,7 +257,7 @@ describe('NodeDetailPage', () => {
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
     await waitFor(() => expect(screen.getByRole('button', { name: /test this node/i })).toBeDisabled());
     expect(document.querySelector('.info-strip--info')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /run with old snapshot/i })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /run on an older release/i })).not.toBeDisabled();
   });
 
   it('changing the operation select refetches history scoped to that operation', async () => {
@@ -289,7 +289,7 @@ describe('NodeDetailPage', () => {
     });
   });
 
-  it('picking an old snapshot POSTs the selected operation alongside source_run_id', async () => {
+  it('picking an older release POSTs the selected operation alongside source_run_id', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
@@ -298,8 +298,8 @@ describe('NodeDetailPage', () => {
     });
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
-    fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /run on an older release/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /v1 image/i }));
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
@@ -349,7 +349,7 @@ describe('NodeDetailPage — section-header alignment', () => {
     });
   });
 
-  it('does not render the truly orphan classes anywhere', async () => {
+  it('does not render the truly unused classes anywhere', async () => {
     mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     const { container } = renderPage();
     await waitFor(() => {
@@ -373,7 +373,7 @@ describe('NodeDetailPage — foundations', () => {
     mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     renderPage();
     const runLatest = await screen.findByRole('button', { name: /run this node/i });
-    const runOld = await screen.findByRole('button', { name: /run with old snapshot/i });
+    const runOld = await screen.findByRole('button', { name: /run on an older release/i });
     [runLatest, runOld].forEach(btn => {
       expect(btn.className).toMatch(/\bbtn\b/);
       expect(btn.className).toMatch(/\bbtn--secondary\b/);
@@ -1094,10 +1094,10 @@ describe('NodeDetailPage full refresh', () => {
     expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
   });
 
-  it('names the old-snapshot action in plain words, with no glyph', async () => {
+  it('names the older-release action in plain words, with no glyph', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model'));
     renderPage();
-    expect(await screen.findByRole('button', { name: 'Run with old snapshot…' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Run on an older release…' })).toBeInTheDocument();
   });
 
   it('asks for confirmation and only POSTs full_refresh after confirming', async () => {
@@ -1158,13 +1158,13 @@ describe('NodeDetailPage full refresh', () => {
   const runPosts = () => (mockFetch.mock.calls as unknown as [string, RequestInit?][])
     .filter(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
 
-  it('confirms a full refresh of an old snapshot before POSTing source_run_id', async () => {
+  it('confirms a full refresh of an older release before POSTing source_run_id', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'pick-me' })]));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
     await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
-    await userEvent.click(screen.getByRole('button', { name: /run with old snapshot/i }));
-    await userEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+    await userEvent.click(screen.getByRole('button', { name: /run on an older release/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /v1 image/i }));
 
     expect(await screen.findByRole('dialog')).toHaveTextContent(/full refresh svc\.schema\.tbl\?/i);
     expect(runPosts()).toHaveLength(0);
@@ -1174,22 +1174,22 @@ describe('NodeDetailPage full refresh', () => {
     expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ request_id: expect.stringMatching(UUID), source_run_id: 'pick-me', operation: 'full_refresh' });
   });
 
-  it('names the picked snapshot in the full refresh confirmation', async () => {
+  it('names the picked image in the full refresh confirmation', async () => {
     const picked = { ...mkRun({ run_id: 'pick-me', created_at: '2026-04-02T08:30:00Z' }), image_tag: 'v7' };
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [picked]));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
     await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
-    await userEvent.click(screen.getByRole('button', { name: /run with old snapshot/i }));
-    await userEvent.click(await screen.findByRole('button', { name: /v7 snapshot/i }));
+    await userEvent.click(screen.getByRole('button', { name: /run on an older release/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /v7 image/i }));
 
     const dialog = await screen.findByRole('dialog');
     const when = new Date('2026-04-02T08:30:00Z').toLocaleString();
-    expect(dialog).toHaveTextContent(`Rebuilds from the snapshot of the run on ${when} (image v7).`);
+    expect(dialog).toHaveTextContent(`Rebuilds from the release of the run on ${when} (image v7).`);
     expect(screen.getByRole('button', { name: /^cancel$/i })).toHaveFocus();
   });
 
-  it('shows no snapshot line when the full refresh runs the latest version', async () => {
+  it('shows no source line when the full refresh runs the latest version', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'pick-me' })]));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
@@ -1198,7 +1198,7 @@ describe('NodeDetailPage full refresh', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent(/full refresh svc\.schema\.tbl\?/i);
-    expect(dialog).not.toHaveTextContent(/rebuilds from the snapshot/i);
+    expect(dialog).not.toHaveTextContent(/rebuilds from the release/i);
   });
 
   it('POSTs full_refresh even if the operation select changes while the dialog is open', async () => {
@@ -1227,12 +1227,12 @@ describe('NodeDetailPage full refresh', () => {
     renderPage(undefined, 'full_refresh');
     const fullRefresh = await screen.findByRole('button', { name: /full refresh this node/i });
     expect(fullRefresh).toBeDisabled();
-    expect(screen.getByRole('button', { name: /run with old snapshot/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /run on an older release/i })).toBeDisabled();
     fireEvent.click(fullRefresh);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(runPosts()).toHaveLength(0);
   });
-  it('offers a full refresh of an inactive node from an old snapshot only', async () => {
+  it('offers a full refresh of a retired node from an older release only', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'old-run' })], { inactive: true }));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
@@ -1244,10 +1244,10 @@ describe('NodeDetailPage full refresh', () => {
     fireEvent.click(latest);
     expect(screen.queryByRole('dialog')).toBeNull();
 
-    const oldSnapshot = screen.getByRole('button', { name: /run with old snapshot/i });
-    expect(oldSnapshot).toBeEnabled();
-    await userEvent.click(oldSnapshot);
-    await userEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+    const olderRelease = screen.getByRole('button', { name: /run on an older release/i });
+    expect(olderRelease).toBeEnabled();
+    await userEvent.click(olderRelease);
+    await userEvent.click(await screen.findByRole('button', { name: /v1 image/i }));
     expect(await screen.findByRole('dialog')).toHaveTextContent(/full refresh svc\.schema\.tbl\?/i);
     expect(runPosts()).toHaveLength(0);
 
@@ -1261,18 +1261,18 @@ describe('NodeDetailPage full refresh', () => {
     ['test', /test this node/i],
     ['build', /build this node/i],
     ['full_refresh', /full refresh this node/i],
-  ])('disables the latest %s action for an inactive node and keeps the old-snapshot button', async (op, name) => {
+  ])('disables the latest %s action for a retired node and keeps the older-release button', async (op, name) => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'old-run' })], { inactive: true }));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
     await userEvent.selectOptions(screen.getByLabelText(/operation/i), op);
 
     expect(screen.getByRole('button', { name })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /run with old snapshot/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /run on an older release/i })).toBeEnabled();
     expect(screen.getAllByText(/no longer active in the topology/i)).toHaveLength(1);
   });
 
-  it('shows only the inactive strip, not the no-tests strip, for an inactive node with no tests', async () => {
+  it('shows only the inactive strip, not the no-tests strip, for a retired node with no tests', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [], { inactive: true, test_count: 0, test_count_known: true }));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
@@ -1341,7 +1341,7 @@ describe('NodeDetailPage — request id', () => {
     expect(ids[1]).toBe(ids[0]);
   });
 
-  it('requestId: a press that asks for another snapshot after a timeout mints a new id', async () => {
+  it('requestId: a press that asks for another image after a timeout mints a new id', async () => {
     const ids = installRun(
       ['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }],
       [mkRun({ run_id: 'pick-me' })],
@@ -1350,15 +1350,15 @@ describe('NodeDetailPage — request id', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
     await screen.findByText('Request failed — please try again');
-    fireEvent.click(screen.getByRole('button', { name: /run with old snapshot/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+    fireEvent.click(screen.getByRole('button', { name: /run on an older release/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /v1 image/i }));
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toMatch(UUID);
     expect(ids[1]).not.toBe(ids[0]);
   });
 
-  it('requestId: a press hours after an unanswered one, with no newer node run in the history, is a retry with the same id', async () => {
+  it('requestId: a press hours after an unanswered one, with no newer single-node run in the history, is a retry with the same id', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       const ids = installRun(
@@ -1400,7 +1400,7 @@ describe('NodeDetailPage — request id', () => {
     await roundTripOperation();
   }
 
-  it('requestId: a press after the history shows a node run newer than the unanswered press saw is a new action', async () => {
+  it('requestId: a press after the history shows a single-node run newer than the unanswered press saw is a new action', async () => {
     const history = [mkRun({ run_id: 'r1', kind: 'single_node_run' })];
     const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], history);
     renderPage();
@@ -1417,7 +1417,7 @@ describe('NodeDetailPage — request id', () => {
     expect(ids[1]).not.toBe(ids[0]);
   });
 
-  it('requestId: a newer scheduled run in the history is not the outcome of the press, so its retry keeps the id', async () => {
+  it('requestId: a newer cron run in the history is not the outcome of the press, so its retry keeps the id', async () => {
     const history = [mkRun({ run_id: 'r1', kind: 'single_node_run' })];
     const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], history);
     renderPage();
@@ -1453,7 +1453,7 @@ describe('NodeDetailPage — request id', () => {
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toBe(ids[0]);
 
-    // The history is readable again and shows a node run newer than r1.
+    // The history is readable again and shows a single-node run newer than r1.
     await screen.findByText('Request failed — please try again');
     history = jsonResp({ tasks: [mkRun({ run_id: 'r2', kind: 'single_node_run' }), mkRun({ run_id: 'r1', kind: 'single_node_run' })] });
     await roundTripOperation();
@@ -1480,7 +1480,7 @@ describe('NodeDetailPage — request id', () => {
     expect(ids[1]).toBe(ids[0]);
   });
 
-  it('requestId: a node run pushed out of the history window by scheduled runs is not a newer run', async () => {
+  it('requestId: a single-node run pushed out of the history window by cron runs is not a newer run', async () => {
     const history: unknown[] = [mkRun({ run_id: 'r1', kind: 'single_node_run' })];
     const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], history);
     renderPage();
@@ -1856,10 +1856,10 @@ describe('NodeDetailPage — dialogs of the node the page has left', () => {
     expect(runPosts()).toHaveLength(0);
   });
 
-  it('closes the old snapshot picker when the page moves to another node', async () => {
+  it('closes the older release picker when the page moves to another node', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model'));
     renderWithLinksTo('svc.schema.other');
-    fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /run on an older release/i }));
     await screen.findByRole('dialog');
 
     fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.other' }));

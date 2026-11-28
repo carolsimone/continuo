@@ -274,7 +274,7 @@ def test_canonical_hashing_of_a_dbt_release_counts_its_dbt_contracts():
     assert (record.runs, record.counts) == (1, {"contracts": 2})
 
 
-# --- a failed release writes no contract bundle ----------------------------------
+# --- a rejected release writes no contract bundle ----------------------------------
 
 def _invalid_contract_release(tmp_path):
     return source_of(bundle_file(tmp_path, [bundle_node(

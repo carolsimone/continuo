@@ -18,11 +18,11 @@ func TestPromotedNodes_KeepsAnUnknownExternalNode(t *testing.T) {
 		TenantID:      "default",
 		ReleaseID:     "rel-1",
 		Nodes: []topologyartifact.Node{
-			{UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"},
+			{UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe", NodeType: "unknown-external"},
 			{
 				UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
 				ProjectName: "service-1", NodeType: "dbt-model", ContentHash: "sha256:orders",
-				UpstreamUniqueIDs: []string{"raw.ingest_probe"},
+				UpstreamUniqueIDs: []string{"raw.external_probe"},
 			},
 			{UniqueID: "test.service_1.not_null_orders_id.5c1f0b2a3d", NodeType: "dbt-test"},
 		},
@@ -32,7 +32,7 @@ func TestPromotedNodes_KeepsAnUnknownExternalNode(t *testing.T) {
 
 	require.Len(t, got, 2, "the unknown-external node stays and the dbt test goes")
 	assert.Equal(t, topology.ReleasePromotedTopologyNode{
-		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external",
+		UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe", NodeType: "unknown-external",
 	}, got[0])
-	assert.Equal(t, []string{"raw.ingest_probe"}, got[1].UpstreamUniqueIDs, "the reader keeps its edge to the unknown-external node")
+	assert.Equal(t, []string{"raw.external_probe"}, got[1].UpstreamUniqueIDs, "the reader keeps its edge to the unknown-external node")
 }

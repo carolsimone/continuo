@@ -279,7 +279,7 @@ func (r *DeadLetterRepository) DeleteExpired(ctx context.Context, originalBefore
 	return toDomainAll(rows)
 }
 
-// Backlog counts the open dead letters per source, stream and failure kind, with
+// Backlog counts the open dead letters per source, stream and dead-letter kind, with
 // the oldest recorded_at of each group.
 func (r *DeadLetterRepository) Backlog(ctx context.Context) ([]deadletter.BacklogRow, error) {
 	var rows []struct {

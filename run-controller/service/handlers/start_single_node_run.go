@@ -22,7 +22,7 @@ var ErrSourceRunNotTerminal = errors.New("source run is not in a terminal state"
 // StartSingleNodeRunHandler is the use case behind the StartSingleNodeRun
 // gRPC method. It creates a single-task Run, stores its task and dispatches it
 // in the caller's transaction: on the live release, or, in stale mode
-// (MetadataSource = snapshot_of_run), on the source run's release, after
+// (MetadataSource = release_of_run), on the source run's release, after
 // validating that the source run is terminal and carries a task at the
 // requested node.
 type StartSingleNodeRunHandler struct {
@@ -53,7 +53,7 @@ type StartSingleNodeRunInput struct {
 
 // HandleInTransaction synthesises the single-task Run runID inside u's open
 // transaction, which the caller commits or rolls back, and returns the run's
-// schedule name. In stale mode (MetadataSource = snapshot_of_run) it requires
+// schedule name. In stale mode (MetadataSource = release_of_run) it requires
 // the source run to be terminal and to carry a task at the requested node. A
 // selection the planner refuses (the node is not in the release or another
 // project owns it, a test of a node without data tests, a full refresh of a
@@ -72,11 +72,11 @@ func (h *StartSingleNodeRunHandler) HandleInTransaction(ctx context.Context, u u
 // is terminal and carries a task at the requested node; a request on the live
 // release has none.
 func (h *StartSingleNodeRunHandler) source(ctx context.Context, u uow.UnitOfWork, in StartSingleNodeRunInput) (*run.Run, error) {
-	if in.MetadataSource != run.MetadataSourceSnapshotOfRun {
+	if in.MetadataSource != run.MetadataSourceReleaseOfRun {
 		return nil, nil
 	}
 	if in.SourceRunID == nil {
-		return nil, fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run")
+		return nil, fmt.Errorf("source_run_id required when metadata_source=release_of_run")
 	}
 	src, err := u.Run().GetRun(ctx, in.TenantID, *in.SourceRunID)
 	if err != nil {

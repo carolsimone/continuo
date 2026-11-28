@@ -162,7 +162,7 @@ CREATE TABLE fix (
     CONSTRAINT fix_pkey PRIMARY KEY (id),
     CONSTRAINT fix_uniq UNIQUE (release_id, round, try),
     CONSTRAINT fix_try_check CHECK ((try >= 0)),
-    CONSTRAINT fix_status_check CHECK ((status IN ('generating', 'verifying', 'proposed', 'skipped', 'failed', 'escalated'))),
+    CONSTRAINT fix_status_check CHECK ((status IN ('generating', 'verifying', 'proposed', 'skipped', 'failed', 'handed_over'))),
     CONSTRAINT fix_remediation_id_fkey FOREIGN KEY (remediation_id) REFERENCES remediation(id) ON DELETE SET NULL
 );
 

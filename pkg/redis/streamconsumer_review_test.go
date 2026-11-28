@@ -341,10 +341,10 @@ func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t
 		require.NoError(t, c.reclaimPending(ctx))
 		return pendingCount() == 0
 	}, 10*time.Second, 50*time.Millisecond,
-		"a poison message must be dead-lettered on its fifth delivery, not cycle in the PEL forever")
+		"a message that always fails must be dead-lettered on its fifth delivery, not cycle in the PEL forever")
 
 	// It was genuinely retried several times before being dead-lettered (i.e. it
-	// was a poison message, not a one-shot drop), and it is gone from the PEL.
+	// was a message that always fails, not a one-shot drop), and it is gone from the PEL.
 	// (Exact count depends on when the PEL delivery counter reaches the bound;
 	// assert a safe lower bound rather than an exact value.)
 	assert.GreaterOrEqual(t, calls.Load(), int32(3),

@@ -4,24 +4,24 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // The names the checks of this file register under.
 const (
-	nameEditsMapToAProject workflow.StepName = "edits_map_to_a_project"
-	nameNoPathEditedTwice  workflow.StepName = "no_path_edited_twice"
-	nameOneManifestKind    workflow.StepName = "one_manifest_kind"
+	nameEditsMapToAProject flow.StepName = "edits_map_to_a_project"
+	nameNoPathEditedTwice  flow.StepName = "no_path_edited_twice"
+	nameOneManifestKind    flow.StepName = "one_manifest_kind"
 )
 
-var crossStage = []workflow.Stage{workflow.StageCrossCluster}
+var crossStage = []flow.Stage{flow.StageCrossCluster}
 
 // finish wraps at most one finding as the result of the check called name. Each
 // check reports the first edit it refuses, as one refusal.
-func finish(name workflow.StepName, f *remediation.Finding) remediation.CheckResult {
+func finish(name flow.StepName, f *remediation.Finding) remediation.CheckResult {
 	res := remediation.CheckResult{Check: string(name)}
 	if f != nil {
 		res.Findings = []remediation.Finding{*f}

@@ -889,13 +889,13 @@ func TestObserver_DeletesAJobWhoseRowFailedBeforeItWasDeployed(t *testing.T) {
 func TestObserver_LeavesAnUnfencedJobWithNoRowForAdoption(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	h.cache.set("job-orphan", liveJobOf(uuid.NewString(), h.now))
+	h.cache.set("job-to-adopt", liveJobOf(uuid.NewString(), h.now))
 	runID := uuid.NewString()
 	h.unstartedRow(t, runID, "job-launching", false)
 	h.cache.set("job-launching", liveJobOf(runID, h.now))
 	h.cache.set("job-of-a-release-leg", model.JobObservation{JobPresent: true})
 
-	for _, name := range []string{"job-orphan", "job-launching", "job-of-a-release-leg"} {
+	for _, name := range []string{"job-to-adopt", "job-launching", "job-of-a-release-leg"} {
 		require.NoError(t, h.o.Process(ctx, name))
 	}
 

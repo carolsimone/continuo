@@ -670,7 +670,7 @@ func TestTaskDispatch_WaitsForAFenceInProgressAndMeetsIt(t *testing.T) {
 // propagation), is not reported stopped while the pod can still write:
 // nothing is stored or reported for it, and run-controller's next cancel names it
 // again. The run is fenced all the same.
-func TestRunCancelled_LeavesANamedAttemptWithAnOrphanPodUnanswered(t *testing.T) {
+func TestRunCancelled_LeavesANamedAttemptWithAnUnfinishedPodUnanswered(t *testing.T) {
 	f := newFenceFlow(t)
 	cmd := f.command(0)
 	started := f.now.Add(-time.Minute)
@@ -768,9 +768,9 @@ func TestRunCancelled_AdoptsTheJobOfAPendingRowThatNeverRecordedIt(t *testing.T)
 func TestRunCancelled_LeavesAPendingRowWithAnUnfinishedPodAndNoJob(t *testing.T) {
 	f := newFenceFlow(t)
 	d := f.attempt(model.StatusPending)
-	orphan := f.liveJobOf(d.Command())
-	orphan.JobPresent = false
-	live := jobsOf{d.JobName(): orphan}
+	jobless := f.liveJobOf(d.Command())
+	jobless.JobPresent = false
+	live := jobsOf{d.JobName(): jobless}
 	var logs bytes.Buffer
 	h := handlers.NewRunCancelledHandler(live, f.term, f.metrics, slog.New(slog.NewTextHandler(&logs, nil)))
 
@@ -796,9 +796,9 @@ func TestRunCancelled_LeavesAPendingRowWithAnUnfinishedPodAndNoJob(t *testing.T)
 func TestRunCancelled_AReSentCancelOverRowsWaitingForTheirLaunch(t *testing.T) {
 	f := newFenceFlow(t)
 	withJob, withPod, withNothing := f.attempt(model.StatusReserved), f.attempt(model.StatusPending), f.attempt(model.StatusPending)
-	orphan := f.liveJobOf(withPod.Command())
-	orphan.JobPresent = false
-	live := jobsOf{withJob.JobName(): f.liveJobOf(withJob.Command()), withPod.JobName(): orphan}
+	jobless := f.liveJobOf(withPod.Command())
+	jobless.JobPresent = false
+	live := jobsOf{withJob.JobName(): f.liveJobOf(withJob.Command()), withPod.JobName(): jobless}
 
 	first := f.cancel(f.handler(live), f.event())
 	assert.Equal(t, []string{withJob.JobName()}, first)

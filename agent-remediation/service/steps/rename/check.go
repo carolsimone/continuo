@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -37,7 +37,7 @@ func (*MatchesPlan) Meta() step.Meta {
 		Description: "Fails a rename draft that does not move the model's file to the planned path, that edits a file the plan does not name, " +
 			"or that leaves a file of the project still naming the model by its old name.",
 		Needs:  []remediation.EvidenceKey{remediation.KeyDraft, remediation.KeyModelRename},
-		Stages: []workflow.Stage{workflow.StagePreflight},
+		Stages: []flow.Stage{flow.StagePreflight},
 	}
 }
 

@@ -148,7 +148,7 @@ func (s *fakeStore) SeedRelease(r *releasecheck.Check) {
 	s.releases[r.ID()] = r
 }
 
-// SeedLiveRelease installs a live-release snapshot directly, simulating a
+// SeedLiveRelease installs a live release directly, simulating a
 // prior promotion. Used by handler tests to exercise the content_hash diff.
 func (s *fakeStore) SeedLiveRelease(live *release.LiveRelease) {
 	s.mu.Lock()

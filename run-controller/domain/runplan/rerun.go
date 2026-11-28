@@ -8,7 +8,7 @@ import (
 )
 
 // Rerun selects a rerun of Source on the source run's own release, so it
-// reproduces the source's DAG whatever has been promoted since. g is that
+// reproduces the source's topology whatever has been promoted since. g is that
 // release restricted to the source run's nodes; Select restricts it again, so
 // a wider slice selects the same plan. The source tasks that did not succeed
 // and every descendant of theirs among the source's tasks are executed along
@@ -45,5 +45,5 @@ func (s Rerun) Select(g topology.Graph) (Plan, error) {
 	if err := checkNodeTypes(g, keysOf(pending)); err != nil {
 		return Plan{}, err
 	}
-	return carryRebuilds(dagPlan(g, pending, succeededIn(g, s.Source.Tasks)), s.Source.Tasks, s.Source.Operation), nil
+	return carryRebuilds(topologyPlan(g, pending, succeededIn(g, s.Source.Tasks)), s.Source.Tasks, s.Source.Operation), nil
 }

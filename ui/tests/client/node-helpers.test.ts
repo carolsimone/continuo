@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { kindLabel, computeNodeStats, formatDuration, formatRelative, groupRunsBySnapshot } from '../../src/client/node-helpers';
+import { kindLabel, computeNodeStats, formatDuration, formatRelative, groupRunsByImage } from '../../src/client/node-helpers';
 import type { NodeRun } from '../../src/client/types';
 
 const mkRun = (over: Partial<NodeRun>): NodeRun => ({
@@ -132,14 +132,14 @@ describe('computeNodeStats — extended fields', () => {
   });
 });
 
-describe('groupRunsBySnapshot', () => {
+describe('groupRunsByImage', () => {
   it('collapses runs sharing an image_tag into one group', () => {
     const runs = [
       mkRun({ run_id: 'a1', image_tag: 'img-a', created_at: '2026-05-10T10:00:00Z' }),
       mkRun({ run_id: 'a2', image_tag: 'img-a', created_at: '2026-05-09T10:00:00Z' }),
       mkRun({ run_id: 'b1', image_tag: 'img-b', created_at: '2026-05-08T10:00:00Z' }),
     ];
-    const groups = groupRunsBySnapshot(runs);
+    const groups = groupRunsByImage(runs);
     expect(groups).toHaveLength(2);
     expect(groups[0]).toMatchObject({ imageTag: 'img-a', runCount: 2 });
     expect(groups[1]).toMatchObject({ imageTag: 'img-b', runCount: 1 });
@@ -152,7 +152,7 @@ describe('groupRunsBySnapshot', () => {
       mkRun({ run_id: 'newest', image_tag: 'img',
               created_at: '2026-05-10T10:00:00Z', task_status: 'succeeded' }),
     ];
-    const [g] = groupRunsBySnapshot(runs);
+    const [g] = groupRunsByImage(runs);
     expect(g.representativeRunId).toBe('newest');
     expect(g.status).toBe('succeeded');
     expect(g.lastRunAt).toBe('2026-05-10T10:00:00Z');
@@ -162,7 +162,7 @@ describe('groupRunsBySnapshot', () => {
     const runs = [
       mkRun({ run_id: 'inflight', run_status: 'running', image_tag: 'img' }),
     ];
-    expect(groupRunsBySnapshot(runs)).toEqual([]);
+    expect(groupRunsByImage(runs)).toEqual([]);
   });
 
   it('includes a run whose source scheduler failed even if this node stayed pending', () => {
@@ -170,7 +170,7 @@ describe('groupRunsBySnapshot', () => {
       mkRun({ run_id: 'src-failed', run_status: 'failed', task_status: 'pending',
               image_tag: 'img' }),
     ];
-    const groups = groupRunsBySnapshot(runs);
+    const groups = groupRunsByImage(runs);
     expect(groups).toHaveLength(1);
     expect(groups[0].representativeRunId).toBe('src-failed');
     expect(groups[0].status).toBe('pending');
@@ -182,6 +182,6 @@ describe('groupRunsBySnapshot', () => {
       mkRun({ run_id: 'old', image_tag: 'old-img', created_at: '2026-01-01T00:00:00Z' }),
       mkRun({ run_id: 'new', image_tag: 'new-img', created_at: '2026-09-01T00:00:00Z' }),
     ];
-    expect(groupRunsBySnapshot(runs).map(g => g.imageTag)).toEqual(['new-img', 'old-img']);
+    expect(groupRunsByImage(runs).map(g => g.imageTag)).toEqual(['new-img', 'old-img']);
   });
 });

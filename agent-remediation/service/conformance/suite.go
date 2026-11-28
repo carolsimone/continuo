@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -88,7 +88,7 @@ type Result struct {
 // Suite runs the conformance scenarios of a set of loaded files.
 type Suite struct {
 	// Files are the loaded flows and types.
-	Files workflow.Set
+	Files flow.Set
 	// Fixtures are the loaded fixtures.
 	Fixtures []Fixture
 	// Locator and Inspector are the contract locator and inspector the
@@ -181,10 +181,10 @@ func (s Suite) listedTypes() []listedType {
 	}
 	var out []listedType
 	for _, name := range flows {
-		flow := s.Files.Flows[name]
-		for _, t := range flow.Types {
+		fl := s.Files.Flows[name]
+		for _, t := range fl.Types {
 			if !slices.ContainsFunc(out, func(lt listedType) bool { return lt.name == t }) {
-				out = append(out, listedType{name: t, flow: name, tries: flow.Tries})
+				out = append(out, listedType{name: t, flow: name, tries: fl.Tries})
 			}
 		}
 	}
@@ -329,14 +329,14 @@ type typePlan struct {
 
 // revises reports whether typ allows a draft after the first, in which the
 // prompt revises a draft pre-flight refused.
-func revises(typ workflow.Type) bool {
+func revises(typ flow.Type) bool {
 	return typ.Agent.Drafts > 1
 }
 
 // refusedThenPassed is the drafts of a try whose first draft ends as first and
 // whose revision passes: both drafts when typ allows a revision, else the
 // first draft alone, which spends the type's one draft.
-func refusedThenPassed(typ workflow.Type, first answerKind) []answerKind {
+func refusedThenPassed(typ flow.Type, first answerKind) []answerKind {
 	if revises(typ) {
 		return []answerKind{first, passes}
 	}
@@ -345,7 +345,7 @@ func refusedThenPassed(typ workflow.Type, first answerKind) []answerKind {
 
 // typeScript is the plan of scenario sc of the type typ from its fixture f,
 // in a flow that makes tries tries.
-func typeScript(f Fixture, typ workflow.Type, tries int, sc Scenario) (typePlan, error) {
+func typeScript(f Fixture, typ flow.Type, tries int, sc Scenario) (typePlan, error) {
 	members, err := memberPasses(f)
 	if err != nil {
 		return typePlan{}, err
@@ -424,7 +424,7 @@ func memberPasses(f Fixture) (map[string][]ports.ProposeResult, error) {
 // after the first model call of the second draft, and in a type of one draft
 // the next commit of the try. It delivers the trigger a third time and
 // restarts the worker again.
-func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, plan typePlan, typ workflow.Type) error {
+func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, plan typePlan, typ flow.Type) error {
 	prompt := string(typ.Agent.Prompt.Name)
 	if err := sr.accept(ctx, plan.trigger); err != nil {
 		return fmt.Errorf("deliver the trigger again: %w", err)
@@ -494,7 +494,7 @@ func (sr *scenarioRun) loseCommitAfterCall(ctx context.Context, n int) error {
 // and the scenario's plan. oneRunCalls is how often the model is called when
 // the trigger is delivered once and nothing restarts, which a redelivery and a
 // restart must not change.
-func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Type, plan typePlan, sc Scenario, oneRunCalls int) error {
+func (sr *scenarioRun) expectType(files flow.Set, f Fixture, typ flow.Type, plan typePlan, sc Scenario, oneRunCalls int) error {
 	e := sr.expect(plan.trigger)
 	e.ended()
 	first := e.firstCluster(typ.Name)
@@ -536,10 +536,10 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 		e.triesSpent(f, plan)
 	case DeclinesBeforeModel:
 		switch typ.Match.Cluster {
-		case workflow.ClusterSharedUpstream:
+		case flow.ClusterSharedUpstream:
 			e.membersRanTheirTypes(files, first)
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
-		case workflow.ClusterCrossProject:
+		case flow.ClusterCrossProject:
 			if as := e.fixRows(fix.StatusSkipped); len(as) == 1 {
 				e.membersSkipped(first, as[0], model.HandoverReasonDeclined)
 			}
@@ -559,12 +559,12 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 // the code drafts_spent and the last draft's first finding in their
 // reason, and a single cluster was handed over with its last draft's first
 // finding.
-func (e *expectation) refusedEveryDraft(files workflow.Set, first remediation.Cluster, typ workflow.Type, plan typePlan) {
+func (e *expectation) refusedEveryDraft(files flow.Set, first remediation.Cluster, typ flow.Type, plan typePlan) {
 	e.draftsSpent(first, typ, plan.firstTryCalls)
 	switch typ.Match.Cluster {
-	case workflow.ClusterSharedUpstream:
+	case flow.ClusterSharedUpstream:
 		e.membersRanTheirTypes(files, first)
-	case workflow.ClusterCrossProject:
+	case flow.ClusterCrossProject:
 		if as := e.fixRows(fix.StatusSkipped); len(as) == 1 {
 			e.membersSkipped(first, as[0], model.HandoverReasonDraftsSpent)
 		}
@@ -584,7 +584,7 @@ func (e *expectation) refusedEveryDraft(files workflow.Set, first remediation.Cl
 // event that counts the tries, and no fix.
 func (e *expectation) triesSpent(f Fixture, plan typePlan) {
 	failed := slices.Repeat([]fix.Status{fix.StatusFailed}, plan.tries)
-	as := e.fixRows(append(failed, fix.StatusEscalated)...)
+	as := e.fixRows(append(failed, fix.StatusHandedOver)...)
 	for _, a := range as[:min(plan.tries, len(as))] {
 		e.verifyError(a, f.GateErrors)
 	}

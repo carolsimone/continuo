@@ -136,7 +136,7 @@ names:
       - "deploy/continuo/files"
       - "deploy/continuo/templates/NOTES.txt"
       - "deploy/continuo/templates/_helpers.tpl"
-      - "deploy/continuo/templates/agent-remediation-workflows-configmap.yaml"
+      - "deploy/continuo/templates/agent-remediation-files-configmap.yaml"
       - "deploy/continuo/templates/cancel-config-configmap.yaml"
       - "deploy/continuo/templates/ci-auth-configmap.yaml"
       - "deploy/continuo/templates/configmap.yaml"
@@ -344,7 +344,7 @@ names:
     use: yaml:"drafts", Agent.Drafts
   - pattern: 'rounds'
     use: drafts (a type's drafts key)
-    paths: [agent-remediation/workflows]
+    paths: [agent-remediation/files]
   # Manual run group: a run of a whole schedule started by hand is a manual
   # run (run kind manual), a run of one node started by hand is a
   # single-node run, and every command that starts a run is Start...
@@ -449,3 +449,69 @@ names:
   - pattern: '\w*SkippedNodes?\w*|(?i)skipped[ -]nodes?'
     use: excluded model (ExcludedModel)
     paths: [topology-controller]
+  # Remediation files group: an install's own flow, type and fixture files are
+  # its remediation files (agentRemediation.files, AGENT_REMEDIATION_FILES_DIR,
+  # the ConfigMap <release>-agent-remediation-files and the volume
+  # remediation-files). A remediation's plan is its flow, never a workflow; a
+  # GitHub Actions workflow keeps its name outside agent-remediation.
+  - pattern: 'AGENT_REMEDIATION_WORKFLOWS_DIR'
+    use: AGENT_REMEDIATION_FILES_DIR
+  - pattern: 'agentRemediation\.workflows?\w*|agentRemediation[A-Z]?\w*Workflows?\w*|assertWorkflows?\w*'
+    use: agentRemediation.files
+  - pattern: '(agent-)?remediation-workflows|continuo-workflows'
+    use: remediation-files (the volume, the ConfigMap <release>-agent-remediation-files)
+  - pattern: '(?i)\w*workflows?\w*'
+    use: flow, remediation files (domain/flow, adapters/remediationfile)
+    paths: [agent-remediation, pkg/deploycheck/remediation_files_test.go, scripts/install-test/lint.sh, scripts/install-test/assert-config-rollout.py, scripts/install-test/fixtures/remediation-files]
+  # Hand-over group: a round's row written once its tries are spent is its
+  # hand-over row, with status handed_over.
+  - pattern: '\w*[eE]scalated\w*|escalates'
+    use: handed_over, hand over
+  - pattern: '(?i)escalations?'
+    use: hand-over
+    paths: [agent-remediation, release-controller, ui/src/client, ui/tests, tests/e2e, pkg/domain]
+  # Cluster group: the failing nodes one draft fixes together are a cluster;
+  # domain/cluster groups them through a Strategy over a TopologyView.
+  - pattern: '(?i)typolog\w*'
+    use: cluster (domain/cluster, cluster.Strategy)
+  - pattern: 'DagView|DAG view'
+    use: TopologyView
+  # Unknown-external node group: a table a node reads and no node builds is an
+  # unknown-external node; no code reads a node type stored under another name.
+  - pattern: 'legacyIngested|CanonicalNodeType|\w*LegacyIngested\w*|(?i)ingested[ _-]?(nodes?|rows?|types?)'
+    use: unknown-external node
+  # The type name itself, as a string a reader compares: the guard wraps a
+  # pattern in word boundaries, so it names the word, retired in the code.
+  - pattern: '(?i)ingested'
+    use: unknown-external
+    paths: [run-controller, catalog, execution-controller, release-controller, agent-remediation, agent-chat, topology-controller, pkg, cli, ui/src, ui/tests, tests/e2e, db]
+  - pattern: '(?i)ingest[_-]?probe\w*'
+    use: external_probe (the e2e probe of an unknown-external node)
+  # Candidate release group: a release on its way to production is a candidate
+  # release, and the checks it passes are its release check.
+  - pattern: '(?i)blue[/ -]?green\w*'
+    use: candidate release, release check
+  # Dormant node and adopted Job group: a node of no schedule is a dormant
+  # node, and a Job a dispatch takes over is an adopted Job. Kubernetes'
+  # Orphan propagation policy keeps its own name.
+  - pattern: '(?i)orphan(ed)?[ _-]?(nodes?|jobs?|pods?|models?)|\w*Orphan(Pod|Job|Node|Model)\w*'
+    use: dormant node, adopted Job, unfinished pod
+  - pattern: '(?i)\w*orphan\w*'
+    use: dormant node, adopted Job
+    paths: [run-controller, release-controller, agent-remediation, ui/src, ui/tests]
+  # Topology group: the graph of which node reads which is the topology.
+  - pattern: '(?i)lineage'
+    use: topology
+  - pattern: '(?i)poison messages?'
+    use: dead letter (a message that keeps failing)
+  - pattern: '(?i)fire times?'
+    use: slot
+  # Schedule and topology group: a schedule's graph is its topology, never a
+  # DAG. A GitHub Actions job graph keeps its own name in .github.
+  - pattern: 'DAGs?|\w+DAG\w*|DAG\w+|[a-z]+Dag[A-Z]\w*|dag-[a-z][\w-]*|dag_\w+|\w+_dag'
+    use: topology, schedule (GraphPanel, runplan.WholeSchedule)
+    paths: [ui, docs, README.md, AGENTS.md, SECURITY.md, deploy, cli, tests, run-controller, catalog, agent-chat, agent-remediation, topology-controller, release-controller, execution-controller, pkg, scripts, .claude/design-guideline]
+  # Release group: what a past run ran on is its release, never a snapshot. A
+  # dbt snapshot keeps its name.
+  - pattern: '(?i)(old|older|past|latest|live-release|this) snapshots?|snapshot[ _]of[ _]run|\w*SnapshotOfRun|SnapshotTile|SnapshotStrip|SnapshotGroup|snapshot-tile|\w*RunsBySnapshot|isSnapshotSourceEligible|snapshotRun|snapshotLine'
+    use: release (release_of_run, ScheduleTile, PastRunStrip, ReleaseGroup)

@@ -68,35 +68,35 @@ export function computeNodeStats(runs: NodeRun[]): NodeStats {
   };
 }
 
-// One distinct past snapshot the node can be re-run against — an image_tag,
+// One distinct past image the node can be re-run with — an image_tag,
 // plus the runs that used it.
-export interface SnapshotGroup {
+export interface ImageGroup {
   imageTag: string;
-  runCount: number;             // eligible runs sharing this snapshot
-  representativeRunId: string;  // the run a single-node run of this snapshot executes against
+  runCount: number;             // eligible runs sharing this image
+  representativeRunId: string;  // the run a single-node run with this image executes against
   status: string;               // task_status of the representative run
   lastRunAt: string | null;     // created_at of the representative run
 }
 
-// Stale-mode (snapshot_of_run) eligibility mirrors run-controller.StartSingleNodeRun's
+// Stale-mode (release_of_run) eligibility mirrors run-controller.StartSingleNodeRun's
 // validation: the source RUN must be terminal (scheduler-level status), not the
 // per-task status on this node. A FAILED run where this node stayed PENDING is a
 // valid source; an in-flight run where this node already succeeded is NOT.
-export function isSnapshotSourceEligible(r: NodeRun): boolean {
+export function isReleaseSourceEligible(r: NodeRun): boolean {
   const s = r.run_status;
   return s === 'succeeded' || s === 'failed' || s === 'cancelled';
 }
 
-// Collapse a node's runs into the distinct snapshots it can be re-run against.
-// Runs that share an image_tag are one snapshot; the
-// snapshot's representative is its most-recent terminal run, which is the run the
-// stale-mode single-node run executes against. Groups come back newest-snapshot-first.
-export function groupRunsBySnapshot(runs: NodeRun[]): SnapshotGroup[] {
-  const eligible = runs.filter(isSnapshotSourceEligible);
+// Collapse a node's runs into the distinct images it can be re-run with.
+// Runs that share an image_tag are one image group; the
+// group's representative is its most-recent terminal run, which is the run the
+// stale-mode single-node run executes against. Groups come back newest-image-first.
+export function groupRunsByImage(runs: NodeRun[]): ImageGroup[] {
+  const eligible = runs.filter(isReleaseSourceEligible);
   const byRecent = [...eligible].sort(
     (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
 
-  const groups = new Map<string, SnapshotGroup>();
+  const groups = new Map<string, ImageGroup>();
   for (const r of byRecent) {
     const key = r.image_tag;
     const existing = groups.get(key);

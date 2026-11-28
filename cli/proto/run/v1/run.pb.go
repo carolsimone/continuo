@@ -1104,8 +1104,8 @@ type StartSingleNodeRunRequest struct {
 	ProjectName    string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`          // Required
 	SchemaName     string                 `protobuf:"bytes,3,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`             // Required
 	TableName      string                 `protobuf:"bytes,4,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`                // Required
-	MetadataSource string                 `protobuf:"bytes,5,opt,name=metadata_source,json=metadataSource,proto3" json:"metadata_source,omitempty"` // Required: "latest" | "snapshot_of_run"
-	SourceRunId    string                 `protobuf:"bytes,6,opt,name=source_run_id,json=sourceRunId,proto3" json:"source_run_id,omitempty"`        // Required iff metadata_source is "snapshot_of_run"
+	MetadataSource string                 `protobuf:"bytes,5,opt,name=metadata_source,json=metadataSource,proto3" json:"metadata_source,omitempty"` // Required: "latest" | "release_of_run"
+	SourceRunId    string                 `protobuf:"bytes,6,opt,name=source_run_id,json=sourceRunId,proto3" json:"source_run_id,omitempty"`        // Required iff metadata_source is "release_of_run"
 	// operation is "" | "run" | "test" | "build" | "full_refresh"; empty means
 	// run. full_refresh rebuilds a dbt model or seed from scratch.
 	Operation string `protobuf:"bytes,7,opt,name=operation,proto3" json:"operation,omitempty"`

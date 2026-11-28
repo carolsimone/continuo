@@ -17,13 +17,13 @@ import (
 )
 
 // liveScheduleRelease stores two releases of one tenant and makes the second
-// live. The live release holds the e2e DAG
+// live. The live release holds the e2e topology
 //
 //	seed_table_1 -> table_a -> table_d <- table_b <- seed_table_2
 //
 // where the schedule "daily" holds every table but seed_table_2, which belongs
 // to the schedule "seeds" and reads raw_src, another "seeds" node. other_y
-// (schedule "other") reads table_d, and orphan belongs to no schedule. The
+// (schedule "other") reads table_d, and dormant_model belongs to no schedule. The
 // first release holds table_old in "daily" and is not live.
 func liveScheduleRelease(t *testing.T, db *sqlx.DB) (tenant string, loadedAt time.Time) {
 	t.Helper()
@@ -37,7 +37,7 @@ func liveScheduleRelease(t *testing.T, db *sqlx.DB) (tenant string, loadedAt tim
 		graphSpec("table_b", "dbt-model", "daily", "seed_table_2"),
 		graphSpec("table_d", "dbt-model", "daily", "table_a", "table_b"),
 		graphSpec("other_y", "dbt-model", "other", "table_d"),
-		graphSpec("orphan", "dbt-model", ""),
+		graphSpec("dormant_model", "dbt-model", ""),
 	}
 	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1", old))
 	require.NoError(t, err)
@@ -232,7 +232,7 @@ func TestScheduleSummaries_AreOfTheTenantsLiveRelease(t *testing.T) {
 	mine, err := repo.Summaries(context.Background(), tenant)
 	require.NoError(t, err)
 	assert.Equal(t, 4, mine.Schedules[0].NodeCount)
-	assert.Equal(t, 1, mine.DormantNodeCount, "orphan, the model of no schedule, is the tenant's one dormant node")
+	assert.Equal(t, 1, mine.DormantNodeCount, "dormant_model, the model of no schedule, is the tenant's one dormant node")
 
 	nobody, err := repo.Summaries(context.Background(), "t-no-release")
 	require.NoError(t, err)
@@ -399,23 +399,6 @@ func TestSummaries_CountsDormantNodes(t *testing.T) {
 	assert.Equal(t, map[string]int{"daily": 1, "other": 1}, counts, "the models of a schedule leave out the dormant nodes")
 }
 
-// A stored release can hold an unknown-external node under the legacy type
-// name "ingested", with an empty schedule. It is not a node continuo builds,
-// so the tiles do not count it dormant.
-func TestSummaries_DoesNotCountALegacyIngestedRowAsDormant(t *testing.T) {
-	legacy := unknownExternalSpec("raw", "legacy")
-	legacy.NodeType = "ingested"
-	db := newTestDB(t)
-	tenant := dormantRelease(t, db, legacy)
-	require.Equal(t, 1, countTopoRows(t, db, `
-		SELECT count(*) FROM topology_nodes
-		WHERE tenant_id = $1 AND release_id = 'rel-2' AND node_type = 'ingested' AND schedule_name = ''`, tenant))
-
-	got, err := postgres.NewScheduleGraphRepository(db).Summaries(context.Background(), tenant)
-	require.NoError(t, err)
-	assert.Equal(t, 2, got.DormantNodeCount)
-}
-
 // A live release whose every node continuo builds is dormant has no schedule
 // and no tile, and still reports its dormant nodes.
 func TestSummaries_ALiveReleaseOfDormantNodesOnlyHasNoScheduleAndCountsThem(t *testing.T) {
@@ -433,9 +416,8 @@ func TestSummaries_ALiveReleaseOfDormantNodesOnlyHasNoScheduleAndCountsThem(t *t
 }
 
 // The dormant count is the SQL form of model.IsDormant. A live release holds
-// one node of no schedule of every declared node type, and one unknown-external
-// row under the legacy name "ingested": the count is the number of declared
-// types IsDormant calls dormant. NewRelease drops a dbt test, so its row is
+// one node of no schedule of every declared node type: the count is the number
+// of declared types IsDormant calls dormant. NewRelease drops a dbt test, so its row is
 // added to the stored nodes directly, and the query reads a row of every type.
 func TestSummaries_CountsEveryNodeTypeModelIsDormantCallsDormant(t *testing.T) {
 	db := newTestDB(t)
@@ -448,9 +430,6 @@ func TestSummaries_CountsEveryNodeTypeModelIsDormantCallsDormant(t *testing.T) {
 			want++
 		}
 	}
-	legacy := unknownExternalSpec("raw", "legacy")
-	legacy.NodeType = "ingested"
-	specs = append(specs, legacy)
 	rel := topoRelease(t, tenant, "rel-1", 1, "sha-1", specs...)
 	kept := make(map[string]bool, len(rel.Nodes))
 	for _, n := range rel.Nodes {
@@ -467,10 +446,10 @@ func TestSummaries_CountsEveryNodeTypeModelIsDormantCallsDormant(t *testing.T) {
 	_, err := saveTopoRelease(t, db, rel)
 	require.NoError(t, err)
 	makeTenantLive(t, db, tenant, "rel-1", 1)
-	require.Equal(t, len(model.NodeTypes())+1, countTopoRows(t, db, `
+	require.Equal(t, len(model.NodeTypes()), countTopoRows(t, db, `
 		SELECT count(DISTINCT node_type) FROM topology_nodes
 		WHERE tenant_id = $1 AND release_id = 'rel-1' AND schedule_name = ''`, tenant),
-		"the release stores a node of no schedule of every declared type and of the legacy name")
+		"the release stores a node of no schedule of every declared type")
 	require.Positive(t, want)
 
 	got, err := postgres.NewScheduleGraphRepository(db).Summaries(context.Background(), tenant)

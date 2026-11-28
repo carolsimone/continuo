@@ -1,7 +1,7 @@
 {#
     Schema resolution shared by every dbt project image.
 
-    Blue/green validation runs each candidate node in an isolated schema so it
+    The release check runs each candidate node in an isolated schema so it
     never touches production tables. execution-controller passes that schema
     through the DBT_TARGET_SCHEMA env var (dbt has no --target-schema flag), so
     when it is set every model materializes there regardless of its configured

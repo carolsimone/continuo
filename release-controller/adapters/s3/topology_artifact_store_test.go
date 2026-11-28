@@ -364,10 +364,10 @@ func TestTopologyArtifactStore_LoadKeepsNodesSharingAUniqueID(t *testing.T) {
 // and loads with the node whole, and a write of it reads back the same.
 func TestTopologyArtifactStore_LoadKeepsAnUnknownExternalNodeWithEmptyFields(t *testing.T) {
 	const doc = `{"nodes":[` +
-		`{"content_hash":"","image_tag":"","node_type":"unknown-external","original_file_path":"","resolved_relation_id":"raw.ingest_probe",` +
-		`"schedule":"","schema_name":"raw","project_name":"","table_name":"ingest_probe","test_count":0,"unique_id":"raw.ingest_probe","upstream_unique_ids":[]},` +
+		`{"content_hash":"","image_tag":"","node_type":"unknown-external","original_file_path":"","resolved_relation_id":"raw.external_probe",` +
+		`"schedule":"","schema_name":"raw","project_name":"","table_name":"external_probe","test_count":0,"unique_id":"raw.external_probe","upstream_unique_ids":[]},` +
 		`{"content_hash":"h","image_tag":"img:1","node_type":"dbt-model","original_file_path":"models/m.sql","resolved_relation_id":"svc.m",` +
-		`"schedule":"","schema_name":"svc","project_name":"svc","table_name":"m","test_count":1,"unique_id":"svc.m","upstream_unique_ids":["raw.ingest_probe"]}` +
+		`"schedule":"","schema_name":"svc","project_name":"svc","table_name":"m","test_count":1,"unique_id":"svc.m","upstream_unique_ids":["raw.external_probe"]}` +
 		`],"release_id":"r1","schema_version":1,"tenant_id":"default"}`
 	gz, sum := gzipped(t, []byte(doc))
 	mem := objectstoretest.NewMemory(bucket)
@@ -378,11 +378,11 @@ func TestTopologyArtifactStore_LoadKeepsAnUnknownExternalNodeWithEmptyFields(t *
 	require.NoError(t, err)
 
 	want := release.Node{
-		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", ResolvedRelationID: "raw.ingest_probe",
+		UniqueID: "raw.external_probe", SchemaName: "raw", TableName: "external_probe", ResolvedRelationID: "raw.external_probe",
 		NodeType: "unknown-external", UpstreamUniqueIDs: []string{},
 	}
-	assert.Equal(t, want, byUniqueID(got)["raw.ingest_probe"])
-	assert.Equal(t, []string{"raw.ingest_probe"}, byUniqueID(got)["svc.m"].UpstreamUniqueIDs)
+	assert.Equal(t, want, byUniqueID(got)["raw.external_probe"])
+	assert.Equal(t, []string{"raw.external_probe"}, byUniqueID(got)["svc.m"].UpstreamUniqueIDs)
 
 	rewritten, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r2", got)
 	require.NoError(t, err)

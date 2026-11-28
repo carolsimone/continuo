@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/fix"
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -80,7 +80,7 @@ func (stubPass) Pass(context.Context, uow.UnitOfWork, step.OutputInput, remediat
 // provides itself.
 func stubRegistry() *Registry {
 	r := &Registry{
-		steps:    map[workflow.StepName]entry{},
+		steps:    map[flow.StepName]entry{},
 		evidence: builtinEvidence(),
 	}
 	for _, m := range []step.Meta{
@@ -90,13 +90,13 @@ func stubRegistry() *Registry {
 		{Name: "reads_the_draft", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
 		{Name: "dbt-compile", Kind: step.KindPrompt, Needs: []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles}},
 		{Name: "dbt-parse", Kind: step.KindPrompt},
-		{Name: "target_file_was_shown", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
-		{Name: "needs_a_precedent", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyFailurePrecedents}},
-		{Name: "edits_map_to_a_project", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageCrossCluster}},
-		{Name: "release_check", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}, MayStandAsGateRun: true},
-		{Name: "a_gate_without_a_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}},
-		{Name: "open_pr", Kind: step.KindOutput, Stages: []workflow.Stage{workflow.StageOutput}},
-		{Name: "node_owner", Kind: step.KindApprover, Stages: []workflow.Stage{workflow.StageApprover}},
+		{Name: "target_file_was_shown", Kind: step.KindCheck, Stages: []flow.Stage{flow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
+		{Name: "needs_a_precedent", Kind: step.KindCheck, Stages: []flow.Stage{flow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyFailurePrecedents}},
+		{Name: "edits_map_to_a_project", Kind: step.KindCheck, Stages: []flow.Stage{flow.StageCrossCluster}},
+		{Name: "release_check", Kind: step.KindCheck, Stages: []flow.Stage{flow.StageGate}, MayStandAsGateRun: true},
+		{Name: "a_gate_without_a_run", Kind: step.KindCheck, Stages: []flow.Stage{flow.StageGate}},
+		{Name: "open_pr", Kind: step.KindOutput, Stages: []flow.Stage{flow.StageOutput}},
+		{Name: "node_owner", Kind: step.KindApprover, Stages: []flow.Stage{flow.StageApprover}},
 	} {
 		m.Description = string(m.Name)
 		r.register(stubFor(m))
@@ -104,26 +104,26 @@ func stubRegistry() *Registry {
 	return r
 }
 
-func ref(file string, line int, name string) workflow.StepRef {
-	return workflow.StepRef{Name: workflow.StepName(name), Pos: workflow.Pos{File: file, Line: line}}
+func ref(file string, line int, name string) flow.StepRef {
+	return flow.StepRef{Name: flow.StepName(name), Pos: flow.Pos{File: file, Line: line}}
 }
 
-func pos(file string, line int) workflow.Pos { return workflow.Pos{File: file, Line: line} }
+func pos(file string, line int) flow.Pos { return flow.Pos{File: file, Line: line} }
 
-func validFlow() workflow.Flow {
-	return workflow.Flow{
+func validFlow() flow.Flow {
+	return flow.Flow{
 		Version:        1,
 		Name:           "f",
 		Trigger:        "heal.triggered",
 		Types:          []string{"t"},
 		TypesPos:       pos(flowFile, 5),
-		Context:        []workflow.StepRef{ref(flowFile, 6, "failing_node_source")},
-		AcrossClusters: []workflow.StepRef{ref(flowFile, 7, "edits_map_to_a_project")},
-		Gate:           []workflow.StepRef{ref(flowFile, 8, "release_check")},
+		Context:        []flow.StepRef{ref(flowFile, 6, "failing_node_source")},
+		AcrossClusters: []flow.StepRef{ref(flowFile, 7, "edits_map_to_a_project")},
+		Gate:           []flow.StepRef{ref(flowFile, 8, "release_check")},
 		Tries:          3,
-		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: "fix.proposed", Pos: pos(flowFile, 11)},
-		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Pos: pos(flowFile, 12)},
-		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
+		OnPass:         flow.Output{Action: flow.OutputPullRequest, Emits: "fix.proposed", Pos: pos(flowFile, 11)},
+		OnGiveUp:       flow.Output{Action: flow.OutputHandOver, Pos: pos(flowFile, 12)},
+		ModelMaySee:    []flow.DataClass{flow.ClassCode, flow.ClassLogs},
 		ModelMaySeePos: pos(flowFile, 13),
 		Approver:       ref(flowFile, 14, "node_owner"),
 		File:           flowFile,
@@ -131,21 +131,21 @@ func validFlow() workflow.Flow {
 	}
 }
 
-func validType() workflow.Type {
-	return workflow.Type{
+func validType() flow.Type {
+	return flow.Type{
 		Version:   1,
 		Name:      "t",
-		Match:     workflow.Match{Cluster: workflow.ClusterSingle, Source: "compile", Pos: pos(typeFile, 4)},
-		Context:   []workflow.StepRef{ref(typeFile, 5, "dbt_log")},
-		Agent:     workflow.Agent{Prompt: ref(typeFile, 6, "dbt-compile"), Drafts: 1, Pos: pos(typeFile, 6)},
-		Preflight: []workflow.StepRef{ref(typeFile, 7, "target_file_was_shown")},
+		Match:     flow.Match{Cluster: flow.ClusterSingle, Source: "compile", Pos: pos(typeFile, 4)},
+		Context:   []flow.StepRef{ref(typeFile, 5, "dbt_log")},
+		Agent:     flow.Agent{Prompt: ref(typeFile, 6, "dbt-compile"), Drafts: 1, Pos: pos(typeFile, 6)},
+		Preflight: []flow.StepRef{ref(typeFile, 7, "target_file_was_shown")},
 		File:      typeFile,
 		Pos:       pos(typeFile, 1),
 	}
 }
 
-func setOf(f workflow.Flow, types ...workflow.Type) workflow.Set {
-	s := workflow.Set{Flows: map[string]workflow.Flow{f.Name: f}, Types: map[string]workflow.Type{}}
+func setOf(f flow.Flow, types ...flow.Type) flow.Set {
+	s := flow.Set{Flows: map[string]flow.Flow{f.Name: f}, Types: map[string]flow.Type{}}
 	for _, t := range types {
 		s.Types[t.Name] = t
 	}
@@ -154,7 +154,7 @@ func setOf(f workflow.Flow, types ...workflow.Type) workflow.Set {
 
 // refuses runs Validate on the valid set after change and requires an error
 // holding every one of wants.
-func refuses(t *testing.T, change func(*workflow.Flow, *workflow.Type), wants ...string) {
+func refuses(t *testing.T, change func(*flow.Flow, *flow.Type), wants ...string) {
 	t.Helper()
 	f, ty := validFlow(), validType()
 	change(&f, &ty)
@@ -172,34 +172,34 @@ func TestValidate_AcceptsAValidFlowAndType(t *testing.T) {
 }
 
 func TestValidate_RefusesAnUnknownStep(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-		f.Gate = []workflow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "no_such_step")}
+	refuses(t, func(f *flow.Flow, _ *flow.Type) {
+		f.Gate = []flow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "no_such_step")}
 	}, `flows/f.yaml:9`, `no_such_step`)
 }
 
 func TestValidate_RefusesAStepInAStageItIsNotAllowedIn(t *testing.T) {
 	t.Run("a gate step under preflight", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
+		refuses(t, func(_ *flow.Flow, ty *flow.Type) {
 			ty.Preflight = append(ty.Preflight, ref(typeFile, 8, "release_check"))
 		}, `types/t.yaml:8`, `release_check`, `preflight`)
 	})
 	t.Run("a context step as the prompt", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
+		refuses(t, func(_ *flow.Flow, ty *flow.Type) {
 			ty.Agent.Prompt = ref(typeFile, 6, "dbt_log")
 		}, `types/t.yaml:6`, `dbt_log`, `prompt`)
 	})
 	t.Run("a prompt step in a context list", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
+		refuses(t, func(_ *flow.Flow, ty *flow.Type) {
 			ty.Context = append(ty.Context, ref(typeFile, 9, "dbt-parse"))
 		}, `types/t.yaml:9`, `dbt-parse`, `context`)
 	})
 	t.Run("a preflight check in the gate", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
+		refuses(t, func(f *flow.Flow, _ *flow.Type) {
 			f.Gate = append(f.Gate, ref(flowFile, 9, "target_file_was_shown"))
 		}, `flows/f.yaml:9`, `target_file_was_shown`, `gate`)
 	})
 	t.Run("a cross-cluster check in preflight", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
+		refuses(t, func(_ *flow.Flow, ty *flow.Type) {
 			ty.Preflight = append(ty.Preflight, ref(typeFile, 8, "edits_map_to_a_project"))
 		}, `types/t.yaml:8`, `edits_map_to_a_project`)
 	})
@@ -207,22 +207,22 @@ func TestValidate_RefusesAStepInAStageItIsNotAllowedIn(t *testing.T) {
 
 func TestValidate_RefusesAMissingStage(t *testing.T) {
 	t.Run("no gate", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Gate = nil }, `flows/f.yaml:1`, `gate`)
+		refuses(t, func(f *flow.Flow, _ *flow.Type) { f.Gate = nil }, `flows/f.yaml:1`, `gate`)
 	})
 	t.Run("no types", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Types = nil }, `flows/f.yaml:5`, `types`)
+		refuses(t, func(f *flow.Flow, _ *flow.Type) { f.Types = nil }, `flows/f.yaml:5`, `types`)
 	})
 	t.Run("no agent prompt", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Agent.Prompt = workflow.StepRef{} }, `types/t.yaml:6`, `agent.prompt`)
+		refuses(t, func(_ *flow.Flow, ty *flow.Type) { ty.Agent.Prompt = flow.StepRef{} }, `types/t.yaml:6`, `agent.prompt`)
 	})
 	t.Run("no on_pass", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-			f.OnPass = workflow.Output{Pos: pos(flowFile, 11)}
+		refuses(t, func(f *flow.Flow, _ *flow.Type) {
+			f.OnPass = flow.Output{Pos: pos(flowFile, 11)}
 		}, `flows/f.yaml:11`, `on_pass`)
 	})
 	t.Run("no on_give_up", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-			f.OnGiveUp = workflow.Output{Pos: pos(flowFile, 12)}
+		refuses(t, func(f *flow.Flow, _ *flow.Type) {
+			f.OnGiveUp = flow.Output{Pos: pos(flowFile, 12)}
 		}, `flows/f.yaml:12`, `on_give_up`)
 	})
 }
@@ -232,28 +232,28 @@ func TestValidate_RefusesAMissingStage(t *testing.T) {
 // refused with its file and line.
 func TestValidate_RefusesAFlowWithoutAnApprover(t *testing.T) {
 	t.Run("no approver", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = workflow.StepRef{} },
+		refuses(t, func(f *flow.Flow, _ *flow.Type) { f.Approver = flow.StepRef{} },
 			`flows/f.yaml:1: flow "f" has no approver`)
 	})
 	t.Run("an unknown step", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = ref(flowFile, 14, "no_such_step") },
+		refuses(t, func(f *flow.Flow, _ *flow.Type) { f.Approver = ref(flowFile, 14, "no_such_step") },
 			`flows/f.yaml:14: unknown step "no_such_step" in approver`)
 	})
 	t.Run("a step that is no approver", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = ref(flowFile, 14, "dbt_log") },
+		refuses(t, func(f *flow.Flow, _ *flow.Type) { f.Approver = ref(flowFile, 14, "dbt_log") },
 			`flows/f.yaml:14: step "dbt_log" is a context step and cannot be used in approver`)
 	})
 }
 
 func TestValidate_RefusesAFlowListingAMissingType(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
+	refuses(t, func(f *flow.Flow, _ *flow.Type) {
 		f.Types = []string{"t", "ghost"}
 	}, `flows/f.yaml:5`, `ghost`)
 }
 
 func TestValidate_RefusesAGateWithNoRealRun(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-		f.Gate = []workflow.StepRef{ref(flowFile, 8, "a_gate_without_a_run")}
+	refuses(t, func(f *flow.Flow, _ *flow.Type) {
+		f.Gate = []flow.StepRef{ref(flowFile, 8, "a_gate_without_a_run")}
 	}, `flows/f.yaml:`, `gate`, `release check`)
 }
 
@@ -262,35 +262,35 @@ func TestValidate_RefusesAGateWithNoRealRun(t *testing.T) {
 // failing every remediation at its gate.
 func TestValidate_RefusesAGateOfMoreThanOneStep(t *testing.T) {
 	t.Run("two steps", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-			f.Gate = []workflow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "a_gate_without_a_run")}
+		refuses(t, func(f *flow.Flow, _ *flow.Type) {
+			f.Gate = []flow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "a_gate_without_a_run")}
 		}, `flows/f.yaml:9: flow "f" has 2 gate steps`)
 	})
 	t.Run("one step twice", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-			f.Gate = []workflow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "release_check")}
+		refuses(t, func(f *flow.Flow, _ *flow.Type) {
+			f.Gate = []flow.StepRef{ref(flowFile, 8, "release_check"), ref(flowFile, 9, "release_check")}
 		}, `flows/f.yaml:9: flow "f" has 2 gate steps`)
 	})
 }
 
 func TestValidate_RefusesAnUnprovidedNeed(t *testing.T) {
 	t.Run("a flow context step needs what only the type context provides", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
+		refuses(t, func(f *flow.Flow, _ *flow.Type) {
 			f.Context = append(f.Context, ref(flowFile, 9, "reads_dbt_log"))
 		}, `flows/f.yaml:9`, `reads_dbt_log`, `dbt_log`)
 	})
 	t.Run("a context step needs the draft", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
+		refuses(t, func(_ *flow.Flow, ty *flow.Type) {
 			ty.Context = append(ty.Context, ref(typeFile, 9, "reads_the_draft"))
 		}, `types/t.yaml:9`, `reads_the_draft`, `draft`)
 	})
 	t.Run("the prompt needs evidence no context provides", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
+		refuses(t, func(f *flow.Flow, _ *flow.Type) {
 			f.Context = nil
 		}, `types/t.yaml:6`, `dbt-compile`, `source_files`)
 	})
 	t.Run("a preflight check needs evidence nothing provides", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
+		refuses(t, func(_ *flow.Flow, ty *flow.Type) {
 			ty.Preflight = append(ty.Preflight, ref(typeFile, 8, "needs_a_precedent"))
 		}, `types/t.yaml:8`, `needs_a_precedent`, `failure_precedents`)
 	})
@@ -311,7 +311,7 @@ func TestValidate_RefusesAnUnprovidedNeed(t *testing.T) {
 func TestValidate_RefusesDraftsBelowOne(t *testing.T) {
 	for _, drafts := range []int{0, -1} {
 		t.Run(fmt.Sprintf("drafts %d", drafts), func(t *testing.T) {
-			refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Agent.Drafts = drafts },
+			refuses(t, func(_ *flow.Flow, ty *flow.Type) { ty.Agent.Drafts = drafts },
 				fmt.Sprintf(`types/t.yaml:6: type "t" has drafts %d, and a type runs at least one draft, so drafts must be 1 or more`, drafts))
 		})
 	}
@@ -329,20 +329,20 @@ func TestValidate_AcceptsOneDraftOrMore(t *testing.T) {
 }
 
 func TestValidate_RefusesTriesBelowOne(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Tries = 0 }, `flows/f.yaml:1`, `tries`)
+	refuses(t, func(f *flow.Flow, _ *flow.Type) { f.Tries = 0 }, `flows/f.yaml:1`, `tries`)
 }
 
 func TestValidate_RefusesAnUnknownOutputAction(t *testing.T) {
 	t.Run("on_pass", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.OnPass.Action = "hand_over" }, `flows/f.yaml:11`, `on_pass`, `hand_over`)
+		refuses(t, func(f *flow.Flow, _ *flow.Type) { f.OnPass.Action = "hand_over" }, `flows/f.yaml:11`, `on_pass`, `hand_over`)
 	})
 	t.Run("on_give_up", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.OnGiveUp.Action = "pull_request" }, `flows/f.yaml:12`, `on_give_up`, `pull_request`)
+		refuses(t, func(f *flow.Flow, _ *flow.Type) { f.OnGiveUp.Action = "pull_request" }, `flows/f.yaml:12`, `on_give_up`, `pull_request`)
 	})
 }
 
 func TestValidate_RefusesAnEventNotInTheContract(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.OnPass.Emits = "remediation.invented" }, `flows/f.yaml:11`, `remediation.invented`)
+	refuses(t, func(f *flow.Flow, _ *flow.Type) { f.OnPass.Emits = "remediation.invented" }, `flows/f.yaml:11`, `remediation.invented`)
 }
 
 func TestValidate_AcceptsEveryEventOfTheContract(t *testing.T) {
@@ -356,10 +356,10 @@ func TestValidate_AcceptsEveryEventOfTheContract(t *testing.T) {
 
 func TestValidate_RefusesAnUnsupportedVersion(t *testing.T) {
 	t.Run("flow", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Version = 2 }, `flows/f.yaml:1`, `version`)
+		refuses(t, func(f *flow.Flow, _ *flow.Type) { f.Version = 2 }, `flows/f.yaml:1`, `version`)
 	})
 	t.Run("type", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Version = 2 }, `types/t.yaml:1`, `version`)
+		refuses(t, func(_ *flow.Flow, ty *flow.Type) { ty.Version = 2 }, `types/t.yaml:1`, `version`)
 	})
 }
 
@@ -386,20 +386,20 @@ func TestValidate_AcceptsTwoTypesWithDisjointMatches(t *testing.T) {
 }
 
 func TestValidate_RefusesAnUnknownTrigger(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Trigger = "release.promoted" }, `flows/f.yaml:1`, `trigger`, `release.promoted`)
+	refuses(t, func(f *flow.Flow, _ *flow.Type) { f.Trigger = "release.promoted" }, `flows/f.yaml:1`, `trigger`, `release.promoted`)
 }
 
 func TestValidate_RefusesATypeThatMatchesNoNodeType(t *testing.T) {
-	refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Match.NodeTypes = []string{} }, `types/t.yaml:4`, `node type`)
+	refuses(t, func(_ *flow.Flow, ty *flow.Type) { ty.Match.NodeTypes = []string{} }, `types/t.yaml:4`, `node type`)
 }
 
 func TestValidate_RefusesAnUnknownClusterKind(t *testing.T) {
-	refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Match.Cluster = "pair" }, `types/t.yaml:4`, `cluster`)
+	refuses(t, func(_ *flow.Flow, ty *flow.Type) { ty.Match.Cluster = "pair" }, `types/t.yaml:4`, `cluster`)
 }
 
 func TestValidate_RefusesReservedAgentTools(t *testing.T) {
-	refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
-		ty.Agent.Tools = []workflow.StepRef{ref(typeFile, 6, "web_search")}
+	refuses(t, func(_ *flow.Flow, ty *flow.Type) {
+		ty.Agent.Tools = []flow.StepRef{ref(typeFile, 6, "web_search")}
 	}, `types/t.yaml:6`, `tools`)
 }
 
@@ -414,38 +414,38 @@ func TestValidate_JoinsEveryRefusal(t *testing.T) {
 }
 
 func TestValidate_WarnsAboutATypeNoFlowLists(t *testing.T) {
-	orphan := validType()
-	orphan.Name = "orphan"
-	orphan.File = "types/orphan.yaml"
-	orphan.Pos = pos("types/orphan.yaml", 1)
-	warnings, err := Validate(setOf(validFlow(), validType(), orphan), stubRegistry())
+	unlisted := validType()
+	unlisted.Name = "unlisted"
+	unlisted.File = "types/unlisted.yaml"
+	unlisted.Pos = pos("types/unlisted.yaml", 1)
+	warnings, err := Validate(setOf(validFlow(), validType(), unlisted), stubRegistry())
 	require.NoError(t, err)
 	require.Len(t, warnings, 1)
-	assert.Contains(t, warnings[0], `types/orphan.yaml:1`)
-	assert.Contains(t, warnings[0], `orphan`)
+	assert.Contains(t, warnings[0], `types/unlisted.yaml:1`)
+	assert.Contains(t, warnings[0], `unlisted`)
 }
 
 // A flow says which classes of content the model may see, and a type whose
 // context gathers evidence of another class is refused at the step that
 // gathers it, so the model is never shown what the install did not allow.
 func TestValidate_RefusesATypeNeedingAForbiddenClass(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-		f.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	refuses(t, func(f *flow.Flow, _ *flow.Type) {
+		f.ModelMaySee = []flow.DataClass{flow.ClassCode}
 	}, `types/t.yaml:5: type "t" uses step "dbt_log", which provides "dbt_log" (class logs), and flow "f" does not let the model see logs (model_may_see: code)`)
 }
 
 func TestValidate_RefusesAFlowContextNeedingAForbiddenClass(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, ty *workflow.Type) {
-		f.ModelMaySee = []workflow.DataClass{workflow.ClassLogs}
+	refuses(t, func(f *flow.Flow, ty *flow.Type) {
+		f.ModelMaySee = []flow.DataClass{flow.ClassLogs}
 		ty.Context = nil
 	}, `flows/f.yaml:6: flow "f" uses step "failing_node_source", which provides "source_files" (class code), and flow "f" does not let the model see code (model_may_see: logs)`)
 }
 
 func TestValidate_AcceptsEveryTypeWhoseClassesTheFlowAllows(t *testing.T) {
-	for _, allowed := range [][]workflow.DataClass{
-		{workflow.ClassCode, workflow.ClassLogs},
-		{workflow.ClassLogs, workflow.ClassCode},
-		{workflow.ClassCode, workflow.ClassLogs, workflow.ClassRows},
+	for _, allowed := range [][]flow.DataClass{
+		{flow.ClassCode, flow.ClassLogs},
+		{flow.ClassLogs, flow.ClassCode},
+		{flow.ClassCode, flow.ClassLogs, flow.ClassRows},
 	} {
 		f, ty := validFlow(), validType()
 		f.ModelMaySee = allowed
@@ -458,7 +458,7 @@ func TestValidate_AcceptsEveryTypeWhoseClassesTheFlowAllows(t *testing.T) {
 func TestValidate_HoldsAListedTypeToEachFlowsClasses(t *testing.T) {
 	strict := validFlow()
 	strict.Name, strict.File, strict.Pos = "strict", "flows/strict.yaml", pos("flows/strict.yaml", 1)
-	strict.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	strict.ModelMaySee = []flow.DataClass{flow.ClassCode}
 	strict.ModelMaySeePos = pos("flows/strict.yaml", 13)
 	strict.Context = nil
 	set := setOf(validFlow(), validType())
@@ -473,9 +473,9 @@ func TestValidate_HoldsAListedTypeToEachFlowsClasses(t *testing.T) {
 }
 
 func TestValidate_RefusesAFlowWithoutModelMaySee(t *testing.T) {
-	for name, classes := range map[string][]workflow.DataClass{"absent": nil, "empty": {}} {
+	for name, classes := range map[string][]flow.DataClass{"absent": nil, "empty": {}} {
 		t.Run(name, func(t *testing.T) {
-			refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.ModelMaySee = classes },
+			refuses(t, func(f *flow.Flow, _ *flow.Type) { f.ModelMaySee = classes },
 				`flows/f.yaml:13: flow "f" has no model_may_see, and a flow lists the classes of content the model may see (code, logs, rows)`)
 		})
 	}
@@ -484,8 +484,8 @@ func TestValidate_RefusesAFlowWithoutModelMaySee(t *testing.T) {
 // An unknown class is refused once, at the flow's list, and not again for every
 // step the flow's classes would be held against.
 func TestValidate_RefusesAnUnknownDataClassOnce(t *testing.T) {
-	for name, classes := range map[string][]workflow.DataClass{
-		"among known ones": {workflow.ClassCode, "secrets"},
+	for name, classes := range map[string][]flow.DataClass{
+		"among known ones": {flow.ClassCode, "secrets"},
 		"alone":            {"secrets"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -505,7 +505,7 @@ func TestValidate_RefusesAnUnknownDataClassOnce(t *testing.T) {
 // type whose prompt reads the failure, at the prompt's line.
 func TestValidate_RefusesAPromptReadingAForbiddenClass(t *testing.T) {
 	f, ty := validFlow(), validType()
-	f.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	f.ModelMaySee = []flow.DataClass{flow.ClassCode}
 	ty.Context = nil
 
 	_, err := Validate(setOf(f, ty), stubRegistry())

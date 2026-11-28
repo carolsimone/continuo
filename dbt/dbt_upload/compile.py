@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # The project directory of the dbt base image this uploader's image is built
 # FROM. Every project image is built FROM the same base image and copies its
 # project files over this directory, so the shared macros it holds (the
-# generate_schema_name that routes a validation run to its candidate schema)
+# generate_schema_name that routes a release check's validation to its candidate schema)
 # are macros of the root project dbt compiles when the project's image compiles.
 BASE_PROJECT_DIR = "/project"
 

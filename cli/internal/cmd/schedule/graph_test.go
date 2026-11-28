@@ -139,13 +139,13 @@ func TestGraph_UnknownExternalNodeKeepsItsTypeAndAnEmptyProject(t *testing.T) {
 		Nodes: []*runv1.ScheduleGraphNode{
 			{
 				SchemaName:  "raw",
-				TableName:   "ingest_probe",
+				TableName:   "external_probe",
 				ProjectName: "",
 				NodeType:    "unknown-external",
 			},
 		},
 		Edges: []*runv1.ScheduleGraphEdge{
-			{FromNodeId: "a.m", ToNodeId: ".raw.ingest_probe"},
+			{FromNodeId: "a.m", ToNodeId: ".raw.external_probe"},
 		},
 	}}
 
@@ -159,13 +159,13 @@ func TestGraph_UnknownExternalNodeKeepsItsTypeAndAnEmptyProject(t *testing.T) {
 	require.Len(t, payload.Nodes, 1)
 	n := payload.Nodes[0]
 	assert.Equal(t, "raw", n.SchemaName)
-	assert.Equal(t, "ingest_probe", n.TableName)
+	assert.Equal(t, "external_probe", n.TableName)
 	assert.Equal(t, "unknown-external", n.NodeType)
 	assert.Empty(t, n.ProjectName)
 	assert.Contains(t, stdout, `"project_name":""`, "the empty project is emitted, not omitted")
 	require.Len(t, payload.Edges, 1)
 	assert.Equal(t, "a.m", payload.Edges[0].FromNodeId)
-	assert.Equal(t, ".raw.ingest_probe", payload.Edges[0].ToNodeId)
+	assert.Equal(t, ".raw.external_probe", payload.Edges[0].ToNodeId)
 
 	cmd := NewGraphCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
 	assert.Contains(t, cmd.Long, `A node of type "unknown-external" is a table continuo reads and does not build`, "the help says what an unknown-external node is")
@@ -189,7 +189,7 @@ func TestGraph_DormantNodeIsMarked(t *testing.T) {
 				NodeType: "dbt-model", Dormant: true,
 			},
 			{
-				TableName: "ingest_probe", SchemaName: "raw", NodeType: "unknown-external",
+				TableName: "external_probe", SchemaName: "raw", NodeType: "unknown-external",
 			},
 		},
 		Edges: []*runv1.ScheduleGraphEdge{

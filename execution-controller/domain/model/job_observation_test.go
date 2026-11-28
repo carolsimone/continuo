@@ -181,7 +181,7 @@ func TestJobObservation_HasUnfinishedPod(t *testing.T) {
 	assert.False(t, model.JobObservation{}.HasUnfinishedPod(), "no pod")
 	assert.False(t, model.JobObservation{Pods: []model.PodObservation{finished(model.PodFailed, 1, "Error")}}.HasUnfinishedPod(),
 		"every pod finished")
-	assert.True(t, model.JobObservation{Pods: []model.PodObservation{running()}}.HasUnfinishedPod(), "an orphan pod runs")
+	assert.True(t, model.JobObservation{Pods: []model.PodObservation{running()}}.HasUnfinishedPod(), "a pod whose Job is gone runs")
 	assert.True(t, model.JobObservation{JobPresent: true, Pods: []model.PodObservation{
 		finished(model.PodFailed, 1, "Error"), {Name: "q", Phase: model.PodPending}}}.HasUnfinishedPod(), "a second pod is pending")
 }

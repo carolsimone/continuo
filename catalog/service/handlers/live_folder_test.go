@@ -698,12 +698,12 @@ func TestLiveRewriteAll_ReadsNoArtifact(t *testing.T) {
 	assert.Empty(t, artifacts.calls)
 }
 
-// An index whose entries carry no physical schema was written for files whose
+// An index whose entries carry no declared schema was written for files whose
 // servers entry names the id's schema. Such an entry is current for a node
 // whose declared schema agrees with its id's or is not known, so the first
 // rewrite after an upgrade puts none of those files, and stale for a node
 // declared in a schema that differs, so that rewrite puts its file.
-func TestLiveRewrite_AnIndexEntryWithNoPhysicalSchemaIsCurrentForALowerCaseSchema(t *testing.T) {
+func TestLiveRewrite_AnIndexEntryWithNoDeclaredSchemaIsCurrentForALowerCaseSchema(t *testing.T) {
 	f := newLiveFolderFixture(
 		declaredIn(liveContract("analytics.lower", 1, "sha256:l1"), "analytics"),
 		liveContract("analytics.unknown", 1, "sha256:u1"),

@@ -262,9 +262,9 @@ export function graphBadgeLabel({
   selectedRun,
   liveRunExists,
   activeGraph,
-}: GraphBadgeLabelArgs): 'catalog' | 'snapshot' | 'live' | 'idle' {
+}: GraphBadgeLabelArgs): 'catalog' | 'past run' | 'live' | 'idle' {
   if (mode === 'latest') return 'catalog';
-  if (selectedRun) return 'snapshot';
+  if (selectedRun) return 'past run';
   if (liveRunExists) return 'live';
   return activeGraph && activeGraph.nodes.length > 0 ? 'catalog' : 'idle';
 }
@@ -277,7 +277,7 @@ interface GraphCardStateArgs {
   selectedRunGraphFailed?: boolean;
 }
 
-// What the graph card shows: a selected run waits for its own snapshot, or
+// What the graph card shows: a selected run waits for its own graph, or
 // reports that it cannot be read; any other view draws the graph when it has
 // nodes and otherwise reports how the schedule graph's read went.
 export function graphCardState({
@@ -305,7 +305,7 @@ interface RunTabStateArgs {
 }
 
 // What the Run tab shows before it has a task set to summarise: a schedule
-// that never ran says so, a run whose snapshot or tasks are still arriving
+// that never ran says so, a run whose graph or tasks are still arriving
 // reads as loading, and only a non-empty task set renders the progress header
 // and the views.
 export function runTabState({
@@ -410,13 +410,13 @@ export function runActions({ run, lastRunId, liveRunExists, driftState }: {
   };
 }
 
-// The classes of the graph card's badge: a snapshot takes its run's status
+// The classes of the graph card's badge: a past run takes its run's status
 // colour, a live graph reads as current, anything else as pending.
 export function graphBadgeClass(
-  label: 'catalog' | 'snapshot' | 'live' | 'idle',
-  snapshotStatus: string | null | undefined,
+  label: 'catalog' | 'past run' | 'live' | 'idle',
+  pastRunStatus: string | null | undefined,
 ): string {
-  if (label === 'snapshot') return `pill-sm ${pillClass(snapshotStatus).replace('pill', 'pill-sm')}`;
+  if (label === 'past run') return `pill-sm ${pillClass(pastRunStatus).replace('pill', 'pill-sm')}`;
   return label === 'live' ? 'pill-sm pill-sm--current' : 'pill-sm pill-sm--pending';
 }
 

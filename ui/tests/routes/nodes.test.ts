@@ -155,7 +155,7 @@ describe('nodes router', () => {
     );
   });
 
-  it('POST /:svc/:schema/:table/run with source_run_id uses snapshot_of_run', async () => {
+  it('POST /:svc/:schema/:table/run with source_run_id uses release_of_run', async () => {
     mockStartSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'new-r', schedule_name: 'single-node-run-abc12345' }),
     );
@@ -167,7 +167,7 @@ describe('nodes router', () => {
     expect(mockStartSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         request_id: REQUEST_ID,
-        metadata_source: 'snapshot_of_run',
+        metadata_source: 'release_of_run',
         source_run_id: 'src-run-id',
       }),
       expect.any(Object),
@@ -370,7 +370,7 @@ describe('nodes router', () => {
 
   it('GET /meta reports a node a later release deactivated as inactive', async () => {
     // include_inactive keeps a deactivated node's type visible, so the page
-    // can still offer a full refresh from one of its old snapshots.
+    // can still offer a full refresh from one of its older releases.
     mockGetNode.mockImplementation((_req, cb) =>
       cb(null, { node_type: 'dbt-seed', test_count: 0, test_count_known: true, inactive: true }),
     );

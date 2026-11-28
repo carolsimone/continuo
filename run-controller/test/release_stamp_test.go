@@ -66,7 +66,7 @@ func (h *builtHarness) finished(t *testing.T, name string, stamp run.ReleaseStam
 
 // TestReleaseStamp drives every creation path against a real Postgres: a run
 // names the live release, or the source run's for a rerun and a
-// snapshot_of_run single-node run.
+// release_of_run single-node run.
 func TestReleaseStamp(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -114,10 +114,10 @@ func TestReleaseStamp(t *testing.T) {
 		assert.Equal(t, live, h.stampOf(t, id))
 	})
 
-	t.Run("a snapshot_of_run single-node run names its source's release", func(t *testing.T) {
+	t.Run("a release_of_run single-node run names its source's release", func(t *testing.T) {
 		src := h.finished(t, "stamp-snapshot", old)
 		id, err := h.singleNode(ctx, svchandlers.StartSingleNodeRunInput{
-			TenantID: pkgevents.DefaultTenantID, Target: target, MetadataSource: run.MetadataSourceSnapshotOfRun, SourceRunID: &src, Operation: model.OperationRun, Initiator: alice,
+			TenantID: pkgevents.DefaultTenantID, Target: target, MetadataSource: run.MetadataSourceReleaseOfRun, SourceRunID: &src, Operation: model.OperationRun, Initiator: alice,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, old, h.stampOf(t, id))

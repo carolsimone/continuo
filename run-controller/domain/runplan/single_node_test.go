@@ -11,14 +11,14 @@ import (
 
 func TestSingleNode_SelectsTheNodeReady(t *testing.T) {
 	for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationFullRefresh} {
-		plan, err := runplan.SingleNode{Key: key("table_d"), ProjectName: "service-3", Operation: op}.Select(releaseGraph(e2eDAG))
+		plan, err := runplan.SingleNode{Key: key("table_d"), ProjectName: "service-3", Operation: op}.Select(releaseGraph(e2eTopology))
 		require.NoError(t, err, "operation %q", op)
 		assert.Equal(t, planOf(pending("table_d"), "table_d"), plan, "operation %q", op)
 	}
 }
 
 func TestSingleNode_ANodeOutsideTheReleaseOrTheProjectIsNotFound(t *testing.T) {
-	g := releaseGraph(e2eDAG)
+	g := releaseGraph(e2eTopology)
 	_, err := runplan.SingleNode{Key: key("table_z"), ProjectName: "service-3"}.Select(g)
 	assert.ErrorIs(t, err, runplan.ErrTargetNotFound)
 
@@ -30,7 +30,7 @@ func TestSingleNode_ANodeOutsideTheReleaseOrTheProjectIsNotFound(t *testing.T) {
 // Only a known, positive data-test count is testable: seed_table_2 has a known
 // 0, and a node whose count is unknown cannot be shown to have a test.
 func TestSingleNode_TestNeedsAKnownPositiveCount(t *testing.T) {
-	g := releaseGraph(e2eDAG)
+	g := releaseGraph(e2eTopology)
 	plan, err := runplan.SingleNode{Key: key("seed_table_1"), ProjectName: "service-1", Operation: model.OperationTest}.Select(g)
 	require.NoError(t, err)
 	assert.Equal(t, planOf(pending("seed_table_1"), "seed_table_1"), plan)
@@ -43,7 +43,7 @@ func TestSingleNode_TestNeedsAKnownPositiveCount(t *testing.T) {
 }
 
 func TestSingleNode_FullRefreshNeedsATypeThatSupportsIt(t *testing.T) {
-	_, err := runplan.SingleNode{Key: key("seed_table_1"), ProjectName: "service-1", Operation: model.OperationFullRefresh}.Select(releaseGraph(e2eDAG))
+	_, err := runplan.SingleNode{Key: key("seed_table_1"), ProjectName: "service-1", Operation: model.OperationFullRefresh}.Select(releaseGraph(e2eTopology))
 	require.NoError(t, err, "a dbt seed can be rebuilt from scratch")
 
 	for _, nodeType := range []string{"dbt-snapshot", "python-node", "python-csv", "python-api"} {
@@ -64,13 +64,13 @@ func TestSingleNode_AnUndeclaredNodeTypeIsRefused(t *testing.T) {
 // and rebuildability are looked at: the project of an unknown-external node is empty,
 // so a request that names one would otherwise be a node of another project.
 func TestSingleNode_RefusesAnUnknownExternalNode(t *testing.T) {
-	g := withUnknownExternalUpstream(releaseGraph(e2eDAG), "table_a")
+	g := withUnknownExternalUpstream(releaseGraph(e2eTopology), "table_a")
 	for _, project := range []string{"", "service-1"} {
 		for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationTest, model.OperationFullRefresh} {
 			_, err := runplan.SingleNode{Key: unknownExternalProbe, ProjectName: project, Operation: op}.Select(g)
 			require.ErrorIs(t, err, runplan.ErrExternalNode, "project %q, operation %q", project, op)
 			assert.NotErrorIs(t, err, runplan.ErrTargetNotFound, "project %q, operation %q", project, op)
-			assert.Contains(t, err.Error(), "raw.ingest_probe")
+			assert.Contains(t, err.Error(), "raw.external_probe")
 		}
 	}
 }
@@ -78,14 +78,14 @@ func TestSingleNode_RefusesAnUnknownExternalNode(t *testing.T) {
 // A key the release does not hold is still not found: the unknown-external check
 // reads the node the lookup found.
 func TestSingleNode_AnUnknownExternalKeyOfAnotherReleaseIsNotFound(t *testing.T) {
-	_, err := runplan.SingleNode{Key: unknownExternalProbe, ProjectName: ""}.Select(releaseGraph(e2eDAG))
+	_, err := runplan.SingleNode{Key: unknownExternalProbe, ProjectName: ""}.Select(releaseGraph(e2eTopology))
 	assert.ErrorIs(t, err, runplan.ErrTargetNotFound)
 }
 
 // A dormant node is on no schedule, and a run of the node alone executes it:
 // the plan holds its one task, ready at creation, whatever it reads.
 func TestSingleNode_SelectsADormantNode(t *testing.T) {
-	g := releaseGraph(dormantDAG)
+	g := releaseGraph(dormantTopology)
 	n, ok := g.Node(key("dormant_d"))
 	require.True(t, ok)
 	require.True(t, n.IsDormant(), "the fixture node is dormant")

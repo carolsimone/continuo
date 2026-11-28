@@ -20,7 +20,7 @@ import (
 // run-controller propagates job-completion events asynchronously after the k8s
 // jobs finish (execution-controller → gRPC → run-controller → DB), so the scheduler
 // and task records may still show "pending"/"running" immediately after
-// verifyFullDAGExecution returns.
+// verifyFullTopologyExecution returns.
 //
 // The function is a no-op when UI_HTTP_BASE is unset so developer runs without
 // the UI container are not broken.

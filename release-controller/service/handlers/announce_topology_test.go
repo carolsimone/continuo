@@ -80,7 +80,7 @@ func TestAnnounceTopology_RefusesAnIDTheReleaseAPIWouldRefuse(t *testing.T) {
 		assert.Equal(t, int64(0), store.LastPromotionSeq(), "%q", id)
 	}
 	deps, _ := newDeps(time.Unix(100, 0).UTC())
-	_, err := handlers.AnnounceTopology(context.Background(), deps, "bench-dag_2000.rep1", benchTopology())
+	_, err := handlers.AnnounceTopology(context.Background(), deps, "bench-topology-2000.rep1", benchTopology())
 	require.NoError(t, err, "letters, digits, '.', '_' and '-' are accepted")
 }
 

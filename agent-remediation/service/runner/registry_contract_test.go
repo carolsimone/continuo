@@ -5,14 +5,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/flow"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
 func TestRegistry_HoldsTheContractSteps(t *testing.T) {
 	r := NewRegistry(Collaborators{})
-	for name, kind := range map[workflow.StepName]step.Kind{
+	for name, kind := range map[flow.StepName]step.Kind{
 		"contract_file":    step.KindContext,
 		"failing_siblings": step.KindContext,
 		"contract_entry":   step.KindContext,

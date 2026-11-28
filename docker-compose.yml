@@ -420,7 +420,7 @@ services:
       - REDIS_ACL_MODE=perComponent
       - AGENT_REMEDIATION_HTTP_PORT=8092
       - AGENT_REMEDIATION_GRPC_PORT=50054
-      - AGENT_REMEDIATION_WORKFLOWS_DIR=/etc/continuo-workflows
+      - AGENT_REMEDIATION_FILES_DIR=/etc/continuo-remediation-files
       - LOG_LEVEL=INFO
       - REMEDIATION_PR_POLL_INTERVAL=${REMEDIATION_PR_POLL_INTERVAL:-5s}
       - REMEDIATION_PR_OPENING_GRACE_PERIOD=${REMEDIATION_PR_OPENING_GRACE_PERIOD:-15s}
@@ -465,7 +465,7 @@ services:
       # An install's flow, type and fixture files, which agent-remediation loads
       # over the built-in ones. The folder is empty here (only a .gitkeep), so
       # the local stack runs the built-in files alone.
-      - ./tests/e2e/config/remediation-workflows:/etc/continuo-workflows:ro
+      - ./tests/e2e/config/remediation-files:/etc/continuo-remediation-files:ro
     ports:
       # Host port 8094 avoids collision with other services.
       # The container-internal port remains 8092 (AGENT_REMEDIATION_HTTP_PORT).

@@ -56,7 +56,7 @@ const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'rejected', 'superseded']
 // see whether it holds, then ready for a human to review. A node can carry
 // several tries at once — a later one can supersede an earlier in-flight
 // one — so the cell shows the furthest-along of them. Every other fix
-// status is terminal-but-blank (skipped/failed/escalated) and leaves the cell
+// status is terminal-but-blank (skipped/failed/handed_over) and leaves the cell
 // empty.
 type FixState = 'generating' | 'verifying' | 'proposed';
 
@@ -70,7 +70,7 @@ function isFixState(status: string): status is FixState {
 // fix ready for review, or one of the terminal-but-blank outcomes rendered
 // as a fixNote (see refresh() below). 'generating'/'verifying' are the only
 // non-terminal statuses a node can carry.
-const TERMINAL_NODE_STATUSES = new Set(['proposed', 'skipped', 'failed', 'escalated']);
+const TERMINAL_NODE_STATUSES = new Set(['proposed', 'skipped', 'failed', 'handed_over']);
 
 // fixIsDeadEnd mirrors release-controller's isDeadEnd: a batched try
 // opens one pull request per owning project, so it is a dead end only once
@@ -152,7 +152,7 @@ function OwnerNote({ approver }: { approver: ApproverDTO }) {
 // FixCell renders one node's remediation state: a link to the fix once a
 // fix is ready to review, a non-actionable chip while one is still being
 // produced or verified, and — when no try is in flight — a note
-// explaining why the latest try stopped (skipped/failed/escalated), so a
+// explaining why the latest try stopped (skipped/failed/handed_over), so a
 // node whose fix dead-ended says why instead of showing an empty cell. For a
 // fix being verified, verifyPhase splits the chip into queued vs running (see
 // verifyLabel). A fix ready to review and a node handed to a human also show
@@ -210,7 +210,7 @@ export default function ReleaseDetailPage() {
   const [pollError, setPollError] = useState<string | null>(null);
   // Per (stage, node_id) FIX-cell state, bucketed from the node's remediation
   // fixes — see FixState. Nodes with only terminal-but-blank outcomes
-  // (skipped/failed/escalated) or none carry no entry and render nothing here.
+  // (skipped/failed/handed_over) or none carry no entry and render nothing here.
   const [fixState, setFixState] = useState<Map<string, FixState>>(new Map());
   // Per (stage, node_id) explanation for a node whose latest try landed on
   // a terminal-but-blank status, so the FIX cell says why instead of leaving
@@ -381,7 +381,7 @@ export default function ReleaseDetailPage() {
             .catch(() => {});
           // Bucket each failed node by its fixes, keeping the furthest-along
           // state any of its tries reached; terminal-but-blank statuses
-          // (skipped/failed/escalated) leave the node without an entry here —
+          // (skipped/failed/handed_over) leave the node without an entry here —
           // see fixNote below for those. A batched fix is unpacked into
           // every node it resolves, each read against its own per-node
           // outcome rather than the fix's overall status.
@@ -452,7 +452,7 @@ export default function ReleaseDetailPage() {
             }
             const status = fixStatusForNode(p, nid);
             const reason = fixReasonForNode(p, nid);
-            if (status === 'escalated') noteByKey.set(k, { text: "The round's tries are spent." });
+            if (status === 'handed_over') noteByKey.set(k, { text: "The round's tries are spent." });
             else if (status === 'failed') noteByKey.set(k, { text: reason || 'The model could not produce a safe fix.' });
             else if (status === 'skipped') noteByKey.set(k, { text: `Skipped try: ${withFullStop(reason || 'No source to fix at this commit.')} Fix it in the repository.` });
           }
@@ -462,7 +462,7 @@ export default function ReleaseDetailPage() {
           // Stop once every failed node has settled *for the release's current
           // round*: its latest current-round try landed on
           // 'proposed', or on a terminal-but-blank outcome ('skipped'/
-          // 'failed'/'escalated'). A node still 'generating'/'verifying', or
+          // 'failed'/'handed_over'). A node still 'generating'/'verifying', or
           // with no current-round fix at all yet, is not settled and
           // keeps the poll alive (up to the cap below, suspended by
           // `verifying`). Scoping to the current round (rather than reusing

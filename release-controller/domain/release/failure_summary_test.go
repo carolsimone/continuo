@@ -57,9 +57,9 @@ func TestSummarizeValidationFailure_JoinsSeveralNodesWithAnd(t *testing.T) {
 }
 
 func TestSummarizeValidationFailure_OmitsTheProjectWhenTheTopologyDoesNotNameOne(t *testing.T) {
-	got := SummarizeValidationFailure(4, []FailedNode{{NodeID: "orphan"}}, nil)
+	got := SummarizeValidationFailure(4, []FailedNode{{NodeID: "lone_model"}}, nil)
 
-	assert.Equal(t, "1 of 4 nodes failed validation: orphan", got)
+	assert.Equal(t, "1 of 4 nodes failed validation: lone_model", got)
 }
 
 func TestSummarizeValidationFailure_NamesAtMostFiveNodesAndCountsTheRest(t *testing.T) {
