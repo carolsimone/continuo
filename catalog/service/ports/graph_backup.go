@@ -25,7 +25,7 @@ type RecordReader interface {
 // GraphSaver reads a tenant's graph out of the catalog. It is called while
 // the tenant's backup lease is held, so no write changes the graph under it.
 type GraphSaver interface {
-	// Backup writes the tenant's header, then streams its nodes and its
+	// Save writes the tenant's header, then streams its nodes and its
 	// relationships to out. It never holds the whole graph in memory. The
 	// tenant's backup lease node is not backed up, and no node of another
 	// tenant is.
@@ -38,7 +38,7 @@ type GraphLoader interface {
 	// Wipe deletes every node of the tenant, with its relationships, except
 	// the tenant's backup lease node.
 	Wipe(ctx context.Context, tenantID string) error
-	// Restore loads in into the tenant's wiped graph: nodes, then
+	// Load loads in into the tenant's wiped graph: nodes, then
 	// relationships. It refuses a record of another tenant, of a label or
 	// type outside the catalog's schema, or counts that disagree with in's
 	// header; a backup lease node in the backup is not loaded.

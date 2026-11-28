@@ -15,17 +15,17 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// importBatchRows is how many nodes, or relationships, one restore
+// loadBatchRows is how many nodes, or relationships, one restore
 // transaction creates.
-const importBatchRows = 500
+const loadBatchRows = 500
 
 // wipeBatchRows is how many nodes each inner transaction of a wipe deletes.
 const wipeBatchRows = 1000
 
 var (
 	// errLoadTenantNotEmpty means the tenant holds nodes besides its lease
-	// node, so an restore would mix them with the backup's.
-	errLoadTenantNotEmpty = errors.New("neo4j: the tenant holds nodes besides its backup lease node; wipe it before an restore")
+	// node, so a restore would mix them with the backup's.
+	errLoadTenantNotEmpty = errors.New("neo4j: the tenant holds nodes besides its backup lease node; wipe it before a restore")
 	// errLoadOutOfOrder means a node came after the first relationship.
 	errLoadOutOfOrder = errors.New("neo4j: a node after the relationships")
 	// errLoadUnresolvedEnd means a relationship's ends did not name exactly
@@ -145,8 +145,8 @@ func (i *graphLoader) Wipe(ctx context.Context, tenantID string) error {
 	return nil
 }
 
-// Restore loads in into the tenant's wiped graph: its nodes in batches of
-// importBatchRows, then its relationships, each end matched by its label and
+// Load loads in into the tenant's wiped graph: its nodes in batches of
+// loadBatchRows, then its relationships, each end matched by its label and
 // identity within the tenant. Every record is checked against the schema and
 // the tenant before any statement is built from it, and the statements are
 // built from the schema's constants, never from the record's text. A backup
@@ -260,7 +260,7 @@ type relGroup struct {
 	from, to graphschema.Label
 }
 
-// recordLoader batches an restore's records and creates them.
+// recordLoader batches a restore's records and creates them.
 type recordLoader struct {
 	ctx         context.Context
 	session     neo4j.SessionWithContext
@@ -307,7 +307,7 @@ func (l *recordLoader) node(n graphbackup.NodeRecord) error {
 	for _, label := range labels {
 		l.loaded.nodes[string(label)]++
 	}
-	if len(b.rows) >= importBatchRows {
+	if len(b.rows) >= loadBatchRows {
 		return l.createNodes(key, b)
 	}
 	return nil
@@ -346,7 +346,7 @@ func (l *recordLoader) rel(r graphbackup.RelRecord) error {
 		props = map[string]any{}
 	}
 	l.relBatches[g] = append(l.relBatches[g], map[string]any{"from": r.From.Key, "to": r.To.Key, "props": props})
-	if len(l.relBatches[g]) >= importBatchRows {
+	if len(l.relBatches[g]) >= loadBatchRows {
 		return l.createRels(g)
 	}
 	return nil

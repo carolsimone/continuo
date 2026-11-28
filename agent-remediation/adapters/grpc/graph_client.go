@@ -100,7 +100,7 @@ func (c *GraphClient) CurrentVersion(ctx context.Context, uniqueID string) (port
 	return v, ok, nil
 }
 
-// Precedents returns past rejections matching q's signature, or the broader
+// Precedents returns the failure precedents matching q's signature, or the broader
 // (category, reason) class.
 func (c *GraphClient) Precedents(ctx context.Context, q ports.PrecedentQuery) ([]prompt.Precedent, error) {
 	resp, err := c.client.GetPrecedents(ctx, &catalogv1.GetPrecedentsRequest{

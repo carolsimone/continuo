@@ -171,7 +171,7 @@ func TestLoad_RefusesATenantThatHoldsNodes(t *testing.T) {
 	assert.Len(t, nodes, 1)
 }
 
-// TestLoad_RefusesWhatItCannotLoadExactly: an restore whose relationship
+// TestLoad_RefusesWhatItCannotLoadExactly: a restore whose relationship
 // names no node of the backup, or whose records disagree with the header's
 // counts, fails instead of reporting a graph other than the backup.
 func TestLoad_RefusesWhatItCannotLoadExactly(t *testing.T) {

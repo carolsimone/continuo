@@ -78,15 +78,15 @@ func envOr(key, fallback string) string {
 // unit of work. Each test takes tenants of its own; the cleanup DETACH
 // DELETEs every node of those tenants.
 type graphFixture struct {
-	t        *testing.T
-	client   neo4jinfra.Neo4jClient
-	mem      *objectstoretest.Memory
-	store    ports.BackupStore
-	lease    ports.BackupLease
-	graph    ports.GraphSaver
-	loader ports.GraphLoader
-	uow      uow.UnitOfWork
-	tenants  []string
+	t       *testing.T
+	client  neo4jinfra.Neo4jClient
+	mem     *objectstoretest.Memory
+	store   ports.BackupStore
+	lease   ports.BackupLease
+	graph   ports.GraphSaver
+	loader  ports.GraphLoader
+	uow     uow.UnitOfWork
+	tenants []string
 }
 
 func newGraphFixture(t *testing.T) *graphFixture {
@@ -106,10 +106,10 @@ func newGraphFixture(t *testing.T) *graphFixture {
 	mem := objectstoretest.NewMemory("continuo")
 	f := &graphFixture{
 		t: t, client: client, mem: mem, store: s3infra.NewBackupStore(mem),
-		lease:    neo4jinfra.NewBackupLease(client, quietLogger()),
-		graph:    neo4jinfra.NewGraphSaver(client, "b3-test", quietLogger()),
+		lease:  neo4jinfra.NewBackupLease(client, quietLogger()),
+		graph:  neo4jinfra.NewGraphSaver(client, "b3-test", quietLogger()),
 		loader: neo4jinfra.NewGraphLoader(client, quietLogger()),
-		uow:      neo4jinfra.NewUnitOfWork(client, quietLogger()),
+		uow:    neo4jinfra.NewUnitOfWork(client, quietLogger()),
 	}
 	t.Cleanup(func() {
 		for _, tenantID := range f.tenants {
@@ -233,7 +233,7 @@ func (f *graphFixture) processed(tenantID, id string) bool {
 	return ok
 }
 
-// stored returns the keys of the backs up the backup store holds for
+// stored returns the keys of the backups the backup store holds for
 // tenantID.
 func (f *graphFixture) stored(tenantID string) []string {
 	f.t.Helper()

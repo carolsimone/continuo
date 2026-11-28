@@ -15,14 +15,14 @@ import (
 )
 
 // fakeLoader is a GraphLoader that records its calls. Restore reads every
-// record; wipeErr and importErr, when set, are what those calls return.
+// record; wipeErr and loadErr, when set, are what those calls return.
 type fakeLoader struct {
-	mu        sync.Mutex
-	ops       []string
-	wipeErr   error
-	importErr error
-	// onImport, when set, runs before Restore reads the records.
-	onImport func(ctx context.Context) error
+	mu      sync.Mutex
+	ops     []string
+	wipeErr error
+	loadErr error
+	// onLoad, when set, runs before Restore reads the records.
+	onLoad func(ctx context.Context) error
 	// wipeTakes is how long Wipe runs; perRecord how long Restore spends on
 	// each record it reads.
 	wipeTakes, perRecord time.Duration
@@ -41,8 +41,8 @@ func (g *fakeLoader) Load(ctx context.Context, tenantID string, in ports.RecordR
 	g.mu.Lock()
 	g.ops = append(g.ops, "Restore "+tenantID)
 	g.mu.Unlock()
-	if g.onImport != nil {
-		if err := g.onImport(ctx); err != nil {
+	if g.onLoad != nil {
+		if err := g.onLoad(ctx); err != nil {
 			return err
 		}
 	}
@@ -62,7 +62,7 @@ func (g *fakeLoader) Load(ctx context.Context, tenantID string, in ports.RecordR
 		g.mu.Unlock()
 		time.Sleep(g.perRecord)
 	}
-	return g.importErr
+	return g.loadErr
 }
 
 func (g *fakeLoader) calls() []string {
@@ -242,7 +242,7 @@ func TestRestorer_AnObjectThatChangesBeforeTheWipeIsNotLoaded(t *testing.T) {
 // again, and the lease is released.
 func TestRestorer_AFailedLoadReportsAPartialGraph(t *testing.T) {
 	for name, fail := range map[string]func(g *fakeLoader){
-		"restore": func(g *fakeLoader) { g.importErr = errors.New("neo4j: connection reset") },
+		"restore": func(g *fakeLoader) { g.loadErr = errors.New("neo4j: connection reset") },
 		"wipe":    func(g *fakeLoader) { g.wipeErr = errors.New("neo4j: connection reset") },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -268,7 +268,7 @@ func TestRestorer_LostLeaseStopsTheRestore(t *testing.T) {
 	f.putBackup(2)
 	f.r.keeper.renewEvery = 10 * time.Millisecond
 	f.lease.renewErr = func(int) error { return fmt.Errorf("tenant %q: %w", tenant, ports.ErrLeaseLost) }
-	f.graph.onImport = func(ctx context.Context) error {
+	f.graph.onLoad = func(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -296,7 +296,7 @@ func TestRestorer_ConfirmsTheLeaseAfterTheLoad(t *testing.T) {
 	assert.ErrorContains(t, err, "run the restore again")
 }
 
-// A restore that moves no record for the stall limit (an restore
+// A restore that moves no record for the stall limit (a restore
 // against a database that never answers) is stopped: it fails with
 // ErrStalled, reports the graph partial and releases the lease.
 func TestRestorer_AStalledRestoreFailsWithinTheBound(t *testing.T) {
@@ -304,7 +304,7 @@ func TestRestorer_AStalledRestoreFailsWithinTheBound(t *testing.T) {
 	f.putBackup(2)
 	f.r.keeper.renewEvery = 5 * time.Millisecond
 	f.r.keeper.stallAfter = 50 * time.Millisecond
-	f.graph.onImport = func(ctx context.Context) error {
+	f.graph.onLoad = func(ctx context.Context) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}
@@ -330,7 +330,7 @@ func TestRestorer_EachStepStartsTheStallLimitAfresh(t *testing.T) {
 	f.r.keeper.renewEvery = 5 * time.Millisecond
 	f.r.keeper.stallAfter = 100 * time.Millisecond
 	f.graph.wipeTakes = 60 * time.Millisecond
-	f.graph.onImport = func(context.Context) error {
+	f.graph.onLoad = func(context.Context) error {
 		time.Sleep(60 * time.Millisecond)
 		return nil
 	}

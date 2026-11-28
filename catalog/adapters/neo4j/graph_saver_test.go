@@ -93,7 +93,7 @@ func (f *graphFixture) loader() ports.GraphLoader {
 	return NewGraphLoader(f.client, quietLogger())
 }
 
-// backup backups tenantID's graph into a backup file in memory.
+// backup saves tenantID's graph into a backup file in memory.
 func (f *graphFixture) backup(tenantID string) []byte {
 	f.t.Helper()
 	var buf bytes.Buffer

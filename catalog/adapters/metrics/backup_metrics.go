@@ -155,7 +155,7 @@ func (c *lastSuccess) read() (float64, bool, error) {
 	return float64(at.UnixNano()) / 1e9, true, nil
 }
 
-// NopBackupMetrics drops the observations of the backs up a process takes. A
+// NopBackupMetrics drops the observations of the backups a process takes. A
 // process that ends with its backup, such as catalog-backup, uses it: the
 // last-success gauge reads the store, where its backup lands too.
 type NopBackupMetrics struct{}

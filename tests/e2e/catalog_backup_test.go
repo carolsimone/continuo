@@ -69,7 +69,7 @@ type printedListing struct {
 type backupFileHeader struct {
 	FormatVersion  int              `json:"format_version"`
 	TenantID       string           `json:"tenant_id"`
-	TakenAt     string           `json:"taken_at"`
+	TakenAt        string           `json:"taken_at"`
 	CatalogVersion string           `json:"catalog_version"`
 	Nodes          map[string]int64 `json:"nodes"`
 	Relationships  map[string]int64 `json:"relationships"`

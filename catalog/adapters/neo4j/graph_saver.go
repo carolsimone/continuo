@@ -115,7 +115,7 @@ func NewGraphSaver(client Neo4jClient, catalogVersion string, logger *slog.Logge
 	return &graphSaver{client: client, catalogVersion: catalogVersion, logger: logger}
 }
 
-// Backup counts the tenant's nodes per label and relationships per type,
+// Save counts the tenant's nodes per label and relationships per type,
 // writes the header, then streams the nodes and the relationships to out, all
 // in one read transaction that pulls backupFetchSize records at a time. The
 // tenant's writes are paused by its backup lease, so the counts hold; a

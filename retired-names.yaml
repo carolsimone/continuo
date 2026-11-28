@@ -426,7 +426,7 @@ names:
   - pattern: '\w*[eE]xport(s|er|ers|ing)?|\w*[eE]xport(s|er)?[A-Z0-9_]\w*'
     use: backup (a backup, take a backup, the backup lease)
     paths: [catalog]
-  - pattern: '\w*[iI]mporter\w*|TestImport\w*|[a-z]+\.Import'
+  - pattern: '\w*[iI]mporter\w*|TestImport\w*|[a-z]+\.Import|import[A-Z]\w*|[a-z]+Import'
     use: restore, GraphLoader.Load
     paths: [catalog]
   # Failure precedent group: an earlier failure at a node, kept with the fix

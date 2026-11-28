@@ -338,7 +338,7 @@ func tenantsToBackUp(ctx context.Context, logger *slog.Logger, d deps, opts opti
 	case err != nil:
 		logger.Warn("the catalog's tenants could not be listed; backing up the named tenant anyway", "tenant_id", opts.tenant, "error", err)
 	case !slices.Contains(listed, opts.tenant):
-		logger.Warn("tenant is not listed by the catalog, which holds no graph for it yet; backing up it as an empty graph",
+		logger.Warn("tenant is not listed by the catalog, which holds no graph for it yet; backing it up as an empty graph",
 			"tenant_id", opts.tenant, "known_tenants", strings.Join(listed, ","))
 	}
 	return []string{opts.tenant}, nil
