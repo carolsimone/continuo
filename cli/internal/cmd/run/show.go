@@ -48,7 +48,7 @@ Output (stdout, JSON):
   attempt is the 0-based number of the task's current attempt.
   status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
   dispatched: an attempt was sent and not yet accepted; queued: the attempt
-  was accepted and waits for a slot to run in; stopping: a stop was requested
+  was accepted and waits for Job capacity; stopping: a stop was requested
   and the task waits for its attempt to stop.
   failure_class and failure_reason are those of the task's latest attempt and are
   empty strings when that attempt did not fail or the task has no attempt yet.

@@ -1,36 +1,36 @@
-// catalog-backup takes, lists and restores exports of a tenant's catalog graph.
+// catalog-backup takes, lists and restores backups of a tenant's catalog graph.
 // An operator runs it in catalog's container (`kubectl exec deploy/catalog --
 // catalog-backup ...`).
 //
-//	catalog-backup export [--tenant <tenant>]
+//	catalog-backup take [--tenant <tenant>]
 //	catalog-backup list [--tenant <tenant>]
 //	catalog-backup restore <object key> --yes
 //
-// export stores an export of each tenant's graph at once (of every tenant the
+// take stores a backup of each tenant's graph at once (of every tenant the
 // catalog holds, or of the one --tenant names) and prints one JSON object per
-// stored export on its own line: {"object_key","bytes","nodes",
+// stored backup on its own line: {"object_key","bytes","nodes",
 // "relationships","duration_seconds"}, the last being the seconds the tenant's
-// writes were paused. list prints a JSON array of the stored exports, newest
+// writes were paused. list prints a JSON array of the stored backups, newest
 // first: [{"key","size","last_modified"}]; without --tenant it covers only
 // the tenants the catalog's graph holds. restore returns the graph of the
-// tenant its object key names to that export and prints {"object_key",
+// tenant its object key names to that backup and prints {"object_key",
 // "tenant_id","nodes","relationships"}; it deletes the tenant's graph before
-// it loads the export, so it refuses to run without --yes.
+// it loads the backup, so it refuses to run without --yes.
 //
 // stdout carries only that JSON; diagnostics go to stderr through log/slog.
 // Exit codes: 0 ok, 1 error (a restore that fails after it wiped the graph
 // leaves it partial: run the same restore again), 2 usage (an unknown
-// command or flag, restore without --yes or with a key that is not an
-// export's), 3 skipped (another export or a restore holds a tenant's lease).
-// An export of several tenants goes on past a tenant that fails or is skipped
-// and prints every export it stored; its exit code is 1 when any tenant
+// command or flag, restore without --yes or with a key that is not a
+// backup key), 3 skipped (another backup or a restore holds a tenant's lease).
+// A backup of several tenants goes on past a tenant that fails or is skipped
+// and prints every backup it stored; its exit code is 1 when any tenant
 // failed, else 3 when any was skipped.
 //
 // It reads NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD and the S3 settings
 // (S3_ENDPOINT_URL, S3_BUCKET, AWS_DEFAULT_REGION, and the keys unless an IAM
 // role supplies them) catalog reads, and CATALOG_BACKUP_KEEP, the number of
-// exports of a tenant an export keeps. It needs nothing else of catalog's
-// configuration. SIGINT and SIGTERM cancel the work in flight: an export
+// backups of a tenant a backup keeps. It needs nothing else of catalog's
+// configuration. SIGINT and SIGTERM cancel the work in flight: a backup
 // aborts its upload and releases the tenant's lease.
 package main
 
@@ -67,20 +67,20 @@ const (
 	exitSkipped = 3
 )
 
-const usageText = `catalog-backup takes, lists and restores exports of a tenant's catalog graph.
+const usageText = `catalog-backup takes, lists and restores backups of a tenant's catalog graph.
 
 Usage:
-  catalog-backup export [--tenant <tenant>]
-      Store an export of every tenant's graph (of one tenant with --tenant).
-      Prints one JSON object per stored export:
+  catalog-backup take [--tenant <tenant>]
+      Take a backup of every tenant's graph (of one tenant with --tenant).
+      Prints one JSON object per stored backup:
       {"object_key","bytes","nodes","relationships","duration_seconds"}.
   catalog-backup list [--tenant <tenant>]
-      Print the stored exports, newest first, as a JSON array of
+      Print the stored backups, newest first, as a JSON array of
       {"key","size","last_modified"}. Without --tenant it covers only the
       tenants the catalog's graph holds: after a loss of the graph, name the
-      tenant to find its exports.
+      tenant to find its backups.
   catalog-backup restore <object key> --yes
-      Return the graph of the tenant the key names to that export. This
+      Return the graph of the tenant the key names to that backup. This
       deletes the tenant's graph first, so --yes is required. Prints
       {"object_key","tenant_id","nodes","relationships"}.
 
@@ -89,26 +89,26 @@ list prints it. stdout carries only JSON; diagnostics go to stderr.
 Exit codes: 0 ok, 1 error, 2 usage, 3 skipped (a lease is held).
 `
 
-// exporter stores the exports of the tenants it is given, one after the other.
-type exporter interface {
-	ExportEach(ctx context.Context, tenants []string, each func(tenantID string, res backup.Result, err error)) (notReached []string)
+// taker stores the backups of the tenants it is given, one after the other.
+type taker interface {
+	TakeEach(ctx context.Context, tenants []string, each func(tenantID string, res backup.Result, err error)) (notReached []string)
 }
 
-// restorer returns a tenant's graph to the export stored at a key.
+// restorer returns a tenant's graph to the backup stored at a key.
 type restorer interface {
 	Restore(ctx context.Context, key string) (backup.RestoreResult, error)
 }
 
-// exportLister lists a tenant's stored exports.
-type exportLister interface {
+// backupLister lists a tenant's stored backups.
+type backupLister interface {
 	List(ctx context.Context, tenantID string) ([]ports.BackupObject, error)
 }
 
 // deps is what the commands run on.
 type deps struct {
-	exporter exporter
+	taker    taker
 	restorer restorer
-	store    exportLister
+	store    backupLister
 	tenants  ports.GraphTenants
 }
 
@@ -153,7 +153,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, keys port
 	case "-h", "--help", "help":
 		_, _ = io.WriteString(stderr, usageText)
 		return exitOK
-	case "export", "list", "restore":
+	case "take", "list", "restore":
 	default:
 		return usageError(logger, stderr, fmt.Errorf("unknown command %q", command))
 	}
@@ -175,8 +175,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, keys port
 	defer closeFn()
 
 	switch command {
-	case "export":
-		return runExport(ctx, logger, stdout, d, opts)
+	case "take":
+		return runTake(ctx, logger, stdout, d, opts)
 	case "list":
 		return runList(ctx, logger, stdout, d, opts)
 	default:
@@ -202,7 +202,7 @@ func parseOptions(command string, args []string, keys ports.BackupKeys) (options
 	var o options
 	var yes bool
 	if command == "restore" {
-		fs.BoolVar(&yes, "yes", false, "confirm that the tenant's graph is deleted before the export is loaded")
+		fs.BoolVar(&yes, "yes", false, "confirm that the tenant's graph is deleted before the backup is loaded")
 	} else {
 		fs.StringVar(&o.tenant, "tenant", "", "the tenant to act on; every tenant when omitted")
 	}
@@ -229,11 +229,11 @@ func parseOptions(command string, args []string, keys ports.BackupKeys) (options
 	}
 	o.key = positional[0]
 	if o.keyTenant, _, err = keys.Locate(o.key); err != nil {
-		return options{}, fmt.Errorf("%q is not the object key of a catalog export: a key looks like "+
+		return options{}, fmt.Errorf("%q is not the object key of a catalog backup: a key looks like "+
 			"tenants/<tenant>/backups/catalog/<UTC time>.jsonl.gz, and `catalog-backup list` prints them", o.key)
 	}
 	if !yes {
-		return options{}, fmt.Errorf("restore deletes the graph of tenant %s and loads the export %s instead; "+
+		return options{}, fmt.Errorf("restore deletes the graph of tenant %s and loads the backup %s instead; "+
 			"nothing was changed: run it again with --yes to restore", o.keyTenant, o.key)
 	}
 	return o, nil
@@ -263,8 +263,8 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// exportLine is what export prints for each tenant it stored.
-type exportLine struct {
+// backupLine is what take prints for each tenant it stored.
+type backupLine struct {
 	ObjectKey       string  `json:"object_key"`
 	Bytes           int64   `json:"bytes"`
 	Nodes           int64   `json:"nodes"`
@@ -272,33 +272,33 @@ type exportLine struct {
 	DurationSeconds float64 `json:"duration_seconds"`
 }
 
-// runExport stores an export of each tenant, one after the other. A tenant
+// runTake stores a backup of each tenant, one after the other. A tenant
 // that fails or is skipped does not stop the rest.
-func runExport(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps, opts options) int {
-	tenants, err := tenantsToExport(ctx, logger, d, opts)
+func runTake(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps, opts options) int {
+	tenants, err := tenantsToBackUp(ctx, logger, d, opts)
 	if err != nil {
 		logger.Error("list the catalog's tenants", "error", err)
 		return exitError
 	}
 	if len(tenants) == 0 {
-		logger.Info("the catalog holds no tenant, so there is nothing to export; " +
-			"to export a tenant that has not written yet, name it with --tenant <tenant>")
+		logger.Info("the catalog holds no tenant, so there is nothing to back up; " +
+			"to back up a tenant that has not written yet, name it with --tenant <tenant>")
 		return exitOK
 	}
 
 	var failed, skipped int
 	enc := json.NewEncoder(stdout)
-	notReached := d.exporter.ExportEach(ctx, tenants, func(tenant string, res backup.Result, err error) {
+	notReached := d.taker.TakeEach(ctx, tenants, func(tenant string, res backup.Result, err error) {
 		switch {
 		case errors.Is(err, backup.ErrSkipped):
-			logger.Warn("export skipped: another export or a restore holds the tenant's lease; "+
+			logger.Warn("backup skipped: another backup or a restore holds the tenant's lease; "+
 				"run it again once that ends (a lease a crashed holder left expires within minutes)", "tenant_id", tenant)
 			skipped++
 		case err != nil:
-			logger.Error("export failed: nothing was stored", "tenant_id", tenant, "error", err)
+			logger.Error("backup failed: nothing was stored", "tenant_id", tenant, "error", err)
 			failed++
 		default:
-			err = enc.Encode(exportLine{
+			err = enc.Encode(backupLine{
 				ObjectKey:       res.ObjectKey,
 				Bytes:           res.Bytes,
 				Nodes:           res.Nodes,
@@ -306,13 +306,13 @@ func runExport(ctx context.Context, logger *slog.Logger, stdout io.Writer, d dep
 				DurationSeconds: res.Duration.Seconds(),
 			})
 			if err != nil {
-				logger.Error("write the result of the export", "tenant_id", tenant, "object_key", res.ObjectKey, "error", err)
+				logger.Error("write the result of the backup", "tenant_id", tenant, "object_key", res.ObjectKey, "error", err)
 				failed++
 			}
 		}
 	})
 	if len(notReached) > 0 {
-		logger.Error("interrupted: the remaining tenants were not exported", "tenant_ids", notReached)
+		logger.Error("interrupted: the remaining tenants were not backed up", "tenant_ids", notReached)
 	}
 	switch {
 	case failed > 0 || len(notReached) > 0:
@@ -324,37 +324,37 @@ func runExport(ctx context.Context, logger *slog.Logger, stdout io.Writer, d dep
 	}
 }
 
-// tenantsToExport returns the tenant --tenant names, or every tenant the
+// tenantsToBackUp returns the tenant --tenant names, or every tenant the
 // catalog holds. A named tenant the catalog does not list holds no graph yet:
-// it is exported as an empty graph, which is how an install that has not
-// written anything takes its first export, and a warning tells a mistyped id
+// it is backed up as an empty graph, which is how an install that has not
+// written anything takes its first backup, and a warning tells a mistyped id
 // from a new tenant.
-func tenantsToExport(ctx context.Context, logger *slog.Logger, d deps, opts options) ([]string, error) {
+func tenantsToBackUp(ctx context.Context, logger *slog.Logger, d deps, opts options) ([]string, error) {
 	if !opts.tenantSet {
 		return d.tenants.Tenants(ctx)
 	}
 	listed, err := d.tenants.Tenants(ctx)
 	switch {
 	case err != nil:
-		logger.Warn("the catalog's tenants could not be listed; exporting the named tenant anyway", "tenant_id", opts.tenant, "error", err)
+		logger.Warn("the catalog's tenants could not be listed; backing up the named tenant anyway", "tenant_id", opts.tenant, "error", err)
 	case !slices.Contains(listed, opts.tenant):
-		logger.Warn("tenant is not listed by the catalog, which holds no graph for it yet; exporting it as an empty graph",
+		logger.Warn("tenant is not listed by the catalog, which holds no graph for it yet; backing it up as an empty graph",
 			"tenant_id", opts.tenant, "known_tenants", strings.Join(listed, ","))
 	}
 	return []string{opts.tenant}, nil
 }
 
-// listLine is what list prints for each stored export.
+// listLine is what list prints for each stored backup.
 type listLine struct {
 	Key          string `json:"key"`
 	Size         int64  `json:"size"`
 	LastModified string `json:"last_modified"`
 }
 
-// runList prints the stored exports of the named tenant, or of every tenant
+// runList prints the stored backups of the named tenant, or of every tenant
 // the catalog holds, newest first. A failure prints nothing, so a partial list
 // is never taken for the whole one. A list with no --tenant that finds no
-// tenant warns on stderr, since the bucket may still hold exports.
+// tenant warns on stderr, since the bucket may still hold backups.
 func runList(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps, opts options) int {
 	tenants := []string{opts.tenant}
 	if !opts.tenantSet {
@@ -365,16 +365,16 @@ func runList(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps,
 		}
 		if len(tenants) == 0 {
 			// The tenants come from the graph, which a Neo4j loss empties
-			// while the bucket still holds the exports.
+			// while the bucket still holds the backups.
 			logger.Warn("the catalog holds no tenant, so nothing was listed; " +
-				"name one with --tenant <tenant> to list its exports")
+				"name one with --tenant <tenant> to list its backups")
 		}
 	}
 	var all []ports.BackupObject
 	for _, tenant := range tenants {
 		objects, err := d.store.List(ctx, tenant)
 		if err != nil {
-			logger.Error("list the exports of the tenant", "tenant_id", tenant, "error", err)
+			logger.Error("list the backups of the tenant", "tenant_id", tenant, "error", err)
 			return exitError
 		}
 		all = append(all, objects...)
@@ -391,13 +391,13 @@ func runList(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps,
 		})
 	}
 	if err := json.NewEncoder(stdout).Encode(out); err != nil {
-		logger.Error("write the list of exports", "error", err)
+		logger.Error("write the list of backups", "error", err)
 		return exitError
 	}
 	return exitOK
 }
 
-// restoreLine is what restore prints once it has loaded an export.
+// restoreLine is what restore prints once it has loaded a backup.
 type restoreLine struct {
 	ObjectKey     string `json:"object_key"`
 	TenantID      string `json:"tenant_id"`
@@ -405,7 +405,7 @@ type restoreLine struct {
 	Relationships int64  `json:"relationships"`
 }
 
-// runRestore returns the tenant the key names to the export stored at it.
+// runRestore returns the tenant the key names to the backup stored at it.
 func runRestore(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps, opts options) int {
 	res, err := d.restorer.Restore(ctx, opts.key)
 	switch {
@@ -415,16 +415,16 @@ func runRestore(ctx context.Context, logger *slog.Logger, stdout io.Writer, d de
 			"tenant_id", opts.keyTenant, "object_key", opts.key, "error", err)
 		return exitError
 	case errors.Is(err, backup.ErrSkipped):
-		logger.Warn("restore skipped: another export or a restore holds the tenant's lease; "+
+		logger.Warn("restore skipped: another backup or a restore holds the tenant's lease; "+
 			"run it again once that ends (a lease a crashed holder left expires within minutes)",
 			"tenant_id", opts.keyTenant, "object_key", opts.key)
 		return exitSkipped
 	case errors.Is(err, ports.ErrBackupNotFound):
-		logger.Error("restore failed: no export is stored at the key, and the graph is untouched; "+
-			"`catalog-backup list --tenant "+opts.keyTenant+"` lists the tenant's exports",
+		logger.Error("restore failed: no backup is stored at the key, and the graph is untouched; "+
+			"`catalog-backup list --tenant "+opts.keyTenant+"` lists the tenant's backups",
 			"tenant_id", opts.keyTenant, "object_key", opts.key, "error", err)
 		return exitError
-	case errors.Is(err, ports.ErrNotAnExportKey):
+	case errors.Is(err, ports.ErrNotABackupKey):
 		logger.Error("usage", "object_key", opts.key, "error", err)
 		return exitUsage
 	case err != nil:
@@ -445,7 +445,7 @@ func runRestore(ctx context.Context, logger *slog.Logger, stdout io.Writer, d de
 }
 
 // settings are the values connect needs: catalog's Neo4j and S3 settings and
-// the keep an export prunes with.
+// the keep a backup prunes with.
 type settings struct {
 	neo4j config.Neo4jConfig
 	s3    pkgconfig.S3Config
@@ -475,7 +475,7 @@ func neo4jConnectPolicy() neo4jinfra.StartupPolicy {
 	return neo4jinfra.StartupPolicy{Timeout: 30 * time.Second, InitialDelay: time.Second, MaxDelay: 5 * time.Second}
 }
 
-// connect builds the exporter, the restorer, the backup store and the tenant
+// connect builds the taker, the restorer, the backup store and the tenant
 // list over catalog's Neo4j and object store.
 func connect(ctx context.Context, logger *slog.Logger) (deps, func(), error) {
 	cfg, err := loadConfig()
@@ -493,10 +493,10 @@ func connect(ctx context.Context, logger *slog.Logger) (deps, func(), error) {
 	}
 
 	store := s3infra.NewBackupStore(objects)
-	lease := neo4jinfra.NewExportLease(client, logger)
+	lease := neo4jinfra.NewBackupLease(client, logger)
 	d := deps{
-		exporter: backup.NewExporter(lease, neo4jinfra.NewGraphExporter(client, config.Version(), logger), store, metricsinfra.NopBackupMetrics{}, cfg.keep, time.Now, logger),
-		restorer: backup.NewRestorer(lease, neo4jinfra.NewGraphImporter(client, logger), store, logger),
+		taker:    backup.NewTaker(lease, neo4jinfra.NewGraphSaver(client, config.Version(), logger), store, metricsinfra.NopBackupMetrics{}, cfg.keep, time.Now, logger),
+		restorer: backup.NewRestorer(lease, neo4jinfra.NewGraphLoader(client, logger), store, logger),
 		store:    store,
 		tenants:  neo4jinfra.NewGraphTenants(client),
 	}

@@ -12,8 +12,8 @@ import (
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// settle records how an attempt ended on its deployment, which releases the
-// slot. A release leg's node settles through outcomes.Recorder. A production
+// settle records how an attempt ended on its deployment, which releases its
+// Job capacity. A release leg's node settles through outcomes.Recorder. A production
 // attempt is reported succeeded, stopped (it was asked to stop because its
 // run was cancelled, and did not succeed first) or failed, with every fact
 // seen of it; run-controller decides what follows. A stopped attempt is counted once

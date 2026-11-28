@@ -20,8 +20,8 @@ import (
 func TestMetrics_ComponentsServePrometheusMetrics(t *testing.T) {
 	withConsumersAndOutbox := []string{"continuo_consumer_pending{", "continuo_outbox_backlog{", "go_sql_open_connections{"}
 	// catalog keeps no outbox and no Postgres, so it exposes consumer series
-	// and its own export series only.
-	withConsumers := []string{"continuo_consumer_pending{", "continuo_catalog_exports_total{"}
+	// and its own backup series only.
+	withConsumers := []string{"continuo_consumer_pending{", "continuo_catalog_backups_total{"}
 	cases := []struct {
 		host string
 		want []string

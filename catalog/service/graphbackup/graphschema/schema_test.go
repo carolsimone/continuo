@@ -3,7 +3,7 @@ package graphschema_test
 import (
 	"testing"
 
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 )
 
 func TestGraphSchema_EveryLabelHasAnIdentity(t *testing.T) {
@@ -39,7 +39,7 @@ func TestGraphSchema_IdentitiesMatchTheDesign(t *testing.T) {
 		graphschema.NodeVersion:      {"unique_id", "content_hash"},
 		graphschema.CodeUnit:         {"unit_id"},
 		graphschema.CodeUnitVersion:  {"unit_id", "checksum"},
-		graphschema.Rejection:        {"release_id", "node_id"},
+		graphschema.FailurePrecedent: {"release_id", "node_id"},
 		graphschema.ErrorSignature:   {"signature"},
 		graphschema.Fix:              {"fix_id"},
 		graphschema.PullRequest:      {"fix_id", "project"},

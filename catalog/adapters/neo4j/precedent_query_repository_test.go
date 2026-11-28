@@ -21,10 +21,10 @@ func newPrecedentReader(client neo4jinfra.Neo4jClient) *neo4jinfra.PrecedentQuer
 		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 }
 
-// seedPrecedentRejection creates one :Rejection fixture of
+// seedFailurePrecedent creates one :FailurePrecedent fixture of
 // precedentFixtureTenant and MERGEs its :ErrorSignature hub, matching the
-// shape CaseBaseRepository.RecordRejection writes.
-func seedPrecedentRejection(
+// shape CaseBaseRepository.RecordFailurePrecedent writes.
+func seedFailurePrecedent(
 	t *testing.T, client neo4jinfra.Neo4jClient,
 	releaseID, nodeID, signature, category, reason string,
 	at time.Time, rawCode, contentHash string,
@@ -34,7 +34,7 @@ func seedPrecedentRejection(
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
-		CREATE (rej:Rejection {
+		CREATE (rej:FailurePrecedent {
 			tenant_id: $tenant_id,
 			release_id: $release_id, node_id: $node_id, stage: 'validation',
 			category: $category, reason: $reason, error_excerpt: 'excerpt',
@@ -85,7 +85,7 @@ func seedPrecedentVersion(
 	require.NoError(t, err)
 }
 
-// linkPrecedentResolvedBy links [:RESOLVED_BY] from one rejection to one
+// linkPrecedentResolvedBy links [:RESOLVED_BY] from one failure precedent to one
 // version, addressed by its (unique_id, content_hash) identity.
 func linkPrecedentResolvedBy(
 	t *testing.T, client neo4jinfra.Neo4jClient,
@@ -96,7 +96,7 @@ func linkPrecedentResolvedBy(
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		MATCH (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 		MATCH (v:NodeVersion {tenant_id: $tenant_id, unique_id: $uid, content_hash: $hash})
 		MERGE (rej)-[:RESOLVED_BY]->(v)
 	`, map[string]any{
@@ -121,7 +121,7 @@ func setPrecedentResolvedByPromotedAt(
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
-		MATCH (:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		MATCH (:FailurePrecedent {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 		      -[rb:RESOLVED_BY]->(:NodeVersion {tenant_id: $tenant_id, unique_id: $uid, content_hash: $hash})
 		SET rb.promoted_at = $at
 	`, map[string]any{
@@ -161,7 +161,7 @@ func seedPrecedentCurrentPointer(
 }
 
 // seedPrecedentFix creates one :Fix fixture linked [:PROPOSED] from the
-// given rejection, stamped with project, and its PR facts on the fix's
+// given failure precedent, stamped with project, and its PR facts on the fix's
 // :PullRequest of that project, the shape RecordFix writes.
 func seedPrecedentFix(
 	t *testing.T, client neo4jinfra.Neo4jClient,
@@ -173,7 +173,7 @@ func seedPrecedentFix(
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		MATCH (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 		CREATE (f:Fix {tenant_id: $tenant_id, fix_id: $fix_id})
 		MERGE (rej)-[:PROPOSED {project: $project}]->(f)
 		CREATE (f)-[:HAS_PR]->(:PullRequest {
@@ -193,10 +193,10 @@ func seedPrecedentFix(
 }
 
 // TestPrecedentReader_MatchesBySignature verifies the signature lookup path
-// and the resolved-first ordering: two rejections share signature S (one
+// and the resolved-first ordering: two failure precedents share signature S (one
 // resolved, one open — the open one deliberately timestamped LATER than the
 // resolved one, so resolved-first sorting ahead of it can only be explained
-// by the "resolved" rank, not recency), and a third rejection on a different
+// by the "resolved" rank, not recency), and a third failure precedent on a different
 // signature must not appear at all. The resolved row must carry its
 // ResolvingVersion, the PriorVersion it superseded (next-older by
 // promoted_at), and its Fixes.
@@ -216,11 +216,11 @@ func TestPrecedentReader_MatchesBySignature(t *testing.T) {
 	relResolved, nodeResolved := marker+"-rel-resolved", marker+"-node-resolved"
 	relOther, nodeOther := marker+"-rel-other", marker+"-node-other"
 
-	seedPrecedentRejection(t, client, relOpen, nodeOpen, sigS, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, relOpen, nodeOpen, sigS, "logic", "logic:missing_object",
 		t0.Add(10*time.Minute), "select open", "hash-open")
-	seedPrecedentRejection(t, client, relResolved, nodeResolved, sigS, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, relResolved, nodeResolved, sigS, "logic", "logic:missing_object",
 		t0, "select resolved-fail", "hash-resolved-fail")
-	seedPrecedentRejection(t, client, relOther, nodeOther, sigT, "syntax", "syntax:typo",
+	seedFailurePrecedent(t, client, relOther, nodeOther, sigT, "syntax", "syntax:typo",
 		t0, "select other", "hash-other")
 
 	seedPrecedentVersion(t, client, nodeResolved, marker, "hash-prior", "select prior", t0.Add(time.Hour))
@@ -233,12 +233,12 @@ func TestPrecedentReader_MatchesBySignature(t *testing.T) {
 	repo := newPrecedentReader(client)
 	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, sigS, "", "", 10, true)
 	require.NoError(t, err)
-	require.Len(t, precedents, 2, "only signature S's two rejections match")
+	require.Len(t, precedents, 2, "only signature S's two failure precedents match")
 
 	resolved, open := precedents[0], precedents[1]
-	assert.Equal(t, nodeResolved, resolved.Rejection.NodeID,
+	assert.Equal(t, nodeResolved, resolved.Failure.NodeID,
 		"the resolved row must sort first despite being OLDER by `at`")
-	assert.Equal(t, nodeOpen, open.Rejection.NodeID)
+	assert.Equal(t, nodeOpen, open.Failure.NodeID)
 
 	require.NotNil(t, resolved.ResolvingVersion, "the resolved row must carry its resolving version")
 	assert.Equal(t, "hash-resolving", resolved.ResolvingVersion.ContentHash)
@@ -261,7 +261,7 @@ func TestPrecedentReader_MatchesBySignature(t *testing.T) {
 // used when the caller has no signature: an empty signature with a
 // (category, reason) pair matches every :ErrorSignature hub sharing that
 // pair, regardless of the hub's own signature string, and excludes a
-// rejection filed under a different category/reason.
+// failure precedent filed under a different category/reason.
 func TestPrecedentReader_MatchesByCategoryReason(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
@@ -276,11 +276,11 @@ func TestPrecedentReader_MatchesByCategoryReason(t *testing.T) {
 	relA2, nodeA2 := marker+"-rel-a2", marker+"-node-a2"
 	relB, nodeB := marker+"-rel-b", marker+"-node-b"
 
-	seedPrecedentRejection(t, client, relA1, nodeA1, sigA1, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, relA1, nodeA1, sigA1, "logic", "logic:missing_object",
 		t0, "select a1", "hash-a1")
-	seedPrecedentRejection(t, client, relA2, nodeA2, sigA2, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, relA2, nodeA2, sigA2, "logic", "logic:missing_object",
 		t0.Add(time.Minute), "select a2", "hash-a2")
-	seedPrecedentRejection(t, client, relB, nodeB, sigB, "syntax", "syntax:typo",
+	seedFailurePrecedent(t, client, relB, nodeB, sigB, "syntax", "syntax:typo",
 		t0, "select b", "hash-b")
 
 	repo := newPrecedentReader(client)
@@ -288,7 +288,7 @@ func TestPrecedentReader_MatchesByCategoryReason(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "both signatures sharing the (category, reason) pair must match")
 
-	got := []string{precedents[0].Rejection.NodeID, precedents[1].Rejection.NodeID}
+	got := []string{precedents[0].Failure.NodeID, precedents[1].Failure.NodeID}
 	assert.ElementsMatch(t, []string{nodeA1, nodeA2}, got)
 	assert.NotContains(t, got, nodeB, "a different category/reason must not match")
 
@@ -297,7 +297,7 @@ func TestPrecedentReader_MatchesByCategoryReason(t *testing.T) {
 	// share the (category, reason) pair that matched them.
 	bySignature := map[string]string{}
 	for _, p := range precedents {
-		bySignature[p.Rejection.NodeID] = p.Rejection.Signature
+		bySignature[p.Failure.NodeID] = p.Failure.Signature
 	}
 	assert.Equal(t, sigA1, bySignature[nodeA1])
 	assert.Equal(t, sigA2, bySignature[nodeA2])
@@ -305,7 +305,7 @@ func TestPrecedentReader_MatchesByCategoryReason(t *testing.T) {
 
 // TestPrecedentReader_LimitAppliedBeforeBodies verifies limit caps the row
 // count exactly, and that resolved-first / newest-within-group ordering
-// holds across the surviving rows: 4 rejections on one signature (two open,
+// holds across the surviving rows: 4 failure precedents on one signature (two open,
 // two resolved, each pair newest-last-seeded), limit 2, must return exactly
 // the two resolved rows, newest resolved first.
 func TestPrecedentReader_LimitAppliedBeforeBodies(t *testing.T) {
@@ -324,10 +324,10 @@ func TestPrecedentReader_LimitAppliedBeforeBodies(t *testing.T) {
 	rel3, node3 := marker+"-rel-3", marker+"-node-3" // resolved, older
 	rel4, node4 := marker+"-rel-4", marker+"-node-4" // resolved, newest
 
-	seedPrecedentRejection(t, client, rel1, node1, sig, "logic", "logic:missing_object", t0, "s1", "h1")
-	seedPrecedentRejection(t, client, rel2, node2, sig, "logic", "logic:missing_object", t0.Add(time.Minute), "s2", "h2")
-	seedPrecedentRejection(t, client, rel3, node3, sig, "logic", "logic:missing_object", t0.Add(2*time.Minute), "s3", "h3")
-	seedPrecedentRejection(t, client, rel4, node4, sig, "logic", "logic:missing_object", t0.Add(3*time.Minute), "s4", "h4")
+	seedFailurePrecedent(t, client, rel1, node1, sig, "logic", "logic:missing_object", t0, "s1", "h1")
+	seedFailurePrecedent(t, client, rel2, node2, sig, "logic", "logic:missing_object", t0.Add(time.Minute), "s2", "h2")
+	seedFailurePrecedent(t, client, rel3, node3, sig, "logic", "logic:missing_object", t0.Add(2*time.Minute), "s3", "h3")
+	seedFailurePrecedent(t, client, rel4, node4, sig, "logic", "logic:missing_object", t0.Add(3*time.Minute), "s4", "h4")
 
 	seedPrecedentVersion(t, client, node3, marker, "v3-hash", "fix3", t0.Add(time.Hour))
 	linkPrecedentResolvedBy(t, client, rel3, node3, node3, "v3-hash")
@@ -346,8 +346,8 @@ func TestPrecedentReader_LimitAppliedBeforeBodies(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "limit caps the identity query before any body is fetched")
 
-	assert.Equal(t, node4, precedents[0].Rejection.NodeID, "resolved + newest ranks first")
-	assert.Equal(t, node3, precedents[1].Rejection.NodeID, "resolved + older ranks second, ahead of every open row")
+	assert.Equal(t, node4, precedents[0].Failure.NodeID, "resolved + newest ranks first")
+	assert.Equal(t, node3, precedents[1].Failure.NodeID, "resolved + older ranks second, ahead of every open row")
 
 	require.NotNil(t, precedents[0].ResolvingVersion)
 	assert.True(t, precedents[0].ResolvingVersion.IsCurrent,
@@ -358,10 +358,10 @@ func TestPrecedentReader_LimitAppliedBeforeBodies(t *testing.T) {
 }
 
 // TestPrecedentReader_DuplicateResolvedByEdgeIsOneRow verifies the identity
-// query dedups a rejection whose two writers each linked a [:RESOLVED_BY]
+// query dedups a failure precedent whose two writers each linked a [:RESOLVED_BY]
 // edge in a race (both writers' "no existing edge" guards passed before
-// either committed, so the rejection ends up with two edges to two different
-// versions). Without dedup, the rejection consumes two slots in the
+// either committed, so the failure precedent ends up with two edges to two different
+// versions). Without dedup, the failure precedent consumes two slots in the
 // resolved-first/newest LIMIT window and can appear twice in the response,
 // evicting a genuine precedent. It also verifies the detail query resolves
 // the race deterministically — oldest resolving version by promoted_at wins,
@@ -380,7 +380,7 @@ func TestPrecedentReader_DuplicateResolvedByEdgeIsOneRow(t *testing.T) {
 	t0 := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
 	rel, node := marker+"-rel", marker+"-node"
 
-	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, rel, node, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 	seedPrecedentVersion(t, client, node, marker, "hash-race-a", "select race a", t0.Add(time.Hour))
 	seedPrecedentVersion(t, client, node, marker, "hash-race-b", "select race b", t0.Add(2*time.Hour))
@@ -393,21 +393,21 @@ func TestPrecedentReader_DuplicateResolvedByEdgeIsOneRow(t *testing.T) {
 	repo := newPrecedentReader(client)
 	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
-	require.Len(t, precedents, 1, "two RESOLVED_BY edges on one rejection must still yield exactly one row")
-	assert.Equal(t, node, precedents[0].Rejection.NodeID)
+	require.Len(t, precedents, 1, "two RESOLVED_BY edges on one failure precedent must still yield exactly one row")
+	assert.Equal(t, node, precedents[0].Failure.NodeID)
 
 	require.NotNil(t, precedents[0].ResolvingVersion)
 	assert.Equal(t, "hash-race-a", precedents[0].ResolvingVersion.ContentHash,
 		"the OLDEST resolving version by promoted_at must win deterministically, not whichever edge Neo4j visits last")
 }
 
-// TestPrecedentReader_CategoryReasonFallbackUsesRejectionsOwnReason verifies
-// the (category, reason) fallback filters on each :Rejection's own
-// properties, not the shared :ErrorSignature hub's. RecordRejection sets the
+// TestPrecedentReader_CategoryReasonFallbackUsesFailurePrecedentsOwnReason verifies
+// the (category, reason) fallback filters on each :FailurePrecedent's own
+// properties, not the shared :ErrorSignature hub's. RecordFailurePrecedent sets the
 // hub's category/reason under ON CREATE only (first writer wins), so a
-// second rejection sharing the signature but classified under a different
+// second failure precedent sharing the signature but classified under a different
 // reason must still be found under ITS OWN reason.
-func TestPrecedentReader_CategoryReasonFallbackUsesRejectionsOwnReason(t *testing.T) {
+func TestPrecedentReader_CategoryReasonFallbackUsesFailurePrecedentsOwnReason(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -423,12 +423,12 @@ func TestPrecedentReader_CategoryReasonFallbackUsesRejectionsOwnReason(t *testin
 	caseBase := newCaseBaseRepo(client)
 	// relA lands first, so the :ErrorSignature hub's category/reason freeze
 	// on its values (ON CREATE only).
-	require.NoError(t, caseBase.RecordRejection(ctx, casebase.Rejection{
+	require.NoError(t, caseBase.RecordFailurePrecedent(ctx, casebase.FailurePrecedent{
 		ReleaseID: relA, NodeID: nodeA, Stage: "validation",
 		Category: "logic", Reason: "reason-a", Signature: sig,
 		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
 	}))
-	require.NoError(t, caseBase.RecordRejection(ctx, casebase.Rejection{
+	require.NoError(t, caseBase.RecordFailurePrecedent(ctx, casebase.FailurePrecedent{
 		ReleaseID: relB, NodeID: nodeB, Stage: "validation",
 		Category: "logic", Reason: "reason-b", Signature: sig,
 		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0.Add(time.Minute),
@@ -437,8 +437,8 @@ func TestPrecedentReader_CategoryReasonFallbackUsesRejectionsOwnReason(t *testin
 	repo := newPrecedentReader(client)
 	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, "", "logic", "reason-b", 10, true)
 	require.NoError(t, err)
-	require.Len(t, precedents, 1, "must find the rejection under its OWN reason, not the hub's first-seen one")
-	assert.Equal(t, nodeB, precedents[0].Rejection.NodeID)
+	require.Len(t, precedents, 1, "must find the failure precedent under its OWN reason, not the hub's first-seen one")
+	assert.Equal(t, nodeB, precedents[0].Failure.NodeID)
 }
 
 // TestPrecedentReader_DiffBaselineUsesEdgePromotedAt verifies the detail
@@ -460,11 +460,11 @@ func TestPrecedentReader_DiffBaselineUsesEdgePromotedAt(t *testing.T) {
 	t0 := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
 	rel, node := marker+"-rel", marker+"-node"
 
-	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, rel, node, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 
 	// v0 is the reverted-to version: its own promoted_at predates even the
-	// rejection and never changes once created.
+	// failure precedent and never changes once created.
 	seedPrecedentVersion(t, client, node, marker, "hash-v0", "select v0", t0.Add(-time.Hour))
 	// v2 is the version v0's revert actually replaced — the one active right
 	// before the resolving (re-)promotion.
@@ -485,7 +485,7 @@ func TestPrecedentReader_DiffBaselineUsesEdgePromotedAt(t *testing.T) {
 }
 
 // TestPrecedentReader_IncludeCodeFalseOmitsFailingCode verifies includeCode
-// governs the FAILING code only: with includeCode=false the rejection's
+// governs the FAILING code only: with includeCode=false the failure precedent's
 // RawCode comes back "" even though the stored node carries raw_code, while
 // the resolving and prior version bodies are still populated — the service
 // renders the resolution diff from them regardless of includeCode.
@@ -501,7 +501,7 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 	t0 := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
 	rel, node := marker+"-rel", marker+"-node"
 
-	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, rel, node, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 	seedPrecedentVersion(t, client, node, marker, "hash-prior", "select prior", t0.Add(time.Hour))
 	seedPrecedentVersion(t, client, node, marker, "hash-resolving", "select resolving", t0.Add(2*time.Hour))
@@ -513,7 +513,7 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 	require.Len(t, precedents, 1)
 
 	p := precedents[0]
-	assert.Equal(t, "", p.Rejection.RawCode, "includeCode=false must blank the failing code")
+	assert.Equal(t, "", p.Failure.RawCode, "includeCode=false must blank the failing code")
 	require.NotNil(t, p.ResolvingVersion)
 	assert.Equal(t, "select resolving", p.ResolvingVersion.RawCode,
 		"resolving-version code is always fetched — the caller renders the diff from it")
@@ -522,17 +522,17 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 		"prior-version code is always fetched — the caller renders the diff from it")
 }
 
-// TestPrecedentReader_FixResolvedRejectionCarriesEditedAndLivePrState
+// TestPrecedentReader_FixResolvedFailurePrecedentCarriesEditedAndLivePrState
 // verifies the read path widened to recognize fix-level provenance: a
-// rejection resolved by a MERGED PR (a [:RESOLVED_BY] edge to a :Fix,
+// failure precedent resolved by a MERGED PR (a [:RESOLVED_BY] edge to a :Fix,
 // not a :NodeVersion)
 // counts as resolved by the identity query — it must sort ahead of a still-open
-// rejection filed LATER on the same signature — and the detail path surfaces
+// failure precedent filed LATER on the same signature — and the detail path surfaces
 // the merged PR's [:EDITED] provenance and the :PullRequest's live pr_state.
 // The edited node (nu) is an UPSTREAM node distinct from the rejected node, so
 // the test also proves the edited target is carried faithfully rather than
-// assumed equal to the rejection node.
-func TestPrecedentReader_FixResolvedRejectionCarriesEditedAndLivePrState(t *testing.T) {
+// assumed equal to the failure precedent node.
+func TestPrecedentReader_FixResolvedFailurePrecedentCarriesEditedAndLivePrState(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -548,12 +548,12 @@ func TestPrecedentReader_FixResolvedRejectionCarriesEditedAndLivePrState(t *test
 	fixID := marker + "-fix"
 	closedAt := t0.Add(2 * time.Hour)
 
-	// The fix-resolved rejection, filed EARLIER than the open one.
-	seedPrecedentRejection(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
+	// The fix-resolved failure precedent, filed EARLIER than the open one.
+	seedFailurePrecedent(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
-	// A still-open rejection on the same signature, filed LATER — resolved-first
-	// ordering must still rank the fix-resolved rejection ahead of it.
-	seedPrecedentRejection(t, client, relOpen, nodeOpen, sig, "logic", "logic:missing_object",
+	// A still-open failure precedent on the same signature, filed LATER — resolved-first
+	// ordering must still rank the fix-resolved failure precedent ahead of it.
+	seedFailurePrecedent(t, client, relOpen, nodeOpen, sig, "logic", "logic:missing_object",
 		t0.Add(30*time.Minute), "select open", "hash-open")
 
 	// The edit's target :Node must already exist; the writer never mints one.
@@ -579,14 +579,14 @@ func TestPrecedentReader_FixResolvedRejectionCarriesEditedAndLivePrState(t *test
 	reader := newPrecedentReader(client)
 	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
-	require.Len(t, precedents, 2, "both rejections on the signature match")
+	require.Len(t, precedents, 2, "both failure precedents on the signature match")
 
 	// The identity query counts the [:RESOLVED_BY]->(:Fix) edge as
 	// resolved: nodeA sorts first despite being OLDER by `at`.
 	resolved, open := precedents[0], precedents[1]
-	assert.Equal(t, nodeA, resolved.Rejection.NodeID,
-		"a fix-resolved rejection must rank resolved-first, ahead of a newer open one")
-	assert.Equal(t, nodeOpen, open.Rejection.NodeID)
+	assert.Equal(t, nodeA, resolved.Failure.NodeID,
+		"a fix-resolved failure precedent must rank resolved-first, ahead of a newer open one")
+	assert.Equal(t, nodeOpen, open.Failure.NodeID)
 
 	require.Len(t, resolved.Edited, 1, "the merged PR's EDITED provenance is surfaced")
 	e := resolved.Edited[0]
@@ -603,7 +603,7 @@ func TestPrecedentReader_FixResolvedRejectionCarriesEditedAndLivePrState(t *test
 	assert.Equal(t, "merged", resolved.Fixes[0].PrState,
 		"pr_state comes live from the :PullRequest node")
 
-	assert.Empty(t, open.Edited, "the still-open rejection carries no edited provenance")
+	assert.Empty(t, open.Edited, "the still-open failure precedent carries no edited provenance")
 }
 
 // TestPrecedentReader_AmendedEditSelectsStraddlingVersions verifies the new
@@ -627,7 +627,7 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 	fixID := marker + "-fix"
 	closedAt := t0.Add(2 * time.Hour)
 
-	seedPrecedentRejection(t, client, relC, nodeC, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, relC, nodeC, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 	seedEditTargetNode(t, client, nu, marker)
 
@@ -677,7 +677,7 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 // verifies the detail query surfaces the fix-resolved signal even when the
 // merged PR drew NO [:EDITED] edges — every edit target was absent from the
 // graph, so RecordPullRequestOutcome skipped them (it never mints a :Node).
-// The rejection is genuinely fixed and the identity query already counts it
+// The failure precedent is genuinely fixed and the identity query already counts it
 // resolved-first; ResolvedByFix must be true so the service's Resolved
 // boolean agrees, with no Edited rows and no own-timeline version.
 func TestPrecedentReader_FixResolvedWithAllEditsAbsentSurfacesResolvedByFix(t *testing.T) {
@@ -695,7 +695,7 @@ func TestPrecedentReader_FixResolvedWithAllEditsAbsentSurfacesResolvedByFix(t *t
 	missing := marker + "-missing" // edit target that is NOT in the graph
 	closedAt := t0.Add(2 * time.Hour)
 
-	seedPrecedentRejection(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 
 	repo := newCaseBaseRepo(client)
@@ -729,10 +729,10 @@ func TestPrecedentReader_FixResolvedWithAllEditsAbsentSurfacesResolvedByFix(t *t
 	assert.Nil(t, p.ResolvingVersion, "there is no own-timeline resolving version")
 }
 
-// TestPrecedentReader_UnresolvedRejectionIsNotResolvedByFix pins the
-// negative: a rejection with no [:RESOLVED_BY] edge at all reports
+// TestPrecedentReader_UnresolvedFailurePrecedentIsNotResolvedByFix pins the
+// negative: a failure precedent with no [:RESOLVED_BY] edge at all reports
 // ResolvedByFix=false.
-func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByFix(t *testing.T) {
+func TestPrecedentReader_UnresolvedFailurePrecedentIsNotResolvedByFix(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -744,7 +744,7 @@ func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByFix(t *testing.T) {
 	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	rel, node := marker+"-rel", marker+"-node"
 
-	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, rel, node, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 
 	reader := newPrecedentReader(client)
@@ -752,20 +752,20 @@ func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByFix(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
-	assert.False(t, precedents[0].ResolvedByFix, "an unresolved rejection has no fix edge")
+	assert.False(t, precedents[0].ResolvedByFix, "an unresolved failure precedent has no fix edge")
 	assert.Nil(t, precedents[0].ResolvingVersion)
 	assert.Empty(t, precedents[0].Edited)
 }
 
 // TestPrecedentReader_MultiProjectFixScopesEditedProvenancePerProject
 // verifies the per-resolving-project scoping of edited-node provenance. A single
-// :Fix spans two projects: a core rejection resolved by core's merged PR
-// (a non-amended edit to a core node) and a finance rejection resolved by
-// finance's merged PR (an amended edit to a finance node). Each rejection links
+// :Fix spans two projects: a core failure precedent resolved by core's merged PR
+// (a non-amended edit to a core node) and a finance failure precedent resolved by
+// finance's merged PR (an amended edit to a finance node). Each failure precedent links
 // to the SHARED :Fix, so without scoping the read would walk EVERY [:EDITED]
 // edge and EVERY merged :PullRequest on that fix. The RESOLVED_BY edge's
-// project stamp scopes the walk: the core rejection surfaces only the core edit,
-// the finance rejection only the finance edit, and the finance amended straddle
+// project stamp scopes the walk: the core failure precedent surfaces only the core edit,
+// the finance failure precedent only the finance edit, and the finance amended straddle
 // is selected against finance's own :PullRequest closed_at — never core's
 // earlier one.
 func TestPrecedentReader_MultiProjectFixScopesEditedProvenancePerProject(t *testing.T) {
@@ -788,11 +788,11 @@ func TestPrecedentReader_MultiProjectFixScopesEditedProvenancePerProject(t *test
 	coreClosed := t0.Add(2 * time.Hour) // Tc — earlier close
 	finClosed := t0.Add(5 * time.Hour)  // Tf — later close
 
-	// Two rejections on the SAME signature, resolved by the SAME fix but by
+	// Two failure precedents on the SAME signature, resolved by the SAME fix but by
 	// different projects' PRs.
-	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
 		t0, "select core", "hash-core")
-	seedPrecedentRejection(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
 		t0.Add(time.Minute), "select fin", "hash-fin")
 
 	seedEditTargetNode(t, client, coreEdited, marker)
@@ -847,27 +847,27 @@ func TestPrecedentReader_MultiProjectFixScopesEditedProvenancePerProject(t *test
 	reader := newPrecedentReader(client)
 	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
-	require.Len(t, precedents, 2, "both rejections on the signature match")
+	require.Len(t, precedents, 2, "both failure precedents on the signature match")
 
 	byNode := map[string]casebase.PrecedentView{}
 	for _, p := range precedents {
-		byNode[p.Rejection.NodeID] = p
+		byNode[p.Failure.NodeID] = p
 	}
 	coreP, ok := byNode[coreNode]
-	require.True(t, ok, "the core rejection is present")
+	require.True(t, ok, "the core failure precedent is present")
 	finP, ok := byNode[finNode]
-	require.True(t, ok, "the finance rejection is present")
+	require.True(t, ok, "the finance failure precedent is present")
 
-	// The core rejection surfaces ONLY the core edit — never finance's.
-	require.Len(t, coreP.Edited, 1, "core rejection surfaces exactly its own project's edit")
+	// The core failure precedent surfaces ONLY the core edit — never finance's.
+	require.Len(t, coreP.Edited, 1, "core failure precedent surfaces exactly its own project's edit")
 	assert.Equal(t, coreEdited, coreP.Edited[0].NodeID, "core must not surface finance's edited node")
 	assert.Equal(t, "D-core", coreP.Edited[0].Diff)
 	assert.False(t, coreP.Edited[0].Amended)
 	assert.Nil(t, coreP.Edited[0].MergedVersion, "a non-amended edit selects no straddling version")
 
-	// The finance rejection surfaces ONLY the finance edit, and selects the
+	// The finance failure precedent surfaces ONLY the finance edit, and selects the
 	// straddling merged version against finance's own PR closed_at.
-	require.Len(t, finP.Edited, 1, "finance rejection surfaces exactly its own project's edit")
+	require.Len(t, finP.Edited, 1, "finance failure precedent surfaces exactly its own project's edit")
 	fe := finP.Edited[0]
 	assert.Equal(t, finEdited, fe.NodeID, "finance must not surface core's edited node")
 	assert.Equal(t, "D-fin", fe.Diff)
@@ -881,13 +881,13 @@ func TestPrecedentReader_MultiProjectFixScopesEditedProvenancePerProject(t *test
 
 // TestPrecedentReader_MultiProjectFixScopesFixPRsPerProject verifies
 // the per-proposing-project scoping of a precedent's PR facts. A single
-// :Fix spans two projects: a core rejection whose fix PR is core's, and a
-// finance rejection whose fix PR is finance's. Both rejections link to the
+// :Fix spans two projects: a core failure precedent whose fix PR is core's, and a
+// finance failure precedent whose fix PR is finance's. Both failure precedents link to the
 // SHARED :Fix, which carries both projects' :PullRequest nodes. Without
-// scoping the read would fan EVERY :PullRequest into EVERY rejection's Fixes
-// list — a core rejection would surface finance's PR url/number/state (and a
+// scoping the read would fan EVERY :PullRequest into EVERY failure precedent's Fixes
+// list — a core failure precedent would surface finance's PR url/number/state (and a
 // duplicate fix entry). The [:PROPOSED] edge's project stamp scopes the PR
-// join: the core rejection surfaces only core's PR, the finance rejection only
+// join: the core failure precedent surfaces only core's PR, the finance failure precedent only
 // finance's.
 func TestPrecedentReader_MultiProjectFixScopesFixPRsPerProject(t *testing.T) {
 	client := newTestClient(t)
@@ -904,11 +904,11 @@ func TestPrecedentReader_MultiProjectFixScopesFixPRsPerProject(t *testing.T) {
 	coreRel, coreNode := marker+"-core-rel", marker+"-core-node"
 	finRel, finNode := marker+"-fin-rel", marker+"-fin-node"
 
-	// Two rejections on the SAME signature, resolved by the SAME fix but by
+	// Two failure precedents on the SAME signature, resolved by the SAME fix but by
 	// different projects' PRs.
-	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
 		t0, "select core", "hash-core")
-	seedPrecedentRejection(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
+	seedFailurePrecedent(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
 		t0.Add(time.Minute), "select fin", "hash-fin")
 
 	repo := newCaseBaseRepo(client)
@@ -934,35 +934,35 @@ func TestPrecedentReader_MultiProjectFixScopesFixPRsPerProject(t *testing.T) {
 	reader := newPrecedentReader(client)
 	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
-	require.Len(t, precedents, 2, "both rejections on the signature match")
+	require.Len(t, precedents, 2, "both failure precedents on the signature match")
 
 	byNode := map[string]casebase.PrecedentView{}
 	for _, p := range precedents {
-		byNode[p.Rejection.NodeID] = p
+		byNode[p.Failure.NodeID] = p
 	}
 	coreP, ok := byNode[coreNode]
-	require.True(t, ok, "the core rejection is present")
+	require.True(t, ok, "the core failure precedent is present")
 	finP, ok := byNode[finNode]
-	require.True(t, ok, "the finance rejection is present")
+	require.True(t, ok, "the finance failure precedent is present")
 
-	// The core rejection surfaces ONLY core's PR — never finance's, and never a
+	// The core failure precedent surfaces ONLY core's PR — never finance's, and never a
 	// duplicate.
-	require.Len(t, coreP.Fixes, 1, "core rejection surfaces exactly its own project's PR")
+	require.Len(t, coreP.Fixes, 1, "core failure precedent surfaces exactly its own project's PR")
 	assert.Equal(t, fixID, coreP.Fixes[0].FixID)
 	assert.Equal(t, "https://github.com/org/core/pull/1", coreP.Fixes[0].PrURL,
 		"core must not surface finance's PR url")
 	assert.Equal(t, 1, coreP.Fixes[0].PrNumber)
 	assert.Equal(t, "open", coreP.Fixes[0].PrState)
 
-	// The finance rejection surfaces ONLY finance's PR.
-	require.Len(t, finP.Fixes, 1, "finance rejection surfaces exactly its own project's PR")
+	// The finance failure precedent surfaces ONLY finance's PR.
+	require.Len(t, finP.Fixes, 1, "finance failure precedent surfaces exactly its own project's PR")
 	assert.Equal(t, "https://github.com/org/finance/pull/7", finP.Fixes[0].PrURL,
 		"finance must not surface core's PR url")
 	assert.Equal(t, 7, finP.Fixes[0].PrNumber)
 }
 
 // TestPrecedentReader_NoMatchIsEmptyNotError verifies that a signature with no
-// recorded rejections is a valid, non-error answer: an empty slice, not an
+// recorded failure precedents is a valid, non-error answer: an empty slice, not an
 // error.
 func TestPrecedentReader_NoMatchIsEmptyNotError(t *testing.T) {
 	client := newTestClient(t)

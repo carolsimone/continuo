@@ -8,7 +8,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +28,7 @@ var wantConstraints = map[string]schemaEntry{
 	"node_version_unique":             {"NodeVersion", []string{"tenant_id", "unique_id", "content_hash"}},
 	"code_unit_unique":                {"CodeUnit", []string{"tenant_id", "unit_id"}},
 	"code_unit_version_unique":        {"CodeUnitVersion", []string{"tenant_id", "unit_id", "checksum"}},
-	"rejection_unique":                {"Rejection", []string{"tenant_id", "release_id", "node_id"}},
+	"failure_precedent_unique":        {"FailurePrecedent", []string{"tenant_id", "release_id", "node_id"}},
 	"error_signature_unique":          {"ErrorSignature", []string{"tenant_id", "signature"}},
 	"fix_unique":                      {"Fix", []string{"tenant_id", "fix_id"}},
 	"pull_request_fix_unique":         {"PullRequest", []string{"tenant_id", "fix_id", "project"}},
@@ -39,13 +39,13 @@ var wantConstraints = map[string]schemaEntry{
 
 // wantIndexes is the graph's range indexes that back no constraint, by name.
 var wantIndexes = map[string]schemaEntry{
-	"node_project_fqn":                {"Node", []string{"tenant_id", "project_name", "schema_name", "table_name"}},
-	"node_version_uid":                {"NodeVersion", []string{"tenant_id", "unique_id"}},
-	"code_unit_version_unit_id":       {"CodeUnitVersion", []string{"tenant_id", "unit_id"}},
-	"rejection_node_id":               {"Rejection", []string{"tenant_id", "node_id"}},
-	"rejection_category_reason":       {"Rejection", []string{"tenant_id", "category", "reason"}},
-	"error_signature_category_reason": {"ErrorSignature", []string{"tenant_id", "category", "reason"}},
-	"contract_version_uid":            {"ContractVersion", []string{"tenant_id", "unique_id"}},
+	"node_project_fqn":                  {"Node", []string{"tenant_id", "project_name", "schema_name", "table_name"}},
+	"node_version_uid":                  {"NodeVersion", []string{"tenant_id", "unique_id"}},
+	"code_unit_version_unit_id":         {"CodeUnitVersion", []string{"tenant_id", "unit_id"}},
+	"failure_precedent_node_id":         {"FailurePrecedent", []string{"tenant_id", "node_id"}},
+	"failure_precedent_category_reason": {"FailurePrecedent", []string{"tenant_id", "category", "reason"}},
+	"error_signature_category_reason":   {"ErrorSignature", []string{"tenant_id", "category", "reason"}},
+	"contract_version_uid":              {"ContractVersion", []string{"tenant_id", "unique_id"}},
 }
 
 // graphSchemaState is what SHOW CONSTRAINTS and SHOW INDEXES report.

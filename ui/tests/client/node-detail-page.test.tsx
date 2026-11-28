@@ -126,10 +126,10 @@ describe('NodeDetailPage', () => {
     expect(await screen.findByText('task · exit_code')).toBeInTheDocument();
   });
 
-  it('titles a queued run "waiting for a slot"', async () => {
+  it('titles a queued run "waiting for Job capacity"', async () => {
     mockFetch.mockImplementation(() => jsonResp({ tasks: [mkRun({ run_id: 'r1', task_id: 't1', task_status: 'queued' })] }));
     renderPage();
-    expect(await screen.findByTitle('waiting for a slot')).toHaveTextContent('queued');
+    expect(await screen.findByTitle('waiting for Job capacity')).toHaveTextContent('queued');
   });
 
   it('shows node-history table with kindLabel and computed stats', async () => {
@@ -1539,12 +1539,12 @@ describe('NodeDetailPage — history of a run still in flight', () => {
     const rows = { current: [mkRun({ task_status: 'queued' })] };
     serveHistory(rows);
     renderPage();
-    expect(await screen.findByTitle('waiting for a slot')).toHaveTextContent('queued');
+    expect(await screen.findByTitle('waiting for Job capacity')).toHaveTextContent('queued');
 
     rows.current = [mkRun({ task_status: 'succeeded' })];
     await nextPoll();
 
-    await waitFor(() => expect(screen.queryByTitle('waiting for a slot')).toBeNull());
+    await waitFor(() => expect(screen.queryByTitle('waiting for Job capacity')).toBeNull());
     expect(screen.getByText('succeeded')).toBeInTheDocument();
   });
 

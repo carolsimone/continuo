@@ -58,7 +58,7 @@ func TestPrecedents_ExactSignatureMatchSkipsTheFallback(t *testing.T) {
 	}}, got)
 }
 
-func TestPrecedents_DropsThisFailuresOwnRejectionBeforeTheFallback(t *testing.T) {
+func TestPrecedents_DropsThisFailuresOwnPrecedentBeforeTheFallback(t *testing.T) {
 	self := prompt.Precedent{ReleaseID: "rel-1", NodeID: "model.a"}
 	other := prompt.Precedent{ReleaseID: "rel-0", NodeID: "model.b", ErrorExcerpt: "e"}
 	r := &fakePrecedents{

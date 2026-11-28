@@ -25,7 +25,7 @@ import (
 //
 // It is a system path, like MarkerSweeper: it reads which tenants hold
 // deletable history, then sweeps each in a transaction of its own that takes
-// the tenant's export gate first and deletes nothing while an export or a
+// the tenant's backup gate first and deletes nothing while a backup or a
 // restore holds the tenant's lease.
 type ContractHistorySweeper struct {
 	client Neo4jClient
@@ -91,7 +91,7 @@ RETURN count(*) AS deleted`
 // is an edge or a version: each pass deletes edges first, then the versions
 // they left unreached. The limit counts every tenant together: a pass visits
 // the tenants that hold deletable history in turn until it has deleted limit.
-// A tenant whose export lease is held is skipped. A tenant whose sweep fails
+// A tenant whose backup lease is held is skipped. A tenant whose sweep fails
 // is logged and does not stop the others: it is skipped for the rest of the
 // sweep, so it logs once however many passes the sweep takes, and its history
 // waits for the next sweep. The count of what the pass deleted comes back
@@ -163,18 +163,18 @@ func (s *ContractHistorySweeper) markFailed(tenantID string) {
 }
 
 // pruneTenant deletes at most limit rows of the tenant's contract history in
-// one write transaction behind the tenant's export gate, and returns how many.
+// one write transaction behind the tenant's backup gate, and returns how many.
 // It deletes nothing while the tenant's lease is held. Edges come first, up to
 // limit, and the versions left unreached take what is left of it.
 func (s *ContractHistorySweeper) pruneTenant(ctx context.Context, tenantID string, retentionMs, limit int64) (int64, error) {
 	var deleted int64
 	err := inWriteTx(ctx, s.client, tenantID, func(run TenantRunner) (bool, error) {
-		gate, err := lockExportGate(ctx, run)
+		gate, err := lockBackupGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
 		if gate.held {
-			s.logger.Debug("contract history sweep skipped: the tenant's export lease is held", "tenant_id", tenantID)
+			s.logger.Debug("contract history sweep skipped: the tenant's backup lease is held", "tenant_id", tenantID)
 			return false, nil
 		}
 		edges, err := deletedCount(ctx, run, deleteContractEdgesCypher,
@@ -190,7 +190,7 @@ func (s *ContractHistorySweeper) pruneTenant(ctx context.Context, tenantID strin
 				return false, fmt.Errorf("delete unreached contract versions: %w", err)
 			}
 		}
-		if err := unlockExportGate(ctx, run); err != nil {
+		if err := unlockBackupGate(ctx, run); err != nil {
 			return false, err
 		}
 		deleted = edges + versions

@@ -204,7 +204,7 @@ func TestDispatchProblemAcceptsTheJobNamesRunControllerComputes(t *testing.T) {
 	}
 }
 
-// A rebuilt record holds a slot and is starting; a refused one has ended
+// A rebuilt record holds Job capacity and is starting; a refused one has ended
 // failed with its reason, so a repeated dispatch is answered from it.
 func TestNewAdoptedAndRefusedDeployments(t *testing.T) {
 	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)

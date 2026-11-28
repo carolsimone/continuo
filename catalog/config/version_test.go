@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The version an export's header names comes from the build: the main
+// The version a backup's header names comes from the build: the main
 // module's version when the build stamped one, otherwise the VCS revision
 // (marked when the tree was modified), otherwise "unknown".
 func TestVersion_ComesFromTheBuild(t *testing.T) {

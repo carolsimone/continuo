@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 )
 
@@ -46,7 +46,7 @@ type leaseCall struct {
 	TTL      time.Duration
 }
 
-// fakeLease is an ExportLease in memory: one lease per tenant. acquireErr,
+// fakeLease is a BackupLease in memory: one lease per tenant. acquireErr,
 // renewErr and releaseErr, when set, decide what a call returns instead.
 type fakeLease struct {
 	mu         sync.Mutex
@@ -162,21 +162,21 @@ func (l *fakeLease) isHeld(tenantID string) bool {
 	return ok
 }
 
-// fakeGraph is a GraphExporter whose export is the function the test gives.
+// fakeGraph is a GraphSaver whose backup is the function the test gives.
 type fakeGraph struct {
-	export func(ctx context.Context, tenantID string, out ports.RecordWriter) error
+	backup func(ctx context.Context, tenantID string, out ports.RecordWriter) error
 }
 
-func (g fakeGraph) Export(ctx context.Context, tenantID string, out ports.RecordWriter) error {
-	return g.export(ctx, tenantID, out)
+func (g fakeGraph) Save(ctx context.Context, tenantID string, out ports.RecordWriter) error {
+	return g.backup(ctx, tenantID, out)
 }
 
-// header is the header of an export of tenantID holding nodes :Node nodes and
+// header is the header of a backup of tenantID holding nodes :Node nodes and
 // rels :DEPENDS_ON relationships.
-func header(tenantID string, nodes, rels int64) export.Header {
-	h := export.Header{
-		FormatVersion: export.FormatVersion, TenantID: tenantID,
-		ExportedAt:     time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC),
+func header(tenantID string, nodes, rels int64) graphbackup.Header {
+	h := graphbackup.Header{
+		FormatVersion: graphbackup.FormatVersion, TenantID: tenantID,
+		TakenAt:        time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC),
 		CatalogVersion: "test", Nodes: map[string]int64{}, Relationships: map[string]int64{},
 	}
 	if nodes > 0 {
@@ -188,24 +188,24 @@ func header(tenantID string, nodes, rels int64) export.Header {
 	return h
 }
 
-func node(tenantID string, i int) export.NodeRecord {
-	return export.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{
+func node(tenantID string, i int) graphbackup.NodeRecord {
+	return graphbackup.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{
 		"tenant_id": tenantID, "unique_id": fmt.Sprintf("svc.t%d", i), "active": true,
 	}}
 }
 
-func dependsOn(from, to int) export.RelRecord {
-	return export.RelRecord{
+func dependsOn(from, to int) graphbackup.RelRecord {
+	return graphbackup.RelRecord{
 		Type:  "DEPENDS_ON",
-		From:  export.NodeRef{Label: "Node", Key: []any{fmt.Sprintf("svc.t%d", from)}},
-		To:    export.NodeRef{Label: "Node", Key: []any{fmt.Sprintf("svc.t%d", to)}},
+		From:  graphbackup.NodeRef{Label: "Node", Key: []any{fmt.Sprintf("svc.t%d", from)}},
+		To:    graphbackup.NodeRef{Label: "Node", Key: []any{fmt.Sprintf("svc.t%d", to)}},
 		Props: map[string]any{},
 	}
 }
 
-// smallGraph exports n nodes and a chain of n-1 relationships between them.
+// smallGraph backups n nodes and a chain of n-1 relationships between them.
 func smallGraph(n int) fakeGraph {
-	return fakeGraph{export: func(_ context.Context, tenantID string, out ports.RecordWriter) error {
+	return fakeGraph{backup: func(_ context.Context, tenantID string, out ports.RecordWriter) error {
 		if err := out.WriteHeader(header(tenantID, int64(n), int64(max(n-1, 0)))); err != nil {
 			return err
 		}
@@ -223,7 +223,7 @@ func smallGraph(n int) fakeGraph {
 	}}
 }
 
-// fakeKey is the key a fakeStore gives tenantID's export taken at at: the
+// fakeKey is the key a fakeStore gives tenantID's backup taken at at: the
 // fake lays out its keys its own way, as the service never reads one.
 func fakeKey(tenantID string, at time.Time) string {
 	return tenantID + "@" + at.UTC().Format(fakeKeyTime)
@@ -231,10 +231,10 @@ func fakeKey(tenantID string, at time.Time) string {
 
 const fakeKeyTime = "20060102T150405Z"
 
-// storedExport is one export a fakeStore holds: its header and its records,
+// storedBackup is one backup a fakeStore holds: its header and its records,
 // in the order they were written, and the size Close reported.
-type storedExport struct {
-	header  export.Header
+type storedBackup struct {
+	header  graphbackup.Header
 	records []any
 	size    int64
 }
@@ -243,7 +243,7 @@ type storedExport struct {
 // when set, is what that call returns; deleteErr is per key.
 type fakeStore struct {
 	mu          sync.Mutex
-	exports     map[string]storedExport
+	backups     map[string]storedBackup
 	sinks       []*fakeSink
 	sources     []*fakeSource
 	reads       []string // the keys Validate and OpenRead read, in order
@@ -259,17 +259,17 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{exports: map[string]storedExport{}, deleteErr: map[string]error{}}
+	return &fakeStore{backups: map[string]storedBackup{}, deleteErr: map[string]error{}}
 }
 
 func (s *fakeStore) Locate(key string) (string, time.Time, error) {
 	tenantID, stamp, ok := strings.Cut(key, "@")
 	if !ok || tenantID == "" {
-		return "", time.Time{}, fmt.Errorf("%w: %q", ports.ErrNotAnExportKey, key)
+		return "", time.Time{}, fmt.Errorf("%w: %q", ports.ErrNotABackupKey, key)
 	}
 	at, err := time.Parse(fakeKeyTime, stamp)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("%w: %q", ports.ErrNotAnExportKey, key)
+		return "", time.Time{}, fmt.Errorf("%w: %q", ports.ErrNotABackupKey, key)
 	}
 	return tenantID, at, nil
 }
@@ -281,7 +281,7 @@ func (s *fakeStore) CheckTenant(tenantID string) error {
 	return nil
 }
 
-func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.ExportSink, string, error) {
+func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.BackupSink, string, error) {
 	if err := s.CheckTenant(tenantID); err != nil {
 		return nil, "", err
 	}
@@ -299,27 +299,27 @@ func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time, pro
 	return w, key, nil
 }
 
-// read records a read of key and returns the export stored there.
-func (s *fakeStore) read(key string) (storedExport, error) {
+// read records a read of key and returns the backup stored there.
+func (s *fakeStore) read(key string) (storedBackup, error) {
 	if _, _, err := s.Locate(key); err != nil {
-		return storedExport{}, err
+		return storedBackup{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reads = append(s.reads, key)
 	if s.readErr != nil {
 		if err := s.readErr(len(s.reads)); err != nil {
-			return storedExport{}, err
+			return storedBackup{}, err
 		}
 	}
-	e, ok := s.exports[key]
+	e, ok := s.backups[key]
 	if !ok {
-		return storedExport{}, fmt.Errorf("%w: %s", ports.ErrBackupNotFound, key)
+		return storedBackup{}, fmt.Errorf("%w: %s", ports.ErrBackupNotFound, key)
 	}
 	return e, nil
 }
 
-func (s *fakeStore) OpenRead(_ context.Context, key string) (ports.ExportSource, error) {
+func (s *fakeStore) OpenRead(_ context.Context, key string) (ports.BackupSource, error) {
 	e, err := s.read(key)
 	if err != nil {
 		return nil, err
@@ -331,16 +331,16 @@ func (s *fakeStore) OpenRead(_ context.Context, key string) (ports.ExportSource,
 	return src, nil
 }
 
-func (s *fakeStore) Validate(_ context.Context, key, tenantID string) (export.Header, error) {
+func (s *fakeStore) Validate(_ context.Context, key, tenantID string) (graphbackup.Header, error) {
 	e, err := s.read(key)
 	if err != nil {
-		return export.Header{}, err
+		return graphbackup.Header{}, err
 	}
 	if s.validateErr != nil {
-		return export.Header{}, s.validateErr
+		return graphbackup.Header{}, s.validateErr
 	}
 	if e.header.TenantID != tenantID {
-		return export.Header{}, fmt.Errorf("the export is of tenant %q, not %q: %w", e.header.TenantID, tenantID, export.ErrTenantMismatch)
+		return graphbackup.Header{}, fmt.Errorf("the backup is of tenant %q, not %q: %w", e.header.TenantID, tenantID, graphbackup.ErrTenantMismatch)
 	}
 	return e.header, nil
 }
@@ -353,7 +353,7 @@ func (s *fakeStore) List(_ context.Context, tenantID string) ([]ports.BackupObje
 		return nil, s.listErr
 	}
 	var out []ports.BackupObject
-	for key, e := range s.exports {
+	for key, e := range s.backups {
 		owner, at, err := s.Locate(key)
 		if err != nil || owner != tenantID {
 			continue
@@ -371,16 +371,16 @@ func (s *fakeStore) Delete(_ context.Context, key string) error {
 		return err
 	}
 	s.deleted = append(s.deleted, key)
-	delete(s.exports, key)
+	delete(s.backups, key)
 	return nil
 }
 
-// put stores an export of tenantID taken at at holding n :Node nodes and a
+// put stores a backup of tenantID taken at at holding n :Node nodes and a
 // chain of n-1 relationships, and returns its key.
 func (s *fakeStore) put(tenantID string, at time.Time, n int) string {
 	key := fakeKey(tenantID, at)
 	h := header(tenantID, int64(n), int64(max(n-1, 0)))
-	h.ExportedAt = at
+	h.TakenAt = at
 	var records []any
 	for i := range n {
 		records = append(records, node(tenantID, i))
@@ -388,26 +388,26 @@ func (s *fakeStore) put(tenantID string, at time.Time, n int) string {
 	for i := 1; i < n; i++ {
 		records = append(records, dependsOn(i, i-1))
 	}
-	s.putExport(key, storedExport{header: h, records: records, size: int64(len(records))})
+	s.putBackup(key, storedBackup{header: h, records: records, size: int64(len(records))})
 	return key
 }
 
-func (s *fakeStore) putExport(key string, e storedExport) {
+func (s *fakeStore) putBackup(key string, e storedBackup) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.exports[key] = e
+	s.backups[key] = e
 }
 
 func (s *fakeStore) keys() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.Sorted(maps.Keys(s.exports))
+	return slices.Sorted(maps.Keys(s.backups))
 }
 
-func (s *fakeStore) stored(key string) (storedExport, bool) {
+func (s *fakeStore) stored(key string) (storedBackup, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	e, ok := s.exports[key]
+	e, ok := s.backups[key]
 	return e, ok
 }
 
@@ -423,7 +423,7 @@ func (s *fakeStore) lastSink() *fakeSink {
 // fakeSinkRecordBytes is the size a fakeSink gives each record it stores.
 const fakeSinkRecordBytes = 100
 
-// fakeSink is the ExportSink of a fakeStore: it stores its records at Close,
+// fakeSink is the BackupSink of a fakeStore: it stores its records at Close,
 // with a size of fakeSinkRecordBytes per record. writeErr, closeErr and
 // abortErr, when set, are what those calls return; onWrite, when set, runs
 // before each record; blockWrites makes every record wait until the context
@@ -434,7 +434,7 @@ type fakeSink struct {
 	key         string
 	ctx         context.Context
 	blockWrites bool
-	header      export.Header
+	header      graphbackup.Header
 	records     []any
 	closed      bool
 	aborted     bool
@@ -457,12 +457,12 @@ func (w *fakeSink) write(rec any) error {
 		return w.ctx.Err()
 	}
 	if w.closed || w.aborted {
-		return fmt.Errorf("%w: %s", ports.ErrExportClosed, w.key)
+		return fmt.Errorf("%w: %s", ports.ErrBackupClosed, w.key)
 	}
 	if w.writeErr != nil {
 		return w.writeErr
 	}
-	if h, ok := rec.(export.Header); ok {
+	if h, ok := rec.(graphbackup.Header); ok {
 		w.header = h
 		return nil
 	}
@@ -470,20 +470,20 @@ func (w *fakeSink) write(rec any) error {
 	return nil
 }
 
-func (w *fakeSink) WriteHeader(h export.Header) error   { return w.write(h) }
-func (w *fakeSink) WriteNode(n export.NodeRecord) error { return w.write(n) }
-func (w *fakeSink) WriteRel(r export.RelRecord) error   { return w.write(r) }
+func (w *fakeSink) WriteHeader(h graphbackup.Header) error   { return w.write(h) }
+func (w *fakeSink) WriteNode(n graphbackup.NodeRecord) error { return w.write(n) }
+func (w *fakeSink) WriteRel(r graphbackup.RelRecord) error   { return w.write(r) }
 
 func (w *fakeSink) Close() (int64, error) {
 	if w.closed || w.aborted {
-		return 0, fmt.Errorf("%w: %s", ports.ErrExportClosed, w.key)
+		return 0, fmt.Errorf("%w: %s", ports.ErrBackupClosed, w.key)
 	}
 	if w.closeErr != nil {
 		return 0, w.closeErr
 	}
 	w.closed = true
 	size := int64(fakeSinkRecordBytes * (len(w.records) + 1))
-	w.store.putExport(w.key, storedExport{header: w.header, records: slices.Clone(w.records), size: size})
+	w.store.putBackup(w.key, storedBackup{header: w.header, records: slices.Clone(w.records), size: size})
 	return size, nil
 }
 
@@ -499,15 +499,15 @@ func (w *fakeSink) Abort() error {
 	return nil
 }
 
-// fakeSource is the ExportSource of a fakeStore: it hands back the records of
-// a stored export.
+// fakeSource is the BackupSource of a fakeStore: it hands back the records of
+// a stored backup.
 type fakeSource struct {
-	header  export.Header
+	header  graphbackup.Header
 	records []any
 	closed  bool
 }
 
-func (s *fakeSource) Header() export.Header { return s.header }
+func (s *fakeSource) Header() graphbackup.Header { return s.header }
 
 func (s *fakeSource) Next() (any, error) {
 	if len(s.records) == 0 {
@@ -523,7 +523,7 @@ func (s *fakeSource) Close() error {
 	return nil
 }
 
-// observation is one ExportObserved call.
+// observation is one BackupObserved call.
 type observation struct {
 	Outcome     string
 	Duration    time.Duration
@@ -537,7 +537,7 @@ type fakeMetrics struct {
 	obs []observation
 }
 
-func (m *fakeMetrics) ExportObserved(outcome string, d time.Duration, bytes int64, nodes, rels int64) {
+func (m *fakeMetrics) BackupObserved(outcome string, d time.Duration, bytes int64, nodes, rels int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.obs = append(m.obs, observation{outcome, d, bytes, nodes, rels})

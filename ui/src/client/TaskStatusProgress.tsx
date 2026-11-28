@@ -4,7 +4,7 @@ import type { Task } from './types';
 
 // The statuses a run's tasks are counted under, in the order the bar, the
 // counts and the swimlane legend read. Dispatched (sent, not yet acknowledged),
-// queued (accepted, waiting for a slot) and stopping (a cancel asked its Job to
+// queued (accepted, waiting for Job capacity) and stopping (a cancel asked its Job to
 // stop, which is still being deleted) come just before running, and none of
 // them has ended. Cancelled is an outcome (an operator stopped the run), so it
 // is counted on its own and toward completion.

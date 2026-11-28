@@ -44,39 +44,39 @@ func (f *uowFixture) recordLiveFolder(messageID string, seq int64, release, sett
 }
 
 // The live-folder lease lives on its own node, and taking it is a graph write:
-// while an export or a restore holds the tenant's lease a rewrite cannot take
+// while a backup or a restore holds the tenant's lease a rewrite cannot take
 // it (and creates no live-folder node a restore's import would meet), while a
-// rewrite holding it pauses no graph write and stops no export.
-func TestLiveFolderLease_IsNotTheExportLease(t *testing.T) {
+// rewrite holding it pauses no graph write and stops no backup.
+func TestLiveFolderLease_IsNotTheBackupLease(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
-	exportLease := NewExportLease(f.client, quietLogger())
+	backupLease := NewBackupLease(f.client, quietLogger())
 	live := NewLiveFolderLease(f.client, quietLogger())
 
-	for _, kind := range []ports.LeaseKind{ports.LeaseExport, ports.LeaseRestore} {
-		require.NoError(t, exportLease.Acquire(ctx, f.tenant, kind, "exporter-1", time.Minute))
+	for _, kind := range []ports.LeaseKind{ports.LeaseBackup, ports.LeaseRestore} {
+		require.NoError(t, backupLease.Acquire(ctx, f.tenant, kind, "taker-1", time.Minute))
 		acquired, err := live.Acquire(ctx, f.tenant, "rewrite-1", time.Minute)
 		require.NoError(t, err)
 		assert.False(t, acquired, "an %s holds the tenant's writes, the live-folder lease among them", kind)
 		assert.Nil(t, f.liveNode(), "a refused take creates no live-folder node")
-		require.NoError(t, exportLease.Release(ctx, f.tenant, "exporter-1"))
+		require.NoError(t, backupLease.Release(ctx, f.tenant, "taker-1"))
 	}
 
 	acquired, err := live.Acquire(ctx, f.tenant, "rewrite-1", time.Minute)
 	require.NoError(t, err)
-	require.True(t, acquired, "the lease is taken once the export lease is released")
-	assert.NotContains(t, f.leaseNode(), "_lock", "the export gate's lock never persists")
+	require.True(t, acquired, "the lease is taken once the backup lease is released")
+	assert.NotContains(t, f.leaseNode(), "_lock", "the backup gate's lock never persists")
 
 	require.NoError(t, NewUnitOfWork(f.client, quietLogger()).Write(ctx, f.marker("1762077700000-0", nil), true,
 		func(ctx context.Context, tx uow.Tx) error { return f.writeProbe(ctx, tx, "during-rewrite") }),
 		"a graph write goes ahead while a rewrite holds the live folder")
-	require.NoError(t, exportLease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-2", time.Minute),
-		"an export starts while a rewrite holds the live folder")
+	require.NoError(t, backupLease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-2", time.Minute),
+		"a backup starts while a rewrite holds the live folder")
 
 	node := f.liveNode()
 	assert.Equal(t, "rewrite-1", node["holder"])
 	assert.NotContains(t, node, "_lock")
-	assert.Equal(t, "exporter-2", f.leaseNode()["holder"])
+	assert.Equal(t, "taker-2", f.leaseNode()["holder"])
 }
 
 func TestLiveFolderLease_ASecondHolderIsRefusedUntilRelease(t *testing.T) {
@@ -155,15 +155,15 @@ func TestLiveFolderState_ReadsWhatTransactionBAndRecordSettingsStored(t *testing
 	f.assertGateUnlocked()
 }
 
-// RecordSettings writes the graph, so it backs off like every write while an
-// export holds the tenant's lease.
-func TestLiveFolderState_RecordSettingsBacksOffWhileAnExportHoldsTheLease(t *testing.T) {
+// RecordSettings writes the graph, so it backs off like every write while a
+// backup holds the tenant's lease.
+func TestLiveFolderState_RecordSettingsBacksOffWhileAnBackupHoldsTheLease(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
-	exportLease := NewExportLease(f.client, quietLogger())
+	backupLease := NewBackupLease(f.client, quietLogger())
 	state := NewLiveFolderLease(f.client, quietLogger())
 
-	require.NoError(t, exportLease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	require.NoError(t, backupLease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute))
 
 	assert.ErrorIs(t, state.RecordSettings(ctx, f.tenant, "sha-c"), uow.ErrWritesPaused)
 	assert.Nil(t, f.liveNode(), "nothing was written")

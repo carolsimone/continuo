@@ -484,7 +484,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	pollNeo4jPRState(t, ctx, clients, row.ID, changedProject, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id})-[rb:RESOLVED_BY]->(p:Fix {tenant_id: 'default', fix_id: $fix_id})
+		MATCH (r:FailurePrecedent {tenant_id: 'default', release_id: $release_id})-[rb:RESOLVED_BY]->(p:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN count(r) AS n, collect(DISTINCT rb.amended) AS amended`,
 		map[string]any{"release_id": releaseID, "fix_id": row.ID})
 	require.Len(t, resolvedRows, 1, "expected one summary row for the RESOLVED_BY query")
@@ -726,7 +726,7 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	pollNeo4jPRState(t, ctx, clients, row.ID, otherProject, "rejected", 60*time.Second)
 
 	mergedResolved := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
+		MATCH (r:FailurePrecedent {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN rb.amended AS amended`,
 		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "fix_id": row.ID})
 	require.Len(t, mergedResolved, 1,
@@ -734,7 +734,7 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 	require.Equal(t, false, mergedResolved[0]["amended"], "an as-proposed merge's RESOLVED_BY edge must carry amended=false")
 
 	rejectedResolved := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
+		MATCH (r:FailurePrecedent {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN rb.amended AS amended`,
 		map[string]any{"release_id": releaseID, "node_id": ftableGUniqueID, "fix_id": row.ID})
 	require.Empty(t, rejectedResolved,
@@ -748,7 +748,7 @@ func TestE2E_BatchedRemediation_TwoProjectsTwoPullRequests(t *testing.T) {
 // as such all the way into the case-base: the agent-remediation's merge-time
 // byte-compare (agent-remediation/service/fixes/amend.go) flags the edit
 // amended, and catalog's pr_closed provenance handler carries that
-// flag onto both the RESOLVED_BY edge (from the fixed node's :Rejection) and
+// flag onto both the RESOLVED_BY edge (from the fixed node's :FailurePrecedent) and
 // the EDITED edge (from the shared :Fix).
 //
 // The scenario reuses TestE2E_AgentRemediation_ProposesFixForRejection's
@@ -872,7 +872,7 @@ FROM e2e_schema.ftable_c c`
 	pollNeo4jPRState(t, ctx, clients, row.ID, changedProject, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
+		MATCH (r:FailurePrecedent {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN rb.amended AS amended`,
 		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "fix_id": row.ID})
 	require.Len(t, resolvedRows, 1, "ftable_e must have exactly one RESOLVED_BY edge to the fix")
@@ -1374,7 +1374,7 @@ func TestE2E_BatchedRemediation_CrossProjectBreakFixedAtProducer(t *testing.T) {
 	pollNeo4jPRState(t, ctx, clients, row.ID, producerProject, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
+		MATCH (r:FailurePrecedent {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Fix {tenant_id: 'default', fix_id: $fix_id})
 		RETURN rb.amended AS amended`,
 		map[string]any{"release_id": releaseID, "node_id": xbreakDownUniqueID, "fix_id": row.ID})
 	require.Len(t, resolvedRows, 1, "the consumer is resolved by the producer's merged fix")

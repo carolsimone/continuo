@@ -1259,7 +1259,7 @@ func (x *GetPrecedentsRequest) GetIncludeCode() bool {
 	return false
 }
 
-// PrecedentFix is one fix PR opened for a precedent's rejection.
+// PrecedentFix is one fix PR opened for a failure precedent.
 type PrecedentFix struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	FixId    string                 `protobuf:"bytes,1,opt,name=fix_id,json=fixId,proto3" json:"fix_id,omitempty"`
@@ -1267,7 +1267,7 @@ type PrecedentFix struct {
 	PrNumber int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
 	// pr_state is the PR's live state: open until the close-loop mirrors a
 	// terminal outcome, merged/rejected afterwards. It is read from the fix's
-	// :PullRequest of the rejection's project.
+	// :PullRequest of the failure precedent's project.
 	PrState       string `protobuf:"bytes,4,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1332,7 +1332,7 @@ func (x *PrecedentFix) GetPrState() string {
 }
 
 // PrecedentEdit is one provenance edit a merged fix PR made while resolving a
-// precedent's rejection. node_id is the edited node — which may be an upstream
+// failure precedent. node_id is the edited node — which may be an upstream
 // ancestor of the rejected node rather than the rejected node itself. diff is
 // the merged-truth diff (the version the merge superseded to the promoted
 // merged version) when the edit was amended and a promoted version straddles
@@ -1418,7 +1418,7 @@ func (x *PrecedentEdit) GetDiffIsShipped() bool {
 	return false
 }
 
-// Precedent is one past rejection with its resolution.
+// Precedent is one failure precedent with its resolution.
 type Precedent struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	ReleaseId    string                 `protobuf:"bytes,1,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
@@ -1429,7 +1429,7 @@ type Precedent struct {
 	ErrorExcerpt string                 `protobuf:"bytes,6,opt,name=error_excerpt,json=errorExcerpt,proto3" json:"error_excerpt,omitempty"`
 	RejectedAt   string                 `protobuf:"bytes,7,opt,name=rejected_at,json=rejectedAt,proto3" json:"rejected_at,omitempty"` // RFC3339
 	// failing_code is the rejected candidate's raw code; "" unless
-	// include_code was set (and a bundle existed for the rejection).
+	// include_code was set (and a bundle existed for the failure precedent).
 	FailingCode string `protobuf:"bytes,8,opt,name=failing_code,json=failingCode,proto3" json:"failing_code,omitempty"`
 	Resolved    bool   `protobuf:"varint,9,opt,name=resolved,proto3" json:"resolved,omitempty"`
 	// resolving_version is present when resolved; its code fields are ""
@@ -1441,7 +1441,7 @@ type Precedent struct {
 	ResolutionDiffTruncated bool            `protobuf:"varint,12,opt,name=resolution_diff_truncated,json=resolutionDiffTruncated,proto3" json:"resolution_diff_truncated,omitempty"`
 	Fixes                   []*PrecedentFix `protobuf:"bytes,13,rep,name=fixes,proto3" json:"fixes,omitempty"`
 	// edited carries the provenance of a merged fix PR that resolved this
-	// rejection: one entry per node the PR edited.
+	// failure precedent: one entry per node the PR edited.
 	Edited        []*PrecedentEdit `protobuf:"bytes,14,rep,name=edited,proto3" json:"edited,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -160,7 +160,7 @@ func TestMarkerSweeper_KeepsMarkersWithinTheReplayHorizon(t *testing.T) {
 	f.requireMarkerIDs("twenty-days-1")
 }
 
-// TestMarkerSweeper_SkipsATenantWhoseLeaseIsHeld holds tenant A's export lease:
+// TestMarkerSweeper_SkipsATenantWhoseLeaseIsHeld holds tenant A's backup lease:
 // a sweep deletes tenant B's expired markers and none of A's. Once A's lease
 // ends, by its release or by its expiry, A's markers go too.
 func TestMarkerSweeper_SkipsATenantWhoseLeaseIsHeld(t *testing.T) {
@@ -169,16 +169,16 @@ func TestMarkerSweeper_SkipsATenantWhoseLeaseIsHeld(t *testing.T) {
 	a.seedMarkers("a-old", 3, 2*time.Hour)
 	b.seedMarkers("b-old", 3, 2*time.Hour)
 	sweeper := NewMarkerSweeper(a.client, quietLogger())
-	lease := NewExportLease(a.client, quietLogger())
+	lease := NewBackupLease(a.client, quietLogger())
 
-	require.NoError(t, lease.Acquire(ctx, a.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	require.NoError(t, lease.Acquire(ctx, a.tenant, ports.LeaseBackup, "taker-1", time.Minute))
 	got, err := sweeper.Prune(ctx, time.Hour, 100)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), got, "only the tenant whose lease is free is swept")
 	a.requireMarkerIDs("a-old-1", "a-old-2", "a-old-3")
 	b.requireMarkerIDs()
 
-	require.NoError(t, lease.Release(ctx, a.tenant, "exporter-1"))
+	require.NoError(t, lease.Release(ctx, a.tenant, "taker-1"))
 	got, err = sweeper.Prune(ctx, time.Hour, 100)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), got, "a released lease no longer protects the tenant's markers")
@@ -227,9 +227,9 @@ func TestMarkerSweeper_LimitBoundsTheWholePass(t *testing.T) {
 	assert.Nil(t, quiet.leaseNode(), "a tenant with nothing to sweep is left alone")
 }
 
-// TestMarkerSweeper_WaitsForInFlightWrites takes the tenant's export gate the
-// way an export's Acquire does: a Prune starts while a write of the tenant is
-// in flight and waits for it, so a sweep never deletes between an export
+// TestMarkerSweeper_WaitsForInFlightWrites takes the tenant's backup gate the
+// way a backup's Acquire does: a Prune starts while a write of the tenant is
+// in flight and waits for it, so a sweep never deletes between a backup
 // taking the lease and the writes that preceded it.
 func TestMarkerSweeper_WaitsForInFlightWrites(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -296,7 +296,7 @@ func TestMarkerSweeper_ATenantThatFailsDoesNotStopTheOthers(t *testing.T) {
 	a, b := newUoWFixture(t), newUoWFixture(t)
 	a.seedMarkers("a-old", 2, 2*time.Hour)
 	b.seedMarkers("b-old", 3, 2*time.Hour)
-	a.run(`CREATE (:Meta {tenant_id: $tenant_id, key: 'export', holder: 'broken', until: 'not a time'})`, nil)
+	a.run(`CREATE (:Meta {tenant_id: $tenant_id, key: 'backup', holder: 'broken', until: 'not a time'})`, nil)
 	var logs syncBuffer
 	sweeper := NewMarkerSweeper(a.client, slog.New(slog.NewTextHandler(&logs, nil)))
 
@@ -310,7 +310,7 @@ func TestMarkerSweeper_ATenantThatFailsDoesNotStopTheOthers(t *testing.T) {
 }
 
 // TestMarkerSweeper_ACancelledPassReturnsTheContextsErrorWithoutAnErrorLog
-// cancels a pass while it waits on a tenant's export gate, which a write of
+// cancels a pass while it waits on a tenant's backup gate, which a write of
 // the tenant holds: the pass ends with the context's error and logs no
 // error, as a shutdown does.
 func TestMarkerSweeper_ACancelledPassReturnsTheContextsErrorWithoutAnErrorLog(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 // Report is what execution-controller reported of one production attempt:
 // its status and every fact known of it when the report was written. Status
 // is a value of the attempt_status vocabulary: queued once the attempt was
-// accepted and waits for a slot or its Job, running once its main container
+// accepted and waits for Job capacity or its Job, running once its main container
 // started, succeeded, failed or stopped once it ended and no pod of it can run
 // again; stopped is an attempt that was asked to stop and did not succeed
 // first, and carries no failure.

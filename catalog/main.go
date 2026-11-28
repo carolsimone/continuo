@@ -198,7 +198,7 @@ func main() {
 	// 30 days (the replay horizon), longer when RETENTION_DAYS is longer, so a
 	// message the streams can still redeliver always finds its marker. The
 	// sweep uses database-clock cutoffs, deletes in batches, and skips a tenant
-	// whose export lease is held. It runs every RETENTION_SWEEP_INTERVAL_MINUTES
+	// whose backup lease is held. It runs every RETENTION_SWEEP_INTERVAL_MINUTES
 	// as a tracked goroutine, so shutdown waits for a sweep in flight.
 	markerSweeper := neo4jinfra.NewMarkerSweeper(neo4jClient, logger)
 	retentionSweeper := pkgretention.NewSweeper(
@@ -222,7 +222,7 @@ func main() {
 	// is above 0; at 0, every contract version is kept. It deletes the
 	// promotion edges older than that many days, never a node's two newest, and
 	// the versions no edge or pointer then reaches. Like the marker sweep, it
-	// skips a tenant whose export lease is held and runs every
+	// skips a tenant whose backup lease is held and runs every
 	// RETENTION_SWEEP_INTERVAL_MINUTES as a tracked goroutine.
 	if cfg.ContractHistoryRetentionDays > 0 {
 		contractHistorySweeper := neo4jinfra.NewContractHistorySweeper(neo4jClient, logger)
@@ -253,9 +253,9 @@ func main() {
 
 	// One object-storage client, passed to each adapter as the roles it uses:
 	// the topology artifact reader of the topology and versions groups, the
-	// code-bundle reader of the versions and rejections groups and the
+	// code-bundle reader of the versions and failure precedents groups and the
 	// contract-bundle reader of the contracts group read objects, and the
-	// backup store streams, lists and deletes each tenant's exports.
+	// backup store streams, lists and deletes each tenant's backups.
 	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
 	if err != nil {
 		logger.Error("Failed to build the object-storage client", "error", err)
@@ -290,7 +290,7 @@ func main() {
 	// promotion edges and current-contract pointer through the Neo4j unit of
 	// work, then rewrites the tenant's live contracts folder
 	// (tenants/<tenant>/contracts/live/) under the tenant's live-folder lease,
-	// which is not the export lease, renewing the message's in-flight mark
+	// which is not the backup lease, renewing the message's in-flight mark
 	// while the rewrite runs. The published files carry the install's warehouse
 	// servers entry (cfg.ContractsServer, nil when no host is set) and absolute
 	// ontology links under cfg.OntologyBaseURL, as GetNodeDataContract's document
@@ -332,15 +332,15 @@ func main() {
 		}
 	})
 
-	// heal.triggered:v1 (rejections) + fix.pr_opened:v1
+	// heal.triggered:v1 (failure precedents) + fix.pr_opened:v1
 	// (fixes) + fix.pr_closed:v1 (provenance) — the
 	// failure-precedent case base, written under the tenant each message names
-	// through the Neo4j unit of work. The rejections handler reuses the
+	// through the Neo4j unit of work. The failure precedents handler reuses the
 	// versions path's bundle reader to fetch the failing code; the fixes
 	// and provenance handlers need no bundle. The provenance handler draws the
 	// RESOLVED_BY/EDITED case-base edges on a merged PR and stamps every PR's
 	// terminal state. The catalog component remains the sole Neo4j writer.
-	rejectionsHandler := handlers.NewHealTriggeredRejectionsHandler(graphUnitOfWork, codeBundleReader, logger)
+	failurePrecedentsHandler := handlers.NewHealTriggeredFailurePrecedentsHandler(graphUnitOfWork, codeBundleReader, logger)
 	fixesHandler := handlers.NewPrOpenedFixesHandler(graphUnitOfWork, logger)
 	provenanceHandler := handlers.NewPrClosedProvenanceHandler(graphUnitOfWork, logger)
 
@@ -359,7 +359,7 @@ func main() {
 		{"release_promoted", streams.ReleasePromotedV1, streams.CatalogReleaseTopology, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_versions", streams.ReleasePromotedV1, streams.CatalogReleaseVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_contracts", streams.ReleasePromotedV1, streams.CatalogReleaseContracts, redis.NewReleasePromotedContractsBinding(releasePromotedContractsHandler, logger), topologyHandlerTimeout},
-		{"heal_triggered_rejections", streams.HealTriggeredV1, streams.CatalogHealTriggeredRejections, redis.NewHealTriggeredBinding(rejectionsHandler, logger), 0},
+		{"heal_triggered_failure_precedents", streams.HealTriggeredV1, streams.CatalogHealTriggeredFailurePrecedents, redis.NewHealTriggeredBinding(failurePrecedentsHandler, logger), 0},
 		{"fix_pr_opened_fixes", streams.FixPrOpenedV1, streams.CatalogFixPrOpenedFixes, redis.NewPrOpenedBinding(fixesHandler, logger), 0},
 		{"fix_pr_closed_provenance", streams.FixPrClosedV1, streams.CatalogFixPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
 	}
@@ -373,28 +373,28 @@ func main() {
 	// START THE BACKUP
 	// ========================================================================
 
-	// With CATALOG_BACKUP_ENABLED, every tenant's graph is exported at each
+	// With CATALOG_BACKUP_ENABLED, every tenant's graph is backed up at each
 	// slot of CATALOG_BACKUP_SCHEDULE (UTC) to
 	// tenants/<tenant>/backups/catalog/<UTC time>.jsonl.gz, streamed so memory
-	// does not grow with the graph, and the newest CATALOG_BACKUP_KEEP exports
-	// of each tenant are kept. An export holds the tenant's export lease, so
+	// does not grow with the graph, and the newest CATALOG_BACKUP_KEEP backups
+	// of each tenant are kept. A backup holds the tenant's backup lease, so
 	// the tenant's writes back off on every pod while it runs. The scheduler
-	// is a tracked goroutine: shutdown cancels an export in flight, which
-	// aborts its upload and releases its lease. The export series are
+	// is a tracked goroutine: shutdown cancels a backup in flight, which
+	// aborts its upload and releases its lease. The backup series are
 	// registered only here.
 	if cfg.Backup.Enabled {
 		backupStore := s3infra.NewBackupStore(objectStore)
 		graphTenants := neo4jinfra.NewGraphTenants(neo4jClient)
-		exporter := backup.NewExporter(
-			neo4jinfra.NewExportLease(neo4jClient, logger),
-			neo4jinfra.NewGraphExporter(neo4jClient, config.Version(), logger),
+		taker := backup.NewTaker(
+			neo4jinfra.NewBackupLease(neo4jClient, logger),
+			neo4jinfra.NewGraphSaver(neo4jClient, config.Version(), logger),
 			backupStore,
 			metricsinfra.NewBackupMetrics(metricsReg, backup.NewFreshness(graphTenants, backupStore), time.Now, logger),
 			cfg.Backup.Keep,
 			time.Now,
 			logger,
 		)
-		backupScheduler, err := backup.NewScheduler(cfg.Backup.Schedule, croninfra.BackupScheduleParser{}, graphTenants, exporter, time.Now, logger)
+		backupScheduler, err := backup.NewScheduler(cfg.Backup.Schedule, croninfra.BackupScheduleParser{}, graphTenants, taker, time.Now, logger)
 		if err != nil {
 			logger.Error("Failed to build the catalog backup scheduler", "error", err)
 			os.Exit(1)

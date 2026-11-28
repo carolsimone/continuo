@@ -509,11 +509,11 @@ validation:
   warehouseDatabase: continuo_dbt
 
 # Admission of Jobs in execution-controller. Every task, whole-DAG test,
-# validation, seed-build and compile Job holds one slot from the moment it is
-# admitted until its outcome is recorded; at most maxConcurrentJobs slots are
-# held at once, across every execution-controller replica, and further work
-# waits in execution-controller's queue. Per-release schema-operation Jobs
-# take no slot. Must be a whole number of at least 1: anything else fails the
+# validation, seed-build and compile Job counts against Job capacity from the
+# moment it is admitted until its outcome is recorded; maxConcurrentJobs is the
+# Job capacity, across every execution-controller replica, and further work
+# waits in execution-controller's queue. Per-release schema-operation Jobs do
+# not count against it. Must be a whole number of at least 1: anything else fails the
 # install, and execution-controller refuses to start on it.
 execution:
   maxConcurrentJobs: 50
@@ -573,23 +573,23 @@ runs:
   taskMaxRetries: 2
   taskTimeoutHours: 24
 
-# catalog's backup. On `schedule`, catalog exports each tenant's whole graph
+# catalog's backup. On `schedule`, catalog backs up each tenant's whole graph
 # (nodes and relationships, including the code-version history and the
 # remediation case base that nothing else holds) as one gzipped JSON-lines file
 # to tenants/<tenant>/backups/catalog/<UTC timestamp>.jsonl.gz in the S3
-# bucket, then deletes all but the newest `keep` exports of that tenant. While
-# a tenant's export runs, catalog's writes for that tenant wait and its reads
+# bucket, then deletes all but the newest `keep` backups of that tenant. While
+# a tenant's backup runs, catalog's writes for that tenant wait and its reads
 # go on. With an external bucket (s3.*), catalog needs the access
 # release-controller has to tenants/ (read, write, delete) plus
 # s3:AbortMultipartUpload; an install with per-pod IAM roles grants it to
-# catalog's role. `enabled` is true or false (false runs no exports),
+# catalog's role. `enabled` is true or false (false runs no backups),
 # `schedule` is a five-field cron in UTC or an @ descriptor (@daily,
 # @every 6h), and `keep` is a whole number of at least 1. The three reach
 # catalog through the shared ConfigMap as CATALOG_BACKUP_ENABLED,
 # CATALOG_BACKUP_SCHEDULE and CATALOG_BACKUP_KEEP; a value outside these rules
 # fails the install, and catalog refuses to start on a schedule its cron parser
-# rejects or a keep below 1. A shutdown of catalog stops an export in flight
-# within its drain window (half of SHUTDOWN_GRACE): the export aborts its
+# rejects or a keep below 1. A shutdown of catalog stops a backup in flight
+# within its drain window (half of SHUTDOWN_GRACE): the backup aborts its
 # upload and releases the lease. When the process ends first, the lease
 # lapses within two minutes and the parts already uploaded stay in the bucket
 # until a lifecycle rule AbortIncompleteMultipartUpload removes them.

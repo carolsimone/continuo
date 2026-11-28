@@ -19,7 +19,7 @@ func scrape(reg *pkgmetrics.Registry) string {
 	return rec.Body.String()
 }
 
-// Every label pair of the three contract series is exported at 0 from boot,
+// Every label pair of the three contract series is backed up at 0 from boot,
 // so a rate or an absent() alert works before the first promotion.
 func TestContractMetrics_EveryLabelPairStartsAtZero(t *testing.T) {
 	reg := pkgmetrics.New("catalog")

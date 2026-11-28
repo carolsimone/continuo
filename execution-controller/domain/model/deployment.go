@@ -343,7 +343,7 @@ func (d *Deployment) moveTo(next Status) error {
 	return nil
 }
 
-// Reserve takes an execution slot for a pending deployment.
+// Reserve takes Job capacity for a pending deployment.
 func (d *Deployment) Reserve() error { return d.moveTo(StatusReserved) }
 
 // MarkStarted records that the reserved deployment's Job was created.
@@ -388,7 +388,7 @@ func (d *Deployment) settle(outcome string, now time.Time) error {
 }
 
 // Finish records a production Job's terminal outcome ("ok", "failed" or
-// "stopped") and releases its slot. A recorded outcome marks the Job's result
+// "stopped") and releases its Job capacity. A recorded outcome marks the Job's result
 // as reported, so observing the same Job again writes nothing.
 func (d *Deployment) Finish(outcome string, now time.Time) error {
 	if d.mode != ModeProduction {
@@ -450,7 +450,7 @@ func (d *Deployment) RecordProbes(probes []seedreload.Probe) bool {
 
 // BeginTermination records why execution-controller ends the attempt itself
 // (a start error or the start timeout) and moves the starting or running
-// deployment to terminating, where it keeps its slot until the attempt's pods
+// deployment to terminating, where it keeps its Job capacity until the attempt's pods
 // are gone. A terminating deployment stays as it is: the first reason stands.
 func (d *Deployment) BeginTermination(reason pkgmodel.FailureReason, message string) error {
 	if d.status == StatusTerminating {
@@ -501,7 +501,7 @@ func (d *Deployment) AwaitsLaunch() bool {
 
 // Stop records that run-controller asked the attempt to stop, as the time of the first
 // request. A deployment whose Job exists (starting or running) moves to
-// terminating, where it keeps its slot until its pods are gone; a terminating
+// terminating, where it keeps its Job capacity until its pods are gone; a terminating
 // one stays as it is, keeping the reason it was ended for. A deployment that
 // has ended records nothing. A deployment that awaits its launch is refused:
 // whether a Job of its attempt exists is not recorded, so StopBeforeLaunch
@@ -529,8 +529,8 @@ func (d *Deployment) Stop(now time.Time) (StopEffect, error) {
 // StopBeforeLaunch stops a deployment that awaits its launch from found, what
 // a look for its attempt's Job and pods showed (DecideFenced). A Job of the
 // attempt exists (StopAdopted): the deployment adopts it, recorded as
-// deployed now, and moves to terminating with the stop recorded, keeping a
-// slot until the Job's pods are gone. Neither a Job nor an unfinished pod
+// deployed now, and moves to terminating with the stop recorded, keeping its
+// Job capacity until the Job's pods are gone. Neither a Job nor an unfinished pod
 // (StoreStopped): it ends done, outcome stopped, at once. An unfinished pod
 // without its Job (AwaitFencedPod): nothing is recorded. Only a production
 // deployment that awaits its launch is stopped here.
@@ -606,7 +606,7 @@ func (d *Deployment) RetriesLeft() bool { return d.retryCount+1 < d.maxRetries }
 
 // RegisterFailure records a failed deploy attempt of a reserved deployment and
 // applies the retry policy. A transient failure with attempts left returns the
-// deployment to pending (freeing its slot), bumps retryCount and pushes
+// deployment to pending (freeing its Job capacity), bumps retryCount and pushes
 // nextAttemptAt, and reports terminal=false. Otherwise the deployment fails and
 // terminal=true.
 func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason string, backoff BackoffPolicy) (terminal bool, err error) {
@@ -633,7 +633,7 @@ func (d *Deployment) setError(reason string) {
 
 // RecordOutcome attaches the terminal outcome to a started (starting, running
 // or terminating) validation, seed-build, OR compile
-// deployment and releases its slot — all three legs report a per-node terminal
+// deployment and releases its Job capacity — all three legs report a per-node terminal
 // status the same way: the observer sees the attempt end and records it here
 // via outcomes.Recorder. Production deployments announce their result through a
 // different path (Finish) and are rejected. Only "ok" and "failed" are accepted.

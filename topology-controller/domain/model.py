@@ -41,29 +41,31 @@ class ManifestKind(StrEnum):
     ONTOLOGY = "ontology"
 
 
-class SkipReason(StrEnum):
-    """Why the parse leg leaves a dbt node out of the topology without failing
-    the release: it declares no owner, it is a local stub, or it is a node of an
-    installed dbt package (not of the project the manifest was compiled from)
-    that carries no tag. A value is the string the logs report, and the reason
-    continuo-contracts' `dbt.skip_reason` gives for that gate, in the order of the
-    gates. A model or snapshot of the project with an owner and no schedule tag
-    is not left out: it is a dormant node with an empty schedule, and an untagged
-    seed takes the schedule `seed`. A node of an installed package with an owner
-    and a tag (and no `local_stub` tag) is not left out either: it is kept under
-    the package's project, which the release's project check refuses."""
+class ExclusionReason(StrEnum):
+    """Why the parse leg excludes a dbt node from the topology, making it an
+    excluded model, without failing the release: it declares no owner, it is a
+    local stub, or it is a node of an installed dbt package (not of the project
+    the manifest was compiled from) that carries no tag. A value is the string
+    the logs report, and the reason continuo-contracts' `dbt.skip_reason` gives
+    for that gate, in the order of the gates. A model or snapshot of the project
+    with an owner and no schedule tag is not left out: it is a dormant node with
+    an empty schedule, and an untagged seed takes the schedule `seed`. A node of
+    an installed package with an owner and a tag (and no `local_stub` tag) is
+    not left out either: it is kept under the package's project, which the
+    release's project check refuses."""
     NO_OWNER = "no_owner"
     LOCAL_STUB = "local_stub"
     INSTALLED_PACKAGE = "installed_package"
 
 
 @dataclass(frozen=True)
-class SkippedNode:
-    """One dbt node the parse leg left out of the topology, and why. A skip is
-    never a failure: the node simply is not part of the release."""
+class ExcludedModel:
+    """One excluded model: a dbt model, seed or snapshot the parse leg left out
+    of the topology, and why. An exclusion is never a failure: the model simply
+    is not a node of the release."""
     node_id: str
     project: str
-    reason: SkipReason
+    reason: ExclusionReason
 
 
 @dataclass(frozen=True)

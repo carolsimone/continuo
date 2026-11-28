@@ -1,4 +1,4 @@
-package exportfile
+package backupfile
 
 import (
 	"bufio"
@@ -11,30 +11,30 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/catalog/service/export"
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 )
 
 var (
 	// ErrMalformed means a line is not one the Writer writes: not JSON of the
 	// layout, cut short, blank, longer than a line may be, or not UTF-8.
-	ErrMalformed = errors.New("exportfile: malformed export line")
+	ErrMalformed = errors.New("backupfile: malformed backup line")
 	// ErrCountMismatch means the file holds other node or relationship counts
 	// than its header says, as a file cut short at a line boundary does.
-	ErrCountMismatch = errors.New("exportfile: the records disagree with the header's counts")
+	ErrCountMismatch = errors.New("backupfile: the records disagree with the header's counts")
 	// ErrDuplicateNode means two nodes of the file share one identity.
-	ErrDuplicateNode = errors.New("exportfile: two nodes with one identity")
+	ErrDuplicateNode = errors.New("backupfile: two nodes with one identity")
 	// ErrUnresolvedEnd means a relationship names a node the file does not
 	// hold.
-	ErrUnresolvedEnd = errors.New("exportfile: a relationship end names no node of the export")
+	ErrUnresolvedEnd = errors.New("backupfile: a relationship end names no node of the backup")
 )
 
 // maxLineBytes bounds one line, so a damaged file cannot make the reader
 // buffer without limit.
 const maxLineBytes = 64 << 20
 
-// Reader reads an export file line by line. Each record passes the checks
-// of package export against the header's tenant, every node comes before the
+// Reader reads a backup file line by line. Each record passes the checks
+// of package graphbackup against the header's tenant, every node comes before the
 // first relationship, and the end of the file is io.EOF only when the records
 // match the header's counts. Once Next returns an error it returns it again.
 // It is not safe for concurrent use.
@@ -42,7 +42,7 @@ type Reader struct {
 	src      *bufio.Reader
 	limit    int
 	line     int
-	header   export.Header
+	header   graphbackup.Header
 	seenRels bool
 	nodes    map[string]int64
 	rels     map[string]int64
@@ -78,14 +78,14 @@ func newReader(r io.Reader, limit int) (*Reader, error) {
 }
 
 // Header returns the file's header.
-func (r *Reader) Header() export.Header {
+func (r *Reader) Header() graphbackup.Header {
 	h := r.header
 	h.Nodes = maps.Clone(h.Nodes)
 	h.Relationships = maps.Clone(h.Relationships)
 	return h
 }
 
-// Next returns the next record, an export.NodeRecord or an export.RelRecord,
+// Next returns the next record, a graphbackup.NodeRecord or a graphbackup.RelRecord,
 // and io.EOF after the last.
 func (r *Reader) Next() (any, error) {
 	if r.err != nil {
@@ -114,7 +114,7 @@ func (r *Reader) next() (any, error) {
 		return nil, fmt.Errorf("line %d: %w", r.line, err)
 	}
 	switch x := rec.(type) {
-	case export.NodeRecord:
+	case graphbackup.NodeRecord:
 		if r.seenRels {
 			return nil, fmt.Errorf("line %d: %w: a node after the relationships", r.line, ErrMalformed)
 		}
@@ -124,7 +124,7 @@ func (r *Reader) next() (any, error) {
 		for _, l := range x.Labels {
 			r.nodes[l]++
 		}
-	case export.RelRecord:
+	case graphbackup.RelRecord:
 		r.seenRels = true
 		if err := x.Check(); err != nil {
 			return nil, fmt.Errorf("line %d: %w", r.line, err)
@@ -186,7 +186,7 @@ func (r *Reader) readLine() ([]byte, error) {
 			}
 			return nil, fmt.Errorf("%w: line %d ends without a newline, so the file is cut short", ErrMalformed, r.line+1)
 		default:
-			return nil, fmt.Errorf("exportfile: read line %d: %w", r.line+1, err)
+			return nil, fmt.Errorf("backupfile: read line %d: %w", r.line+1, err)
 		}
 	}
 }
@@ -217,40 +217,54 @@ func unmarshal(m map[string]json.RawMessage, name string, v any) error {
 	return nil
 }
 
-var headerMembers = []string{"format_version", "tenant_id", "exported_at", "catalog_version", "nodes", "relationships"}
+var headerMembers = []string{"format_version", "tenant_id", "taken_at", "catalog_version", "nodes", "relationships"}
 
-func decodeHeader(line []byte) (export.Header, error) {
+func decodeHeader(line []byte) (graphbackup.Header, error) {
 	members, err := decodeObject(line)
 	if err != nil {
-		return export.Header{}, err
+		return graphbackup.Header{}, err
+	}
+	// The version is read before the other members, so a file of another
+	// layout is refused for its version, not for the members that layout
+	// names.
+	for _, mem := range members {
+		if mem.name != "format_version" {
+			continue
+		}
+		var v int
+		if json.Unmarshal(mem.value, &v) == nil && v != graphbackup.FormatVersion {
+			return graphbackup.Header{}, fmt.Errorf("%w: format version %d, want %d",
+				graphbackup.ErrInvalidRecord, v, graphbackup.FormatVersion)
+		}
+		break
 	}
 	m, err := fields(members, headerMembers, headerMembers)
 	if err != nil {
-		return export.Header{}, err
+		return graphbackup.Header{}, err
 	}
-	var h export.Header
-	var exportedAt string
+	var h graphbackup.Header
+	var takenAt string
 	for _, f := range []struct {
 		name string
 		v    any
 	}{
 		{"format_version", &h.FormatVersion}, {"tenant_id", &h.TenantID},
-		{"exported_at", &exportedAt}, {"catalog_version", &h.CatalogVersion},
+		{"taken_at", &takenAt}, {"catalog_version", &h.CatalogVersion},
 	} {
 		if err := unmarshal(m, f.name, f.v); err != nil {
-			return export.Header{}, err
+			return graphbackup.Header{}, err
 		}
 	}
-	at, err := time.Parse(time.RFC3339Nano, exportedAt)
+	at, err := time.Parse(time.RFC3339Nano, takenAt)
 	if err != nil {
-		return export.Header{}, fmt.Errorf("%w: exported_at: %v", ErrMalformed, err)
+		return graphbackup.Header{}, fmt.Errorf("%w: taken_at: %v", ErrMalformed, err)
 	}
-	h.ExportedAt = at.UTC()
+	h.TakenAt = at.UTC()
 	if h.Nodes, err = decodeCounts(m["nodes"]); err != nil {
-		return export.Header{}, fmt.Errorf("nodes: %w", err)
+		return graphbackup.Header{}, fmt.Errorf("nodes: %w", err)
 	}
 	if h.Relationships, err = decodeCounts(m["relationships"]); err != nil {
-		return export.Header{}, fmt.Errorf("relationships: %w", err)
+		return graphbackup.Header{}, fmt.Errorf("relationships: %w", err)
 	}
 	return h, nil
 }
@@ -294,7 +308,7 @@ func decodeRecord(line []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		var n export.NodeRecord
+		var n graphbackup.NodeRecord
 		if err := unmarshal(m, "node", &n.Labels); err != nil {
 			return nil, err
 		}
@@ -307,7 +321,7 @@ func decodeRecord(line []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		var r export.RelRecord
+		var r graphbackup.RelRecord
 		if err := unmarshal(m, "rel", &r.Type); err != nil {
 			return nil, err
 		}
@@ -343,20 +357,20 @@ func decodeProps(raw json.RawMessage) (map[string]any, error) {
 }
 
 // decodeRef reads [label, key value...].
-func decodeRef(raw json.RawMessage) (export.NodeRef, error) {
+func decodeRef(raw json.RawMessage) (graphbackup.NodeRef, error) {
 	var parts []json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil || len(parts) == 0 {
-		return export.NodeRef{}, fmt.Errorf("%w: an end is a list of its label and key values", ErrMalformed)
+		return graphbackup.NodeRef{}, fmt.Errorf("%w: an end is a list of its label and key values", ErrMalformed)
 	}
-	var ref export.NodeRef
+	var ref graphbackup.NodeRef
 	if err := json.Unmarshal(parts[0], &ref.Label); err != nil {
-		return export.NodeRef{}, fmt.Errorf("%w: an end's label is not text", ErrMalformed)
+		return graphbackup.NodeRef{}, fmt.Errorf("%w: an end's label is not text", ErrMalformed)
 	}
 	ref.Key = make([]any, 0, len(parts)-1)
 	for _, p := range parts[1:] {
 		v, err := decodeValue(p)
 		if err != nil {
-			return export.NodeRef{}, fmt.Errorf("a :%s's key: %w", ref.Label, err)
+			return graphbackup.NodeRef{}, fmt.Errorf("a :%s's key: %w", ref.Label, err)
 		}
 		ref.Key = append(ref.Key, v)
 	}
@@ -369,21 +383,21 @@ func decodeRef(raw json.RawMessage) (export.NodeRef, error) {
 // Validate refuses a file with two.
 const outboxEntryProperty = "outbox_entry_id"
 
-// Validate reads a whole export file and touches nothing else. It returns
+// Validate reads a whole backup file and touches nothing else. It returns
 // the header when the file is one a restore of tenantID can load exactly:
 // the header names tenantID; every line decodes; every label, type and
 // value is the catalog graph's; the counts match the header; no two nodes
 // share an identity, and no two processed-message markers a group and an
 // outbox entry id; and every relationship names a node of the file. It holds
-// one identity per node, so its memory grows with the export.
-func Validate(r io.Reader, tenantID string) (export.Header, error) {
+// one identity per node, so its memory grows with the backup.
+func Validate(r io.Reader, tenantID string) (graphbackup.Header, error) {
 	rd, err := NewReader(r)
 	if err != nil {
-		return export.Header{}, err
+		return graphbackup.Header{}, err
 	}
 	h := rd.Header()
 	if h.TenantID != tenantID {
-		return export.Header{}, fmt.Errorf("the export is of tenant %q, not %q: %w", h.TenantID, tenantID, export.ErrTenantMismatch)
+		return graphbackup.Header{}, fmt.Errorf("the backup is of tenant %q, not %q: %w", h.TenantID, tenantID, graphbackup.ErrTenantMismatch)
 	}
 	ids := map[string]struct{}{}
 	outboxEntries := map[[2]string]struct{}{}
@@ -393,10 +407,10 @@ func Validate(r io.Reader, tenantID string) (export.Header, error) {
 			return h, nil
 		}
 		if err != nil {
-			return export.Header{}, err
+			return graphbackup.Header{}, err
 		}
 		switch x := rec.(type) {
-		case export.NodeRecord:
+		case graphbackup.NodeRecord:
 			if x.IsLease() {
 				continue
 			}
@@ -406,26 +420,26 @@ func Validate(r io.Reader, tenantID string) (export.Header, error) {
 				if !ok {
 					continue
 				}
-				id, err := identityText(export.NodeRef{Label: string(l), Key: key})
+				id, err := identityText(graphbackup.NodeRef{Label: string(l), Key: key})
 				if err != nil {
-					return export.Header{}, fmt.Errorf("line %d: %w", rd.line, err)
+					return graphbackup.Header{}, fmt.Errorf("line %d: %w", rd.line, err)
 				}
 				if _, dup := ids[id]; dup {
-					return export.Header{}, fmt.Errorf("line %d: %w: a second :%s %v", rd.line, ErrDuplicateNode, l, key)
+					return graphbackup.Header{}, fmt.Errorf("line %d: %w: a second :%s %v", rd.line, ErrDuplicateNode, l, key)
 				}
 				ids[id] = struct{}{}
 			}
 			if err := checkOutboxEntry(x, labels, outboxEntries); err != nil {
-				return export.Header{}, fmt.Errorf("line %d: %w", rd.line, err)
+				return graphbackup.Header{}, fmt.Errorf("line %d: %w", rd.line, err)
 			}
-		case export.RelRecord:
-			for _, end := range []export.NodeRef{x.From, x.To} {
+		case graphbackup.RelRecord:
+			for _, end := range []graphbackup.NodeRef{x.From, x.To} {
 				id, err := identityText(end)
 				if err != nil {
-					return export.Header{}, fmt.Errorf("line %d: %w", rd.line, err)
+					return graphbackup.Header{}, fmt.Errorf("line %d: %w", rd.line, err)
 				}
 				if _, ok := ids[id]; !ok {
-					return export.Header{}, fmt.Errorf("line %d: %w: :%s %v", rd.line, ErrUnresolvedEnd, end.Label, end.Key)
+					return graphbackup.Header{}, fmt.Errorf("line %d: %w: :%s %v", rd.line, ErrUnresolvedEnd, end.Label, end.Key)
 				}
 			}
 		}
@@ -436,7 +450,7 @@ func Validate(r io.Reader, tenantID string) (export.Header, error) {
 // is not text, or that shares its group and outbox entry id with a marker
 // seen before, which it records in seen. A marker without an outbox entry id
 // is not checked: the graph's constraint skips it too.
-func checkOutboxEntry(n export.NodeRecord, labels []graphschema.Label, seen map[[2]string]struct{}) error {
+func checkOutboxEntry(n graphbackup.NodeRecord, labels []graphschema.Label, seen map[[2]string]struct{}) error {
 	if !slices.Contains(labels, graphschema.ProcessedMessage) {
 		return nil
 	}
@@ -446,7 +460,7 @@ func checkOutboxEntry(n export.NodeRecord, labels []graphschema.Label, seen map[
 	}
 	entry, ok := v.(string)
 	if !ok {
-		return fmt.Errorf("%w: a :%s with %s of type %T, want text", export.ErrInvalidRecord, graphschema.ProcessedMessage, outboxEntryProperty, v)
+		return fmt.Errorf("%w: a :%s with %s of type %T, want text", graphbackup.ErrInvalidRecord, graphschema.ProcessedMessage, outboxEntryProperty, v)
 	}
 	group, _ := n.Props["group"].(string) // Check has made it text
 	k := [2]string{group, entry}
@@ -459,14 +473,14 @@ func checkOutboxEntry(n export.NodeRecord, labels []graphschema.Label, seen map[
 
 // identityText renders a node's label and key values as one text, with each
 // value in its typed form, so the string "1" and the integer 1 differ.
-func identityText(ref export.NodeRef) (string, error) {
+func identityText(ref graphbackup.NodeRef) (string, error) {
 	enc, err := encodeRef(ref)
 	if err != nil {
 		return "", err
 	}
 	b, err := json.Marshal(enc)
 	if err != nil {
-		return "", fmt.Errorf("exportfile: render an identity: %w", err)
+		return "", fmt.Errorf("backupfile: render an identity: %w", err)
 	}
 	return string(b), nil
 }

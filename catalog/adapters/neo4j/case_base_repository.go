@@ -8,8 +8,8 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/repository"
 )
 
-// recordRejectionCypher upserts one rejection of the tenant. In one statement
-// it: fills the rejection's properties (plain SET, so a fix-created stub
+// recordFailurePrecedentCypher upserts one failure precedent of the tenant. In one statement
+// it: fills the failure precedent's properties (plain SET, so a fix-created stub
 // is completed), MERGEs the tenant's signature hub and its edge, anchors
 // [:FAILED] only when the tenant holds the node's :Node (FOREACH-guarded: a
 // retired node still exists and takes the link, and this writer never creates
@@ -19,11 +19,11 @@ import (
 // The existing-edge guard is scoped to that target-label family: RESOLVED_BY
 // is a shared relationship type, and a merged fix PR can draw its own
 // RESOLVED_BY->(:Fix) provenance edge (RecordPullRequestOutcome) before
-// the rejection lands through this path, so that edge's presence must not
+// the failure precedent lands through this path, so that edge's presence must not
 // suppress this own-timeline link. Two branches feed the back-link, and the
 // first to match wins:
 //   - the ordinary case links the OLDEST :NodeVersion whose own promoted_at is
-//     after the rejection;
+//     after the failure precedent;
 //   - the revert case covers a promotion that reuses an existing, older
 //     version node (version nodes are immutable, so a revert's promoted_at
 //     stays at its original, earlier value) — it is detected instead through
@@ -33,10 +33,10 @@ import (
 //
 // Neither branch can attribute a fix through a revert followed by a further
 // promotion. The hub keeps the category and reason it was created with: a
-// later rejection sharing its signature can carry another reason, so every
-// category and reason lookup reads the :Rejection's own properties.
-const recordRejectionCypher = `
-MERGE (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+// later failure precedent sharing its signature can carry another reason, so every
+// category and reason lookup reads the :FailurePrecedent's own properties.
+const recordFailurePrecedentCypher = `
+MERGE (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 SET rej.stage = $stage,
     rej.category = $category,
     rej.reason = $reason,
@@ -67,10 +67,10 @@ FOREACH (_ IN CASE WHEN resolved IS NULL THEN [] ELSE [1] END |
   MERGE (rej)-[:RESOLVED_BY]->(resolved))`
 
 // recordFixCypher upserts one fix of the tenant, its [:PROPOSED]
-// edge, and the PR facts on the linked :PullRequest. When the rejection has
-// not landed yet, a stub :Rejection is MERGEd so the edge has an anchor; the
-// stub's at is the fix's opened_at (approximate) and RecordRejection
-// later corrects it when the rejection itself arrives. The PR facts land on
+// edge, and the PR facts on the linked :PullRequest. When the failure precedent has
+// not landed yet, a stub :FailurePrecedent is MERGEd so the edge has an anchor; the
+// stub's at is the fix's opened_at (approximate) and RecordFailurePrecedent
+// later corrects it when the failure precedent itself arrives. The PR facts land on
 // :PullRequest rather than inline on :Fix, MERGEd on (fix_id,
 // project) so a redelivery converges onto the one PR node.
 //
@@ -83,13 +83,13 @@ FOREACH (_ IN CASE WHEN resolved IS NULL THEN [] ELSE [1] END |
 // 'open'.
 //
 // The [:PROPOSED] edge carries the proposing project, so a precedent read of a
-// fix that spans projects can scope each rejection's PR facts to the
+// fix that spans projects can scope each failure precedent's PR facts to the
 // project that proposed the fix for it: a fix shared by several
-// rejections links them all to the one :Fix, but each rejection's PR
+// failure precedents links them all to the one :Fix, but each failure precedent's PR
 // facts live on its own project's :PullRequest, and the edge's project selects
 // the right one.
 const recordFixCypher = `
-MERGE (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+MERGE (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 ON CREATE SET rej.at = $opened_at, rej.stub = true
 MERGE (fx:Fix {tenant_id: $tenant_id, fix_id: $fix_id})
 MERGE (rej)-[pe:PROPOSED]->(fx)
@@ -115,8 +115,8 @@ ON MATCH SET pull.opened_by = $opened_by,
 //
 // It then draws the provenance edges $resolved and $edits name, which the
 // caller leaves empty for a rejected outcome: [:RESOLVED_BY] from each
-// resolved :Rejection to the shared :Fix (a stub :Rejection is MERGEd
-// when the rejection has not landed yet, as RecordFix does), and
+// resolved :FailurePrecedent to the shared :Fix (a stub :FailurePrecedent is MERGEd
+// when the failure precedent has not landed yet, as RecordFix does), and
 // [:EDITED] from that :Fix to each edit's :Node, only when the tenant
 // holds the node: a retired node still exists and takes the link, and this
 // writer never creates a :Node. Every [:RESOLVED_BY] carries the same
@@ -135,7 +135,7 @@ ON CREATE SET pull.pr_url = $pr_url, pull.pr_number = $pr_number
 SET pull.pr_state = $outcome, pull.closed_at = $closed_at
 WITH fx
 FOREACH (nid IN $resolved |
-  MERGE (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: nid})
+  MERGE (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: $release_id, node_id: nid})
   ON CREATE SET rej.at = $closed_at, rej.stub = true
   MERGE (rej)-[rb:RESOLVED_BY]->(fx)
   SET rb.amended = $amended_any, rb.project = $project)
@@ -156,15 +156,15 @@ type caseBaseRepository struct {
 
 var _ repository.CaseBaseRepository = (*caseBaseRepository)(nil)
 
-// RecordRejection upserts one rejection of tenantID (recordRejectionCypher).
+// RecordFailurePrecedent upserts one failure precedent of tenantID (recordFailurePrecedentCypher).
 // It refuses a tenantID other than the transaction's.
-func (r *caseBaseRepository) RecordRejection(ctx context.Context, tenantID string, rej casebase.Rejection) error {
+func (r *caseBaseRepository) RecordFailurePrecedent(ctx context.Context, tenantID string, rej casebase.FailurePrecedent) error {
 	if err := r.run.requireTenant(tenantID); err != nil {
 		return err
 	}
 	// The Neo4j Go driver names a time.Time's zone by its Location().String(),
 	// and Neo4j rejects time.Local's "Local", so every time is sent in UTC.
-	if err := execCypher(ctx, r.run, recordRejectionCypher, map[string]any{
+	if err := execCypher(ctx, r.run, recordFailurePrecedentCypher, map[string]any{
 		"release_id":    rej.ReleaseID,
 		"node_id":       rej.NodeID,
 		"stage":         rej.Stage,
@@ -177,7 +177,7 @@ func (r *caseBaseRepository) RecordRejection(ctx context.Context, tenantID strin
 		"raw_code":      rej.RawCode,
 		"content_hash":  rej.ContentHash,
 	}); err != nil {
-		return fmt.Errorf("record rejection %s/%s: %w", rej.ReleaseID, rej.NodeID, err)
+		return fmt.Errorf("record failure precedent %s/%s: %w", rej.ReleaseID, rej.NodeID, err)
 	}
 	return nil
 }

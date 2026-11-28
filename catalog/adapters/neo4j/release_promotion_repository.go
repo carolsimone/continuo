@@ -31,7 +31,7 @@ const currentReleaseUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: '
 // only. A node already retired is not matched again, so a promotion's work
 // does not grow with the retired nodes the graph keeps, and retired_at stays
 // the time of the retirement. Nothing else of a retired node changes: it
-// keeps its properties, its :CURRENT version, its :FAILED rejections and the
+// keeps its properties, its :CURRENT version, its :FAILED failure precedents and the
 // :EDITED edges of its fixes.
 const retireDroppedNodesCypher = `
 MATCH (n:Node {tenant_id: $tenant_id})
@@ -93,7 +93,7 @@ REMOVE m._lock`
 
 // releasePromotionRepository is the topology swap of one tenant, run on the
 // open transaction of a unit-of-work Write. The Write has already locked the
-// tenant's export gate, so the swap's lock on current_release is the second
+// tenant's backup gate, so the swap's lock on current_release is the second
 // lock its transaction takes.
 type releasePromotionRepository struct {
 	run    TenantRunner

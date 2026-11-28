@@ -445,7 +445,7 @@ func TestVersionsHandler_MarkerLookupFailureIsReturned(t *testing.T) {
 	assert.Empty(t, u.writes)
 }
 
-// A write paused by an export or a restore reaches the consumer as
+// A write paused by a backup or a restore reaches the consumer as
 // uow.ErrWritesPaused, which it backs off on as for an outage.
 func TestVersionsHandler_PausedWriteIsReturnedAsPaused(t *testing.T) {
 	u := newVersionsUnitOfWork(&fakeCodeVersionRepository{})
@@ -597,7 +597,7 @@ func TestVersionsHandler_BundleHashDisagreeingWithTheArtifactIsPermanent(t *test
 	assert.Empty(t, u.writes)
 }
 
-// While an export or a restore holds the tenant's lease, the write would be
+// While a backup or a restore holds the tenant's lease, the write would be
 // refused, so the handler fetches nothing from object storage.
 func TestVersionsHandler_PausedWritesSkipTheBundleDownload(t *testing.T) {
 	u := newVersionsUnitOfWork(&fakeCodeVersionRepository{})

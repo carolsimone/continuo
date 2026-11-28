@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from continuo_contracts import dbt
 
-from domain.model import SkipReason
+from domain.model import ExclusionReason
 from service import contracts_library
 
 COMPONENT_ROOT = Path(__file__).parent.parent
@@ -19,8 +19,8 @@ def test_installed_library_is_the_pinned_version():
     assert importlib.metadata.version("continuo-contracts") == "0.5.0"
 
 
-def test_the_domain_skip_reasons_are_the_librarys():
-    assert tuple(reason.value for reason in SkipReason) == dbt.SKIP_REASONS
+def test_the_domain_exclusion_reasons_are_the_librarys():
+    assert tuple(reason.value for reason in ExclusionReason) == dbt.SKIP_REASONS
 
 
 @pytest.mark.parametrize("text, triple", [

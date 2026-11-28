@@ -7,7 +7,7 @@ import (
 
 // LiveFolderLease is the per-tenant lease a rewrite of the live contracts
 // folder holds, so two rewrites of one tenant never interleave their writes.
-// It is not the export lease: holding it pauses no graph write, and an export
+// It is not the backup lease: holding it pauses no graph write, and a backup
 // does not wait for it. A lease nobody renews expires, so a holder that
 // crashed blocks the folder for at most one ttl.
 type LiveFolderLease interface {

@@ -46,7 +46,7 @@ type CurrentContractReader interface {
 	CurrentContract(ctx context.Context, uniqueID string) (string, error)
 }
 
-// PrecedentQuery addresses past rejections by exact signature, falling back
+// PrecedentQuery addresses failure precedents by exact signature, falling back
 // to the broader (category, reason) class.
 type PrecedentQuery struct {
 	Signature string
@@ -55,7 +55,7 @@ type PrecedentQuery struct {
 	Limit     int32
 }
 
-// PrecedentReader returns past rejections matching a PrecedentQuery.
+// PrecedentReader returns the failure precedents matching a PrecedentQuery.
 type PrecedentReader interface {
 	Precedents(ctx context.Context, q PrecedentQuery) ([]prompt.Precedent, error)
 }

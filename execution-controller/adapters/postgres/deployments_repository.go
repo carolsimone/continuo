@@ -486,7 +486,7 @@ func (r *deploymentsRepository) LoadByJobName(ctx context.Context, jobName strin
 }
 
 // openStatusesSQL lists, as SQL literals, the statuses of a deployment that
-// has not ended: pending and every status that holds a slot. LockOpenOfRun
+// has not ended: pending and every status that holds Job capacity. LockOpenOfRun
 // names them as literals so the planner can use idx_deployments_open_by_run,
 // whose predicate lists the same set (TestExecutionSchemaMatchesContract pins
 // the index to it).

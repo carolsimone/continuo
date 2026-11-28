@@ -198,7 +198,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptWithNoTraceIsLost(t *testing.T) {
 }
 
 // With no record but the attempt's Job present, the record is rebuilt, holding
-// a slot, and the observer follows the Job from there.
+// Job capacity, and the observer follows the Job from there.
 func TestTaskDispatch_TheJobOfTheAttemptRebuildsItsRecord(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

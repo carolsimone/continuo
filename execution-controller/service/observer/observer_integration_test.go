@@ -287,7 +287,7 @@ func TestProcess_ARefusedDispatchOfTheJobsNameLeavesItsOwnerObserved(t *testing.
 
 	var status string
 	require.NoError(t, h.db.Get(&status, `SELECT status FROM deployments WHERE id = $1`, dep.ID()))
-	assert.Equal(t, "done", status, "the attempt is settled and its slot released")
+	assert.Equal(t, "done", status, "the attempt is settled and its Job capacity released")
 	reports := h.reports(t)
 	require.Len(t, reports, 1)
 	assert.Equal(t, "succeeded", reports[0]["status"])
@@ -304,7 +304,7 @@ func TestProcess_AStartErrorEndsTheAttemptAndReportsItOnceItsPodsAreGone(t *test
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
 	got := h.reload(t, dep.JobName())
-	assert.Equal(t, model.StatusTerminating, got.Status(), "the slot is held while the pod goes")
+	assert.Equal(t, model.StatusTerminating, got.Status(), "its Job capacity is held while the pod goes")
 	assert.Equal(t, pkgmodel.FailureReasonImagePull, got.Facts().Reason)
 	assert.Equal(t, []string{dep.JobName()}, h.term.deleted)
 	assert.Empty(t, h.reports(t), "nothing is reported while the pod exists")

@@ -10,7 +10,7 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	domainModel "github.com/carolsimone/continuo/catalog/domain/model"
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testdeps"

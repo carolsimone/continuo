@@ -99,7 +99,7 @@ func (r *CandidateSourceReader) readBundle(ctx context.Context, bundleURI, relea
 		// own — a stale or misrouted object naming the same node id. Reading it
 		// would stamp another release's source or owner onto this node, the
 		// same guard catalog applies to the same bundle document in
-		// heal_triggered_rejections_handler.go and
+		// heal_triggered_failure_precedents_handler.go and
 		// release_promoted_versions_handler.go.
 		return codebundle.Bundle{}, ports.ErrNotFound
 	}

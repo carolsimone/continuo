@@ -79,8 +79,8 @@ func TestFixesHandler_RecordsFix(t *testing.T) {
 // parsed, can never be fixed by redelivery: it is refused as permanent before
 // any marker lookup or transaction, and never reaches the repository. An
 // unparseable opened_at is caught here rather than left to zero-value
-// OpenedAt, which the adapter uses as the stub :Rejection's `at` — a zero
-// value would silently attach the wrong fix to a rejection's history.
+// OpenedAt, which the adapter uses as the stub :FailurePrecedent's `at` — a zero
+// value would silently attach the wrong fix to a failure precedent's history.
 func TestFixesHandler_PoisonPayloadIsPermanent(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -130,7 +130,7 @@ func TestFixesHandler_FoundMarkerSkips(t *testing.T) {
 // TestFixesHandler_RecordsOneFixPerResolvedNode verifies that a batched
 // fix PR — one PR resolving several failing nodes — records a :Fix for
 // every node it resolves, all in the one Write. Recording only the
-// representative node would leave the other rejections without a PROPOSED
+// representative node would leave the other failure precedents without a PROPOSED
 // edge, so precedent for them would stop reporting that a fix PR was ever
 // opened.
 func TestFixesHandler_RecordsOneFixPerResolvedNode(t *testing.T) {
@@ -202,7 +202,7 @@ func TestFixesHandler_FailedRecordLeavesNoMarker(t *testing.T) {
 	assert.False(t, u.isRecorded(fixesMarker("1-0", nil)))
 }
 
-// A write paused by an export or a restore reaches the consumer as
+// A write paused by a backup or a restore reaches the consumer as
 // uow.ErrWritesPaused, which it backs off on as for an outage.
 func TestFixesHandler_PausedWriteIsReturnedAsPaused(t *testing.T) {
 	u := newCaseBaseUnitOfWork(&fakeCaseBaseRepository{})

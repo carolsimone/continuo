@@ -27,7 +27,7 @@ const precedentFixtureTenant = "precedent-query-test"
 // precedentFixtureTenant a precedent test could have touched: the nodes it
 // seeds and writes carry the test's marker in test_marker or in an identity
 // value (release_id, node_id, unique_id, signature, fix_id), and the unit
-// of work leaves the tenant's export lease node and processed-message markers.
+// of work leaves the tenant's backup lease node and processed-message markers.
 // No other tenant's node is touched.
 func caseBaseCleanup(t *testing.T, client neo4jinfra.Neo4jClient, marker string) func() {
 	t.Helper()
@@ -86,9 +86,9 @@ func (w *caseBaseWriter) write(ctx context.Context, group string, fn func(ctx co
 	return w.uow.Write(ctx, m, true, fn)
 }
 
-func (w *caseBaseWriter) RecordRejection(ctx context.Context, rej casebase.Rejection) error {
-	return w.write(ctx, streams.CatalogHealTriggeredRejections, func(ctx context.Context, tx uow.Tx) error {
-		return tx.CaseBase().RecordRejection(ctx, precedentFixtureTenant, rej)
+func (w *caseBaseWriter) RecordFailurePrecedent(ctx context.Context, rej casebase.FailurePrecedent) error {
+	return w.write(ctx, streams.CatalogHealTriggeredFailurePrecedents, func(ctx context.Context, tx uow.Tx) error {
+		return tx.CaseBase().RecordFailurePrecedent(ctx, precedentFixtureTenant, rej)
 	})
 }
 

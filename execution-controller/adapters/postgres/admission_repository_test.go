@@ -78,7 +78,7 @@ func TestAdmission_ReserveNext_FairOrder(t *testing.T) {
 	assert.Equal(t, "pending", statusOf(t, db, notDue), "a row whose next attempt is not due waits")
 }
 
-// A fenced run's pending rows are never due: the claim takes no slot for
+// A fenced run's pending rows are never due: the claim takes no Job capacity for
 // them, and the rows of every other run and release are claimed as before.
 func TestReserveNext_SkipsAFencedRunsRows(t *testing.T) {
 	db, cleanup := setupPostgres(t)
@@ -187,7 +187,7 @@ func TestAdmission_ReturnStaleReserved(t *testing.T) {
 	returned, err := postgres.NewAdmissionRepository(db, testLogger()).ReturnStaleReserved(ctx, 2*time.Minute)
 	require.NoError(t, err)
 	assert.Equal(t, []uuid.UUID{staleReserved}, returned)
-	assert.Equal(t, "pending", statusOf(t, db, staleReserved), "a stale reservation gives its slot back")
+	assert.Equal(t, "pending", statusOf(t, db, staleReserved), "a stale reservation gives its Job capacity back")
 }
 
 func TestAdmission_ReturnStaleReserved_SkipsAReservationBeingLaunched(t *testing.T) {
@@ -267,7 +267,7 @@ func TestRepo_ProductionOutcomeSurvivesAReload(t *testing.T) {
 }
 
 // An attempt's facts and the terminating status survive a reload, and a
-// terminating row still holds its slot.
+// terminating row still counts against Job capacity.
 func TestRepo_FactsAndTerminatingSurviveAReload(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -300,7 +300,7 @@ func TestRepo_FactsAndTerminatingSurviveAReload(t *testing.T) {
 
 	n, err := postgres.NewAdmissionRepository(db, testLogger()).CountInFlight(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n, "a terminating row holds its slot")
+	assert.Equal(t, 1, n, "a terminating row counts against Job capacity")
 }
 
 // A row whose attempt was never observed stores no facts.

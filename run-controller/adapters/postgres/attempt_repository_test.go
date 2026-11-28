@@ -213,7 +213,7 @@ func TestAttemptRepository_StalledRunsHaveNothingInFlightAndNoRecentProgress(t *
 	got, err := repo.StalledRuns(ctx, 5*time.Minute, 500)
 	require.NoError(t, err)
 	assert.Contains(t, got, repository.RunRef{TenantID: idleTenant, RunID: idle.RunID()}, "a stalled run is named with its tenant")
-	assert.NotContains(t, got, waiting.ref(), "a run waiting for a slot is never stalled")
+	assert.NotContains(t, got, waiting.ref(), "a run waiting for Job capacity is never stalled")
 	assert.NotContains(t, got, repository.RunRef{TenantID: tenant, RunID: idle.RunID()}, "a run is named with its own tenant only")
 
 	got, err = repo.StalledRuns(ctx, 15*time.Minute, 500)

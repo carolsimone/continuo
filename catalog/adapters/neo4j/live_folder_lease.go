@@ -14,16 +14,16 @@ import (
 // liveFolderNodeKey is the key of the tenant's (:Meta) node that records its
 // live contracts folder: the folder's watermark promotion_seq with its
 // release_id, the publishing settings' fingerprint settings_sha256, and the
-// live-folder lease (holder, kind, until), kept as the export lease keeps its
-// own on the export node.
+// live-folder lease (holder, kind, until), kept as the backup lease keeps its
+// own on the backup node.
 //
-// The node is not the export gate. Renew and Release lock only this node, so a
-// rewrite holding the lease pauses no graph write and stops no export. Taking
+// The node is not the backup gate. Renew and Release lock only this node, so a
+// rewrite holding the lease pauses no graph write and stops no backup. Taking
 // the lease creates the node on a tenant's first rewrite, a graph write, so
-// Acquire runs behind the export gate and refuses while an export or a
-// restore holds the tenant's lease: a restore between its wipe and its import
+// Acquire runs behind the backup gate and refuses while a backup or a
+// restore holds the tenant's lease: a restore between its wipe and its load
 // meets no node it did not write. The writes of the watermark and the
-// fingerprint change the graph, so they run behind the export gate too:
+// fingerprint change the graph, so they run behind the backup gate too:
 // transaction B's through the unit of work, RecordSettings by taking the gate
 // itself.
 const liveFolderNodeKey = "contracts-live"
@@ -90,8 +90,8 @@ func NewLiveFolderLease(client Neo4jClient, logger *slog.Logger) *LiveFolderLeas
 }
 
 // Acquire takes the tenant's live-folder lease for holder. A live lease,
-// whoever holds it, is refused (acquired false), and so is any take while an
-// export or a restore holds the tenant's export lease; an expired lease is
+// whoever holds it, is refused (acquired false), and so is any take while a
+// backup or a restore holds the tenant's backup lease; an expired lease is
 // taken over.
 func (l *LiveFolderLease) Acquire(ctx context.Context, tenantID, holder string, ttl time.Duration) (bool, error) {
 	ttlMs, err := leaseRequest(tenantID, holder, ttl)
@@ -100,11 +100,11 @@ func (l *LiveFolderLease) Acquire(ctx context.Context, tenantID, holder string, 
 	}
 	acquired, paused := false, false
 	err = inWriteTx(ctx, l.client, tenantID, func(run TenantRunner) (bool, error) {
-		exportGate, err := lockExportGate(ctx, run)
+		backupGate, err := lockBackupGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
-		if exportGate.held {
+		if backupGate.held {
 			// Rolled back: no lock property and no live-folder node persists.
 			paused = true
 			return false, nil
@@ -122,7 +122,7 @@ func (l *LiveFolderLease) Acquire(ctx context.Context, tenantID, holder string, 
 		})); err != nil {
 			return false, fmt.Errorf("take the live-folder lease: %w", err)
 		}
-		if err := unlockExportGate(ctx, run); err != nil {
+		if err := unlockBackupGate(ctx, run); err != nil {
 			return false, err
 		}
 		acquired = true
@@ -132,7 +132,7 @@ func (l *LiveFolderLease) Acquire(ctx context.Context, tenantID, holder string, 
 		return false, err
 	}
 	if paused {
-		l.logger.Info("live-folder lease not taken while an export or a restore holds the tenant's lease",
+		l.logger.Info("live-folder lease not taken while a backup or a restore holds the tenant's lease",
 			"tenant_id", tenantID, "holder", holder)
 	}
 	if acquired {
@@ -216,12 +216,12 @@ func (l *LiveFolderLease) Read(ctx context.Context, tenantID string) (ports.Live
 	return mark, nil
 }
 
-// RecordSettings stores the settings fingerprint behind the tenant's export
+// RecordSettings stores the settings fingerprint behind the tenant's backup
 // gate, as every graph write does: it returns uow.ErrWritesPaused, writing
-// nothing, while an export or a restore holds the tenant's lease.
+// nothing, while a backup or a restore holds the tenant's lease.
 func (l *LiveFolderLease) RecordSettings(ctx context.Context, tenantID, settingsSHA256 string) error {
 	return inWriteTx(ctx, l.client, tenantID, func(run TenantRunner) (bool, error) {
-		gate, err := lockExportGate(ctx, run)
+		gate, err := lockBackupGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
@@ -233,7 +233,7 @@ func (l *LiveFolderLease) RecordSettings(ctx context.Context, tenantID, settings
 		})); err != nil {
 			return false, fmt.Errorf("record the live folder's settings: %w", err)
 		}
-		if err := unlockExportGate(ctx, run); err != nil {
+		if err := unlockBackupGate(ctx, run); err != nil {
 			return false, err
 		}
 		return true, nil

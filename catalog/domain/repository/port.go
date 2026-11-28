@@ -54,12 +54,12 @@ type CodeVersionRepository interface {
 	// MERGEs by identity: writing the same batch again writes nothing.
 	//
 	// Promoting a node's version also resolves the case base: every still-open
-	// :Rejection of that node is forward-linked [:RESOLVED_BY] to the version
+	// :FailurePrecedent of that node is forward-linked [:RESOLVED_BY] to the version
 	// that just became current, under the same watermark guard as the pointer
 	// move. This is the ordinary-case half of the convergence — the fix
-	// promoted after the rejection was recorded; CaseBaseRepository's
-	// RecordRejection covers the reverse order, back-linking a rejection to a
-	// version already promoted before it arrived. RejectionsResolved counts the
+	// promoted after the failure precedent was recorded; CaseBaseRepository's
+	// RecordFailurePrecedent covers the reverse order, back-linking a failure precedent to a
+	// version already promoted before it arrived. PrecedentsResolved counts the
 	// links this write created.
 	WriteBatch(ctx context.Context, tenantID string, in codeversion.WriteInput) (codeversion.WriteResult, error)
 }
@@ -67,23 +67,23 @@ type CodeVersionRepository interface {
 // CaseBaseRepository writes a tenant's failure-precedent case base. Every
 // write is an idempotent MERGE on natural identity within the tenant, so
 // redeliveries and out-of-order arrival converge: a fix landing before
-// its rejection creates a stub the rejection later fills. It links a
-// rejection or a fix PR's edit to the tenant's :Node only when the node
+// its failure precedent creates a stub the failure precedent later fills. It links a
+// failure precedent or a fix PR's edit to the tenant's :Node only when the node
 // exists, a retired node included, and never creates a :Node: the topology
 // group owns that lifecycle.
 type CaseBaseRepository interface {
-	// RecordRejection upserts the rejection and the tenant's signature hub
+	// RecordFailurePrecedent upserts the failure precedent and the tenant's signature hub
 	// node, anchors it [:FAILED] to the node's :Node when one exists, and
-	// back-links [:RESOLVED_BY] when a version newer than the rejection is
+	// back-links [:RESOLVED_BY] when a version newer than the failure precedent is
 	// already recorded.
-	RecordRejection(ctx context.Context, tenantID string, r casebase.Rejection) error
+	RecordFailurePrecedent(ctx context.Context, tenantID string, r casebase.FailurePrecedent) error
 	// RecordFix upserts the fix, its [:PROPOSED] edge, and the PR
 	// facts on the linked :PullRequest node (keyed by fix_id + project).
 	RecordFix(ctx context.Context, tenantID string, p casebase.Fix, pr casebase.PullRequest) error
 	// RecordPullRequestOutcome stamps a fix PR's terminal state on its
 	// :PullRequest node and, on a merged outcome, draws the case-base
-	// provenance edges: [:RESOLVED_BY] from each resolved :Rejection to the
-	// shared :Fix (creating stub rejections when absent) and [:EDITED]
+	// provenance edges: [:RESOLVED_BY] from each resolved :FailurePrecedent to the
+	// shared :Fix (creating stub failure precedents when absent) and [:EDITED]
 	// from that :Fix to each edit's :Node (skipped when the :Node is
 	// absent). A rejected outcome only stamps the terminal state. Idempotent
 	// under redelivery.

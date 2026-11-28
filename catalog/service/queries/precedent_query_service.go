@@ -17,7 +17,7 @@ const (
 
 // PrecedentReader is the read surface over the failure-precedent case base.
 type PrecedentReader interface {
-	// Precedents returns the tenant's rejections matching the signature — or,
+	// Precedents returns the tenant's failure precedents matching the signature — or,
 	// when signature is empty, the (category, reason) pair — resolved-first
 	// then newest, capped at limit BEFORE code bodies are fetched. includeCode
 	// governs the failing raw_code only; resolving/prior version bodies are
@@ -52,7 +52,7 @@ func (s *PrecedentQueryService) GetPrecedents(
 	out := make([]casebase.Precedent, 0, len(views))
 	for _, v := range views {
 		p := casebase.Precedent{
-			Rejection: v.Rejection,
+			Failure: v.Failure,
 			// A precedent is resolved by an own-timeline version, by a merged
 			// PR's drawn edits, or — even when that PR drew no edits because
 			// every edit target was absent from the graph — by the presence of

@@ -2,7 +2,7 @@ package config
 
 import "runtime/debug"
 
-// Version is the version of the catalog build that runs, as an export's
+// Version is the version of the catalog build that runs, as a backup's
 // header names it: the main module's version when the build stamped one,
 // otherwise the VCS revision it was built from (with "+dirty" when the tree
 // was modified), otherwise "unknown".

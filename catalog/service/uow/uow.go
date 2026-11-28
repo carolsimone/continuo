@@ -11,15 +11,15 @@ import (
 
 // InFlightTTL is how long a Write that is not final keeps its message's
 // in-flight mark live. It exceeds the time one batch takes, and a message that
-// dies mid-way holds an export back for at most this long after its last
+// dies mid-way holds a backup back for at most this long after its last
 // write. A handler whose work between two writes can take longer writes again,
 // not final, to keep the mark live.
 const InFlightTTL = 2 * time.Minute
 
-// ErrWritesPaused means an export or a restore holds the tenant's export
+// ErrWritesPaused means a backup or a restore holds the tenant's backup
 // lease, so the write did not run. The consumer backs off and retries, as for
 // an outage, and writes no dead letter.
-var ErrWritesPaused = errors.New("catalog writes are paused for an export or a restore")
+var ErrWritesPaused = errors.New("catalog writes are paused for a backup or a restore")
 
 // Marker names one message of one consumer group of one tenant. Its group
 // processed the message once a write recorded the marker.
@@ -37,21 +37,21 @@ type UnitOfWork interface {
 	// message id or, when m carries one, by outbox entry id. It opens no write
 	// transaction and takes no gate.
 	Processed(ctx context.Context, m Marker) (bool, error)
-	// WritesPaused reports whether an export or a restore holds tenantID's
+	// WritesPaused reports whether a backup or a restore holds tenantID's
 	// lease, so that a Write now would return ErrWritesPaused. It runs in a
 	// read transaction and takes no gate: it only saves work a write would
 	// discard, and the Write itself is what guarantees correctness.
 	WritesPaused(ctx context.Context, tenantID string) (bool, error)
 	// Write runs fn in one Neo4j write transaction for m.TenantID, with the
 	// marker recorded in that transaction when final. It returns
-	// ErrWritesPaused while an export or a restore holds the tenant's lease, so
-	// a tenant's writes never interleave with the start of an export. A message
+	// ErrWritesPaused while a backup or a restore holds the tenant's lease, so
+	// a tenant's writes never interleave with the start of a backup. A message
 	// the group already processed (its marker is recorded) skips fn and returns
 	// nil. An error from fn rolls the transaction back and is returned as it is.
 	//
 	// A write that is not final marks m's message in flight on the tenant's
 	// lease node, until the message's final write or until the mark lapses, so
-	// an export never starts between a message's writes.
+	// a backup never starts between a message's writes.
 	Write(ctx context.Context, m Marker, final bool, fn func(ctx context.Context, tx Tx) error) error
 }
 

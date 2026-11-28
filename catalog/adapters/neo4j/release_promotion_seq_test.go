@@ -134,7 +134,7 @@ type swapResult struct {
 }
 
 // swapInTx runs one promotion of fx's tenant on a bare write transaction,
-// without the unit of work's export gate. swapped, when set, is closed once
+// without the unit of work's backup gate. swapped, when set, is closed once
 // the swap's statements ran; hold, when set, keeps the transaction open after
 // that until hold is closed.
 func swapInTx(fx *swapFixture, releaseID string, seq int64, swapped chan<- struct{}, hold <-chan struct{}) <-chan swapResult {
@@ -209,7 +209,7 @@ func metaRace(t *testing.T, f *swapFixture, holderRelease string, holderSeq int6
 }
 
 // TestPromoteRelease_SecondPromotionBlocksOnMetaLock runs the swap on bare
-// write transactions, without the unit of work's export gate, so the tenant's
+// write transactions, without the unit of work's backup gate, so the tenant's
 // current_release node is the only lock two promotions share.
 //
 // On a graph with no current_release node yet, the second promotion waits for

@@ -100,7 +100,7 @@ func TestObserved_StateAgeIsReadByTheDatabaseClock(t *testing.T) {
 
 // An attempt ended undeployed when its row is failed and never created or
 // adopted its Job: the creation failed for good, or the dispatch was refused.
-// A row that is waiting, holding a slot or done does not count, nor does an
+// A row that is waiting, holding Job capacity or done does not count, nor does an
 // attempt with no row. Judged by name (a Job with no attempt labels), the
 // newest row of the name decides. Two attempts can share a truncated name:
 // the one refused on it ended undeployed, the other did not.

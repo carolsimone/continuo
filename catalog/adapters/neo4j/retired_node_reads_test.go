@@ -178,8 +178,8 @@ func TestGetNodeLocation_RetiredNodeIsNotFound(t *testing.T) {
 // A precedent's resolving version is current only while its node is live.
 func TestGetPrecedents_ResolvingVersionOfRetiredNodeIsNotCurrent(t *testing.T) {
 	f := newRetiredNodeFixture(t)
-	// Rejected between x-1 and x-2, so the rejection back-links to x-2.
-	f.recordRejection(rejectionOf("r-failed", retiredX, "sig-retired", promotedAtOf(1).Add(30*time.Minute)))
+	// Rejected between x-1 and x-2, so the failure precedent back-links to x-2.
+	f.recordFailurePrecedent(failurePrecedentOf("r-failed", retiredX, "sig-retired", promotedAtOf(1).Add(30*time.Minute)))
 	resolvingIsCurrent := func() bool {
 		resp, err := f.handler.GetPrecedents(f.ctx, &catalogv1.GetPrecedentsRequest{Signature: "sig-retired"})
 		require.NoError(t, err)

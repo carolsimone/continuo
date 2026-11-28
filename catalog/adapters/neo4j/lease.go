@@ -8,16 +8,16 @@ import (
 	"maps"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 )
 
-// The tenant's export lease lives on its (:Meta {tenant_id, key:'export'})
+// The tenant's backup lease lives on its (:Meta {tenant_id, key:'backup'})
 // node: holder, kind, and until, a datetime on the database clock. The lease
 // is held while until lies ahead of datetime().
 //
-// The same node is the tenant's export gate. Every write transaction the unit
+// The same node is the tenant's backup gate. Every write transaction the unit
 // of work runs sets _lock on it before any other statement, which takes the
 // node's exclusive lock until the transaction ends, and reads the lease in the
 // same statement; it removes _lock again before it commits, so the property
@@ -33,8 +33,8 @@ import (
 // message, and inflight_untils lists, in the same order, the datetime on the
 // database clock at which each lapses. A mark is live while its lapse time lies
 // ahead of datetime(), so each message lapses on its own clock and a later
-// message's batches never extend an earlier one's. An export's Acquire refuses
-// while any mark is live, so an export never starts between a message's
+// message's batches never extend an earlier one's. A backup's Acquire refuses
+// while any mark is live, so a backup never starts between a message's
 // batches; a crashed handler's mark lapses on its own. A write never waits for
 // a mark.
 
@@ -62,19 +62,19 @@ WITH m, ids, untils, [i IN range(0, size(ids) - 1) WHERE ids[i] <> $mark] AS kee
 SET m.inflight_message_ids = CASE WHEN size(keep) = 0 THEN null ELSE [i IN keep | ids[i]] END,
     m.inflight_untils = CASE WHEN size(keep) = 0 THEN null ELSE [i IN keep | untils[i]] END`
 
-// exportGateCypher locks the tenant's lease node, creating it on the tenant's
+// backupGateCypher locks the tenant's lease node, creating it on the tenant's
 // first write, and reports whether a lease is held and whether a message's
 // in-flight mark is live. SET takes the lock before RETURN reads until, so the
 // read sees the lease and the mark as the last holder of the lock committed
 // them.
-const exportGateCypher = `
+const backupGateCypher = `
 MERGE (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m._lock = true
 RETURN m.until IS NOT NULL AND m.until > datetime() AS held,
        any(u IN coalesce(m.inflight_untils, []) WHERE u > datetime()) AS inflight`
 
-// exportGateUnlockCypher removes the gate's lock property before commit.
-const exportGateUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key}) REMOVE m._lock`
+// backupGateUnlockCypher removes the gate's lock property before commit.
+const backupGateUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key}) REMOVE m._lock`
 
 // leaseHeldCypher reads, without locking, whether the tenant's lease is live. A
 // tenant with no lease node returns no row.
@@ -95,9 +95,9 @@ MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m.holder = $holder, m.kind = $kind, m.until = datetime() + duration({milliseconds: $ttl_ms})
 REMOVE m._lock`
 
-// leaseTakeExportCypher records a new export lease like leaseTakeCypher and
+// leaseTakeBackupCypher records a new backup lease like leaseTakeCypher and
 // removes the in-flight mark, which Acquire has found lapsed or absent.
-const leaseTakeExportCypher = `
+const leaseTakeBackupCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m.holder = $holder, m.kind = $kind, m.until = datetime() + duration({milliseconds: $ttl_ms})
 REMOVE m._lock, m.inflight_message_ids, m.inflight_untils`
@@ -113,14 +113,14 @@ const leaseClearCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 REMOVE m.holder, m.kind, m.until, m._lock`
 
-// leaseParams returns params with $lease_key, the key of the tenant's export
+// leaseParams returns params with $lease_key, the key of the tenant's backup
 // lease node, which every statement on that node binds.
 func leaseParams(params map[string]any) map[string]any {
-	return leaseNodeParams(export.LeaseNodeKey, params)
+	return leaseNodeParams(graphbackup.LeaseNodeKey, params)
 }
 
 // leaseNodeParams returns params with $lease_key set to key, the key of the
-// tenant's (:Meta) node a lease statement acts on: the export lease node or
+// tenant's (:Meta) node a lease statement acts on: the backup lease node or
 // the live-folder node.
 func leaseNodeParams(key string, params map[string]any) map[string]any {
 	out := make(map[string]any, len(params)+1)
@@ -132,18 +132,18 @@ func leaseNodeParams(key string, params map[string]any) map[string]any {
 // gateState is what a transaction reads from the tenant's lease node under the
 // gate's lock.
 type gateState struct {
-	// held is true while an export or a restore holds the lease.
+	// held is true while a backup or a restore holds the lease.
 	held bool
 	// inflight is true while a message sits between two of its writes.
 	inflight bool
 }
 
-// lockExportGate takes the tenant's export gate on the open transaction and
+// lockBackupGate takes the tenant's backup gate on the open transaction and
 // reads the lease and the in-flight mark.
-func lockExportGate(ctx context.Context, run TenantRunner) (gateState, error) {
-	gate, err := lockLeaseGate(ctx, run, export.LeaseNodeKey)
+func lockBackupGate(ctx context.Context, run TenantRunner) (gateState, error) {
+	gate, err := lockLeaseGate(ctx, run, graphbackup.LeaseNodeKey)
 	if err != nil {
-		return gateState{}, fmt.Errorf("lock export gate: %w", err)
+		return gateState{}, fmt.Errorf("lock backup gate: %w", err)
 	}
 	return gate, nil
 }
@@ -152,7 +152,7 @@ func lockExportGate(ctx context.Context, run TenantRunner) (gateState, error) {
 // transaction, creating it when missing, and reads its lease and in-flight
 // mark.
 func lockLeaseGate(ctx context.Context, run TenantRunner, key string) (gateState, error) {
-	res, err := run.Run(ctx, exportGateCypher, leaseNodeParams(key, nil))
+	res, err := run.Run(ctx, backupGateCypher, leaseNodeParams(key, nil))
 	if err != nil {
 		return gateState{}, err
 	}
@@ -189,43 +189,43 @@ func clearInFlight(ctx context.Context, run TenantRunner, mark string) error {
 	return nil
 }
 
-// unlockExportGate removes the gate's lock property; the lock itself is
+// unlockBackupGate removes the gate's lock property; the lock itself is
 // released when the transaction ends.
-func unlockExportGate(ctx context.Context, run TenantRunner) error {
-	if err := execCypher(ctx, run, exportGateUnlockCypher, leaseParams(nil)); err != nil {
-		return fmt.Errorf("unlock export gate: %w", err)
+func unlockBackupGate(ctx context.Context, run TenantRunner) error {
+	if err := execCypher(ctx, run, backupGateUnlockCypher, leaseParams(nil)); err != nil {
+		return fmt.Errorf("unlock backup gate: %w", err)
 	}
 	return nil
 }
 
-// exportLease implements ports.ExportLease on each tenant's lease node.
-type exportLease struct {
+// backupLease implements ports.BackupLease on each tenant's lease node.
+type backupLease struct {
 	client Neo4jClient
 	logger *slog.Logger
 }
 
-var _ ports.ExportLease = (*exportLease)(nil)
+var _ ports.BackupLease = (*backupLease)(nil)
 
-// NewExportLease returns the export lease kept in client's graph.
-func NewExportLease(client Neo4jClient, logger *slog.Logger) ports.ExportLease {
-	return &exportLease{client: client, logger: logger}
+// NewBackupLease returns the backup lease kept in client's graph.
+func NewBackupLease(client Neo4jClient, logger *slog.Logger) ports.BackupLease {
+	return &backupLease{client: client, logger: logger}
 }
 
 // Acquire takes the tenant's lease for holder, after the tenant's in-flight
 // writes commit. A live lease, whoever holds it, is ErrLeaseHeld; an expired
-// one is taken over. An export also refuses with ErrWritesInFlight while a
+// one is taken over. A backup also refuses with ErrWritesInFlight while a
 // message's in-flight mark is live, and removes a mark that has lapsed; a
 // restore ignores the mark.
-func (l *exportLease) Acquire(ctx context.Context, tenantID string, kind ports.LeaseKind, holder string, ttl time.Duration) error {
-	if kind != ports.LeaseExport && kind != ports.LeaseRestore {
-		return fmt.Errorf("neo4j: unknown export lease kind %q", kind)
+func (l *backupLease) Acquire(ctx context.Context, tenantID string, kind ports.LeaseKind, holder string, ttl time.Duration) error {
+	if kind != ports.LeaseBackup && kind != ports.LeaseRestore {
+		return fmt.Errorf("neo4j: unknown backup lease kind %q", kind)
 	}
 	ttlMs, err := leaseRequest(tenantID, holder, ttl)
 	if err != nil {
 		return err
 	}
 	err = inWriteTx(ctx, l.client, tenantID, func(run TenantRunner) (bool, error) {
-		gate, err := lockExportGate(ctx, run)
+		gate, err := lockBackupGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
@@ -233,30 +233,30 @@ func (l *exportLease) Acquire(ctx context.Context, tenantID string, kind ports.L
 			return false, fmt.Errorf("tenant %q: %w", tenantID, ports.ErrLeaseHeld)
 		}
 		take := leaseTakeCypher
-		if kind == ports.LeaseExport {
+		if kind == ports.LeaseBackup {
 			if gate.inflight {
 				return false, fmt.Errorf("tenant %q: %w", tenantID, ports.ErrWritesInFlight)
 			}
-			take = leaseTakeExportCypher
+			take = leaseTakeBackupCypher
 		}
 		if err := execCypher(ctx, run, take, leaseParams(map[string]any{
 			"holder": holder, "kind": string(kind), "ttl_ms": ttlMs,
 		})); err != nil {
-			return false, fmt.Errorf("take export lease: %w", err)
+			return false, fmt.Errorf("take backup lease: %w", err)
 		}
 		return true, nil
 	})
 	if err != nil {
 		return err
 	}
-	l.logger.Info("export lease acquired", "tenant_id", tenantID, "kind", string(kind), "holder", holder, "ttl", ttl.String())
+	l.logger.Info("backup lease acquired", "tenant_id", tenantID, "kind", string(kind), "holder", holder, "ttl", ttl.String())
 	return nil
 }
 
 // Renew extends holder's live lease to ttl from now. A lease another holder
 // owns, an expired lease and a tenant with no lease are all ErrLeaseLost: once
 // the lease lapsed, writes may have landed since.
-func (l *exportLease) Renew(ctx context.Context, tenantID, holder string, ttl time.Duration) error {
+func (l *backupLease) Renew(ctx context.Context, tenantID, holder string, ttl time.Duration) error {
 	ttlMs, err := leaseRequest(tenantID, holder, ttl)
 	if err != nil {
 		return err
@@ -270,7 +270,7 @@ func (l *exportLease) Renew(ctx context.Context, tenantID, holder string, ttl ti
 			return false, fmt.Errorf("tenant %q, holder %q: %w", tenantID, holder, ports.ErrLeaseLost)
 		}
 		if err := execCypher(ctx, run, leaseExtendCypher, leaseParams(map[string]any{"ttl_ms": ttlMs})); err != nil {
-			return false, fmt.Errorf("renew export lease: %w", err)
+			return false, fmt.Errorf("renew backup lease: %w", err)
 		}
 		return true, nil
 	})
@@ -278,7 +278,7 @@ func (l *exportLease) Renew(ctx context.Context, tenantID, holder string, ttl ti
 
 // Release ends holder's lease, live or expired. A lease another holder owns,
 // and a tenant with no lease, are left as they are.
-func (l *exportLease) Release(ctx context.Context, tenantID, holder string) error {
+func (l *backupLease) Release(ctx context.Context, tenantID, holder string) error {
 	if err := leaseParties(tenantID, holder); err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func (l *exportLease) Release(ctx context.Context, tenantID, holder string) erro
 			return false, nil
 		}
 		if err := execCypher(ctx, run, leaseClearCypher, leaseParams(nil)); err != nil {
-			return false, fmt.Errorf("release export lease: %w", err)
+			return false, fmt.Errorf("release backup lease: %w", err)
 		}
 		released = true
 		return true, nil
@@ -301,15 +301,15 @@ func (l *exportLease) Release(ctx context.Context, tenantID, holder string) erro
 		return err
 	}
 	if released {
-		l.logger.Info("export lease released", "tenant_id", tenantID, "holder", holder)
+		l.logger.Info("backup lease released", "tenant_id", tenantID, "holder", holder)
 	}
 	return nil
 }
 
-// lockLease locks the tenant's export lease node and reads its holder and
+// lockLease locks the tenant's backup lease node and reads its holder and
 // whether its lease is live; found is false when the tenant has no lease node.
 func lockLease(ctx context.Context, run TenantRunner) (holder string, live, found bool, err error) {
-	return lockLeaseNode(ctx, run, export.LeaseNodeKey)
+	return lockLeaseNode(ctx, run, graphbackup.LeaseNodeKey)
 }
 
 // lockLeaseNode locks the tenant's existing (:Meta) node of key and reads its

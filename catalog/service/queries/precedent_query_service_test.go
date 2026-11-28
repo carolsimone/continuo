@@ -46,7 +46,7 @@ func newPrecedentSvc(r *fakePrecedentReader) *queries.PrecedentQueryService {
 func TestPrecedentService_RendersResolutionDiff(t *testing.T) {
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
-			Rejection:        casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+			Failure:          casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
 			ResolvingVersion: &codeversion.VersionView{RawCode: "select 2", VersionSeq: 2},
 			PriorVersion:     &codeversion.VersionView{RawCode: "select 1", VersionSeq: 1},
 		},
@@ -67,7 +67,7 @@ func TestPrecedentService_RendersResolutionDiff(t *testing.T) {
 func TestPrecedentService_IncludeCodeFalseStripsBodies(t *testing.T) {
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
-			Rejection:        casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl", RawCode: ""},
+			Failure:          casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl", RawCode: ""},
 			ResolvingVersion: &codeversion.VersionView{RawCode: "select 2", CompiledCode: "compiled 2", VersionSeq: 2},
 			PriorVersion:     &codeversion.VersionView{RawCode: "select 1", VersionSeq: 1},
 		},
@@ -79,7 +79,7 @@ func TestPrecedentService_IncludeCodeFalseStripsBodies(t *testing.T) {
 	require.Len(t, out, 1)
 
 	p := out[0]
-	assert.Equal(t, "", p.Rejection.RawCode, "the reader already projects raw_code empty when include_code is false")
+	assert.Equal(t, "", p.Failure.RawCode, "the reader already projects raw_code empty when include_code is false")
 	require.NotNil(t, p.ResolvingVersion)
 	assert.Equal(t, "", p.ResolvingVersion.RawCode)
 	assert.Equal(t, "", p.ResolvingVersion.CompiledCode)
@@ -92,7 +92,7 @@ func TestPrecedentService_IncludeCodeFalseStripsBodies(t *testing.T) {
 func TestPrecedentService_ResolvedByEditedProvenanceWithoutOwnTimeline(t *testing.T) {
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
-			Rejection:        casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+			Failure:          casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
 			ResolvingVersion: nil, // resolved only via a merged PR's edits
 			Edited: []casebase.EditedView{
 				{NodeID: "svc.schema.upstream", Path: "models/upstream.sql", Amended: false, Diff: "D1"},
@@ -122,7 +122,7 @@ func TestPrecedentService_ResolvedByEditedProvenanceWithoutOwnTimeline(t *testin
 func TestPrecedentService_AmendedFallbackDiffIsNotShipped(t *testing.T) {
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
-			Rejection: casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+			Failure: casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
 			Edited: []casebase.EditedView{
 				{NodeID: "svc.schema.tbl", Path: "models/tbl.sql", Amended: true, Diff: "fix-diff"},
 			},
@@ -142,7 +142,7 @@ func TestPrecedentService_AmendedFallbackDiffIsNotShipped(t *testing.T) {
 func TestPrecedentService_AmendedEditRendersMergedTruthDiff(t *testing.T) {
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
-			Rejection: casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+			Failure: casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
 			Edited: []casebase.EditedView{
 				{
 					NodeID: "svc.schema.tbl", Path: "models/tbl.sql", Amended: true,
@@ -170,12 +170,12 @@ func TestPrecedentService_AmendedEditRendersMergedTruthDiff(t *testing.T) {
 }
 
 func TestPrecedentService_FixResolvedWithoutDrawnEditsIsResolved(t *testing.T) {
-	// A rejection resolved by a merged PR whose EDITED targets were all absent
+	// A failure precedent resolved by a merged PR whose EDITED targets were all absent
 	// from the graph: the reader surfaces ResolvedByFix=true but no Edited
 	// rows and no own-timeline version. The service must still report Resolved.
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
-			Rejection:        casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+			Failure:          casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
 			ResolvingVersion: nil,
 			Edited:           nil,
 			ResolvedByFix:    true,
@@ -188,7 +188,7 @@ func TestPrecedentService_FixResolvedWithoutDrawnEditsIsResolved(t *testing.T) {
 	require.Len(t, out, 1)
 
 	p := out[0]
-	assert.True(t, p.Resolved, "a fix-resolved rejection is resolved even with no drawn edits")
+	assert.True(t, p.Resolved, "a fix-resolved failure precedent is resolved even with no drawn edits")
 	assert.Nil(t, p.ResolvingVersion, "no own-timeline version to show")
 	assert.Empty(t, p.Edited, "no fabricated edited provenance when none was drawn")
 	assert.Empty(t, p.ResolutionDiff)
@@ -197,7 +197,7 @@ func TestPrecedentService_FixResolvedWithoutDrawnEditsIsResolved(t *testing.T) {
 func TestPrecedentService_UnresolvedHasNoDiff(t *testing.T) {
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{
-			Rejection:        casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+			Failure:          casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
 			ResolvingVersion: nil,
 		},
 	}}

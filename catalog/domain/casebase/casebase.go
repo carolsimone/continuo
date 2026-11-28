@@ -1,13 +1,13 @@
-// Package casebase holds the failure-precedent vocabulary: rejections, their
+// Package casebase holds the failure-precedent vocabulary: failure precedents, their
 // classified error signatures, the fixes proposed for them, and the
 // links to the code versions that resolved them.
 package casebase
 
 import "time"
 
-// Rejection is one classified failure of one node in one rejected release.
+// FailurePrecedent is one classified failure of one node in one rejected release.
 // Its identity is (ReleaseID, NodeID), matching the classifier's dedup key.
-type Rejection struct {
+type FailurePrecedent struct {
 	ReleaseID string
 	NodeID    string
 	// Stage is the classifier source: "parse" | "validation" | "seed_build" |
@@ -23,7 +23,7 @@ type Rejection struct {
 	// RawCode and ContentHash are the failing candidate's code, read from the
 	// release's code bundle. Both empty when no bundle exists — a compile-stage
 	// failure happens before any parse, so there is nothing to read; the
-	// rejection is recorded anyway (excerpt + fixing-PR link are still
+	// failure precedent is recorded anyway (excerpt + fixing-PR link are still
 	// precedent).
 	RawCode     string
 	ContentHash string
@@ -31,8 +31,8 @@ type Rejection struct {
 
 // Fix is one fix (identified by FixID) continuo proposed for a rejected
 // release. A fix spanning several nodes MERGEs onto the same :Fix, reached
-// by one [:PROPOSED] edge per resolved :Rejection — ReleaseID and NodeID
-// here identify that one rejection's edge, not the :Fix itself. PR facts
+// by one [:PROPOSED] edge per resolved :FailurePrecedent — ReleaseID and NodeID
+// here identify that one failure precedent's edge, not the :Fix itself. PR facts
 // (url/number/state/opened_*) live on the [:HAS_PR]->(:PullRequest) node,
 // never on the :Fix.
 type Fix struct {
@@ -69,7 +69,7 @@ type EditOutcome struct {
 
 // PullRequestOutcome is one fix PR's terminal state, scoped to the owning
 // project. Outcome is "merged" or "rejected". On a merged outcome the case
-// base draws provenance edges: [:RESOLVED_BY] from each resolved rejection to
+// base draws provenance edges: [:RESOLVED_BY] from each resolved failure precedent to
 // the shared :Fix, and [:EDITED] from that :Fix to each edit's
 // :Node. A rejected outcome only stamps the :PullRequest's terminal state and
 // draws no edges; ResolvedNodeIDs and Edits are empty for it.

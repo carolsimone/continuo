@@ -46,7 +46,7 @@ func TestMarkStarted_OnlyFromReserved(t *testing.T) {
 	now := time.Now()
 	d := model.NewDeployment(deployableCmd(), nil, now)
 
-	assert.Error(t, d.MarkStarted(now), "a pending deployment holds no slot to start in")
+	assert.Error(t, d.MarkStarted(now), "a pending deployment holds no Job capacity to start in")
 	require.NoError(t, d.Reserve())
 	require.NoError(t, d.MarkStarted(now))
 	assert.Equal(t, model.StatusStarting, d.Status())
@@ -363,11 +363,11 @@ func productionDeployment(t *testing.T) *model.Deployment {
 	}, nil, time.Now())
 }
 
-func TestDeployment_SlotLifecycle(t *testing.T) {
+func TestDeployment_CapacityLifecycle(t *testing.T) {
 	now := time.Now()
 	d := productionDeployment(t)
 
-	require.Error(t, d.MarkStarted(now), "a pending deployment holds no slot to start in")
+	require.Error(t, d.MarkStarted(now), "a pending deployment holds no Job capacity to start in")
 	require.NoError(t, d.Reserve())
 	assert.Equal(t, model.StatusReserved, d.Status())
 	require.Error(t, d.Reserve(), "reserve is only from pending")
@@ -404,7 +404,7 @@ func TestDeployment_FinishRejections(t *testing.T) {
 	require.Error(t, v.Finish("ok", now), "candidate deployments record through RecordOutcome")
 }
 
-func TestDeployment_TransientFailureReturnsTheSlot(t *testing.T) {
+func TestDeployment_TransientFailureReturnsItsCapacity(t *testing.T) {
 	now := time.Now()
 	d := productionDeployment(t)
 	_, err := d.RegisterFailure(now, false, "api timeout", model.BackoffPolicy{Base: time.Second, Cap: time.Minute})
@@ -413,7 +413,7 @@ func TestDeployment_TransientFailureReturnsTheSlot(t *testing.T) {
 	terminal, err := d.RegisterFailure(now, false, "api timeout", model.BackoffPolicy{Base: time.Second, Cap: time.Minute})
 	require.NoError(t, err)
 	assert.False(t, terminal)
-	assert.Equal(t, model.StatusPending, d.Status(), "a transient failure gives the slot back and waits out the backoff")
+	assert.Equal(t, model.StatusPending, d.Status(), "a transient failure gives its Job capacity back and waits out the backoff")
 	assert.True(t, d.NextAttemptAt().After(now))
 }
 
@@ -437,8 +437,8 @@ func TestDeployment_JobName(t *testing.T) {
 }
 
 // Execution-controller ends an attempt itself by recording why and moving the
-// deployment to terminating, which keeps its slot until the pods are gone.
-func TestDeployment_BeginTerminationHoldsTheSlotAndKeepsTheFirstReason(t *testing.T) {
+// deployment to terminating, which keeps its Job capacity until the pods are gone.
+func TestDeployment_BeginTerminationHoldsItsCapacityAndKeepsTheFirstReason(t *testing.T) {
 	now := time.Now()
 	d := productionDeployment(t)
 	require.Error(t, d.BeginTermination(pkgmodel.FailureReasonStartTimeout, "not started"), "a pending deployment has no Job to end")
@@ -447,7 +447,7 @@ func TestDeployment_BeginTerminationHoldsTheSlotAndKeepsTheFirstReason(t *testin
 
 	require.NoError(t, d.BeginTermination(pkgmodel.FailureReasonStartTimeout, "not started after 15m0s"))
 	assert.Equal(t, model.StatusTerminating, d.Status())
-	assert.True(t, d.Status().InFlight(), "a terminating deployment holds its slot")
+	assert.True(t, d.Status().InFlight(), "a terminating deployment holds its Job capacity")
 	assert.Equal(t, pkgmodel.FailureReasonStartTimeout, d.Facts().Reason)
 	assert.Equal(t, "not started after 15m0s", d.Facts().Message)
 
@@ -516,7 +516,7 @@ func TestDeployment_StopRefusesARowWaitingForItsLaunch(t *testing.T) {
 
 // A row waiting for its launch whose attempt has neither a Job nor a pod
 // left ends at once: the attempt never ran, so it is done with the outcome
-// stopped and holds no slot.
+// stopped and holds no Job capacity.
 func TestDeployment_StopBeforeLaunchEndsARowWithNoJob(t *testing.T) {
 	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
 	for _, reserve := range []bool{false, true} {
@@ -540,7 +540,7 @@ func TestDeployment_StopBeforeLaunchEndsARowWithNoJob(t *testing.T) {
 
 // A row waiting for its launch whose attempt's Job exists adopts the Job: it
 // moves to terminating with the stop recorded and the Job recorded as
-// deployed, holding a slot until the Job's pods are gone, and the Job is to
+// deployed, holding Job capacity until the Job's pods are gone, and the Job is to
 // be deleted.
 func TestDeployment_StopBeforeLaunchAdoptsAnExistingJob(t *testing.T) {
 	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
@@ -555,7 +555,7 @@ func TestDeployment_StopBeforeLaunchAdoptsAnExistingJob(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, model.StopTerminate, effect, "reserved=%v", reserve)
 		assert.Equal(t, model.StatusTerminating, d.Status())
-		assert.True(t, d.Status().InFlight(), "it holds a slot until its pods are gone")
+		assert.True(t, d.Status().InFlight(), "it holds Job capacity until its pods are gone")
 		assert.True(t, d.AwaitingResult(), "the observer follows the Job to its end")
 		assert.Equal(t, &now, d.DeployedAt())
 		assert.Equal(t, &now, d.Facts().StopRequestedAt)
@@ -606,7 +606,7 @@ func TestDeployment_StopBeforeLaunchRefusesAnyOtherRow(t *testing.T) {
 	require.Error(t, err, "an unknown action is refused")
 }
 
-// A started row keeps its slot until its pods are gone, so the stop moves it
+// A started row keeps its Job capacity until its pods are gone, so the stop moves it
 // to terminating and asks for its Job to be deleted.
 func TestDeployment_StopMovesAStartedRowToTerminating(t *testing.T) {
 	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
@@ -623,7 +623,7 @@ func TestDeployment_StopMovesAStartedRowToTerminating(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, model.StopTerminate, effect, "running=%v", running)
 		assert.Equal(t, model.StatusTerminating, d.Status())
-		assert.True(t, d.Status().InFlight(), "it keeps its slot until its pods are gone")
+		assert.True(t, d.Status().InFlight(), "it keeps its Job capacity until its pods are gone")
 		stopAt := now.Add(time.Minute)
 		assert.Equal(t, &stopAt, d.Facts().StopRequestedAt)
 		assert.False(t, d.HasOutcome(), "the outcome is recorded once the pods are gone")

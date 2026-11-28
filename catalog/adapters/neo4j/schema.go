@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -64,10 +64,10 @@ func (o schemaObject) statement() string {
 //   - node_version_uid and code_unit_version_unit_id back the version-history
 //     reads that start from a node's unique_id or a code unit's unit_id; the
 //     identity constraints cover only the full (id, hash) pair.
-//   - rejection_node_id backs the [:RESOLVED_BY] links the versions group and
-//     a late rejection draw from a node's rejections.
-//   - rejection_category_reason backs the category and reason precedent
-//     lookup, which filters :Rejection's own properties.
+//   - failure_precedent_node_id backs the [:RESOLVED_BY] links the versions group and
+//     a late failure precedent draw from a node's failure precedents.
+//   - failure_precedent_category_reason backs the category and reason precedent
+//     lookup, which filters :FailurePrecedent's own properties.
 //   - error_signature_category_reason indexes the signature hub's first-seen
 //     category and reason for direct hub lookups; the hubs are few, so it
 //     costs little to keep.
@@ -84,9 +84,9 @@ var catalogSchema = []schemaObject{
 	identityConstraint("code_unit_unique", graphschema.CodeUnit),
 	identityConstraint("code_unit_version_unique", graphschema.CodeUnitVersion),
 	rangeIndex("code_unit_version_unit_id", graphschema.CodeUnitVersion, "unit_id"),
-	identityConstraint("rejection_unique", graphschema.Rejection),
-	rangeIndex("rejection_node_id", graphschema.Rejection, "node_id"),
-	rangeIndex("rejection_category_reason", graphschema.Rejection, "category", "reason"),
+	identityConstraint("failure_precedent_unique", graphschema.FailurePrecedent),
+	rangeIndex("failure_precedent_node_id", graphschema.FailurePrecedent, "node_id"),
+	rangeIndex("failure_precedent_category_reason", graphschema.FailurePrecedent, "category", "reason"),
 	identityConstraint("error_signature_unique", graphschema.ErrorSignature),
 	rangeIndex("error_signature_category_reason", graphschema.ErrorSignature, "category", "reason"),
 	identityConstraint("fix_unique", graphschema.Fix),

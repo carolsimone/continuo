@@ -115,8 +115,8 @@ func TestCaseBase_RefusesAnotherTenantsCall(t *testing.T) {
 	tx := &transaction{run: run, logger: quietLogger()}
 	ctx := context.Background()
 
-	assert.ErrorIs(t, tx.CaseBase().RecordRejection(ctx, "tenant-b",
-		casebase.Rejection{ReleaseID: "r1", NodeID: "a", Signature: "sig"}), errTenantMismatch)
+	assert.ErrorIs(t, tx.CaseBase().RecordFailurePrecedent(ctx, "tenant-b",
+		casebase.FailurePrecedent{ReleaseID: "r1", NodeID: "a", Signature: "sig"}), errTenantMismatch)
 	assert.ErrorIs(t, tx.CaseBase().RecordFix(ctx, "tenant-b",
 		casebase.Fix{FixID: "p", ReleaseID: "r1", NodeID: "a"}, casebase.PullRequest{FixID: "p"}), errTenantMismatch)
 	assert.ErrorIs(t, tx.CaseBase().RecordPullRequestOutcome(ctx, "tenant-b",

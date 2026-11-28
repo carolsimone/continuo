@@ -318,7 +318,7 @@ func TestContractsHandler_AMissingBundleIsRetried(t *testing.T) {
 	assert.Empty(t, f.uow.writes)
 }
 
-// While an export or a restore holds the tenant's lease the handler returns
+// While a backup or a restore holds the tenant's lease the handler returns
 // uow.ErrWritesPaused without reading the bundle, so the consumer backs off
 // and writes no dead letter.
 func TestContractsHandler_WritesPausedBacksOff(t *testing.T) {
@@ -506,7 +506,7 @@ func TestContractsHandler_AFailedRewriteRecordsNoWatermark(t *testing.T) {
 }
 
 // A rewrite that runs long writes again, not final, while it runs, so the
-// message's in-flight mark stays live until transaction B and no export starts
+// message's in-flight mark stays live until transaction B and no backup starts
 // in between; the renewals stop when the rewrite ends.
 func TestContractsHandler_ALongRewriteKeepsTheMessageInFlight(t *testing.T) {
 	f := newContractsFixture()

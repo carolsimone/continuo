@@ -12,7 +12,7 @@ import (
 )
 
 // minInterval is the shortest @every interval a schedule may name: each
-// export pauses the tenant's writes while it runs.
+// backup pauses the tenant's writes while it runs.
 const minInterval = time.Minute
 
 // neverFiresProbe is the instant a schedule must fire after to be taken as

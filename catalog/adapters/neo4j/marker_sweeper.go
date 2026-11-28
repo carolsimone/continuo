@@ -17,8 +17,8 @@ import (
 //
 // It is a system path: it reads which tenants hold expired markers, then
 // sweeps each in a transaction of its own. That transaction takes the
-// tenant's export gate first, as every write does, and sweeps nothing while
-// an export or a restore holds the tenant's lease. Because it takes the gate,
+// tenant's backup gate first, as every write does, and sweeps nothing while
+// a backup or a restore holds the tenant's lease. Because it takes the gate,
 // it waits for the tenant's in-flight writes, and no lease can be taken
 // between its reading the lease and its commit.
 type MarkerSweeper struct {
@@ -65,7 +65,7 @@ RETURN count(*) AS deleted`
 // Prune deletes at most limit markers recorded more than retention ago on the
 // database clock, and returns how many it deleted. The limit counts every
 // tenant together: a pass visits the tenants that hold expired markers in
-// turn until it has deleted limit. A tenant whose export lease is held is
+// turn until it has deleted limit. A tenant whose backup lease is held is
 // skipped. A tenant whose sweep fails is logged and does not stop the
 // others: it is skipped for the rest of the sweep, so it logs once however
 // many passes the sweep takes, and its markers wait for the next sweep. The
@@ -168,17 +168,17 @@ func (s *MarkerSweeper) tenantsWithExpiredMarkers(ctx context.Context, retention
 }
 
 // pruneTenant deletes at most limit of the tenant's expired markers in one
-// write transaction behind the tenant's export gate, and returns how many. It
+// write transaction behind the tenant's backup gate, and returns how many. It
 // deletes nothing while the tenant's lease is held.
 func (s *MarkerSweeper) pruneTenant(ctx context.Context, tenantID string, retentionMs, limit int64) (int64, error) {
 	var deleted int64
 	err := inWriteTx(ctx, s.client, tenantID, func(run TenantRunner) (bool, error) {
-		gate, err := lockExportGate(ctx, run)
+		gate, err := lockBackupGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
 		if gate.held {
-			s.logger.Debug("marker sweep skipped: the tenant's export lease is held", "tenant_id", tenantID)
+			s.logger.Debug("marker sweep skipped: the tenant's backup lease is held", "tenant_id", tenantID)
 			return false, nil
 		}
 		res, err := run.Run(ctx, markerPruneCypher, map[string]any{"retention_ms": retentionMs, "limit": limit})
@@ -193,7 +193,7 @@ func (s *MarkerSweeper) pruneTenant(ctx context.Context, tenantID string, retent
 		if !ok {
 			return false, fmt.Errorf("neo4j: the deleted count is %T, want an integer", rec.Values[0])
 		}
-		if err := unlockExportGate(ctx, run); err != nil {
+		if err := unlockBackupGate(ctx, run); err != nil {
 			return false, err
 		}
 		deleted = n

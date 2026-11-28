@@ -13,7 +13,7 @@ scan of this file's source finds every series the component exports.
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, disable_created_metrics
 
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import SkipReason
+from domain.model import ExclusionReason
 from service.release_timings import (
     CONTRACT_FAILURE_REASONS,
     CONTRACT_FAILURE_STAGES,
@@ -70,9 +70,9 @@ class TopologyMetrics:
             ["component", "family"],
             registry=self.registry,
         )
-        self._release_skipped_nodes = Gauge(
-            "continuo_topology_release_skipped_nodes",
-            "Nodes the parse of the last release that ended left out, by reason.",
+        self._release_excluded_models = Gauge(
+            "continuo_topology_release_excluded_models",
+            "Excluded models of the last release that ended: the dbt models, seeds and snapshots its parse left out, by reason.",
             ["component", "reason"],
             registry=self.registry,
         )
@@ -121,7 +121,7 @@ class TopologyMetrics:
             registry=self.registry,
         )
 
-        # Every stage, every pair a release can end under, every skip reason,
+        # Every stage, every pair a release can end under, every exclusion reason,
         # every contract failure stage with every contract failure reason and
         # both cache results are visible from boot, so a rate or an
         # increase over a series that has not moved yet is 0, not absent (an
@@ -131,8 +131,8 @@ class TopologyMetrics:
         self._releases.labels(component, ReleaseOutcome.OK.value, _NO_FAILURE_KIND)
         for kind in ParseFailureKind:
             self._releases.labels(component, ReleaseOutcome.FAILED.value, kind.value)
-        for reason in SkipReason:
-            self._release_skipped_nodes.labels(component, reason.value).set(0)
+        for reason in ExclusionReason:
+            self._release_excluded_models.labels(component, reason.value).set(0)
         self._release_dormant_nodes.labels(component).set(0)
         for contract_stage in CONTRACT_FAILURE_STAGES:
             for reason in CONTRACT_FAILURE_REASONS:
@@ -144,7 +144,7 @@ class TopologyMetrics:
         """Count a release that ended and replace the gauges of the last one.
 
         A stage that never ran observes nothing. The gauges are set for every
-        family and every skip reason the record names, so one the release lacked
+        family and every exclusion reason the record names, so one the release lacked
         drops to 0 instead of keeping the previous release's value. The dormant
         gauge is set from the release's dormant total, so a release with none
         sets it to 0. The contract counters add the release's failures and cache
@@ -159,8 +159,8 @@ class TopologyMetrics:
             self._release_nodes.labels(self._component, family).set(count)
         for family, count in timings.columns.items():
             self._release_columns.labels(self._component, family).set(count)
-        for reason in SkipReason:
-            self._release_skipped_nodes.labels(self._component, reason.value).set(timings.skipped.get(reason, 0))
+        for reason in ExclusionReason:
+            self._release_excluded_models.labels(self._component, reason.value).set(timings.excluded.get(reason, 0))
         self._release_dormant_nodes.labels(self._component).set(sum(timings.dormant.values()))
         self._release_peak_rss.labels(self._component).set(timings.peak_rss_bytes)
         for (contract_stage, reason), count in timings.contract_failures.items():

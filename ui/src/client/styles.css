@@ -106,7 +106,7 @@ body {
 .pill--succeeded, .pill-sm--succeeded { background: #dcfce7; color: #15803d; }
 .pill--failed,    .pill-sm--failed    { background: #fee2e2; color: #dc2626; }
 .pill--pending,   .pill-sm--pending   { background: #f1f5f9; color: #64748b; }
-/* Dispatched (sent, not acknowledged) and queued (waiting for a slot) are
+/* Dispatched (sent, not acknowledged) and queued (waiting for Job capacity) are
    neutral like pending: nothing runs yet. */
 .pill--dispatched, .pill-sm--dispatched,
 .pill--queued,     .pill-sm--queued     { background: #f1f5f9; color: #475569; }

@@ -26,11 +26,11 @@ func (f *swapFixture) pullRequest(fixID, project string) map[string]any {
 }
 
 // resolvedByFix counts the [:RESOLVED_BY] edges from the tenant's
-// rejections to its :Fix fixID.
+// failure precedents to its :Fix fixID.
 func (f *swapFixture) resolvedByFix(fixID string) int64 {
 	f.t.Helper()
 	return f.count(`
-		MATCH (:Rejection {tenant_id: $tenant_id})-[r:RESOLVED_BY]->(:Fix {tenant_id: $tenant_id, fix_id: $fix_id})
+		MATCH (:FailurePrecedent {tenant_id: $tenant_id})-[r:RESOLVED_BY]->(:Fix {tenant_id: $tenant_id, fix_id: $fix_id})
 		RETURN count(r) AS n`, map[string]any{"fix_id": fixID})
 }
 
@@ -72,14 +72,14 @@ func TestRecordPullRequestOutcome_Merged(t *testing.T) {
 
 	for _, node := range []string{"na", "nb"} {
 		recs := f.rows(`
-			MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: $node_id})-[rb:RESOLVED_BY]->
+			MATCH (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: 'rel', node_id: $node_id})-[rb:RESOLVED_BY]->
 			      (:Fix {tenant_id: $tenant_id, fix_id: 'fix'})
 			RETURN rb.amended AS amended, rej.stub AS stub`, map[string]any{"node_id": node})
 		require.Len(t, recs, 1, "exactly one RESOLVED_BY for %s after redelivery", node)
 		amended, _ := recs[0].Get("amended")
 		assert.Equal(t, true, amended, "the amended flag OR-reduces the PR's edits")
 		stub, _ := recs[0].Get("stub")
-		assert.Equal(t, true, stub, "a rejection first seen at outcome time is a stub")
+		assert.Equal(t, true, stub, "a failure precedent first seen at outcome time is a stub")
 	}
 
 	edited := f.rows(`
@@ -190,7 +190,7 @@ func TestRecordPullRequestOutcome_AmendedOrReduction(t *testing.T) {
 
 			for _, node := range []string{"na", "nb"} {
 				assert.Equal(t, tc.wantResolved, f.scalar(`
-					MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: $node_id})-[rb:RESOLVED_BY]->
+					MATCH (:FailurePrecedent {tenant_id: $tenant_id, release_id: 'rel', node_id: $node_id})-[rb:RESOLVED_BY]->
 					      (:Fix {tenant_id: $tenant_id, fix_id: 'fix'})
 					RETURN rb.amended AS v`, map[string]any{"node_id": node}),
 					"RESOLVED_BY.amended of %s is the OR across all edits", node)

@@ -1,4 +1,4 @@
-package exportfile
+package backupfile
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"time"
 	_ "time/tzdata" // the named-zone cases must not depend on the host's zone database
 
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 )
 
 // encodeJSON renders v as the file writes a property value.
@@ -167,7 +167,7 @@ func TestValue_DecodeRefusesWhatTheWriterNeverWrites(t *testing.T) {
 			t.Errorf("decode %s = %#v, want an error", c, v)
 		}
 	}
-	if _, err := decodeValue([]byte(`7`)); !errors.Is(err, export.ErrUnsupportedValue) {
+	if _, err := decodeValue([]byte(`7`)); !errors.Is(err, graphbackup.ErrUnsupportedValue) {
 		t.Errorf("decode of a plain number = %v, want ErrUnsupportedValue", err)
 	}
 }
@@ -190,7 +190,7 @@ func TestValue_EncodeRefusesAnotherGoType(t *testing.T) {
 		"invalid UTF-8": "\xff",
 	}
 	for name, v := range cases {
-		if _, err := encodeValue(v); !errors.Is(err, export.ErrUnsupportedValue) {
+		if _, err := encodeValue(v); !errors.Is(err, graphbackup.ErrUnsupportedValue) {
 			t.Errorf("%s: encode = %v, want ErrUnsupportedValue", name, err)
 		}
 	}
@@ -199,7 +199,7 @@ func TestValue_EncodeRefusesAnotherGoType(t *testing.T) {
 // TestReader_RefusesALineLongerThanItsLimit reads with a small limit, so the
 // test need not build a line of the production size.
 func TestReader_RefusesALineLongerThanItsLimit(t *testing.T) {
-	head := `{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}` + "\n"
+	head := `{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}` + "\n"
 	long := `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"` + strings.Repeat("a", 4096) + `"}}` + "\n"
 	r, err := newReader(strings.NewReader(head+long), 1024)
 	if err != nil {
@@ -219,19 +219,19 @@ func TestReader_RefusesALineLongerThanItsLimit(t *testing.T) {
 
 // TestWriter_RefusesALineLongerThanAReaderAccepts writes with a small limit,
 // so the test need not build a line of the production size: a record whose
-// line a Reader with the same limit would refuse fails the export, naming
+// line a Reader with the same limit would refuse fails the backup, naming
 // the record and its size, and writes nothing; a line at the limit is
 // written and read back. NewWriter and NewReader share maxLineBytes.
 func TestWriter_RefusesALineLongerThanAReaderAccepts(t *testing.T) {
 	if got := NewWriter(&bytes.Buffer{}).limit; got != maxLineBytes {
 		t.Fatalf("NewWriter's limit = %d, want maxLineBytes (%d), the Reader's", got, maxLineBytes)
 	}
-	h := export.Header{
-		FormatVersion: export.FormatVersion, TenantID: "t1", ExportedAt: time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC),
+	h := graphbackup.Header{
+		FormatVersion: graphbackup.FormatVersion, TenantID: "t1", TakenAt: time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC),
 		CatalogVersion: "x", Nodes: map[string]int64{"NodeVersion": 1}, Relationships: map[string]int64{},
 	}
-	version := func(rawCode string) export.NodeRecord {
-		return export.NodeRecord{Labels: []string{"NodeVersion"}, Props: map[string]any{
+	version := func(rawCode string) graphbackup.NodeRecord {
+		return graphbackup.NodeRecord{Labels: []string{"NodeVersion"}, Props: map[string]any{
 			"tenant_id": "t1", "unique_id": "svc.a", "content_hash": "h", "raw_code": rawCode,
 		}}
 	}
@@ -271,11 +271,11 @@ func TestWriter_RefusesALineLongerThanAReaderAccepts(t *testing.T) {
 }
 
 // mustLine returns the length, newline included, of n's line.
-func mustLine(t *testing.T, n export.NodeRecord) int {
+func mustLine(t *testing.T, n graphbackup.NodeRecord) int {
 	t.Helper()
 	var buf bytes.Buffer
 	w := NewWriter(&buf)
-	h := export.Header{FormatVersion: export.FormatVersion, TenantID: "t1", ExportedAt: time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC), CatalogVersion: "x"}
+	h := graphbackup.Header{FormatVersion: graphbackup.FormatVersion, TenantID: "t1", TakenAt: time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC), CatalogVersion: "x"}
 	if err := w.WriteHeader(h); err != nil {
 		t.Fatal(err)
 	}

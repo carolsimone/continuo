@@ -157,7 +157,7 @@ func versionBatches(in codeversion.WriteInput, size int) []codeversion.WriteInpu
 // closureRefs expands a node's direct shared-code dependencies into the full
 // transitive set in scope, so the recorded edges name every unit whose source
 // folds into the node's shared-code hash. An id absent from the map is skipped:
-// the bundle exports only the units its nodes reach, so a missing one is a
+// the bundle carries only the units its nodes reach, so a missing one is a
 // producer defect, not a reason to drop the whole version. The seen set also
 // makes a dependency cycle terminate.
 func closureRefs(direct []string, shared map[string]codebundle.SharedCodeUnit) []codeversion.UnitRef {

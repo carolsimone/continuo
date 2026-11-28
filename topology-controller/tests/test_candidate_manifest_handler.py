@@ -8,7 +8,7 @@ import pytest
 import botocore.exceptions
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
-from domain.model import FailedNode, ManifestFile, Runtime, SeedExtras, SkipReason
+from domain.model import FailedNode, ManifestFile, Runtime, SeedExtras, ExclusionReason
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
@@ -1427,7 +1427,7 @@ def test_a_release_logs_one_release_line(caplog):
     (line,) = _release_lines(caplog)
     assert (line.levelno, line.release_id, line.outcome, line.nodes) == (
         logging.INFO, "rel-1", "ok", {"dbt": 2, "python": 0, "external": 0})
-    assert line.skipped == {"no_owner": 0, "local_stub": 0, "installed_package": 0}
+    assert line.excluded == {"no_owner": 0, "local_stub": 0, "installed_package": 0}
     assert line.dormant == {}
     assert list(line.stages_ms) == [stage.value for stage in Stage]
     assert not hasattr(line, "failure_kind")
@@ -1448,7 +1448,7 @@ def test_the_download_is_logged_before_it_starts_with_the_manifest_count(caplog)
     assert timings.stages[Stage.DOWNLOAD].counts == {"manifests": 1, "bytes": 1580}
 
 
-def _skipping_manifest(tmp_path, *nodes):
+def _excluding_manifest(tmp_path, *nodes):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps({"macros": {}, "nodes": {n["unique_id"]: n for n in nodes}}))
     return str(path)
@@ -1461,32 +1461,32 @@ def _model(name, *, owner="team-a", tags=("daily",)):
             "checksum": {"checksum": name}, "compiled_code": "select 1"}
 
 
-def test_each_skipped_node_is_logged_at_info_with_its_release_project_and_reason(tmp_path, caplog):
-    path = _skipping_manifest(tmp_path, _model("kept"), _model("no_owner", owner=None),
+def test_each_excluded_model_is_logged_at_info_with_its_release_project_and_reason(tmp_path, caplog):
+    path = _excluding_manifest(tmp_path, _model("kept"), _model("no_owner", owner=None),
                               _model("stub", tags=("local_stub",)), _model("no_owner_no_tag", owner=None, tags=()))
     with caplog.at_level(logging.INFO):
         timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
-    skips = [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
-    assert [(r.levelno, r.release_id, r.project, r.node_id, r.reason) for r in skips] == [
+    exclusions = [r for r in caplog.records if r.getMessage() == "candidate: model excluded"]
+    assert [(r.levelno, r.release_id, r.project, r.node_id, r.reason) for r in exclusions] == [
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner", "no_owner"),
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.stub", "local_stub"),
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner_no_tag", "no_owner")]
-    assert timings.skipped == {SkipReason.NO_OWNER: 2, SkipReason.LOCAL_STUB: 1, SkipReason.INSTALLED_PACKAGE: 0}
+    assert timings.excluded == {ExclusionReason.NO_OWNER: 2, ExclusionReason.LOCAL_STUB: 1, ExclusionReason.INSTALLED_PACKAGE: 0}
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-def test_a_model_with_an_owner_and_no_tag_is_kept_not_skipped_and_counted_dormant(tmp_path, caplog):
-    path = _skipping_manifest(tmp_path, _model("kept"), _model("untagged", tags=()))
+def test_a_model_with_an_owner_and_no_tag_is_kept_not_excluded_and_counted_dormant(tmp_path, caplog):
+    path = _excluding_manifest(tmp_path, _model("kept"), _model("untagged", tags=()))
     with caplog.at_level(logging.INFO):
         timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
-    assert not [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
+    assert not [r for r in caplog.records if r.getMessage() == "candidate: model excluded"]
     assert timings.nodes == {"dbt": 2, "python": 0, "external": 0}
     assert timings.dormant == {"svc-a": 1}
     (line,) = _release_lines(caplog)
-    assert (line.skipped, line.dormant) == ({"no_owner": 0, "local_stub": 0, "installed_package": 0}, {"svc-a": 1})
+    assert (line.excluded, line.dormant) == ({"no_owner": 0, "local_stub": 0, "installed_package": 0}, {"svc-a": 1})
 
 
-def test_an_untagged_node_of_an_installed_package_is_skipped_and_the_release_is_published(caplog):
+def test_an_untagged_node_of_an_installed_package_is_excluded_and_the_release_is_published(caplog):
     """dbt gives the models of an installed package the project's top-level
     owner, so the manifest of project shop-core holds untagged nodes of the
     package evalpkg. They are left out, so the project check passes, and the
@@ -1506,9 +1506,9 @@ def test_an_untagged_node_of_an_installed_package_is_skipped_and_the_release_is_
         "analytics.pkg_model": ("", "unknown-external", ""),
     }
     assert by_id["analytics.orders"]["upstream_unique_ids"] == ["analytics.pkg_model"]
-    assert timings.skipped == {SkipReason.NO_OWNER: 1, SkipReason.LOCAL_STUB: 0, SkipReason.INSTALLED_PACKAGE: 2}
-    skips = [(r.project, r.node_id, r.reason) for r in caplog.records if r.getMessage() == "candidate: node skipped"]
-    assert skips == [
+    assert timings.excluded == {ExclusionReason.NO_OWNER: 1, ExclusionReason.LOCAL_STUB: 0, ExclusionReason.INSTALLED_PACKAGE: 2}
+    exclusions = [(r.project, r.node_id, r.reason) for r in caplog.records if r.getMessage() == "candidate: model excluded"]
+    assert exclusions == [
         ("evalpkg", "model.evalpkg.pkg_model", "installed_package"),
         ("evalpkg", "seed.evalpkg.pkg_seed", "installed_package"),
         ("evalpkg", "model.evalpkg.pkg_no_owner", "no_owner"),
@@ -1533,7 +1533,7 @@ def test_a_tagged_node_of_an_installed_package_still_fails_the_project_check(tmp
 
 def test_a_dormant_node_enters_the_topology_the_code_bundle_and_the_candidate_schema(tmp_path):
     uploader, bundle_uploader, writer = make_uploader(), FakeBundleUploader(), RecordingArtifactWriter()
-    path = _skipping_manifest(tmp_path, _model("untagged", tags=()))
+    path = _excluding_manifest(tmp_path, _model("untagged", tags=()))
     build_handler(source_of(ManifestFile(path=path)), MagicMock(), uploader, bundle_uploader=bundle_uploader,
                   artifact_writer=writer).handle(release_id="rel-1")
     (node,) = writer.nodes
@@ -1543,16 +1543,16 @@ def test_a_dormant_node_enters_the_topology_the_code_bundle_and_the_candidate_sc
     assert [c.kwargs["unique_id"] for c in uploader.upload.call_args_list] == ["analytics.untagged"]
 
 
-def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(tmp_path, caplog):
-    path = _skipping_manifest(tmp_path, _model("a", owner=None), _model("b", owner=None))
+def test_a_manifest_whose_every_model_is_excluded_logs_the_exclusions_before_it_fails(tmp_path, caplog):
+    path = _excluding_manifest(tmp_path, _model("a", owner=None), _model("b", owner=None))
     publisher = MagicMock()
     with caplog.at_level(logging.INFO):
         build_handler(source_of(ManifestFile(path=path, declared_project="svc-a")), publisher,
                  make_uploader()).handle(release_id="rel-1")
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert len([r for r in caplog.records if r.getMessage() == "candidate: node skipped"]) == 2
+    assert len([r for r in caplog.records if r.getMessage() == "candidate: model excluded"]) == 2
     (line,) = _release_lines(caplog)
-    assert (line.outcome, line.failure_kind, line.skipped["no_owner"]) == ("failed", "invalid_artifact", 2)
+    assert (line.outcome, line.failure_kind, line.excluded["no_owner"]) == ("failed", "invalid_artifact", 2)
 
 
 class _RecordingReleaseObserver:
@@ -1572,7 +1572,7 @@ def test_the_observer_gets_each_published_release_once():
 
 def test_the_observer_gets_a_failed_release_with_its_failure_kind(tmp_path):
     observer = _RecordingReleaseObserver()
-    path = _skipping_manifest(tmp_path, _model("a", owner=None))
+    path = _excluding_manifest(tmp_path, _model("a", owner=None))
     timings = build_handler(source_of(ManifestFile(path=path, declared_project="svc-a")), MagicMock(),
                        make_uploader(), observer=observer).handle(release_id="rel-1")
     assert observer.finished == [timings]

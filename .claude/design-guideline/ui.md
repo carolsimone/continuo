@@ -1223,7 +1223,7 @@ Rules:
   pill; `running`, `succeeded`, `failed`, `cancelled` and `stopped` get their own.
 - Task status pills (`.pill-sm--dispatched`, `.pill-sm--queued`) are neutral,
   like pending: nothing of the task runs yet. A `queued` pill carries the
-  title "waiting for a slot" (`taskStatusTitle`). Wherever task statuses are
+  title "waiting for Job capacity" (`taskStatusTitle`). Wherever task statuses are
   ordered or counted (the nodes table, the run-progress header, the swimlane
   legend, a service's rolled-up status, the dashboard run card's counts)
   dispatched and queued come just before running.

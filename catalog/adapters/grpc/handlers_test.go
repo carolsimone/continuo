@@ -512,7 +512,7 @@ func TestGetPrecedents_MapsEntries(t *testing.T) {
 	pr := &fakePrecedentHistoryReader{
 		precedents: []casebase.Precedent{
 			{
-				Rejection: casebase.Rejection{
+				Failure: casebase.FailurePrecedent{
 					ReleaseID: "rel-1", NodeID: "svc.schema.tbl", Stage: "validation",
 					Category: "compile_error", Reason: "syntax_error",
 					ErrorExcerpt: "unexpected token", At: rejectedAt, RawCode: "select 1 !",
@@ -564,8 +564,8 @@ func TestGetPrecedents_MapsEditedProvenance(t *testing.T) {
 	pr := &fakePrecedentHistoryReader{
 		precedents: []casebase.Precedent{
 			{
-				Rejection: casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
-				Resolved:  true,
+				Failure:  casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+				Resolved: true,
 				Edited: []casebase.EditedView{
 					{NodeID: "svc.schema.upstream", Path: "models/upstream.sql", Amended: true, Diff: "-a\n+b\n", DiffIsShipped: true},
 				},
@@ -595,8 +595,8 @@ func TestGetPrecedents_MapsDiffIsShipped(t *testing.T) {
 	pr := &fakePrecedentHistoryReader{
 		precedents: []casebase.Precedent{
 			{
-				Rejection: casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
-				Resolved:  true,
+				Failure:  casebase.FailurePrecedent{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+				Resolved: true,
 				Edited: []casebase.EditedView{
 					{NodeID: "svc.schema.shipped", Path: "models/shipped.sql", Amended: true, Diff: "-a\n+b\n", DiffIsShipped: true},
 					{NodeID: "svc.schema.fallback", Path: "models/fallback.sql", Amended: true, Diff: "-c\n+d\n", DiffIsShipped: false},

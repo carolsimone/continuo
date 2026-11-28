@@ -377,14 +377,14 @@ func (h *QueryHandler) GetNodeDataContractDiff(ctx context.Context, req *catalog
 
 func precedentToProto(p casebase.Precedent) *catalogv1.Precedent {
 	pb := &catalogv1.Precedent{
-		ReleaseId:               p.Rejection.ReleaseID,
-		NodeId:                  p.Rejection.NodeID,
-		Stage:                   p.Rejection.Stage,
-		Category:                p.Rejection.Category,
-		Reason:                  p.Rejection.Reason,
-		ErrorExcerpt:            p.Rejection.ErrorExcerpt,
-		RejectedAt:              p.Rejection.At.UTC().Format(time.RFC3339),
-		FailingCode:             p.Rejection.RawCode,
+		ReleaseId:               p.Failure.ReleaseID,
+		NodeId:                  p.Failure.NodeID,
+		Stage:                   p.Failure.Stage,
+		Category:                p.Failure.Category,
+		Reason:                  p.Failure.Reason,
+		ErrorExcerpt:            p.Failure.ErrorExcerpt,
+		RejectedAt:              p.Failure.At.UTC().Format(time.RFC3339),
+		FailingCode:             p.Failure.RawCode,
 		Resolved:                p.Resolved,
 		ResolutionDiff:          p.ResolutionDiff,
 		ResolutionDiffTruncated: p.ResolutionDiffTruncated,

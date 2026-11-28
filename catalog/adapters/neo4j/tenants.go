@@ -9,7 +9,7 @@ import (
 )
 
 // graphTenantsCypher lists the tenants that hold a :Meta node. Every write
-// MERGEs its tenant's export lease node, a :Meta, so every tenant the catalog
+// MERGEs its tenant's backup lease node, a :Meta, so every tenant the catalog
 // has written for is listed. It reads every tenant, so the Cypher tenant
 // guard exempts this file.
 const graphTenantsCypher = `

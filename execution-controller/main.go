@@ -304,7 +304,7 @@ func main() {
 	runWorker("outbox_processor", outboxProcessor.Run)
 
 	// The dispatcher wakes on the notification the deployments table's
-	// triggers send when a deployment is accepted or a slot is released, so
+	// triggers send when a deployment is accepted or Job capacity is released, so
 	// queued work starts without waiting for the 5 s poll.
 	dispatcherWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.DeploymentsChannel, logger)
 	if errors.Is(err, context.Canceled) {

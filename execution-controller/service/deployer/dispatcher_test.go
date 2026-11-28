@@ -145,7 +145,7 @@ func failedReport(t *testing.T, db *sqlx.DB) pkgevents.TaskStatusReport {
 	return got
 }
 
-// seedRunning inserts a deployable row already holding a slot.
+// seedRunning inserts a deployable row already holding Job capacity.
 func seedRunning(t *testing.T, db *sqlx.DB) uuid.UUID {
 	t.Helper()
 	id := seedJob(t, db, 3, 0)
@@ -426,7 +426,7 @@ func TestDispatcher_CapCountsInFlightRows(t *testing.T) {
 
 	require.NoError(t, newTestDispatcher(db, fk, 4).ProcessBatch(context.Background()))
 
-	assert.Equal(t, 1, fk.calls(), "three running rows leave one slot under a cap of four")
+	assert.Equal(t, 1, fk.calls(), "three running rows leave room for one under a Job capacity of four")
 	assert.Equal(t, 1, countByStatus(t, db, "starting"))
 	assert.Equal(t, 4, countByStatus(t, db, "pending"))
 
@@ -487,7 +487,7 @@ func TestDispatcher_ConcurrentClaimsNeverExceedTheCap(t *testing.T) {
 	assert.Equal(t, 3, fk.calls())
 }
 
-func TestDispatcher_TransientFailureFreesTheSlot(t *testing.T) {
+func TestDispatcher_TransientFailureFreesItsCapacity(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	id := seedJob(t, db, 3, 0)

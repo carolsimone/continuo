@@ -53,7 +53,7 @@ func PkgConstantsForTest() map[string]string {
 		"ExecutionControllerReleaseCheckFinished": ExecutionControllerReleaseCheckFinished,
 		"RemediationRoundRequested": RemediationRoundRequested,
 		"AgentRemediationHealTriggered": AgentRemediationHealTriggered,
-		"CatalogHealTriggeredRejections": CatalogHealTriggeredRejections,
+		"CatalogHealTriggeredFailurePrecedents": CatalogHealTriggeredFailurePrecedents,
 		"CatalogFixPrOpenedFixes": CatalogFixPrOpenedFixes,
 		"CatalogFixPrClosedProvenance": CatalogFixPrClosedProvenance,
 	}

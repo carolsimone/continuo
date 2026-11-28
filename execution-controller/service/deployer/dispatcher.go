@@ -1,6 +1,6 @@
 // Package deployer holds the application service that drains the deployments
-// command queue: it admits queued deployments to execution slots under a
-// concurrency cap and creates their K8s Jobs, and writes the report of a
+// command queue: it admits queued deployments within Job capacity and
+// creates their K8s Jobs, and writes the report of a
 // deployment that cannot be deployed. The observer follows each created Job to
 // its end. It depends only on domain ports.
 package deployer
@@ -52,8 +52,8 @@ type DispatcherConfig struct {
 	BatchSize   int           // max deployments reserved per claim; default 50
 	BackoffBase time.Duration // first retry delay; default 5s
 	BackoffCap  time.Duration // max retry delay; default 2m
-	// Waker wakes the dispatcher when a deployment is accepted or a slot is
-	// released; Tick is then the fallback for retries coming due and for
+	// Waker wakes the dispatcher when a deployment is accepted or Job capacity
+	// is released; Tick is then the fallback for retries coming due and for
 	// notifications lost while the listener reconnects. Without a Waker the
 	// dispatcher runs only on Tick.
 	Waker outbox.Waker
@@ -165,7 +165,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	}
 }
 
-// ProcessBatch claims free slots for due deployments and launches each claimed
+// ProcessBatch claims free Job capacity for due deployments and launches each claimed
 // deployment, repeating while a claim fills a whole batch. Exported for tests.
 func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 	for {
@@ -188,10 +188,10 @@ func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 	}
 }
 
-// claim reserves slots in one transaction: it locks the global capacity
-// record, counts the deployments holding a slot, and reserves up to the
+// claim reserves Job capacity in one transaction: it locks the global capacity
+// record, counts the deployments holding Job capacity, and reserves up to the
 // headroom in fair order. Every dispatcher serialises on that lock, so together
-// they never hold more than maxConcurrent slots. The lock is released at
+// they never hold more than maxConcurrent deployments. The lock is released at
 // commit, before any Job is created.
 func (d *Dispatcher) claim(ctx context.Context) ([]uuid.UUID, error) {
 	tx, err := d.db.BeginTxx(ctx, nil)
@@ -215,7 +215,7 @@ func (d *Dispatcher) claim(ctx context.Context) ([]uuid.UUID, error) {
 			return nil, err
 		}
 	} else {
-		d.logger.Debug("Deploy cap reached — deployments wait for a slot",
+		d.logger.Debug("Job capacity reached — deployments wait for capacity",
 			"in_flight", inFlight, "max_concurrent", d.maxConcurrent)
 	}
 	if err := tx.Commit(); err != nil {
