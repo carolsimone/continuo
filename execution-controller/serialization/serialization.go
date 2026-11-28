@@ -31,50 +31,50 @@ type DeployTaskDTO struct {
 	Operation      string `json:"operation"`
 	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
 	ContentHash    string `json:"content_hash,omitempty"`
-	// SeedPreflight is stored in the shape the dispatch carried it, so a Job
+	// DependentsCheck is stored in the shape the dispatch carried it, so a Job
 	// created or adopted after a restart still runs the check.
-	SeedPreflight *pkgevents.SeedPreflight `json:"seed_preflight,omitempty"`
+	DependentsCheck *pkgevents.DependentsCheck `json:"dependents_check,omitempty"`
 }
 
 // DeployTaskFromDomain maps a domain command to its DTO.
 func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 	return DeployTaskDTO{
-		TaskID:         c.TaskID,
-		RunID:          c.RunID,
-		ScheduleName:   c.ScheduleName,
-		ProjectName:    c.ProjectName,
-		SchemaName:     c.SchemaName,
-		TableName:      c.TableName,
-		JobName:        c.JobName,
-		NodeType:       c.NodeType,
-		ImageTag:       c.ImageTag,
-		SecretRef:      c.SecretRef,
-		Attempt:        c.Attempt,
-		Operation:      c.Operation,
-		TimeoutSeconds: c.TimeoutSeconds,
-		ContentHash:    c.ContentHash,
-		SeedPreflight:  pkgevents.SeedPreflightOf(c.SeedPreflight),
+		TaskID:          c.TaskID,
+		RunID:           c.RunID,
+		ScheduleName:    c.ScheduleName,
+		ProjectName:     c.ProjectName,
+		SchemaName:      c.SchemaName,
+		TableName:       c.TableName,
+		JobName:         c.JobName,
+		NodeType:        c.NodeType,
+		ImageTag:        c.ImageTag,
+		SecretRef:       c.SecretRef,
+		Attempt:         c.Attempt,
+		Operation:       c.Operation,
+		TimeoutSeconds:  c.TimeoutSeconds,
+		ContentHash:     c.ContentHash,
+		DependentsCheck: pkgevents.DependentsCheckOf(c.DependentsCheck),
 	}
 }
 
 // ToDomain maps a decoded DTO back to the domain command.
 func (d DeployTaskDTO) ToDomain() command.DeployTask {
 	return command.DeployTask{
-		TaskID:         d.TaskID,
-		RunID:          d.RunID,
-		ScheduleName:   d.ScheduleName,
-		ProjectName:    d.ProjectName,
-		SchemaName:     d.SchemaName,
-		TableName:      d.TableName,
-		JobName:        d.JobName,
-		NodeType:       d.NodeType,
-		ImageTag:       d.ImageTag,
-		SecretRef:      d.SecretRef,
-		Attempt:        d.Attempt,
-		Operation:      d.Operation,
-		TimeoutSeconds: d.TimeoutSeconds,
-		ContentHash:    d.ContentHash,
-		SeedPreflight:  d.SeedPreflight.ToDomain(),
+		TaskID:          d.TaskID,
+		RunID:           d.RunID,
+		ScheduleName:    d.ScheduleName,
+		ProjectName:     d.ProjectName,
+		SchemaName:      d.SchemaName,
+		TableName:       d.TableName,
+		JobName:         d.JobName,
+		NodeType:        d.NodeType,
+		ImageTag:        d.ImageTag,
+		SecretRef:       d.SecretRef,
+		Attempt:         d.Attempt,
+		Operation:       d.Operation,
+		TimeoutSeconds:  d.TimeoutSeconds,
+		ContentHash:     d.ContentHash,
+		DependentsCheck: d.DependentsCheck.ToDomain(),
 	}
 }
 
@@ -99,9 +99,9 @@ type ValidationDeployTaskDTO struct {
 	ParseProdS3URI       string   `json:"parse_prod_s3_uri,omitempty"`
 	ParseCandidateS3URI  string   `json:"parse_candidate_s3_uri,omitempty"`
 	SourceOverlayURI     string   `json:"source_overlay_uri,omitempty"`
-	// SeedPreflight is stored in the shape the request carried it, so a
-	// seed-build Job created after a restart runs the same preflight.
-	SeedPreflight *pkgevents.SeedPreflight `json:"seed_preflight,omitempty"`
+	// DependentsCheck is stored in the shape the request carried it, so a
+	// seed-build Job created after a restart runs the same dependents check.
+	DependentsCheck *pkgevents.DependentsCheck `json:"dependents_check,omitempty"`
 }
 
 // ValidationDeployTaskFromDomain maps a domain command to its DTO.
@@ -124,7 +124,7 @@ func ValidationDeployTaskFromDomain(c command.ValidationDeployTask) ValidationDe
 		ParseProdS3URI:       c.ParseProdS3URI,
 		ParseCandidateS3URI:  c.ParseCandidateS3URI,
 		SourceOverlayURI:     c.SourceOverlayURI,
-		SeedPreflight:        pkgevents.SeedPreflightOf(c.SeedPreflight),
+		DependentsCheck:      pkgevents.DependentsCheckOf(c.DependentsCheck),
 	}
 }
 
@@ -148,6 +148,6 @@ func (d ValidationDeployTaskDTO) ToDomain() command.ValidationDeployTask {
 		ParseProdS3URI:       d.ParseProdS3URI,
 		ParseCandidateS3URI:  d.ParseCandidateS3URI,
 		SourceOverlayURI:     d.SourceOverlayURI,
-		SeedPreflight:        d.SeedPreflight.ToDomain(),
+		DependentsCheck:      d.DependentsCheck.ToDomain(),
 	}
 }

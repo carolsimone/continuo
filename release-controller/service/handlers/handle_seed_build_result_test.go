@@ -621,7 +621,7 @@ func TestHandleSeedBuildResult_AddsTheWarehouseFindingsToTheNotice(t *testing.T)
 
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
 		ReleaseID: "rel-findings-ok", Status: "ok",
-		PerNode: []handlers.NodeResult{{NodeID: "analytics.seed_fx_rates_eur", Status: "ok", SeedPreflight: fxFindings()}},
+		PerNode: []handlers.NodeResult{{NodeID: "analytics.seed_fx_rates_eur", Status: "ok", DependentsCheck: fxFindings()}},
 	}))
 
 	r := mustGetRelease(t, store, "rel-findings-ok")
@@ -634,7 +634,7 @@ func TestHandleSeedBuildResult_AddsTheWarehouseFindingsToTheNoticeOnAFailedLeg(t
 
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
 		ReleaseID: "rel-findings-failed", Status: "failed", ErrorDetail: "load failed",
-		PerNode: []handlers.NodeResult{{NodeID: "analytics.seed_fx_rates_eur", Status: "failed", SeedPreflight: fxFindings()}},
+		PerNode: []handlers.NodeResult{{NodeID: "analytics.seed_fx_rates_eur", Status: "failed", DependentsCheck: fxFindings()}},
 	}))
 
 	r := mustGetRelease(t, store, "rel-findings-failed")
@@ -649,7 +649,7 @@ func TestHandleSeedBuildResult_AnEntryWithoutFindingsLeavesTheNoticeAlone(t *tes
 		ReleaseID: "rel-findings-none", Status: "ok",
 		PerNode: []handlers.NodeResult{
 			{NodeID: "analytics.seed_fx_rates_eur", Status: "ok"},
-			{NodeID: "analytics.not_a_noticed_seed", Status: "ok", SeedPreflight: fxFindings()},
+			{NodeID: "analytics.not_a_noticed_seed", Status: "ok", DependentsCheck: fxFindings()},
 		},
 	}))
 

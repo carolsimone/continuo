@@ -765,20 +765,20 @@ func TestDeployment_RecordProbesSetsThemOnFindingsThatHoldNone(t *testing.T) {
 	probe := []seedreload.Probe{{Schema: "bi", Name: "v", OK: true}}
 	findings := &seedreload.Findings{Checked: true}
 	d := model.NewDeployment(deployableCmd(), nil, time.Now())
-	d.Observe(model.AttemptFacts{SeedPreflight: findings})
+	d.Observe(model.AttemptFacts{DependentsCheck: findings})
 
 	assert.True(t, d.RecordProbes(probe))
 
-	assert.Equal(t, probe, d.Facts().SeedPreflight.Probes)
+	assert.Equal(t, probe, d.Facts().DependentsCheck.Probes)
 	assert.Empty(t, findings.Probes, "the findings the caller holds are not changed")
 	assert.False(t, d.RecordProbes([]seedreload.Probe{{Schema: "bi", Name: "w"}}), "probes already set stay")
-	assert.Equal(t, probe, d.Facts().SeedPreflight.Probes)
+	assert.Equal(t, probe, d.Facts().DependentsCheck.Probes)
 }
 
 func TestDeployment_RecordProbesNeedsFindingsAndProbes(t *testing.T) {
 	d := model.NewDeployment(deployableCmd(), nil, time.Now())
 	assert.False(t, d.RecordProbes([]seedreload.Probe{{Schema: "bi", Name: "v"}}), "no findings")
-	d.Observe(model.AttemptFacts{SeedPreflight: &seedreload.Findings{}})
+	d.Observe(model.AttemptFacts{DependentsCheck: &seedreload.Findings{}})
 	assert.False(t, d.RecordProbes(nil), "no probes")
-	assert.Nil(t, d.Facts().SeedPreflight.Probes)
+	assert.Nil(t, d.Facts().DependentsCheck.Probes)
 }

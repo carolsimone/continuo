@@ -11,16 +11,16 @@ import (
 )
 
 // SeedReload is the plan of one seed's load in a run: the seed, what the load
-// and the rebuilds of the views it drops are, and the preflight its task runs.
+// and the rebuilds of the views it drops are, and the dependents check its task runs.
 type SeedReload struct {
-	Seed      topology.NodeKey
-	Plan      seedreload.Plan
-	Preflight *seedreload.Preflight
+	Seed            topology.NodeKey
+	Plan            seedreload.Plan
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 // ApplySeedReloads returns p with each reload merged in. g holds every node of
 // p and every rebuild. The reloads apply in seed-key order. A seed's task
-// takes the load's reason, preflight and refusal, and its operation when that
+// takes the load's reason, dependents check and refusal, and its operation when that
 // differs from runOperation. Each rebuild becomes a pending task, an
 // inherited one pending again, with its operation under the same rule; the
 // first reload that names a rebuild sets its reason and the seed it rebuilds
@@ -43,7 +43,7 @@ func ApplySeedReloads(p Plan, g topology.Graph, runOperation model.Operation, re
 		}
 		task.Operation = ownOperation(r.Plan.Load.Operation, runOperation)
 		task.Reason = r.Plan.Load.Reason
-		task.Preflight = r.Preflight
+		task.DependentsCheck = r.DependentsCheck
 		task.Refusal = r.Plan.Load.Refusal
 		byKey[r.Seed] = task
 		for _, rb := range r.Plan.Rebuilds {

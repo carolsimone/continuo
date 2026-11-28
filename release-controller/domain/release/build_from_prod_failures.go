@@ -24,15 +24,15 @@ type NodeOutcome struct {
 
 // splitValidationFailures sorts the nodes that failed validation by how the
 // validation leg prepared them. rebuilt holds the nodes built from their own
-// candidate code; every other validation node is an unchanged upstream cloned
+// candidate code; every other validation node is an unchanged upstream built
 // empty from its production table.
 //
-// A built node that fails points at the release's code. A cloned node that
-// fails points at its production table, which no code change can repair: the
-// table may never have been built, may have been dropped, or may not be
-// readable. A node that passed or was skipped is in neither list. Both lists
-// are sorted by id.
-func splitValidationFailures(results []NodeOutcome, rebuilt map[string]bool) (built, cloned []string) {
+// A node built from its code that fails points at the release's code. A node
+// built from production that fails points at its production table, which no
+// code change can repair: the table may never have been built, may have been
+// dropped, or may not be readable. A node that passed or was skipped is in
+// neither list. Both lists are sorted by id.
+func splitValidationFailures(results []NodeOutcome, rebuilt map[string]bool) (built, fromProd []string) {
 	for _, r := range results {
 		if r.Status == NodeStatusOK || r.Status == NodeStatusSkipped {
 			continue
@@ -40,12 +40,12 @@ func splitValidationFailures(results []NodeOutcome, rebuilt map[string]bool) (bu
 		if rebuilt[r.NodeID] {
 			built = append(built, r.NodeID)
 		} else {
-			cloned = append(cloned, r.NodeID)
+			fromProd = append(fromProd, r.NodeID)
 		}
 	}
 	sort.Strings(built)
-	sort.Strings(cloned)
-	return built, cloned
+	sort.Strings(fromProd)
+	return built, fromProd
 }
 
 // ValidationRejection is how a failed validation rejects its release: the
@@ -59,46 +59,48 @@ type ValidationRejection struct {
 // DecideValidationRejection decides how a failed validation rejects its
 // release. results holds every validation node's stored outcome, rebuilt the
 // nodes built from their own candidate code (every other validation node is
-// copied empty from its production table), failing the nodes that did not
+// built empty from its production table), failing the nodes that did not
 // pass, skipped ones included, and summary the explanation of the failure
 // (SummarizeValidationFailure).
 //
-// A failed copy failed on its production table, not on the release's code:
-//   - Only copies failed: the reason is upstream_clone_failed, the failing
-//     nodes are the copies, and the detail asks the operator to run them
-//     (SummarizeCloneFailure).
-//   - A built node failed too: the reason stays validation_failed, the
-//     failing nodes are every node of failing but the copies, and the detail
-//     is the summary followed by ". " and the sentence about the copies.
-//   - No copy failed: the reason is validation_failed, the failing nodes are
-//     failing, and the detail is the summary.
+// A node built from production that failed failed on its production table,
+// not on the release's code:
+//   - Only nodes built from production failed: the reason is
+//     upstream_build_from_prod_failed, the failing nodes are those nodes, and
+//     the detail asks the operator to run them (SummarizeBuildFromProdFailure).
+//   - A node built from its code failed too: the reason stays
+//     validation_failed, the failing nodes are every node of failing but the
+//     nodes built from production, and the detail is the summary followed by
+//     ". " and the sentence about the nodes built from production.
+//   - No node built from production failed: the reason is validation_failed,
+//     the failing nodes are failing, and the detail is the summary.
 //
 // The failing nodes come out sorted by id, whatever order failing is in.
 func DecideValidationRejection(results []NodeOutcome, rebuilt map[string]bool, failing []string, summary string) ValidationRejection {
-	built, cloned := splitValidationFailures(results, rebuilt)
+	built, fromProd := splitValidationFailures(results, rebuilt)
 	switch {
-	case len(cloned) > 0 && len(built) == 0:
+	case len(fromProd) > 0 && len(built) == 0:
 		return ValidationRejection{
-			Reason:       pkg_model.RejectReasonUpstreamCloneFailed,
-			Detail:       SummarizeCloneFailure(cloned),
-			FailingNodes: cloned,
+			Reason:       pkg_model.RejectReasonUpstreamBuildFromProdFailed,
+			Detail:       SummarizeBuildFromProdFailure(fromProd),
+			FailingNodes: fromProd,
 		}
-	case len(cloned) > 0:
-		isCloned := make(map[string]bool, len(cloned))
-		for _, id := range cloned {
-			isCloned[id] = true
+	case len(fromProd) > 0:
+		isFromProd := make(map[string]bool, len(fromProd))
+		for _, id := range fromProd {
+			isFromProd[id] = true
 		}
-		var notCloned []string
+		var notFromProd []string
 		for _, id := range failing {
-			if !isCloned[id] {
-				notCloned = append(notCloned, id)
+			if !isFromProd[id] {
+				notFromProd = append(notFromProd, id)
 			}
 		}
-		sort.Strings(notCloned)
+		sort.Strings(notFromProd)
 		return ValidationRejection{
 			Reason:       pkg_model.RejectReasonValidationFailed,
-			Detail:       summary + ". " + SummarizeCloneFailure(cloned),
-			FailingNodes: notCloned,
+			Detail:       summary + ". " + SummarizeBuildFromProdFailure(fromProd),
+			FailingNodes: notFromProd,
 		}
 	}
 	return ValidationRejection{

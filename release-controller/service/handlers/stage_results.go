@@ -25,9 +25,9 @@ type NodeResult struct {
 	// for successes and for non-compile legs.
 	FailedContainer string
 
-	// SeedPreflight is what the seed's report preflight found in the warehouse.
+	// DependentsCheck is what the seed's report dependents check found in the warehouse.
 	// Nil for any node whose result carries no findings.
-	SeedPreflight *seedreload.Findings
+	DependentsCheck *seedreload.Findings
 }
 
 // stageResults converts the inbound per-node wire results of a compile or

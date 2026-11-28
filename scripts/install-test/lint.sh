@@ -944,11 +944,11 @@ done
 if grep -qF "$schedules_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the schedules upgrade note"; exit 1
 fi
-# An upgrading operator is told once that a validation image below v0.12.0 must
+# An upgrading operator is told once that a validation image below v0.15.0 must
 # be re-pinned; an installing one is told nothing.
-repin_note='A validation.imageTag below v0.12.0 fails the render'
+repin_note='A validation.imageTag below v0.15.0 fails the render'
 [ "$(grep -cF "$repin_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
-  || { echo "FAIL: the upgrade notes do not say exactly once that a validation image below v0.12.0 must be re-pinned"; exit 1; }
+  || { echo "FAIL: the upgrade notes do not say exactly once that a validation image below v0.15.0 must be re-pinned"; exit 1; }
 if grep -qF "$repin_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the validation re-pin note"; exit 1
 fi
@@ -1179,7 +1179,7 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set ciAuth=null
 python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ciauth-null.yaml" continuo --default-ci-auth
 
 # The "continuo-api-" Secret-name prefix is reserved for the operator-created
-# Secrets a python-api node contract may name. A chart fullname inside it would
+# Secrets a python-api node's data contract may name. A chart fullname inside it would
 # name every chart-created Secret inside it, and so would a user-supplied
 # Secret name; either would let a contract receive platform credentials. The
 # render must fail with the reserved-prefix message, and a name that merely
@@ -1693,13 +1693,27 @@ if ! helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set llm.ba
 fi
 
 # The validation image gate refuses a runner that cannot run what continuo
-# sends it: below v0.12.0 there is no seed_preflight, which every seed load
-# that drops its table runs first.
-echo "--- validation: the image gate refuses a runner below v0.12.0"
-for old in v0.5.0 v0.10.0 v0.11.0; do
-  refuse_render 'predates seed_preflight' --set "validation.imageTag=${old}"
+# sends it: below v0.15.0 the runner knows neither dependents_check, which
+# every seed load that drops its table runs first, nor build_from_prod, which
+# every release check runs for an unchanged upstream.
+echo "--- validation: the image gate refuses a runner below v0.15.0"
+for old in v0.5.0 v0.10.0 v0.11.0 v0.12.0 v0.13.1 v0.14.0; do
+  refuse_render 'predates the dependents_check and build_from_prod ops' --set "validation.imageTag=${old}"
 done
-for ok in v0.12.0 v0.12.0@sha256:0000000000000000000000000000000000000000000000000000000000000000 v0.13.1; do
+# A v0.0.x tag is below every gate's floor too, so it is refused as well.
+refuse_render 'predates python-csv validation support' --set "validation.imageTag=v0.0.9"
+# The gate reads validation.engine and validation.imageTag, so a components
+# entry that sets VALIDATION_IMAGE itself, to anything but the placeholder the
+# chart fills from them, would run a runner the gate never saw: refused, in env
+# and in secretEnv.
+refuse_render 'components[name=execution-controller].env sets VALIDATION_IMAGE="ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"' \
+  --set-json 'components=[{"name":"execution-controller","enabled":true,"httpPort":8084,"env":{"VALIDATION_IMAGE":"ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"}}]'
+refuse_render 'components[name=execution-controller].secretEnv sets VALIDATION_IMAGE' \
+  --set-json 'components=[{"name":"execution-controller","enabled":true,"httpPort":8084,"secretEnv":[{"name":"VALIDATION_IMAGE","ref":"redis"}]}]'
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'components=[{"name":"execution-controller","enabled":true,"httpPort":8084,"env":{"VALIDATION_IMAGE":"__VALIDATION_IMAGE__"}}]' > /dev/null \
+  || { echo "FAIL: VALIDATION_IMAGE=__VALIDATION_IMAGE__ must render"; exit 1; }
+for ok in v0.15.0 v0.15.0@sha256:0000000000000000000000000000000000000000000000000000000000000000 v0.16.2; do
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "validation.imageTag=${ok}" > /dev/null \
     || { echo "FAIL: validation.imageTag=${ok} must render"; exit 1; }
 done

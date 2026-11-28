@@ -1877,10 +1877,10 @@ describe('NodeDetailPage — tabs', () => {
   };
 
   // Answers the contract with one version and every other read with an empty history.
-  function serveWithContract() {
+  function serveWithDataContract() {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === '/api/nodes/svc/schema/tbl/contract') {
+      if (url === '/api/nodes/svc/schema/tbl/data-contract') {
         return jsonResp({ contract: contractV1, versions: [{ ...contractV1, document_yaml: undefined }] });
       }
       return jsonResp({ tasks: [] });
@@ -1888,7 +1888,7 @@ describe('NodeDetailPage — tabs', () => {
   }
 
   const contractReads = () =>
-    mockFetch.mock.calls.filter(c => String(c[0]).startsWith('/api/nodes/svc/schema/tbl/contract'));
+    mockFetch.mock.calls.filter(c => String(c[0]).startsWith('/api/nodes/svc/schema/tbl/data-contract'));
 
   function renderAt(search: string) {
     return render(
@@ -1900,18 +1900,18 @@ describe('NodeDetailPage — tabs', () => {
     );
   }
 
-  it('shows the History and Contract tabs, History first and selected', async () => {
-    serveWithContract();
+  it('shows the History and Data contract tabs, History first and selected', async () => {
+    serveWithDataContract();
     renderAt('');
 
     const tabs = await screen.findAllByRole('tab');
-    expect(tabs.map(t => t.textContent)).toEqual(['History0', 'Contract']);
+    expect(tabs.map(t => t.textContent)).toEqual(['History0', 'Data contract']);
     expect(screen.getByRole('tab', { name: /^History/ })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Contract' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'Data contract' })).toHaveAttribute('aria-selected', 'false');
   });
 
   it('puts the tabs directly under the page header', async () => {
-    serveWithContract();
+    serveWithDataContract();
     const { container } = renderAt('');
 
     await screen.findAllByRole('tab');
@@ -1919,46 +1919,46 @@ describe('NodeDetailPage — tabs', () => {
   });
 
   it('shows the node history and reads no contract while History is selected', async () => {
-    serveWithContract();
+    serveWithDataContract();
     renderAt('');
 
     expect(await screen.findByText('Node history')).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'Current contract' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Current data contract' })).not.toBeInTheDocument();
     expect(contractReads()).toHaveLength(0);
   });
 
-  it('shows the contract and hides the node history when Contract is selected', async () => {
-    serveWithContract();
+  it('shows the data contract and hides the node history when Data contract is selected', async () => {
+    serveWithDataContract();
     const user = userEvent.setup();
     renderAt('');
 
-    await user.click(await screen.findByRole('tab', { name: 'Contract' }));
+    await user.click(await screen.findByRole('tab', { name: 'Data contract' }));
 
-    expect(await screen.findByRole('region', { name: 'Current contract' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Contract' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('region', { name: 'Current data contract' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Data contract' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText('Node history')).not.toBeInTheDocument();
     expect(contractReads()).toHaveLength(1);
   });
 
-  it('opens on the Contract tab for ?tab=contract', async () => {
-    serveWithContract();
-    renderAt('?tab=contract');
+  it('opens on the Data contract tab for ?tab=data-contract', async () => {
+    serveWithDataContract();
+    renderAt('?tab=data-contract');
 
-    expect(await screen.findByRole('region', { name: 'Current contract' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Current data contract' })).toBeInTheDocument();
     expect(screen.queryByText('Node history')).not.toBeInTheDocument();
   });
 
   it('falls back to History for an unknown tab', async () => {
-    serveWithContract();
+    serveWithDataContract();
     renderAt('?tab=nope');
 
     expect(await screen.findByText('Node history')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /^History/ })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('keeps the explanation of the chosen operation on the Contract tab, without the sentence about the history below', async () => {
-    serveWithContract();
-    renderAt('?tab=contract');
+  it('keeps the explanation of the chosen operation on the Data contract tab, without the sentence about the history below', async () => {
+    serveWithDataContract();
+    renderAt('?tab=data-contract');
 
     fireEvent.change(await screen.findByLabelText('Operation'), { target: { value: 'build' } });
     expect(await screen.findByText(/Build runs/)).toBeInTheDocument();
@@ -1966,7 +1966,7 @@ describe('NodeDetailPage — tabs', () => {
   });
 
   it('keeps the sentence about the history on the History tab', async () => {
-    serveWithContract();
+    serveWithDataContract();
     renderAt('');
 
     fireEvent.change(await screen.findByLabelText('Operation'), { target: { value: 'build' } });
@@ -1974,13 +1974,13 @@ describe('NodeDetailPage — tabs', () => {
   });
 
   it('keeps the back link to the schedule the page was opened from when a tab is clicked', async () => {
-    serveWithContract();
+    serveWithDataContract();
     const user = userEvent.setup();
     renderPage({ type: 'schedule', name: 'daily', mode: 'latest' });
 
     expect(await screen.findByRole('button', { name: /back to daily/i })).toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: 'Contract' }));
-    await screen.findByRole('region', { name: 'Current contract' });
+    await user.click(screen.getByRole('tab', { name: 'Data contract' }));
+    await screen.findByRole('region', { name: 'Current data contract' });
     await user.click(screen.getByRole('tab', { name: /^History/ }));
     await screen.findByText('Node history');
 
@@ -1988,19 +1988,19 @@ describe('NodeDetailPage — tabs', () => {
     expect(await screen.findByText('LATEST MODE')).toBeInTheDocument();
   });
 
-  it('counts the runs on the History tab and gives the Contract tab no count', async () => {
+  it('counts the runs on the History tab and gives the Data contract tab no count', async () => {
     mockFetch.mockImplementation(() => jsonResp({ tasks: [mkRun({ task_id: 't1' }), mkRun({ task_id: 't2', run_id: 'r2' })] }));
     renderAt('');
 
     await screen.findByText('Node history');
     // The heading renders before the history read lands, so the count is awaited.
     await waitFor(() => expect(screen.getByRole('tab', { name: /History/ })).toHaveTextContent('History2'));
-    expect(screen.getByRole('tab', { name: 'Contract' })).toHaveTextContent(/^Contract$/);
+    expect(screen.getByRole('tab', { name: 'Data contract' })).toHaveTextContent(/^Data contract$/);
   });
 
-  it('keeps the run controls on the Contract tab', async () => {
-    serveWithContract();
-    renderAt('?tab=contract');
+  it('keeps the run controls on the Data contract tab', async () => {
+    serveWithDataContract();
+    renderAt('?tab=data-contract');
 
     expect(await screen.findByRole('button', { name: /run this node/i })).toBeInTheDocument();
   });

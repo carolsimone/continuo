@@ -107,9 +107,9 @@ func TestIsHealableReasonMatchesTheContract(t *testing.T) {
 		pkg_model.RejectReasonDuplicateTable:       true,
 		pkg_model.RejectReasonInvalidSQL:           true,
 		pkg_model.RejectReasonUnqualifiedReference: true,
-		// A copied upstream whose production table could not be read is not a
-		// fault in the release's code: no fix can make the copy succeed.
-		pkg_model.RejectReasonUpstreamCloneFailed: false,
+		// An upstream built from production whose production table could not be read is not a
+		// fault in the release's code: no fix can make that build succeed.
+		pkg_model.RejectReasonUpstreamBuildFromProdFailed: false,
 	}
 	for _, reason := range pkg_model.RejectReasons() {
 		if got := IsHealableReason(string(reason)); got != healable[reason] {

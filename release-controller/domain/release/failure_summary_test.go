@@ -287,34 +287,34 @@ func TestSummarizeCompileFailure_SaysSoWhenNoNodeReportedAFailure(t *testing.T) 
 	assert.Equal(t, "dbt compile failed, but no per-node failure was recorded", SummarizeCompileFailure(nil))
 }
 
-func TestSummarizeCloneFailure(t *testing.T) {
+func TestSummarizeBuildFromProdFailure(t *testing.T) {
 	assert.Equal(t,
-		"Could not copy the production table of analytics.b. Run it, then release again.",
-		SummarizeCloneFailure([]string{"analytics.b"}))
+		"Could not build analytics.b from its production table. Run it, then release again.",
+		SummarizeBuildFromProdFailure([]string{"analytics.b"}))
 	assert.Equal(t,
-		"Could not copy the production table of analytics.b, raw.c. Run them, then release again.",
-		SummarizeCloneFailure([]string{"analytics.b", "raw.c"}))
+		"Could not build analytics.b, raw.c from their production tables. Run them, then release again.",
+		SummarizeBuildFromProdFailure([]string{"analytics.b", "raw.c"}))
 }
 
 // The nodes are named in id order whatever order they are given in, so the
 // same failure always reads the same.
-func TestSummarizeCloneFailure_NamesTheNodesInIDOrder(t *testing.T) {
+func TestSummarizeBuildFromProdFailure_NamesTheNodesInIDOrder(t *testing.T) {
 	ids := []string{"raw.c", "analytics.b"}
 
-	got := SummarizeCloneFailure(ids)
+	got := SummarizeBuildFromProdFailure(ids)
 
 	assert.Equal(t,
-		"Could not copy the production table of analytics.b, raw.c. Run them, then release again.", got)
+		"Could not build analytics.b, raw.c from their production tables. Run them, then release again.", got)
 	assert.Equal(t, []string{"raw.c", "analytics.b"}, ids, "the caller's slice is left as it was")
 }
 
-func TestSummarizeCloneFailure_SaysNothingWhenNoCopyFailed(t *testing.T) {
-	assert.Equal(t, "", SummarizeCloneFailure(nil))
+func TestSummarizeBuildFromProdFailure_SaysNothingWhenNoBuildFailed(t *testing.T) {
+	assert.Equal(t, "", SummarizeBuildFromProdFailure(nil))
 }
 
-// Up to maxNamedNodes copies are all named; above it the first are named in id
+// Up to maxNamedNodes nodes are all named; above it the first are named in id
 // order and the rest counted, as every other summary does.
-func TestSummarizeCloneFailure_NamesUpToTheCapAndCountsTheRest(t *testing.T) {
+func TestSummarizeBuildFromProdFailure_NamesUpToTheCapAndCountsTheRest(t *testing.T) {
 	// descendingIDs returns raw.t001 … raw.t<n> in reverse id order.
 	descendingIDs := func(n int) []string {
 		out := make([]string, n)
@@ -325,12 +325,12 @@ func TestSummarizeCloneFailure_NamesUpToTheCapAndCountsTheRest(t *testing.T) {
 	}
 
 	assert.Equal(t,
-		"Could not copy the production table of raw.t001, raw.t002, raw.t003, raw.t004, raw.t005. Run them, then release again.",
-		SummarizeCloneFailure(descendingIDs(maxNamedNodes)), "at the cap every copy is named")
+		"Could not build raw.t001, raw.t002, raw.t003, raw.t004, raw.t005 from their production tables. Run them, then release again.",
+		SummarizeBuildFromProdFailure(descendingIDs(maxNamedNodes)), "at the cap every node is named")
 	assert.Equal(t,
-		"Could not copy the production table of raw.t001, raw.t002, raw.t003, raw.t004, raw.t005 and 1 more. Run them, then release again.",
-		SummarizeCloneFailure(descendingIDs(maxNamedNodes+1)))
+		"Could not build raw.t001, raw.t002, raw.t003, raw.t004, raw.t005 and 1 more from their production tables. Run them, then release again.",
+		SummarizeBuildFromProdFailure(descendingIDs(maxNamedNodes+1)))
 	assert.Equal(t,
-		"Could not copy the production table of raw.t001, raw.t002, raw.t003, raw.t004, raw.t005 and 295 more. Run them, then release again.",
-		SummarizeCloneFailure(descendingIDs(300)))
+		"Could not build raw.t001, raw.t002, raw.t003, raw.t004, raw.t005 and 295 more from their production tables. Run them, then release again.",
+		SummarizeBuildFromProdFailure(descendingIDs(300)))
 }

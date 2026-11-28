@@ -17,10 +17,10 @@ type SeedBuildNode struct {
 	TableName   string
 	NodeType    pkg_model.NodeType // always NodeTypeDbtSeed
 	ImageTag    string
-	// SeedPreflight is the report-mode check the seed's pod runs against the
+	// DependentsCheck is the report-mode check the seed's pod runs against the
 	// production table it stands for, whose findings the leg's result
 	// returns; nil when the request asks for none.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 // SeedBuildRequested is the parsed seed.build.requested:v1 stream payload — a

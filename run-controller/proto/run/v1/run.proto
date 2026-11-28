@@ -451,29 +451,29 @@ message TaskAttempt {
   string error_message = 13;                      // empty when none
   string log_s3_key = 14;                         // S3 object key of the pod log; empty when none
   string run_results_uri = 15;                    // S3 object key of the structured result block; empty when none
-  // seed_preflight is what the attempt's seed preflight found in the warehouse;
-  // unset when the attempt ran no preflight.
-  SeedPreflightFindings seed_preflight = 16;
+  // dependents_check is what the attempt's dependents check found in the warehouse;
+  // unset when the attempt ran no dependents check.
+  DependentsCheckFindings dependents_check = 16;
 }
 
-// SeedPreflightFindings is what a seed's preflight found in the warehouse before
+// DependentsCheckFindings is what a seed's dependents check found in the warehouse before
 // the seed's load.
-message SeedPreflightFindings {
+message DependentsCheckFindings {
   // drop_semantics is how the engine treats a drop of a table that views read.
   string drop_semantics = 1;
   // completeness says whether the dependents listed are all there are.
   string completeness = 2;
-  // checked is true when the preflight ran to the end.
+  // checked is true when the dependents check ran to the end.
   bool checked = 3;
   // dependents are the objects that depend on the seed's table.
-  repeated PreflightDependent dependents = 4;
+  repeated DependentObject dependents = 4;
   // probes are the answers of the probe of each view outside the allowed set
-  // that the preflight found; empty when no probe ran.
+  // that the dependents check found; empty when no probe ran.
   repeated ViewProbe probes = 5;
 }
 
-// PreflightDependent is one object in the warehouse that depends on a seed's table.
-message PreflightDependent {
+// DependentObject is one object in the warehouse that depends on a seed's table.
+message DependentObject {
   string schema = 1;
   string name = 2;
   string kind = 3;    // the kind of object, as the warehouse names it
@@ -770,7 +770,7 @@ message NodeTask {
   string waiting_on_run_id = 20;  // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
   string waiting_since = 21;      // RFC3339, when the task began waiting for wait_reason; empty when it has none
   // blocking_objects are the lowercased "schema.name" of each dependent of the seed that its
-  // preflight did not allow, on a seed task whose latest attempt failed
+  // dependents check did not allow, on a seed task whose latest attempt failed
   // unowned_dependents; empty otherwise.
   repeated string blocking_objects = 22;
 }

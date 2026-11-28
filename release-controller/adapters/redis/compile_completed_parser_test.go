@@ -137,10 +137,10 @@ func TestStageNodeResultsPreserveNilVersusEmpty(t *testing.T) {
 	}
 }
 
-// TestDecodeSeedBuildCompletedSeedPreflight verifies that a per-node
-// seed_preflight entry decodes onto the handler's NodeResult as domain findings
+// TestDecodeSeedBuildCompletedDependentsCheck verifies that a per-node
+// dependents_check entry decodes onto the handler's NodeResult as domain findings
 // and that an entry without one carries none.
-func TestDecodeSeedBuildCompletedSeedPreflight(t *testing.T) {
+func TestDecodeSeedBuildCompletedDependentsCheck(t *testing.T) {
 	msg := goredis.XMessage{
 		ID: "0-1",
 		Values: map[string]any{
@@ -149,7 +149,7 @@ func TestDecodeSeedBuildCompletedSeedPreflight(t *testing.T) {
 				"status":     "ok",
 				"per_node": [
 					{"node_id": "analytics.seed_fx_rates_eur", "status": "ok",
-					 "seed_preflight": {
+					 "dependents_check": {
 						"drop_semantics": "drop_fails",
 						"completeness":   "exact",
 						"checked":        true,
@@ -173,9 +173,9 @@ func TestDecodeSeedBuildCompletedSeedPreflight(t *testing.T) {
 	if len(in.PerNode) != 2 {
 		t.Fatalf("PerNode length: want 2 got %d", len(in.PerNode))
 	}
-	f := in.PerNode[0].SeedPreflight
+	f := in.PerNode[0].DependentsCheck
 	if f == nil {
-		t.Fatal("PerNode[0].SeedPreflight: want findings, got nil")
+		t.Fatal("PerNode[0].DependentsCheck: want findings, got nil")
 	}
 	if f.DropSemantics != "drop_fails" || f.Completeness != "exact" || !f.Checked {
 		t.Errorf("findings header: got %+v", *f)
@@ -183,7 +183,7 @@ func TestDecodeSeedBuildCompletedSeedPreflight(t *testing.T) {
 	if len(f.Dependents) != 2 || f.Dependents[1].Schema != "bi" || f.Dependents[1].Name != "fx_rates_report" || f.Dependents[1].Allowed {
 		t.Errorf("dependents: got %+v", f.Dependents)
 	}
-	if in.PerNode[1].SeedPreflight != nil {
-		t.Errorf("PerNode[1].SeedPreflight: want nil, got %+v", *in.PerNode[1].SeedPreflight)
+	if in.PerNode[1].DependentsCheck != nil {
+		t.Errorf("PerNode[1].DependentsCheck: want nil, got %+v", *in.PerNode[1].DependentsCheck)
 	}
 }

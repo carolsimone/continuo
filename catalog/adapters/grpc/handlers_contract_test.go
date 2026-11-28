@@ -43,21 +43,21 @@ type fakeContractHistoryReader struct {
 
 var _ grpcadapter.ContractHistoryReader = (*fakeContractHistoryReader)(nil)
 
-func (f *fakeContractHistoryReader) GetNodeContract(_ context.Context, tenantID, _ string, includeDocument bool) (queries.NodeContract, error) {
+func (f *fakeContractHistoryReader) GetNodeDataContract(_ context.Context, tenantID, _ string, includeDocument bool) (queries.NodeContract, error) {
 	f.tenants = append(f.tenants, tenantID)
 	f.getCalled = true
 	f.gotDocument = includeDocument
 	return f.contract, f.contractErr
 }
 
-func (f *fakeContractHistoryReader) ListNodeContractVersions(_ context.Context, tenantID, _ string, limit int) ([]contractversion.VersionView, error) {
+func (f *fakeContractHistoryReader) ListNodeDataContractVersions(_ context.Context, tenantID, _ string, limit int) ([]contractversion.VersionView, error) {
 	f.tenants = append(f.tenants, tenantID)
 	f.listCalled = true
 	f.gotLimit = limit
 	return f.versions, f.versionsErr
 }
 
-func (f *fakeContractHistoryReader) GetNodeContractDiff(_ context.Context, tenantID, _ string, from, to int64) ([]contractversion.FieldChange, error) {
+func (f *fakeContractHistoryReader) GetNodeDataContractDiff(_ context.Context, tenantID, _ string, from, to int64) ([]contractversion.FieldChange, error) {
 	f.tenants = append(f.tenants, tenantID)
 	f.diffCalled = true
 	f.gotFrom, f.gotTo = from, to
@@ -85,11 +85,11 @@ func currentKPIs() queries.NodeContract {
 	}
 }
 
-func TestGetNodeContract_ReturnsTheCurrentVersion(t *testing.T) {
+func TestGetNodeDataContract_ReturnsTheCurrentVersion(t *testing.T) {
 	c := &fakeContractHistoryReader{contract: currentKPIs()}
 	h := newHandlerWithContracts(c)
 
-	resp, err := h.GetNodeContract(tenantCtx(), &catalogv1.GetNodeContractRequest{UniqueId: "analytics.py_daily_kpis", IncludeDocument: true})
+	resp, err := h.GetNodeDataContract(tenantCtx(), &catalogv1.GetNodeDataContractRequest{UniqueId: "analytics.py_daily_kpis", IncludeDocument: true})
 
 	require.NoError(t, err)
 	got := resp.GetContract()
@@ -108,54 +108,54 @@ func TestGetNodeContract_ReturnsTheCurrentVersion(t *testing.T) {
 	assert.Equal(t, []string{testTenant}, c.tenants)
 }
 
-func TestGetNodeContract_WithoutIncludeDocumentAsksForNone(t *testing.T) {
+func TestGetNodeDataContract_WithoutIncludeDocumentAsksForNone(t *testing.T) {
 	c := &fakeContractHistoryReader{contract: queries.NodeContract{Version: currentKPIs().Version}}
 	h := newHandlerWithContracts(c)
 
-	resp, err := h.GetNodeContract(tenantCtx(), &catalogv1.GetNodeContractRequest{UniqueId: "analytics.py_daily_kpis"})
+	resp, err := h.GetNodeDataContract(tenantCtx(), &catalogv1.GetNodeDataContractRequest{UniqueId: "analytics.py_daily_kpis"})
 
 	require.NoError(t, err)
 	assert.False(t, c.gotDocument)
 	assert.Empty(t, resp.GetContract().GetDocumentYaml())
 }
 
-func TestGetNodeContract_PromotionTimeIsUTC(t *testing.T) {
+func TestGetNodeDataContract_PromotionTimeIsUTC(t *testing.T) {
 	contract := currentKPIs()
 	contract.Version.PromotedAt = promotedAt.In(time.FixedZone("CET", 3600))
 	h := newHandlerWithContracts(&fakeContractHistoryReader{contract: contract})
 
-	resp, err := h.GetNodeContract(tenantCtx(), &catalogv1.GetNodeContractRequest{UniqueId: "analytics.py_daily_kpis"})
+	resp, err := h.GetNodeDataContract(tenantCtx(), &catalogv1.GetNodeDataContractRequest{UniqueId: "analytics.py_daily_kpis"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "2026-11-27T16:40:12Z", resp.GetContract().GetPromotedAt())
 }
 
-func TestGetNodeContract_NotFoundWithoutAContract(t *testing.T) {
+func TestGetNodeDataContract_NotFoundWithoutAContract(t *testing.T) {
 	h := newHandlerWithContracts(&fakeContractHistoryReader{contractErr: contractversion.ErrNotFound})
 
-	_, err := h.GetNodeContract(tenantCtx(), &catalogv1.GetNodeContractRequest{UniqueId: "analytics.ghost"})
+	_, err := h.GetNodeDataContract(tenantCtx(), &catalogv1.GetNodeDataContractRequest{UniqueId: "analytics.ghost"})
 
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
-func TestGetNodeContract_ReadFailureIsInternal(t *testing.T) {
+func TestGetNodeDataContract_ReadFailureIsInternal(t *testing.T) {
 	h := newHandlerWithContracts(&fakeContractHistoryReader{contractErr: errors.New("neo4j is down")})
 
-	_, err := h.GetNodeContract(tenantCtx(), &catalogv1.GetNodeContractRequest{UniqueId: "analytics.py_daily_kpis"})
+	_, err := h.GetNodeDataContract(tenantCtx(), &catalogv1.GetNodeDataContractRequest{UniqueId: "analytics.py_daily_kpis"})
 
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
-func TestGetNodeContract_RequiresAUniqueID(t *testing.T) {
+func TestGetNodeDataContract_RequiresAUniqueID(t *testing.T) {
 	c := &fakeContractHistoryReader{}
 
-	_, err := newHandlerWithContracts(c).GetNodeContract(tenantCtx(), &catalogv1.GetNodeContractRequest{})
+	_, err := newHandlerWithContracts(c).GetNodeDataContract(tenantCtx(), &catalogv1.GetNodeDataContractRequest{})
 
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.False(t, c.getCalled)
 }
 
-func TestListNodeContractVersions_NewestFirstWithIsCurrent(t *testing.T) {
+func TestListNodeDataContractVersions_NewestFirstWithIsCurrent(t *testing.T) {
 	c := &fakeContractHistoryReader{versions: []contractversion.VersionView{
 		{UniqueID: "analytics.py_daily_kpis", Version: 3, ContractHash: "sha256:aaa", ReleaseID: "rel-3", PromotedAt: promotedAt, SameAsVersion: 1, IsCurrent: true},
 		{UniqueID: "analytics.py_daily_kpis", Version: 2, ContractHash: "sha256:bbb", ReleaseID: "rel-2", PromotedAt: promotedAt.Add(-24 * time.Hour)},
@@ -163,7 +163,7 @@ func TestListNodeContractVersions_NewestFirstWithIsCurrent(t *testing.T) {
 	}}
 	h := newHandlerWithContracts(c)
 
-	resp, err := h.ListNodeContractVersions(tenantCtx(), &catalogv1.ListNodeContractVersionsRequest{UniqueId: "analytics.py_daily_kpis", Limit: 3})
+	resp, err := h.ListNodeDataContractVersions(tenantCtx(), &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: "analytics.py_daily_kpis", Limit: 3})
 
 	require.NoError(t, err)
 	require.Len(t, resp.GetVersions(), 3)
@@ -181,37 +181,37 @@ func TestListNodeContractVersions_NewestFirstWithIsCurrent(t *testing.T) {
 	assert.Equal(t, []string{testTenant}, c.tenants)
 }
 
-func TestListNodeContractVersions_LimitZeroMeansAll(t *testing.T) {
+func TestListNodeDataContractVersions_LimitZeroMeansAll(t *testing.T) {
 	c := &fakeContractHistoryReader{}
 
-	resp, err := newHandlerWithContracts(c).ListNodeContractVersions(tenantCtx(), &catalogv1.ListNodeContractVersionsRequest{UniqueId: "analytics.py_daily_kpis"})
+	resp, err := newHandlerWithContracts(c).ListNodeDataContractVersions(tenantCtx(), &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: "analytics.py_daily_kpis"})
 
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetVersions(), "a node with no history has an empty list, not an error")
 	assert.Equal(t, 0, c.gotLimit)
 }
 
-func TestListNodeContractVersions_RefusesANegativeLimitAndNoUniqueID(t *testing.T) {
+func TestListNodeDataContractVersions_RefusesANegativeLimitAndNoUniqueID(t *testing.T) {
 	c := &fakeContractHistoryReader{}
 	h := newHandlerWithContracts(c)
 
-	_, errLimit := h.ListNodeContractVersions(tenantCtx(), &catalogv1.ListNodeContractVersionsRequest{UniqueId: "analytics.py_daily_kpis", Limit: -1})
-	_, errID := h.ListNodeContractVersions(tenantCtx(), &catalogv1.ListNodeContractVersionsRequest{})
+	_, errLimit := h.ListNodeDataContractVersions(tenantCtx(), &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: "analytics.py_daily_kpis", Limit: -1})
+	_, errID := h.ListNodeDataContractVersions(tenantCtx(), &catalogv1.ListNodeDataContractVersionsRequest{})
 
 	assert.Equal(t, codes.InvalidArgument, status.Code(errLimit))
 	assert.Equal(t, codes.InvalidArgument, status.Code(errID))
 	assert.False(t, c.listCalled)
 }
 
-func TestListNodeContractVersions_ReadFailureIsInternal(t *testing.T) {
+func TestListNodeDataContractVersions_ReadFailureIsInternal(t *testing.T) {
 	h := newHandlerWithContracts(&fakeContractHistoryReader{versionsErr: errors.New("neo4j is down")})
 
-	_, err := h.ListNodeContractVersions(tenantCtx(), &catalogv1.ListNodeContractVersionsRequest{UniqueId: "analytics.py_daily_kpis"})
+	_, err := h.ListNodeDataContractVersions(tenantCtx(), &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: "analytics.py_daily_kpis"})
 
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
-func TestGetNodeContractDiff_TheDesignsExample(t *testing.T) {
+func TestGetNodeDataContractDiff_TheDesignsExample(t *testing.T) {
 	c := &fakeContractHistoryReader{changes: []contractversion.FieldChange{{
 		Path:       "schema[0].properties[2].physicalType",
 		BeforeJSON: `"NUMERIC(12,2)"`,
@@ -219,7 +219,7 @@ func TestGetNodeContractDiff_TheDesignsExample(t *testing.T) {
 	}}}
 	h := newHandlerWithContracts(c)
 
-	resp, err := h.GetNodeContractDiff(tenantCtx(), &catalogv1.GetNodeContractDiffRequest{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 2})
+	resp, err := h.GetNodeDataContractDiff(tenantCtx(), &catalogv1.GetNodeDataContractDiffRequest{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 2})
 
 	require.NoError(t, err)
 	require.Len(t, resp.GetChanges(), 1)
@@ -232,12 +232,12 @@ func TestGetNodeContractDiff_TheDesignsExample(t *testing.T) {
 	assert.Equal(t, []string{testTenant}, c.tenants)
 }
 
-func TestGetNodeContractDiff_AnAddedPathHasNoBeforeValue(t *testing.T) {
+func TestGetNodeDataContractDiff_AnAddedPathHasNoBeforeValue(t *testing.T) {
 	h := newHandlerWithContracts(&fakeContractHistoryReader{changes: []contractversion.FieldChange{
 		{Path: "schema[0].properties[3]", AfterJSON: `{"name":"fee"}`},
 	}})
 
-	resp, err := h.GetNodeContractDiff(tenantCtx(), &catalogv1.GetNodeContractDiffRequest{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 2})
+	resp, err := h.GetNodeDataContractDiff(tenantCtx(), &catalogv1.GetNodeDataContractDiffRequest{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 2})
 
 	require.NoError(t, err)
 	require.Len(t, resp.GetChanges(), 1)
@@ -245,43 +245,43 @@ func TestGetNodeContractDiff_AnAddedPathHasNoBeforeValue(t *testing.T) {
 	assert.Equal(t, `{"name":"fee"}`, resp.GetChanges()[0].GetAfterJson())
 }
 
-func TestGetNodeContractDiff_RefusesAVersionTheNodeDoesNotHave(t *testing.T) {
+func TestGetNodeDataContractDiff_RefusesAVersionTheNodeDoesNotHave(t *testing.T) {
 	h := newHandlerWithContracts(&fakeContractHistoryReader{changesErr: contractversion.ErrNotFound})
 
-	_, err := h.GetNodeContractDiff(tenantCtx(), &catalogv1.GetNodeContractDiffRequest{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 9})
+	_, err := h.GetNodeDataContractDiff(tenantCtx(), &catalogv1.GetNodeDataContractDiffRequest{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 9})
 
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
-func TestGetNodeContractDiff_RefusesAVersionBelowOne(t *testing.T) {
+func TestGetNodeDataContractDiff_RefusesAVersionBelowOne(t *testing.T) {
 	c := &fakeContractHistoryReader{}
 	h := newHandlerWithContracts(c)
 
-	for _, req := range []*catalogv1.GetNodeContractDiffRequest{
+	for _, req := range []*catalogv1.GetNodeDataContractDiffRequest{
 		{UniqueId: "analytics.py_daily_kpis", FromVersion: 0, ToVersion: 2},
 		{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 0},
 		{UniqueId: "analytics.py_daily_kpis", FromVersion: -1, ToVersion: 2},
 		{UniqueId: "analytics.py_daily_kpis"},
 	} {
-		_, err := h.GetNodeContractDiff(tenantCtx(), req)
+		_, err := h.GetNodeDataContractDiff(tenantCtx(), req)
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), req.String())
 	}
 	assert.False(t, c.diffCalled, "no read ran")
 }
 
-func TestGetNodeContractDiff_RequiresAUniqueID(t *testing.T) {
+func TestGetNodeDataContractDiff_RequiresAUniqueID(t *testing.T) {
 	c := &fakeContractHistoryReader{}
 
-	_, err := newHandlerWithContracts(c).GetNodeContractDiff(tenantCtx(), &catalogv1.GetNodeContractDiffRequest{FromVersion: 1, ToVersion: 2})
+	_, err := newHandlerWithContracts(c).GetNodeDataContractDiff(tenantCtx(), &catalogv1.GetNodeDataContractDiffRequest{FromVersion: 1, ToVersion: 2})
 
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.False(t, c.diffCalled)
 }
 
-func TestGetNodeContractDiff_ReadFailureIsInternal(t *testing.T) {
+func TestGetNodeDataContractDiff_ReadFailureIsInternal(t *testing.T) {
 	h := newHandlerWithContracts(&fakeContractHistoryReader{changesErr: errors.New("neo4j is down")})
 
-	_, err := h.GetNodeContractDiff(tenantCtx(), &catalogv1.GetNodeContractDiffRequest{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 2})
+	_, err := h.GetNodeDataContractDiff(tenantCtx(), &catalogv1.GetNodeDataContractDiffRequest{UniqueId: "analytics.py_daily_kpis", FromVersion: 1, ToVersion: 2})
 
 	assert.Equal(t, codes.Internal, status.Code(err))
 }

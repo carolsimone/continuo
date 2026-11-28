@@ -33,10 +33,10 @@ func TestQuestion_DispatchCarriesTheKnownStatusAndTheNextWindow(t *testing.T) {
 }
 
 // A question about a seed's attempt carries the task's own operation, plan
-// reason and preflight, as the attempt's first dispatch did.
+// reason and dependents check, as the attempt's first dispatch did.
 func TestQuestion_DispatchKeepsTheTasksDispatchSpec(t *testing.T) {
 	spec := DispatchSpec{Operation: model.OperationFullRefresh, Reason: "columns changed",
-		Preflight: &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+		DependentsCheck: &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound,
 			Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}}
 
 	d, _ := Question{RunID: uuid.New(), TaskID: uuid.New(), Attempt: 1, Status: AttemptDispatched, Spec: spec}.
@@ -44,7 +44,7 @@ func TestQuestion_DispatchKeepsTheTasksDispatchSpec(t *testing.T) {
 
 	assert.Equal(t, spec.Operation, d.Operation)
 	assert.Equal(t, spec.Reason, d.Reason)
-	assert.Equal(t, spec.Preflight, d.Preflight)
+	assert.Equal(t, spec.DependentsCheck, d.DependentsCheck)
 }
 
 // A stop question is the run's cancel again, naming every attempt run-controller still

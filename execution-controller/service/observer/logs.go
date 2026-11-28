@@ -19,13 +19,13 @@ const nothingToDo = "Nothing to do"
 // readLogs reads the log of d's pod and uploads it, with the structured result
 // block it printed when there is one, under keys named after the deployment;
 // it returns the facts the log shows. A seed attempt or seed-build leg whose
-// command carries a preflight also has the seed-preflight container's log
-// read, which adds the preflight's findings and, for a production attempt in
+// command carries a dependents check also has the dependents-check container's log
+// read, which adds the dependents check's findings and, for a production attempt in
 // check mode, the reason it stopped the load. The
 // dbt container's result is read only from the pod's main log, never from the
-// preflight's. It runs outside any transaction, under LogIOTimeout, and
+// dependents check's. It runs outside any transaction, under LogIOTimeout, and
 // soft-fails: a log that cannot be read or uploaded leaves its own facts
-// empty, and the preflight's log is read even when the pod's log cannot be.
+// empty, and the dependents check's log is read even when the pod's log cannot be.
 func (o *Observer) readLogs(ctx context.Context, d *model.Deployment) model.AttemptFacts {
 	ioCtx, cancel := context.WithTimeout(ctx, o.cfg.LogIOTimeout)
 	defer cancel()
@@ -54,8 +54,8 @@ func (o *Observer) readLogs(ctx context.Context, d *model.Deployment) model.Atte
 		}
 	}
 	f := model.AttemptFacts{NothingToDo: !d.NodeType().IsPython() && strings.Contains(tail, nothingToDo), LogMessage: o.truncate(blockMessage), Reason: blockReason}
-	if p := o.readSeedPreflight(ioCtx, d); p != nil {
-		f.SeedPreflight = p.findings
+	if p := o.readDependentsCheck(ioCtx, d); p != nil {
+		f.DependentsCheck = p.findings
 		if p.reason != "" {
 			f.Reason, f.LogMessage = p.reason, o.truncate(p.message)
 		}
@@ -84,64 +84,64 @@ func (o *Observer) readLogs(ctx context.Context, d *model.Deployment) model.Atte
 	return f
 }
 
-// seedPreflightResult is what a seed attempt's preflight container printed.
-type seedPreflightResult struct {
+// dependentsCheckResult is what a seed attempt's dependents check container printed.
+type dependentsCheckResult struct {
 	findings *seedreload.Findings
-	// reason is why the preflight stopped the load, decided only for a
+	// reason is why the dependents check stopped the load, decided only for a
 	// check-mode block that did not succeed and names a reason; message is
 	// that block's message.
 	reason  pkgmodel.FailureReason
 	message string
 }
 
-// preflightOf is the preflight d's pod runs: a production attempt's seed
+// dependentsCheckOf is the dependents check d's pod runs: a production attempt's seed
 // dispatch asks for one, and so may a seed-build leg's request. Any other
 // deployment runs none.
-func preflightOf(d *model.Deployment) *seedreload.Preflight {
+func dependentsCheckOf(d *model.Deployment) *seedreload.DependentsCheck {
 	switch d.Mode() {
 	case model.ModeProduction:
-		return d.Command().SeedPreflight
+		return d.Command().DependentsCheck
 	case model.ModeSeedBuild:
-		return d.ValidationCommand().SeedPreflight
+		return d.ValidationCommand().DependentsCheck
 	default:
 		return nil
 	}
 }
 
-// readSeedPreflight reads the log of d's seed-preflight container and parses
-// its result block. It returns nil when d's command carries no preflight, the
-// log cannot be read or it holds no seed preflight block, which leaves the
+// readDependentsCheck reads the log of d's dependents-check container and parses
+// its result block. It returns nil when d's command carries no dependents check, the
+// log cannot be read or it holds no dependents check block, which leaves the
 // attempt to the usual classification of its exit code. The mode is the one in
 // d's command, not the block's: a report-mode block never decides a reason, and
 // a seed-build leg's pod always runs in report mode, so its findings are
 // recorded and never a reason.
-func (o *Observer) readSeedPreflight(ctx context.Context, d *model.Deployment) *seedPreflightResult {
-	preflight := preflightOf(d)
-	if preflight == nil {
+func (o *Observer) readDependentsCheck(ctx context.Context, d *model.Deployment) *dependentsCheckResult {
+	dependentsCheck := dependentsCheckOf(d)
+	if dependentsCheck == nil {
 		return nil
 	}
-	log, err := o.deps.Logs.GetContainerLog(ctx, d.JobName(), model.SeedPreflightContainer)
+	log, err := o.deps.Logs.GetContainerLog(ctx, d.JobName(), model.DependentsCheckContainer)
 	if err != nil {
-		o.deps.Logger.Warn("Failed to read the seed preflight log", "job_name", d.JobName(), "error", err)
+		o.deps.Logger.Warn("Failed to read the dependents check log", "job_name", d.JobName(), "error", err)
 		return nil
 	}
 	_, raw := validationresult.Split(log)
 	if raw == "" {
 		return nil
 	}
-	p, err := validationresult.ParsePreflight([]byte(raw))
-	if err != nil || p.Op != validationresult.OpSeedPreflight {
+	p, err := validationresult.ParseWarehouseRead([]byte(raw))
+	if err != nil || p.Op != validationresult.OpDependentsCheck {
 		return nil
 	}
-	res := &seedPreflightResult{findings: findingsOf(p)}
-	if d.Mode() == model.ModeProduction && preflight.Mode == seedreload.PreflightCheck && p.Status != "success" {
+	res := &dependentsCheckResult{findings: findingsOf(p)}
+	if d.Mode() == model.ModeProduction && dependentsCheck.Mode == seedreload.CheckMode && p.Status != "success" {
 		res.reason, res.message = model.ReasonFromResultBlock(p.Reason), p.Message
 	}
 	return res
 }
 
-// findingsOf is what the preflight block p found in the warehouse.
-func findingsOf(p *validationresult.Preflight) *seedreload.Findings {
+// findingsOf is what the dependents check block p found in the warehouse.
+func findingsOf(p *validationresult.WarehouseRead) *seedreload.Findings {
 	f := &seedreload.Findings{DropSemantics: p.DropSemantics, Completeness: p.Completeness, Checked: p.Checked}
 	for _, d := range p.Dependents {
 		f.Dependents = append(f.Dependents, seedreload.Dependent(d))

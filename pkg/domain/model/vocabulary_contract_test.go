@@ -301,23 +301,23 @@ func TestRejectReasonUpgradeInterrupted_IsDeclaredAndNotHealable(t *testing.T) {
 	}
 }
 
-// Validation could not copy the production table of an unchanged upstream. No
+// The release check could not build an unchanged upstream from its production table. No
 // change to the release's source fixes it (a run of that node does), so the
 // remediation classifier must drop it.
-func TestRejectReasonUpstreamCloneFailed_IsDeclaredAndNotHealable(t *testing.T) {
-	r := model.RejectReasonUpstreamCloneFailed
-	if r != "upstream_clone_failed" || !r.IsValid() || r.Healable() {
-		t.Fatalf("RejectReasonUpstreamCloneFailed = %q (valid %v, healable %v), want upstream_clone_failed, valid, not healable",
+func TestRejectReasonUpstreamBuildFromProdFailed_IsDeclaredAndNotHealable(t *testing.T) {
+	r := model.RejectReasonUpstreamBuildFromProdFailed
+	if r != "upstream_build_from_prod_failed" || !r.IsValid() || r.Healable() {
+		t.Fatalf("RejectReasonUpstreamBuildFromProdFailed = %q (valid %v, healable %v), want upstream_build_from_prod_failed, valid, not healable",
 			r, r.IsValid(), r.Healable())
 	}
 }
 
 // The validation runner reads these four values as VALIDATION_OP, and
-// remediation drops a failed node whose op is clone_from_prod. The runner's
+// remediation drops a failed node whose op is build_from_prod. The runner's
 // candidate-schema ops (ensure_schema, drop_schema) are execution-controller's
 // own and stay out of the vocabulary.
 func TestValidationOp_DeclaresTheFourNodeOps(t *testing.T) {
-	want := []model.ValidationOp{"build_from_sql", "build_from_columns", "check_binds", "clone_from_prod"}
+	want := []model.ValidationOp{"build_from_sql", "build_from_columns", "check_binds", "build_from_prod"}
 	got := model.ValidationOps()
 	if len(got) != len(want) {
 		t.Fatalf("ValidationOps() = %v, want %v", got, want)

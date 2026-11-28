@@ -391,11 +391,11 @@ type TaskAttempt struct {
 	ErrorMessage     string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`               // empty when none
 	LogS3Key         string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`                         // S3 object key of the pod log; empty when none
 	RunResultsUri    string                 `protobuf:"bytes,15,opt,name=run_results_uri,json=runResultsUri,proto3" json:"run_results_uri,omitempty"`          // S3 object key of the structured result block; empty when none
-	// seed_preflight is what the attempt's seed preflight found in the warehouse;
-	// unset when the attempt ran no preflight.
-	SeedPreflight *SeedPreflightFindings `protobuf:"bytes,16,opt,name=seed_preflight,json=seedPreflight,proto3" json:"seed_preflight,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// dependents_check is what the attempt's dependents check found in the warehouse;
+	// unset when the attempt ran no dependents check.
+	DependentsCheck *DependentsCheckFindings `protobuf:"bytes,16,opt,name=dependents_check,json=dependentsCheck,proto3" json:"dependents_check,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *TaskAttempt) Reset() {
@@ -533,46 +533,46 @@ func (x *TaskAttempt) GetRunResultsUri() string {
 	return ""
 }
 
-func (x *TaskAttempt) GetSeedPreflight() *SeedPreflightFindings {
+func (x *TaskAttempt) GetDependentsCheck() *DependentsCheckFindings {
 	if x != nil {
-		return x.SeedPreflight
+		return x.DependentsCheck
 	}
 	return nil
 }
 
-// SeedPreflightFindings is what a seed's preflight found in the warehouse before
+// DependentsCheckFindings is what a seed's dependents check found in the warehouse before
 // the seed's load.
-type SeedPreflightFindings struct {
+type DependentsCheckFindings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// drop_semantics is how the engine treats a drop of a table that views read.
 	DropSemantics string `protobuf:"bytes,1,opt,name=drop_semantics,json=dropSemantics,proto3" json:"drop_semantics,omitempty"`
 	// completeness says whether the dependents listed are all there are.
 	Completeness string `protobuf:"bytes,2,opt,name=completeness,proto3" json:"completeness,omitempty"`
-	// checked is true when the preflight ran to the end.
+	// checked is true when the dependents check ran to the end.
 	Checked bool `protobuf:"varint,3,opt,name=checked,proto3" json:"checked,omitempty"`
 	// dependents are the objects that depend on the seed's table.
-	Dependents []*PreflightDependent `protobuf:"bytes,4,rep,name=dependents,proto3" json:"dependents,omitempty"`
+	Dependents []*DependentObject `protobuf:"bytes,4,rep,name=dependents,proto3" json:"dependents,omitempty"`
 	// probes are the answers of the probe of each view outside the allowed set
-	// that the preflight found; empty when no probe ran.
+	// that the dependents check found; empty when no probe ran.
 	Probes        []*ViewProbe `protobuf:"bytes,5,rep,name=probes,proto3" json:"probes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SeedPreflightFindings) Reset() {
-	*x = SeedPreflightFindings{}
+func (x *DependentsCheckFindings) Reset() {
+	*x = DependentsCheckFindings{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SeedPreflightFindings) String() string {
+func (x *DependentsCheckFindings) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SeedPreflightFindings) ProtoMessage() {}
+func (*DependentsCheckFindings) ProtoMessage() {}
 
-func (x *SeedPreflightFindings) ProtoReflect() protoreflect.Message {
+func (x *DependentsCheckFindings) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -584,48 +584,48 @@ func (x *SeedPreflightFindings) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SeedPreflightFindings.ProtoReflect.Descriptor instead.
-func (*SeedPreflightFindings) Descriptor() ([]byte, []int) {
+// Deprecated: Use DependentsCheckFindings.ProtoReflect.Descriptor instead.
+func (*DependentsCheckFindings) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *SeedPreflightFindings) GetDropSemantics() string {
+func (x *DependentsCheckFindings) GetDropSemantics() string {
 	if x != nil {
 		return x.DropSemantics
 	}
 	return ""
 }
 
-func (x *SeedPreflightFindings) GetCompleteness() string {
+func (x *DependentsCheckFindings) GetCompleteness() string {
 	if x != nil {
 		return x.Completeness
 	}
 	return ""
 }
 
-func (x *SeedPreflightFindings) GetChecked() bool {
+func (x *DependentsCheckFindings) GetChecked() bool {
 	if x != nil {
 		return x.Checked
 	}
 	return false
 }
 
-func (x *SeedPreflightFindings) GetDependents() []*PreflightDependent {
+func (x *DependentsCheckFindings) GetDependents() []*DependentObject {
 	if x != nil {
 		return x.Dependents
 	}
 	return nil
 }
 
-func (x *SeedPreflightFindings) GetProbes() []*ViewProbe {
+func (x *DependentsCheckFindings) GetProbes() []*ViewProbe {
 	if x != nil {
 		return x.Probes
 	}
 	return nil
 }
 
-// PreflightDependent is one object in the warehouse that depends on a seed's table.
-type PreflightDependent struct {
+// DependentObject is one object in the warehouse that depends on a seed's table.
+type DependentObject struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Schema        string                 `protobuf:"bytes,1,opt,name=schema,proto3" json:"schema,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
@@ -637,20 +637,20 @@ type PreflightDependent struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *PreflightDependent) Reset() {
-	*x = PreflightDependent{}
+func (x *DependentObject) Reset() {
+	*x = DependentObject{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *PreflightDependent) String() string {
+func (x *DependentObject) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*PreflightDependent) ProtoMessage() {}
+func (*DependentObject) ProtoMessage() {}
 
-func (x *PreflightDependent) ProtoReflect() protoreflect.Message {
+func (x *DependentObject) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -662,47 +662,47 @@ func (x *PreflightDependent) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use PreflightDependent.ProtoReflect.Descriptor instead.
-func (*PreflightDependent) Descriptor() ([]byte, []int) {
+// Deprecated: Use DependentObject.ProtoReflect.Descriptor instead.
+func (*DependentObject) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *PreflightDependent) GetSchema() string {
+func (x *DependentObject) GetSchema() string {
 	if x != nil {
 		return x.Schema
 	}
 	return ""
 }
 
-func (x *PreflightDependent) GetName() string {
+func (x *DependentObject) GetName() string {
 	if x != nil {
 		return x.Name
 	}
 	return ""
 }
 
-func (x *PreflightDependent) GetKind() string {
+func (x *DependentObject) GetKind() string {
 	if x != nil {
 		return x.Kind
 	}
 	return ""
 }
 
-func (x *PreflightDependent) GetOwner() string {
+func (x *DependentObject) GetOwner() string {
 	if x != nil {
 		return x.Owner
 	}
 	return ""
 }
 
-func (x *PreflightDependent) GetDepth() int32 {
+func (x *DependentObject) GetDepth() int32 {
 	if x != nil {
 		return x.Depth
 	}
 	return 0
 }
 
-func (x *PreflightDependent) GetAllowed() bool {
+func (x *DependentObject) GetAllowed() bool {
 	if x != nil {
 		return x.Allowed
 	}
@@ -3024,7 +3024,7 @@ type NodeTask struct {
 	WaitingOnRunId string                 `protobuf:"bytes,20,opt,name=waiting_on_run_id,json=waitingOnRunId,proto3" json:"waiting_on_run_id,omitempty"` // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
 	WaitingSince   string                 `protobuf:"bytes,21,opt,name=waiting_since,json=waitingSince,proto3" json:"waiting_since,omitempty"`           // RFC3339, when the task began waiting for wait_reason; empty when it has none
 	// blocking_objects are the lowercased "schema.name" of each dependent of the seed that its
-	// preflight did not allow, on a seed task whose latest attempt failed
+	// dependents check did not allow, on a seed task whose latest attempt failed
 	// unowned_dependents; empty otherwise.
 	BlockingObjects []string `protobuf:"bytes,22,rep,name=blocking_objects,json=blockingObjects,proto3" json:"blocking_objects,omitempty"`
 	unknownFields   protoimpl.UnknownFields
@@ -4684,7 +4684,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\rwaiting_since\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\fwaitingSince\x12\x1c\n" +
 	"\toperation\x18\x10 \x01(\tR\toperation\x12\x1f\n" +
 	"\vplan_reason\x18\x11 \x01(\tR\n" +
-	"planReason\"\xac\x05\n" +
+	"planReason\"\xb2\x05\n" +
 	"\vTaskAttempt\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\x05R\aattempt\x12\x19\n" +
@@ -4704,17 +4704,17 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\rerror_message\x18\r \x01(\tR\ferrorMessage\x12\x1c\n" +
 	"\n" +
 	"log_s3_key\x18\x0e \x01(\tR\blogS3Key\x12&\n" +
-	"\x0frun_results_uri\x18\x0f \x01(\tR\rrunResultsUri\x12D\n" +
-	"\x0eseed_preflight\x18\x10 \x01(\v2\x1d.run.v1.SeedPreflightFindingsR\rseedPreflight\"\xe3\x01\n" +
-	"\x15SeedPreflightFindings\x12%\n" +
+	"\x0frun_results_uri\x18\x0f \x01(\tR\rrunResultsUri\x12J\n" +
+	"\x10dependents_check\x18\x10 \x01(\v2\x1f.run.v1.DependentsCheckFindingsR\x0fdependentsCheck\"\xe2\x01\n" +
+	"\x17DependentsCheckFindings\x12%\n" +
 	"\x0edrop_semantics\x18\x01 \x01(\tR\rdropSemantics\x12\"\n" +
 	"\fcompleteness\x18\x02 \x01(\tR\fcompleteness\x12\x18\n" +
-	"\achecked\x18\x03 \x01(\bR\achecked\x12:\n" +
+	"\achecked\x18\x03 \x01(\bR\achecked\x127\n" +
 	"\n" +
-	"dependents\x18\x04 \x03(\v2\x1a.run.v1.PreflightDependentR\n" +
+	"dependents\x18\x04 \x03(\v2\x17.run.v1.DependentObjectR\n" +
 	"dependents\x12)\n" +
-	"\x06probes\x18\x05 \x03(\v2\x11.run.v1.ViewProbeR\x06probes\"\x9a\x01\n" +
-	"\x12PreflightDependent\x12\x16\n" +
+	"\x06probes\x18\x05 \x03(\v2\x11.run.v1.ViewProbeR\x06probes\"\x97\x01\n" +
+	"\x0fDependentObject\x12\x16\n" +
 	"\x06schema\x18\x01 \x01(\tR\x06schema\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x14\n" +
@@ -5112,8 +5112,8 @@ var file_proto_run_v1_run_proto_goTypes = []any{
 	(*Run)(nil),                            // 0: run.v1.Run
 	(*Task)(nil),                           // 1: run.v1.Task
 	(*TaskAttempt)(nil),                    // 2: run.v1.TaskAttempt
-	(*SeedPreflightFindings)(nil),          // 3: run.v1.SeedPreflightFindings
-	(*PreflightDependent)(nil),             // 4: run.v1.PreflightDependent
+	(*DependentsCheckFindings)(nil),        // 3: run.v1.DependentsCheckFindings
+	(*DependentObject)(nil),                // 4: run.v1.DependentObject
 	(*ViewProbe)(nil),                      // 5: run.v1.ViewProbe
 	(*Schedule)(nil),                       // 6: run.v1.Schedule
 	(*StartRunRequest)(nil),                // 7: run.v1.StartRunRequest
@@ -5188,9 +5188,9 @@ var file_proto_run_v1_run_proto_depIdxs = []int32{
 	64, // 9: run.v1.TaskAttempt.queued_at:type_name -> google.protobuf.Timestamp
 	64, // 10: run.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
 	64, // 11: run.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
-	3,  // 12: run.v1.TaskAttempt.seed_preflight:type_name -> run.v1.SeedPreflightFindings
-	4,  // 13: run.v1.SeedPreflightFindings.dependents:type_name -> run.v1.PreflightDependent
-	5,  // 14: run.v1.SeedPreflightFindings.probes:type_name -> run.v1.ViewProbe
+	3,  // 12: run.v1.TaskAttempt.dependents_check:type_name -> run.v1.DependentsCheckFindings
+	4,  // 13: run.v1.DependentsCheckFindings.dependents:type_name -> run.v1.DependentObject
+	5,  // 14: run.v1.DependentsCheckFindings.probes:type_name -> run.v1.ViewProbe
 	64, // 15: run.v1.Schedule.next_fire_at:type_name -> google.protobuf.Timestamp
 	64, // 16: run.v1.Schedule.updated_at:type_name -> google.protobuf.Timestamp
 	16, // 17: run.v1.PreviewRebaseResponse.changed_nodes:type_name -> run.v1.ChangedUpstreamNode

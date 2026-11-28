@@ -142,7 +142,7 @@ func (r *contractVersionRepository) ReadStates(ctx context.Context, tenantID str
 	}
 	res, err := r.run.Run(ctx, readContractStatesCypher, map[string]any{"unique_ids": uniqueIDs})
 	if err != nil {
-		return nil, fmt.Errorf("read node contract state: %w", err)
+		return nil, fmt.Errorf("read the nodes' contract state: %w", err)
 	}
 	for res.Next(ctx) {
 		rec := res.Record()
@@ -171,7 +171,7 @@ func (r *contractVersionRepository) ReadStates(ctx context.Context, tenantID str
 		states[uid] = st
 	}
 	if err := res.Err(); err != nil {
-		return nil, fmt.Errorf("iterate node contract state: %w", err)
+		return nil, fmt.Errorf("iterate the nodes' contract state: %w", err)
 	}
 	return states, nil
 }

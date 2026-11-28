@@ -26,7 +26,7 @@ type taskDispatchFixture struct {
 
 var taskDispatchFixtures = []string{
 	"testdata/task_dispatch_v1.json",
-	"testdata/task_dispatch_v1_seed_preflight.json",
+	"testdata/task_dispatch_v1_dependents_check.json",
 }
 
 func loadTaskDispatchFixture(t *testing.T, path string) taskDispatchFixture {
@@ -63,19 +63,19 @@ func TestDecodeTaskDispatch_ReadsGoldenFixtures(t *testing.T) {
 	}
 }
 
-func TestTaskDispatch_DecodesThePlanReasonAndTheSeedPreflight(t *testing.T) {
+func TestTaskDispatch_DecodesThePlanReasonAndTheDependentsCheck(t *testing.T) {
 	decode := func(path string) events.TaskDispatch {
 		_, p, err := events.DecodeTaskDispatch(fixtureFields(t, loadTaskDispatchFixture(t, path).Fields))
 		require.NoError(t, err)
 		return p
 	}
-	p := decode("testdata/task_dispatch_v1_seed_preflight.json")
+	p := decode("testdata/task_dispatch_v1_dependents_check.json")
 	assert.Equal(t, "columns changed; +full_refresh: true re-creates the table on every load", p.PlanReason)
-	assert.Equal(t, &events.SeedPreflight{Mode: "check", EngineFamily: "schema_bound", Relation: "analytics.seed_fx_rates_eur",
-		Allowed: []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"}, Acknowledged: []string{}}, p.SeedPreflight)
+	assert.Equal(t, &events.DependentsCheck{Mode: "check", EngineFamily: "schema_bound", Relation: "analytics.seed_fx_rates_eur",
+		Allowed: []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"}, Acknowledged: []string{}}, p.DependentsCheck)
 
 	plain := decode("testdata/task_dispatch_v1.json")
-	assert.Nil(t, plain.SeedPreflight)
+	assert.Nil(t, plain.DependentsCheck)
 	assert.Empty(t, plain.PlanReason)
 }
 

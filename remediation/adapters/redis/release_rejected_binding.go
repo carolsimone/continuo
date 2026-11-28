@@ -149,10 +149,11 @@ func sourceFromPayload(stage, reason string) (pkg_model.RemediationSource, bool)
 // evidenceFromRejected translates a release.rejected:v1 payload into one
 // FailureEvidence per failed node, none of which names a round: 0
 // is round 1, and a retry stamps its own round on the evidence. Nodes with
-// status != "failed" are skipped, and so is a node validation copied from its
-// production table: no change to the release's code fixes a copy of
-// production. A rejection whose reason the contract declares and marks not
-// healable yields no evidence at all.
+// status != "failed" are skipped, and so is a node the release check built
+// empty from its production table (build_from_prod): its failure points at
+// that production table, which no change to the release's code fixes. A
+// rejection whose reason the contract declares and marks not healable yields
+// no evidence at all.
 // The Source field is derived from the payload's stage field; when stage is
 // absent, the reason field is used as a fallback. FilePath and Project carry
 // whatever the rejection payload set directly (populated by release-controller
@@ -180,7 +181,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	// property, an upload failure or an internal_error is continuo's own, an
 	// invalid_artifact is a manifest or python contract the release ships
 	// unreadable or invalid (or naming another project, or declaring an invalid
-	// node setting), and a failed copy of an unchanged upstream is settled by a
+	// node setting), and a failed build from production of an unchanged upstream is settled by a
 	// run of that node. A reason that is empty or that this build does not
 	// declare (an older producer, a retry replay) is not dropped here; its
 	// stage decides.
@@ -198,7 +199,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 
 	out := make([]failure.FailureEvidence, 0, len(p.PerNode))
 	for _, n := range p.PerNode {
-		if n.Status != "failed" || pkg_model.ValidationOp(n.ValidationOp) == pkg_model.ValidationOpCloneFromProd {
+		if n.Status != "failed" || pkg_model.ValidationOp(n.ValidationOp) == pkg_model.ValidationOpBuildFromProd {
 			continue
 		}
 		out = append(out, failure.FailureEvidence{
@@ -231,7 +232,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 // is a permanent failure: the error wraps events.ErrPermanent, so the consumer
 // dead-letters it. A rejection that yields no failed node to classify (a reason
 // the contract marks not healable, a shadow rejection, a stage this build does
-// not know, or only copies of production) is acknowledged with one DEBUG line
+// not know, or only builds from production) is acknowledged with one DEBUG line
 // naming its release, stage and reason. round, when above 0, is the
 // round the evidence is stamped with. Any error from classification is
 // returned as is, so the consumer redelivers it.

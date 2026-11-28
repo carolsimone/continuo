@@ -208,7 +208,7 @@ func TestDeployLegs_TheJobGetsTheInstallsTaskTimeout(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
-			t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0")
+			t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0")
 			client := newValidationTestClient()
 
 			require.NoError(t, deployLeg(NewDeployer(client, "default", 15*time.Minute, 2*time.Hour)))
@@ -231,51 +231,51 @@ func seedJobParams() JobParams {
 	}
 }
 
-func setPreflightEnv(t *testing.T) {
+func setDependentsCheckEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0")
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	t.Setenv("S3_BUCKET", "continuo")
 }
 
-// lastInitContainer builds the pod of seedJobParams with pf as its preflight
+// lastInitContainer builds the pod of seedJobParams with pf as its dependents check
 // and returns its last init container.
-func lastInitContainer(t *testing.T, pf seedreload.Preflight) corev1.Container {
+func lastInitContainer(t *testing.T, pf seedreload.DependentsCheck) corev1.Container {
 	t.Helper()
-	setPreflightEnv(t)
+	setDependentsCheckEnv(t)
 	p := seedJobParams()
-	p.SeedPreflight = &pf
+	p.DependentsCheck = &pf
 	spec, err := buildPodSpec(p, []string{"dbt", "seed", "--select", "seed_fx_rates_eur"}, "/project/target/partial_parse.msgpack")
 	require.NoError(t, err)
 	require.NotEmpty(t, spec.InitContainers)
 	return spec.InitContainers[len(spec.InitContainers)-1]
 }
 
-func TestBuildPodSpec_ASeedWithAPreflightRunsItLastBeforeDbt(t *testing.T) {
-	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0")
+func TestBuildPodSpec_ASeedWithADependentsCheckRunsItLastBeforeDbt(t *testing.T) {
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	t.Setenv("S3_BUCKET", "continuo")
 	p := seedJobParams() // dbt-seed, SchemaName "analytics", TableName "seed_fx_rates_eur"
-	p.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur",
+	p.DependentsCheck = &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur",
 		Allowed: []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"}, Acknowledged: []string{}}
 	spec, err := buildPodSpec(p, []string{"dbt", "seed", "--select", "seed_fx_rates_eur"}, "/project/target/partial_parse.msgpack")
 	require.NoError(t, err)
 	last := spec.InitContainers[len(spec.InitContainers)-1]
-	assert.Equal(t, model.SeedPreflightContainer, last.Name)
+	assert.Equal(t, "dependents-check", last.Name)
 	assert.Equal(t, "hydrate-parse-cache", spec.InitContainers[0].Name)
 	assert.Subset(t, last.Env, []corev1.EnvVar{
-		{Name: "VALIDATION_OP", Value: "seed_preflight"}, {Name: "SEED_PREFLIGHT_MODE", Value: "check"},
-		{Name: "SEED_PREFLIGHT_ENGINE_FAMILY", Value: "schema_bound"},
+		{Name: "VALIDATION_OP", Value: "dependents_check"}, {Name: "DEPENDENTS_CHECK_MODE", Value: "check"},
+		{Name: "DEPENDENTS_CHECK_ENGINE_FAMILY", Value: "schema_bound"},
 		{Name: "PROD_SCHEMA", Value: "analytics"}, {Name: "TABLE_NAME", Value: "seed_fx_rates_eur"},
-		{Name: "SEED_PREFLIGHT_ALLOWED", Value: `["analytics.fx_rates_current","analytics.fx_rates_latest_eur"]`},
-		{Name: "SEED_PREFLIGHT_ACKNOWLEDGED", Value: `[]`},
+		{Name: "DEPENDENTS_CHECK_ALLOWED", Value: `["analytics.fx_rates_current","analytics.fx_rates_latest_eur"]`},
+		{Name: "DEPENDENTS_CHECK_ACKNOWLEDGED", Value: `[]`},
 		{Name: "NODE_ID", Value: "analytics.seed_fx_rates_eur"},
 	})
 	for _, e := range last.Env {
-		assert.NotEqual(t, "DBT_TARGET_SCHEMA", e.Name, "R0's seed_preflight reads PROD_SCHEMA, never DBT_TARGET_SCHEMA")
+		assert.NotEqual(t, "DBT_TARGET_SCHEMA", e.Name, "R0's dependents_check reads PROD_SCHEMA, never DBT_TARGET_SCHEMA")
 	}
 	assert.Equal(t, "continuo-warehouse-validation", last.EnvFrom[0].SecretRef.Name)
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0", last.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0", last.Image)
 	assert.Equal(t, continuoImageSecurityContext(), last.SecurityContext)
 	// The runner's exit code is the container's: a stop (1) or a bad input
 	// (2) fails the init container, so dbt never starts and nothing is dropped.
@@ -287,71 +287,71 @@ func TestBuildPodSpec_ASeedWithAPreflightRunsItLastBeforeDbt(t *testing.T) {
 
 // R0 exits 2 in report mode too, on a bad input or missing adapter env. A
 // report must never stop the load (N52), so it runs through a shell that exits 0.
-func TestBuildPodSpec_AReportPreflightCannotFailThePod(t *testing.T) {
-	last := lastInitContainer(t, seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.seed_fx_rates_eur"}) // Allowed and Acknowledged nil
+func TestBuildPodSpec_AReportDependentsCheckCannotFailThePod(t *testing.T) {
+	last := lastInitContainer(t, seedreload.DependentsCheck{Mode: seedreload.ReportMode, Family: warehouse.LateBinding, Relation: "analytics.seed_fx_rates_eur"}) // Allowed and Acknowledged nil
 	assert.Equal(t, []string{"sh", "-c", "continuo-runtime validation-op; exit 0"}, last.Command)
-	assert.Subset(t, last.Env, []corev1.EnvVar{{Name: "SEED_PREFLIGHT_MODE", Value: "report"},
-		{Name: "SEED_PREFLIGHT_ENGINE_FAMILY", Value: "late_binding"},
-		{Name: "SEED_PREFLIGHT_ALLOWED", Value: "[]"}, {Name: "SEED_PREFLIGHT_ACKNOWLEDGED", Value: "[]"}})
+	assert.Subset(t, last.Env, []corev1.EnvVar{{Name: "DEPENDENTS_CHECK_MODE", Value: "report"},
+		{Name: "DEPENDENTS_CHECK_ENGINE_FAMILY", Value: "late_binding"},
+		{Name: "DEPENDENTS_CHECK_ALLOWED", Value: "[]"}, {Name: "DEPENDENTS_CHECK_ACKNOWLEDGED", Value: "[]"}})
 }
 
-func TestBuildPodSpec_ATaskWithoutAPreflightHasNoPreflightContainer(t *testing.T) {
-	setPreflightEnv(t)
+func TestBuildPodSpec_ATaskWithoutADependentsCheckHasNoDependentsCheckContainer(t *testing.T) {
+	setDependentsCheckEnv(t)
 	spec, err := buildPodSpec(seedJobParams(), []string{"dbt", "seed", "--select", "seed_fx_rates_eur"}, "/project/target/partial_parse.msgpack")
 	require.NoError(t, err)
 	for _, c := range spec.InitContainers {
-		assert.NotEqual(t, model.SeedPreflightContainer, c.Name)
+		assert.NotEqual(t, model.DependentsCheckContainer, c.Name)
 	}
 }
 
-// Without a parse cache to hydrate, the preflight is the pod's only init
+// Without a parse cache to hydrate, the dependents check is the pod's only init
 // container.
-func TestBuildPodSpec_APreflightRunsWithoutAParseCache(t *testing.T) {
-	setPreflightEnv(t)
+func TestBuildPodSpec_ADependentsCheckRunsWithoutAParseCache(t *testing.T) {
+	setDependentsCheckEnv(t)
 	t.Setenv("S3_BUCKET", "")
 	p := seedJobParams()
-	p.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"}
+	p.DependentsCheck = &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"}
 	spec, err := buildPodSpec(p, []string{"dbt", "seed", "--select", "seed_fx_rates_eur"}, "/project/target/partial_parse.msgpack")
 	require.NoError(t, err)
 	require.Len(t, spec.InitContainers, 1)
-	assert.Equal(t, model.SeedPreflightContainer, spec.InitContainers[0].Name)
+	assert.Equal(t, "dependents-check", spec.InitContainers[0].Name)
 }
 
-// A preflight that cannot run never lets the pod start: a relation without a
+// A dependents check that cannot run never lets the pod start: a relation without a
 // schema and a table, or an install without a validation image, is permanent.
-func TestBuildPodSpec_APreflightThatCannotRunIsPermanent(t *testing.T) {
+func TestBuildPodSpec_ADependentsCheckThatCannotRunIsPermanent(t *testing.T) {
 	for name, c := range map[string]struct {
 		relation string
 		image    string
 	}{
-		"a relation of no dot":    {"seed_fx_rates_eur", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"},
-		"a relation of no schema": {".seed", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"},
-		"a relation of no name":   {"analytics.", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"},
+		"a relation of no dot":    {"seed_fx_rates_eur", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0"},
+		"a relation of no schema": {".seed", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0"},
+		"a relation of no name":   {"analytics.", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0"},
 		"no validation image":     {"analytics.seed_fx_rates_eur", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			setPreflightEnv(t)
+			setDependentsCheckEnv(t)
 			t.Setenv("VALIDATION_IMAGE", c.image)
 			p := seedJobParams()
-			p.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: c.relation}
+			p.DependentsCheck = &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: c.relation}
 			_, err := buildPodSpec(p, []string{"dbt", "seed", "--select", "seed_fx_rates_eur"}, "/project/target/partial_parse.msgpack")
 			require.ErrorIs(t, err, pkgevents.ErrPermanent)
 		})
 	}
 }
 
-// The preflight a seed's dispatch carries reaches the Job the Deployer
+// The dependents check a seed's dispatch carries reaches the Job the Deployer
 // creates, so the check runs before the seed's load.
-func TestDeploy_ASeedsPreflightReachesItsJob(t *testing.T) {
-	setPreflightEnv(t)
+func TestDeploy_ASeedsDependentsCheckReachesItsJob(t *testing.T) {
+	setDependentsCheckEnv(t)
 	client := newValidationTestClient()
 	spec := attemptSpec(pkg_model.NodeTypeDbtSeed, "v42")
 	spec.SchemaName, spec.TableName = "analytics", "seed_fx_rates_eur"
-	spec.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"}
+	spec.DependentsCheck = &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"}
 
 	require.NoError(t, NewDeployer(client, "default", 15*time.Minute, 24*time.Hour).Deploy(context.Background(), spec))
 
 	inits := fetchJob(t, client, "default", spec.JobName).Spec.Template.Spec.InitContainers
 	require.NotEmpty(t, inits)
-	assert.Equal(t, model.SeedPreflightContainer, inits[len(inits)-1].Name)
+	assert.Equal(t, "dependents-check", inits[len(inits)-1].Name)
 }

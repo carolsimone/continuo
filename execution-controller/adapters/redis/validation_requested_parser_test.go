@@ -223,7 +223,7 @@ func TestParseValidationRequested_CarriesValidationOpAndProdSchema(t *testing.T)
 	  "nodes":[
 	    {"unique_id":"model.core.dim","project_name":"core","node_type":"dbt-model",
 	     "schema_name":"analytics","table_name":"dim","image_tag":"t1",
-	     "validation_op":"clone_from_prod","prod_schema":"analytics"},
+	     "validation_op":"build_from_prod","prod_schema":"analytics"},
 	    {"unique_id":"model.shop.orders","project_name":"shop","node_type":"dbt-model",
 	     "schema_name":"shop","table_name":"orders","image_tag":"t2",
 	     "candidate_artifact_uri":"s3://b/o.sql","validation_op":"build_from_sql","prod_schema":""}
@@ -236,7 +236,7 @@ func TestParseValidationRequested_CarriesValidationOpAndProdSchema(t *testing.T)
 	for _, n := range evt.Nodes {
 		byID[n.NodeID] = n
 	}
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["model.core.dim"].ValidationOp)
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), byID["model.core.dim"].ValidationOp)
 	assert.Equal(t, "analytics", byID["model.core.dim"].ProdSchema)
 	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), byID["model.shop.orders"].ValidationOp)
 	assert.Equal(t, "", byID["model.shop.orders"].ProdSchema)

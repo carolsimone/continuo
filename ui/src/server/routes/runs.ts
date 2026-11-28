@@ -71,9 +71,9 @@ function toRun(r: any) {
   };
 }
 
-// toSeedPreflight maps an attempt's SeedPreflightFindings onto the HTTP
-// response, field by field; an attempt that ran no preflight has none (null).
-function toSeedPreflight(p: any) {
+// toDependentsCheck maps an attempt's DependentsCheckFindings onto the HTTP
+// response, field by field; an attempt that ran no dependents check has none (null).
+function toDependentsCheck(p: any) {
   if (!p) return null;
   return {
     drop_semantics: p.drop_semantics,
@@ -228,7 +228,7 @@ export function createRunsRouter(client: GrpcClient) {
           error_message: a.error_message || null,
           log_s3_key: a.log_s3_key || null,
           run_results_uri: a.run_results_uri || null,
-          seed_preflight: toSeedPreflight(a.seed_preflight),
+          dependents_check: toDependentsCheck(a.dependents_check),
         }));
         res.json({ total_count: Number(response.total_count ?? 0), attempts });
       }

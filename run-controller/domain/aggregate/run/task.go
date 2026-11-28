@@ -32,9 +32,9 @@ type Task struct {
 	// PlanReason says why the task runs with its operation; empty when its
 	// plan stated none.
 	PlanReason string
-	// SeedPreflight is the check a seed's pod runs before a load that drops
+	// DependentsCheck is the check a seed's pod runs before a load that drops
 	// its table; nil on every other task.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 	// RebuildOf is the seed whose load drops the relation this task
 	// rebuilds, the smallest seed key when the run loads several seeds above
 	// it; empty on every other task.
@@ -45,9 +45,9 @@ type Task struct {
 }
 
 // Spec is what every dispatch of t carries: its operation, plan reason and
-// seed preflight.
+// dependents check.
 func (t Task) Spec() DispatchSpec {
-	return DispatchSpec{Operation: t.Operation, Reason: t.PlanReason, Preflight: t.SeedPreflight}
+	return DispatchSpec{Operation: t.Operation, Reason: t.PlanReason, DependentsCheck: t.DependentsCheck}
 }
 
 // Node returns the (project, schema, table) triple identifying which model

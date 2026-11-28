@@ -12,7 +12,7 @@ import (
 )
 
 // contractVersionEntry is the JSON-serialisable representation of one version
-// of a node's contract: the promotion that made a contract current. The fields
+// of a node's data contract: the promotion that made a data contract current. The fields
 // a version does not carry (a version that reverts nothing has no
 // same_as_version, a history row has no document) are omitted, as in
 // versionEntry.
@@ -49,19 +49,19 @@ func toContractVersionEntry(v *catalogv1.ContractVersionView) contractVersionEnt
 	}
 }
 
-// NewContractCommand builds `continuo node contract <unique_id>`.
-func NewContractCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+// NewDataContractCommand builds `continuo node data-contract <unique_id>`.
+func NewDataContractCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "contract <unique_id>",
-		Short: "Show the contract a node has now, with its ODCS document",
-		Long: `Show the contract a node has now, with its ODCS document.
+		Use:   "data-contract <unique_id>",
+		Short: "Show the data contract a node has now, with its ODCS document",
+		Long: `Show the data contract a node has now, with its ODCS document.
 
 Use when the user wants to know what a node promises: the fields of its table,
-their types and descriptions, as the contract the live release carries. The
-document is the contract as published, in ODCS (Open Data Contract Standard)
+their types and descriptions, as the data contract the live release carries. The
+document is the data contract as published, in ODCS (Open Data Contract Standard)
 YAML, without the "servers" list. The version is the number of the promotion
-that made this contract current; "node contract-history" lists the earlier ones.
-Every dbt model, seed and snapshot has a contract, and so has every Python node.
+that made this data contract current; "node data-contract-history" lists the earlier ones.
+Every dbt model, seed and snapshot has a data contract, and so has every Python node.
 A dbt test and an unknown-external table have none: asking for one is not_found.
 
 Arguments:
@@ -75,7 +75,7 @@ Output (stdout, JSON):
    "release_id":string,"promoted_at":string,"content_hash":string,
    "is_current":bool,"same_as_version":number,"continuo_contracts":string,
    "document_yaml":string}}
-  promoted_at is RFC 3339, in UTC. document_yaml is the whole contract as YAML.
+  promoted_at is RFC 3339, in UTC. document_yaml is the whole data contract as YAML.
   same_as_version is present only when the version is a revert: the earlier
   version that had the same contract_hash. release_id, promoted_at,
   continuo_contracts and document_yaml are omitted when the version carries no
@@ -83,17 +83,17 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  wrong number of arguments
-  not_found  (exit 3)  the node has no contract, is retired, or its unique_id is not recorded
+  not_found  (exit 3)  the node has no data contract, is retired, or its unique_id is not recorded
   unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo node contract analytics.orders\n  continuo node contract analytics.py_daily_kpis",
+		Example: "  continuo node data-contract analytics.orders\n  continuo node data-contract analytics.py_daily_kpis",
 		Annotations: map[string]string{
 			"output_schema": `{"contract":{"unique_id":"string","version":"number","contract_hash":"string","release_id":"string","promoted_at":"string","content_hash":"string","is_current":"boolean","same_as_version":"number","continuo_contracts":"string","document_yaml":"string"}}`,
 			"exit_codes":    `[0,2,3,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("contract requires exactly one argument: <unique_id>"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("data-contract requires exactly one argument: <unique_id>"))
 			}
 			return nil
 		},
@@ -107,7 +107,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.GetNodeContract(ctx, args[0], true)
+			resp, err := c.GetNodeDataContract(ctx, args[0], true)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

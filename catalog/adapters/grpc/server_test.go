@@ -128,16 +128,16 @@ func everyRPC(client catalogv1.CatalogQueryClient) []struct {
 			_, err := client.GetPrecedents(ctx, &catalogv1.GetPrecedentsRequest{Signature: "x"})
 			return err
 		}},
-		{"GetNodeContract", func() error {
-			_, err := client.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: "x"})
+		{"GetNodeDataContract", func() error {
+			_, err := client.GetNodeDataContract(ctx, &catalogv1.GetNodeDataContractRequest{UniqueId: "x"})
 			return err
 		}},
-		{"ListNodeContractVersions", func() error {
-			_, err := client.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: "x"})
+		{"ListNodeDataContractVersions", func() error {
+			_, err := client.ListNodeDataContractVersions(ctx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: "x"})
 			return err
 		}},
-		{"GetNodeContractDiff", func() error {
-			_, err := client.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: "x", FromVersion: 1, ToVersion: 2})
+		{"GetNodeDataContractDiff", func() error {
+			_, err := client.GetNodeDataContractDiff(ctx, &catalogv1.GetNodeDataContractDiffRequest{UniqueId: "x", FromVersion: 1, ToVersion: 2})
 			return err
 		}},
 	}
@@ -208,15 +208,15 @@ func (s stubPrecedentHistoryReader) GetPrecedents(_ context.Context, tenantID, _
 // stubContractHistoryReader satisfies grpcadapter.ContractHistoryReader.
 type stubContractHistoryReader struct{ log *tenantLog }
 
-func (s stubContractHistoryReader) GetNodeContract(_ context.Context, tenantID, _ string, _ bool) (queries.NodeContract, error) {
+func (s stubContractHistoryReader) GetNodeDataContract(_ context.Context, tenantID, _ string, _ bool) (queries.NodeContract, error) {
 	s.log.add(tenantID)
 	return queries.NodeContract{}, nil
 }
-func (s stubContractHistoryReader) ListNodeContractVersions(_ context.Context, tenantID, _ string, _ int) ([]contractversion.VersionView, error) {
+func (s stubContractHistoryReader) ListNodeDataContractVersions(_ context.Context, tenantID, _ string, _ int) ([]contractversion.VersionView, error) {
 	s.log.add(tenantID)
 	return nil, nil
 }
-func (s stubContractHistoryReader) GetNodeContractDiff(_ context.Context, tenantID, _ string, _, _ int64) ([]contractversion.FieldChange, error) {
+func (s stubContractHistoryReader) GetNodeDataContractDiff(_ context.Context, tenantID, _ string, _, _ int64) ([]contractversion.FieldChange, error) {
 	s.log.add(tenantID)
 	return nil, nil
 }

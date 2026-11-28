@@ -666,16 +666,16 @@ func queryHandlerCalls(h *grpcadapter.QueryHandler, ctx context.Context) map[str
 			_, err := h.GetPrecedents(ctx, &catalogv1.GetPrecedentsRequest{Signature: "sig-1"})
 			return err
 		},
-		"GetNodeContract": func() error {
-			_, err := h.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: "n1"})
+		"GetNodeDataContract": func() error {
+			_, err := h.GetNodeDataContract(ctx, &catalogv1.GetNodeDataContractRequest{UniqueId: "n1"})
 			return err
 		},
-		"ListNodeContractVersions": func() error {
-			_, err := h.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: "n1"})
+		"ListNodeDataContractVersions": func() error {
+			_, err := h.ListNodeDataContractVersions(ctx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: "n1"})
 			return err
 		},
-		"GetNodeContractDiff": func() error {
-			_, err := h.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: "n1", FromVersion: 1, ToVersion: 2})
+		"GetNodeDataContractDiff": func() error {
+			_, err := h.GetNodeDataContractDiff(ctx, &catalogv1.GetNodeDataContractDiffRequest{UniqueId: "n1", FromVersion: 1, ToVersion: 2})
 			return err
 		},
 	}

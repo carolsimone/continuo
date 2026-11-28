@@ -80,13 +80,13 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	// The fix's release check clones its four unchanged upstream models from
+	// The fix's release check builds its four unchanged upstream models from
 	// production (only ftable_e differs from the live release in that run, see
-	// ensureParseFixClonedProdRelations), so those models must already exist in the
+	// ensureParseFixBuiltFromProdRelations), so those models must already exist in the
 	// warehouse before the release is posted. Deferred, so it runs when
 	// the test function returns, while the pool is open.
-	dropParseFixClonedProdRelations := ensureParseFixClonedProdRelations(t, ctx, clients)
-	defer dropParseFixClonedProdRelations()
+	dropParseFixBuiltFromProdRelations := ensureParseFixBuiltFromProdRelations(t, ctx, clients)
+	defer dropParseFixBuiltFromProdRelations()
 
 	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -112,7 +112,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// fix's release check assembles from production alone (assemble_release.go
 	// and changedNodeIDsFor both take their no-candidate fallback). Every live
 	// project keeps its baseline pointer, including service-1; the release check
-	// replaces service-2 with the fix and clones its complete upstream closure.
+	// replaces service-2 with the fix and builds its complete upstream closure from production.
 	var prodNodes []map[string]string
 	for svc, si := range allProjects {
 		for _, n := range si.nodes {
@@ -255,8 +255,8 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusConflict}, resp.StatusCode)
 }
 
-// parseFixClonedProdRelations are the production relations this scenario's
-// fix's release check clones rather than rebuilds. Only ftable_e differs from
+// parseFixBuiltFromProdRelations are the production relations this scenario's
+// fix's release check builds from production rather than from its code. Only ftable_e differs from
 // the live release in that run (every other node's manifest content is untouched),
 // so DescendantsClosure(topo, {ftable_e}) yields {ftable_e, ftable_f} as the
 // changed closure, and FullAncestorsClosure of that closure adds {ftable_a,
@@ -264,40 +264,40 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 // RebuiltFromCandidateSet (release-controller/domain/release) puts only the
 // changed closure itself, {ftable_e, ftable_f}, into the build-from-candidate-SQL set.
 // Those four upstream models are validated but not rebuilt,
-// so the validation Job clones each straight from production instead
-// (VALIDATION_OP=clone_from_prod: "CREATE TABLE <candidate>.<table> AS SELECT
+// so the validation Job builds each straight from production instead
+// (VALIDATION_OP=build_from_prod: "CREATE TABLE <candidate>.<table> AS SELECT
 // * FROM <prod_schema>.<table> WHERE 1=0" — see
 // docs/arch/services/execution-controller.md). A cold stack has never promoted
 // a release, so the warehouse holds none of production's relations and the
-// clone fails with "relation ... does not exist".
+// build fails with "relation ... does not exist".
 //
 // Each is declared with a single `id integer` column because that is the
 // only output column these models select
 // (dbt/projects/service-3/models/ftable_c.sql: "SELECT a.id FROM
 // e2e_schema.ftable_a a LEFT JOIN e2e_schema.ftable_b b ON a.id = b.id";
 // dbt/projects/service-2/models/ftable_d.sql: "SELECT id FROM
-// e2e_schema.ftable_c"), and it satisfies every reader of the cloned copy in
+// e2e_schema.ftable_c"), and it satisfies every reader of the table built from production in
 // the candidate schema: the verified fix (stub-llm's parseFixContent, "SELECT
 // c.id FROM e2e_schema.ftable_c c") and ftable_f (
 // dbt/projects/service-3/models/ftable_f.sql: "SELECT d.id FROM
 // e2e_schema.ftable_d d LEFT JOIN e2e_schema.ftable_e e ON d.id = e.id") both
 // read only `.id` from either relation.
-var parseFixClonedProdRelations = []string{
+var parseFixBuiltFromProdRelations = []string{
 	"e2e_schema.ftable_a", "e2e_schema.ftable_b", "e2e_schema.ftable_c", "e2e_schema.ftable_d",
 }
 
-// ensureParseFixClonedProdRelations creates parseFixClonedProdRelations in the
+// ensureParseFixBuiltFromProdRelations creates parseFixBuiltFromProdRelations in the
 // warehouse when they are not already there, and returns a cleanup that drops
 // only the ones this call created. A warm stack already has these from an
 // earlier promoted release, and the full suite's happy-path tests own that
 // production data — this must not drop a table it did not create.
-func ensureParseFixClonedProdRelations(t *testing.T, ctx context.Context, clients *testClients) func() {
+func ensureParseFixBuiltFromProdRelations(t *testing.T, ctx context.Context, clients *testClients) func() {
 	t.Helper()
 	_, err := clients.dbtDB.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS e2e_schema`)
 	require.NoError(t, err, "create e2e_schema")
 
 	var created []string
-	for _, rel := range parseFixClonedProdRelations {
+	for _, rel := range parseFixBuiltFromProdRelations {
 		var exists bool
 		err := clients.dbtDB.GetContext(ctx, &exists, `SELECT to_regclass($1) IS NOT NULL`, rel)
 		require.NoError(t, err, "check existence of %s", rel)

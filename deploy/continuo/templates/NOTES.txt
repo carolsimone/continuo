@@ -29,14 +29,18 @@ UPGRADE NOTES
   reloaded; a Python project is released as "python", built on
   continuo-python-runtime 0.13.0 or later. The steps are in deploy/README.md,
   "Re-baseline after a fingerprint change".
-  The default validation image is now v0.14.0.
+  The default validation image is now v0.15.0.
   An overridden dbt-commands file whose run commands parse with other --vars,
   --target, --profile, --profiles-dir or --project-dir values than its compile
   command stops execution-controller from starting.
 
-  A validation.imageTag below v0.12.0 fails the render: that runner has no
-  seed preflight. Re-pin it to v0.12.0 or later, or drop the override to
-  track the chart's default.
+  A validation.imageTag below v0.15.0 fails the render: that runner knows
+  neither the dependents check's op dependents_check nor build_from_prod.
+  Re-pin it to v0.15.0 or later, or drop the override to track the chart's
+  default. A components entry that sets VALIDATION_IMAGE to anything but
+  __VALIDATION_IMAGE__ fails the render too: set it back to
+  __VALIDATION_IMAGE__ and pin the image with validation.engine and
+  validation.imageTag.
 
   A values file that overrides the whole components list gets neither
   release-controller's grpcPort and RELEASE_CONTROLLER_GRPC_PORT nor

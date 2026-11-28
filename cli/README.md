@@ -109,7 +109,7 @@ A schedule is a group of models that run together, picked by their first dbt tag
 
 ### Nodes
 
-A node is one model, seed or python script. Node commands take it as `<project> <schema> <table>`, and `node list` shows these three for every node the live release builds. `node contract`, `node contract-history` and `node contract-diff` take the node's `unique_id` instead: its schema and table joined by a dot, in lower case (`<schema>.<table>`). `node list` shows a schema declared with capitals in its declared spelling, and the contract commands do not fold case.
+A node is one model, seed or python script. Node commands take it as `<project> <schema> <table>`, and `node list` shows these three for every node the live release builds. `node data-contract`, `node data-contract-history` and `node data-contract-diff` take the node's `unique_id` instead: its schema and table joined by a dot, in lower case (`<schema>.<table>`). `node list` shows a schema declared with capitals in its declared spelling, and the data contract commands do not fold case.
 
 | Command | What it does | Changes state |
 |---|---|:--:|
@@ -123,15 +123,15 @@ A node is one model, seed or python script. Node commands take it as `<project> 
 | `node diff <project> <schema> <table> --from N --to M` | Shows the SQL diff between two recorded versions, given by the `version_seq` numbers of `node versions`. Both flags are required. | |
 | `node upstream-changes <project> <schema> <table>` | Lists the latest code change of each ancestor of the node, with its distance (`depth`) and diff. `--depth` sets how far up to look (default 3, at most 10), and `--since` (a timestamp) hides older changes. | |
 | `node code-units [<unit-id>]` | Lists the version history of shared-code units, by unit id or for one node with `--project`, `--schema` and `--table`. Empty for a node without shared code. Exits 3 for an unknown unit id. | |
-| `node contract <unique_id>` | Shows the contract a node has now: its version, hashes, the release that promoted it and its ODCS document (`document_yaml`, without the `servers` list). `<unique_id>` is `<schema>.<table>`, for example `analytics.orders`. Every dbt model, seed and snapshot has a contract, and so has every Python node; a dbt test and an unknown-external table have none. Exits 3 if the node has no contract. | |
-| `node contract-history <unique_id> [limit]` | Lists the versions of the node's contract, newest first: one for each promotion that changed it, with `is_current` on the one it has now and `same_as_version` on a revert. The optional `limit` caps the list (default 0, every version). A node with no history gives an empty list. | |
-| `node contract-diff <unique_id> <from> <to>` | Lists the fields that differ between two versions of the node's contract, given by the numbers of `node contract-history`: one row for each changed path, with its value in each version as JSON text. Exits 3 if the node has no promotion for a version, and 2 for a version below 1. | |
+| `node data-contract <unique_id>` | Shows the data contract a node has now: its version, hashes, the release that promoted it and its ODCS document (`document_yaml`, without the `servers` list). `<unique_id>` is `<schema>.<table>`, for example `analytics.orders`. Every dbt model, seed and snapshot has a data contract, and so has every Python node; a dbt test and an unknown-external table have none. Exits 3 if the node has no data contract. | |
+| `node data-contract-history <unique_id> [limit]` | Lists the versions of the node's data contract, newest first: one for each promotion that changed it, with `is_current` on the one it has now and `same_as_version` on a revert. The optional `limit` caps the list (default 0, every version). A node with no history gives an empty list. | |
+| `node data-contract-diff <unique_id> <from> <to>` | Lists the fields that differ between two versions of the node's data contract, given by the numbers of `node data-contract-history`: one row for each changed path, with its value in each version as JSON text. Exits 3 if the node has no promotion for a version, and 2 for a version below 1. | |
 
 ### Releases
 
 | Command | What it does | Changes state |
 |---|---|:--:|
-| `release notices <release-id>` | Lists the seeds whose load a candidate release changes: what each load does, the views it rebuilds (a dormant one included), what refreshes on its schedule (a dormant node, whose `schedule` is empty, only when run by hand), what the warehouse holds outside continuo, and whether the load is predicted to go ahead or stop. A notice predicts, the run's preflight decides. | |
+| `release notices <release-id>` | Lists the seeds whose load a candidate release changes: what each load does, the views it rebuilds (a dormant one included), what refreshes on its schedule (a dormant node, whose `schedule` is empty, only when run by hand), what the warehouse holds outside continuo, and whether the load is predicted to go ahead or stop. A notice predicts, the run's dependents check decides. | |
 
 ### Failures and dead letters
 

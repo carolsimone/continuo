@@ -144,12 +144,12 @@ func TestJobObservation_FactsOfAFailedInitContainerKeepItsTerminationReason(t *t
 		t.Run(reason, func(t *testing.T) {
 			pod := model.PodObservation{Name: "p", Phase: model.PodFailed,
 				Main: model.ContainerObservation{Name: "dbt-job", WaitingReason: "PodInitializing"},
-				Inits: []model.ContainerObservation{{Name: model.SeedPreflightContainer, Terminated: true,
+				Inits: []model.ContainerObservation{{Name: model.DependentsCheckContainer, Terminated: true,
 					ExitCode: 137, TerminatedReason: reason, FinishedAt: at(12)}}}
 
 			f := model.JobObservation{JobPresent: true, JobFailed: true, Pods: []model.PodObservation{pod}}.Facts(*at(60))
 
-			assert.Equal(t, model.SeedPreflightContainer, f.FailedContainer)
+			assert.Equal(t, model.DependentsCheckContainer, f.FailedContainer)
 			assert.Equal(t, code(137), f.ExitCode)
 			assert.Equal(t, reason, f.TerminationReason)
 			assert.Equal(t, want, model.Classify(f).Reason)

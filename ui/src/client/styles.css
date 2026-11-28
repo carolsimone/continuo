@@ -1446,7 +1446,7 @@ a.release-author:hover { text-decoration: underline; }
   font-size: 12px;
 }
 
-/* ---- Contract tab of the node page ---- */
+/* ---- Data contract tab of the node page ---- */
 .contract-panel {
   display: flex;
   flex-direction: column;

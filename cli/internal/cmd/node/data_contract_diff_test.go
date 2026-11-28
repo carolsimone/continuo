@@ -18,18 +18,18 @@ import (
 )
 
 // sampleContractChanges is a changed value, an added field and a removed one.
-func sampleContractChanges() *catalogv1.GetNodeContractDiffResponse {
-	return &catalogv1.GetNodeContractDiffResponse{Changes: []*catalogv1.ContractFieldChange{
+func sampleContractChanges() *catalogv1.GetNodeDataContractDiffResponse {
+	return &catalogv1.GetNodeDataContractDiffResponse{Changes: []*catalogv1.ContractFieldChange{
 		{Path: "description.purpose", BeforeJson: `"Daily KPIs"`, AfterJson: `"Daily KPIs by region"`},
 		{Path: "schema[0].properties[2]", AfterJson: `{"name":"region","physicalType":"text"}`},
 		{Path: "tags", BeforeJson: `["kpi"]`},
 	}}
 }
 
-func TestContractDiff_MapsEveryChangeAndForwardsTheVersions(t *testing.T) {
+func TestDataContractDiff_MapsEveryChangeAndForwardsTheVersions(t *testing.T) {
 	fake := &fakeNodeCatalog{contractDiffResp: sampleContractChanges()}
 
-	stdout, stderr, exit := runContractCommand(t, NewContractDiffCommand, fake, []string{"analytics.py_daily_kpis", "1", "3"}, false)
+	stdout, stderr, exit := runContractCommand(t, NewDataContractDiffCommand, fake, []string{"analytics.py_daily_kpis", "1", "3"}, false)
 
 	require.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
@@ -49,24 +49,24 @@ func TestContractDiff_MapsEveryChangeAndForwardsTheVersions(t *testing.T) {
 	assert.Equal(t, "", payload.Changes[2]["after_json"], "a removed path has an empty after_json, and the key stays")
 }
 
-func TestContractDiff_TwoEqualVersionsAreAnEmptyArrayNotNull(t *testing.T) {
-	fake := &fakeNodeCatalog{contractDiffResp: &catalogv1.GetNodeContractDiffResponse{}}
+func TestDataContractDiff_TwoEqualVersionsAreAnEmptyArrayNotNull(t *testing.T) {
+	fake := &fakeNodeCatalog{contractDiffResp: &catalogv1.GetNodeDataContractDiffResponse{}}
 
-	stdout, _, exit := runContractCommand(t, NewContractDiffCommand, fake, []string{"analytics.orders", "2", "2"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractDiffCommand, fake, []string{"analytics.orders", "2", "2"}, false)
 
 	assert.Equal(t, 0, exit)
 	assert.JSONEq(t, `{"changes":[]}`, stdout)
 }
 
-func TestContractDiff_OutputMatchesItsSchema(t *testing.T) {
+func TestDataContractDiff_OutputMatchesItsSchema(t *testing.T) {
 	fake := &fakeNodeCatalog{contractDiffResp: sampleContractChanges()}
-	stdout, _, exit := runContractCommand(t, NewContractDiffCommand, fake, []string{"analytics.py_daily_kpis", "1", "3"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractDiffCommand, fake, []string{"analytics.py_daily_kpis", "1", "3"}, false)
 	require.Equal(t, 0, exit)
 
-	assertEmitsItsSchema(t, NewContractDiffCommand(nil, &config.Config{}, io.Discard, io.Discard), stdout)
+	assertEmitsItsSchema(t, NewDataContractDiffCommand(nil, &config.Config{}, io.Discard, io.Discard), stdout)
 }
 
-func TestContractDiff_UsageErrorsExit2WithoutCallingTheServer(t *testing.T) {
+func TestDataContractDiff_UsageErrorsExit2WithoutCallingTheServer(t *testing.T) {
 	cases := map[string][]string{
 		"no arguments":             {},
 		"a unique_id alone":        {"analytics.orders"},
@@ -82,7 +82,7 @@ func TestContractDiff_UsageErrorsExit2WithoutCallingTheServer(t *testing.T) {
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
 			fake := &fakeNodeCatalog{}
-			stdout, _, exit := runContractCommand(t, NewContractDiffCommand, fake, args, false)
+			stdout, _, exit := runContractCommand(t, NewDataContractDiffCommand, fake, args, false)
 			assert.Equal(t, 2, exit)
 			var env map[string]output.CLIError
 			require.NoError(t, json.Unmarshal([]byte(stdout), &env))
@@ -92,10 +92,10 @@ func TestContractDiff_UsageErrorsExit2WithoutCallingTheServer(t *testing.T) {
 	}
 }
 
-func TestContractDiff_AVersionBelowOneIsRefusedByTheServerWithExit2(t *testing.T) {
+func TestDataContractDiff_AVersionBelowOneIsRefusedByTheServerWithExit2(t *testing.T) {
 	fake := &fakeNodeCatalog{contractDiffErr: status.Error(codes.InvalidArgument, "from_version and to_version must be 1 or more")}
 
-	stdout, _, exit := runContractCommand(t, NewContractDiffCommand, fake, []string{"analytics.orders", "0", "2"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractDiffCommand, fake, []string{"analytics.orders", "0", "2"}, false)
 
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -104,10 +104,10 @@ func TestContractDiff_AVersionBelowOneIsRefusedByTheServerWithExit2(t *testing.T
 	assert.Contains(t, env["error"].Message, "1 or more")
 }
 
-func TestContractDiff_AVersionTheNodeLacksExits3(t *testing.T) {
-	fake := &fakeNodeCatalog{contractDiffErr: status.Error(codes.NotFound, `node "analytics.orders" has no contract version 1 or 9`)}
+func TestDataContractDiff_AVersionTheNodeLacksExits3(t *testing.T) {
+	fake := &fakeNodeCatalog{contractDiffErr: status.Error(codes.NotFound, `node "analytics.orders" has no data contract version 1 or 9`)}
 
-	stdout, _, exit := runContractCommand(t, NewContractDiffCommand, fake, []string{"analytics.orders", "1", "9"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractDiffCommand, fake, []string{"analytics.orders", "1", "9"}, false)
 
 	assert.Equal(t, 3, exit)
 	var env map[string]output.CLIError
@@ -115,15 +115,15 @@ func TestContractDiff_AVersionTheNodeLacksExits3(t *testing.T) {
 	assert.Equal(t, output.CodeNotFound, env["error"].Code)
 }
 
-func TestContractDiff_UnavailableExits5AndInternalExits6(t *testing.T) {
-	_, _, exit := runContractCommand(t, NewContractDiffCommand, &fakeNodeCatalog{contractDiffErr: status.Error(codes.Unavailable, "down")}, []string{"analytics.orders", "1", "2"}, false)
+func TestDataContractDiff_UnavailableExits5AndInternalExits6(t *testing.T) {
+	_, _, exit := runContractCommand(t, NewDataContractDiffCommand, &fakeNodeCatalog{contractDiffErr: status.Error(codes.Unavailable, "down")}, []string{"analytics.orders", "1", "2"}, false)
 	assert.Equal(t, 5, exit)
-	_, _, exit = runContractCommand(t, NewContractDiffCommand, &fakeNodeCatalog{contractDiffErr: status.Error(codes.Internal, "boom")}, []string{"analytics.orders", "1", "2"}, false)
+	_, _, exit = runContractCommand(t, NewDataContractDiffCommand, &fakeNodeCatalog{contractDiffErr: status.Error(codes.Internal, "boom")}, []string{"analytics.orders", "1", "2"}, false)
 	assert.Equal(t, 6, exit)
 }
 
-func TestContractDiff_FactoryErrorExits5(t *testing.T) {
-	cmd := NewContractDiffCommand(func(context.Context, string) (client.CatalogClient, error) {
+func TestDataContractDiff_FactoryErrorExits5(t *testing.T) {
+	cmd := NewDataContractDiffCommand(func(context.Context, string) (client.CatalogClient, error) {
 		return nil, status.Error(codes.Unavailable, "dial failed")
 	}, &config.Config{Timeout: 2 * time.Second}, io.Discard, io.Discard)
 	cmd.SetArgs([]string{"analytics.orders", "1", "2"})
@@ -134,10 +134,10 @@ func TestContractDiff_FactoryErrorExits5(t *testing.T) {
 	assert.Equal(t, 5, cliErr.ExitCode())
 }
 
-func TestContractDiff_HumanModeWritesOneLinePerChangeToStderr(t *testing.T) {
+func TestDataContractDiff_HumanModeWritesOneLinePerChangeToStderr(t *testing.T) {
 	fake := &fakeNodeCatalog{contractDiffResp: sampleContractChanges()}
 
-	stdout, stderr, exit := runContractCommand(t, NewContractDiffCommand, fake, []string{"analytics.py_daily_kpis", "1", "3"}, true)
+	stdout, stderr, exit := runContractCommand(t, NewDataContractDiffCommand, fake, []string{"analytics.py_daily_kpis", "1", "3"}, true)
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
@@ -146,8 +146,8 @@ func TestContractDiff_HumanModeWritesOneLinePerChangeToStderr(t *testing.T) {
 	assert.Contains(t, stderr, `tags: ["kpi"] -> (absent)`)
 }
 
-func TestContractDiff_IsDocumentedAsAReadOnlyCommandThatTheChatSetsNoFlagsOn(t *testing.T) {
-	cmd := NewContractDiffCommand(nil, &config.Config{}, io.Discard, io.Discard)
+func TestDataContractDiff_IsDocumentedAsAReadOnlyCommandThatTheChatSetsNoFlagsOn(t *testing.T) {
+	cmd := NewDataContractDiffCommand(nil, &config.Config{}, io.Discard, io.Discard)
 
 	assert.NotEmpty(t, cmd.Short)
 	assert.NotEmpty(t, cmd.Long)

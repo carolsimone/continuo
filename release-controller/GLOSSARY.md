@@ -32,9 +32,9 @@ _Avoid_: stage, step, phase
 The warehouse schema where the release check builds a candidate release's tables, apart from production's.
 _Avoid_: staging schema, scratch schema, blue schema
 
-**Production copy**:
-A node the release check copies from its production table instead of building, because it only feeds the nodes that changed.
-_Avoid_: clone, prod clone, snapshot
+**Production shape**:
+The columns and types of a node's production table, from which the release check builds an empty table for a node that only feeds the nodes that changed. It copies no rows.
+_Avoid_: clone, prod clone, production copy, snapshot
 
 **Seed reload notice**:
 A warning on a candidate release that one of its seeds will drop its table when loaded, naming the views rebuilt with it and predicting whether the load reloads, stops or is refused.

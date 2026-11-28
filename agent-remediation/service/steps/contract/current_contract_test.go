@@ -109,7 +109,7 @@ func TestCurrentContractStep_EmptyWithoutOne(t *testing.T) {
 
 // The current contract is reference for the model, never needed to fix the
 // node: a catalog that fails to answer (an outage, or a catalog that serves no
-// GetNodeContract yet during a rolling upgrade) is logged as a warning and
+// GetNodeDataContract yet during a rolling upgrade) is logged as a warning and
 // the step provides an empty text, so the remediation goes on.
 func TestCurrentContractStep_AFailedReadIsAWarningAndAnEmptyText(t *testing.T) {
 	var logs bytes.Buffer

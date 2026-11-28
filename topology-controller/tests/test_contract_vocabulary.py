@@ -98,8 +98,8 @@ def test_reject_reason_invalid_contract_is_not_healable():
     assert reason.INVALID_CONTRACT not in contract_vocabulary.REJECT_REASON_HEALABLE
 
 
-def test_upstream_clone_failed_is_not_healable():
+def test_upstream_build_from_prod_failed_is_not_healable():
     """A run of the unchanged upstream settles it, not a change to the release's code."""
     reason = contract_vocabulary.RejectReason
-    assert reason.UPSTREAM_CLONE_FAILED.value == "upstream_clone_failed"
-    assert reason.UPSTREAM_CLONE_FAILED not in contract_vocabulary.REJECT_REASON_HEALABLE
+    assert reason.UPSTREAM_BUILD_FROM_PROD_FAILED.value == "upstream_build_from_prod_failed"
+    assert reason.UPSTREAM_BUILD_FROM_PROD_FAILED not in contract_vocabulary.REJECT_REASON_HEALABLE

@@ -2,18 +2,18 @@ package seedreload
 
 import "strings"
 
-// Findings is what a preflight of a seed's table found in the warehouse.
+// Findings is what a dependents check of a seed's table found in the warehouse.
 type Findings struct {
 	// DropSemantics is how the engine treats a drop of a table that views read.
 	DropSemantics string
 	// Completeness says whether the dependants listed are all there are.
 	Completeness string
-	// Checked is true when the preflight ran to the end.
+	// Checked is true when the dependents check ran to the end.
 	Checked bool
 	// Dependents are the objects that depend on the seed's table.
 	Dependents []Dependent
 	// Probes are the answers of the probe of each view outside the allowed
-	// set that the preflight found.
+	// set that the dependents check found.
 	Probes []Probe
 }
 

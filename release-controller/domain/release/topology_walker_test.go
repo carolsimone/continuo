@@ -280,7 +280,7 @@ func TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged(t *testing.T
 }
 
 // TestFullAncestorsClosure_StopsAtAnUnknownExternalNode pins that an unknown-external
-// ancestor is never part of a build closure, so it is never cloned or built.
+// ancestor is never part of a build closure, so it is never built, from its code or from production.
 func TestFullAncestorsClosure_StopsAtAnUnknownExternalNode(t *testing.T) {
 	topo := release.Topology{
 		unknownExternalProbe(),

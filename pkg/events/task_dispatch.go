@@ -40,9 +40,9 @@ type TaskDispatch struct {
 	// PlanReason is why run-controller chose Operation for this task, shown
 	// beside the task. Empty when it states none.
 	PlanReason string `json:"plan_reason,omitempty"`
-	// SeedPreflight asks execution-controller to check the warehouse before a
+	// DependentsCheck asks execution-controller to check the warehouse before a
 	// seed's load. Absent on every other task.
-	SeedPreflight *SeedPreflight `json:"seed_preflight,omitempty"`
+	DependentsCheck *DependentsCheck `json:"dependents_check,omitempty"`
 }
 
 // TaskDispatchFields renders p as the Redis fields of one task.dispatch:v1

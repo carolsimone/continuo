@@ -351,18 +351,18 @@ Three read-only commands ask catalog. `<unique_id>` is `<schema>.<table>`, of a
 Python node or of a dbt model, seed or snapshot:
 
 ```bash
-continuo node contract analytics.py_daily_kpis
-continuo node contract-history analytics.py_daily_kpis
-continuo node contract-diff analytics.py_daily_kpis 1 3
+continuo node data-contract analytics.py_daily_kpis
+continuo node data-contract-history analytics.py_daily_kpis
+continuo node data-contract-diff analytics.py_daily_kpis 1 3
 ```
 
-`node contract` prints the contract the node has now, with its ODCS document.
-`node contract-history` lists the versions, newest first. `node contract-diff`
+`node data-contract` prints the data contract the node has now, with its ODCS document.
+`node data-contract-history` lists the versions, newest first. `node data-contract-diff`
 lists the fields where two versions differ.
 
-The node page in the dashboard has a Contract tab with the same three views:
-the contract as YAML, its versions and the diff of any two. Open it with
-`?tab=contract`.
+The node page in the dashboard has a Data contract tab with the same three
+views: the data contract as YAML, its versions and the diff of any two. Open it
+with `?tab=data-contract`.
 
 ## The history of a contract
 
@@ -750,7 +750,7 @@ your `generate_schema_name`. `<name>` is the node's `name`. A versioned model is
 A schema you declare with capitals, such as `Analytics`, is lower case in the
 node's name and the contract's `id`, so the node is `analytics.orders`. The
 topology's schema keeps your spelling, `Analytics`, because dbt builds the
-table under it, and validation copies the table from there. The SQL of the
+table under it, and the release check builds its empty table from there. The SQL of the
 readers names the schema the way dbt wrote it, and continuo finds the node. The
 `servers` entry of the node's published file names `Analytics` too, so an
 outside tool binds the file to the table that exists.
@@ -959,12 +959,12 @@ is its `original_file_path`, and `source.sha256` is the SHA-256 of the manifest
 fields the contract was generated from, not of a file.
 
 catalog keeps every version of a dbt contract as it does for a Python one.
-`continuo node contract <unique_id>` and the Contract tab of the node page show
-it. The [live folder](#the-live-folder) has one file for each dbt model, seed
+`continuo node data-contract <unique_id>` and the Data contract tab of the node page
+show it. The [live folder](#the-live-folder) has one file for each dbt model, seed
 and snapshot, except an ephemeral model. A dbt test and an `unknown-external`
-table have no contract. Their Contract tab says `This node has no contract. A
-dbt test and an unknown-external table have none.`, and
-`continuo node contract <unique_id>` answers `not_found` (exit 3).
+table have no data contract. Their Data contract tab says `This node has no data
+contract. A dbt test and an unknown-external table have none.`, and
+`continuo node data-contract <unique_id>` answers `not_found` (exit 3).
 
 Your dbt project, its YAML and its SQL, is where these facts live. To change a
 contract, change the project and post a release.

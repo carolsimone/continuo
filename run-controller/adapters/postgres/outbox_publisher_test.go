@@ -323,21 +323,21 @@ func TestTranslateRunEvent_DispatchCarriesTheNodesContentHash(t *testing.T) {
 	assert.Equal(t, "sha256:91d4c0", dispatch.ContentHash)
 }
 
-// A dispatch carries the task's plan reason and seed preflight on the wire, in
+// A dispatch carries the task's plan reason and dependents check on the wire, in
 // the shape execution-controller reads; a refused task maps to no row.
-func TestOutboxPublisher_RendersPlanReasonAndSeedPreflight(t *testing.T) {
-	pf := &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+func TestOutboxPublisher_RendersPlanReasonAndDependentsCheck(t *testing.T) {
+	pf := &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound,
 		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}
 	entry, skip, err := postgres.TranslateRunEventForTest(run.TaskDispatched{ID: uuid.New(), TenantID: "default",
 		ScheduleName: "promote-seed-ab12cd34", TaskID: uuid.New(), Operation: model.OperationFullRefresh,
 		Node:   topology.Node{Key: "analytics.seed_fx_rates_eur", NodeType: "dbt-seed"},
-		Reason: "columns changed", Preflight: pf}, uuid.Nil)
+		Reason: "columns changed", DependentsCheck: pf}, uuid.Nil)
 	require.NoError(t, err)
 	require.False(t, skip)
 	_, wire, err := pkgoutbox.UnwrapTenant(entry.Payload)
 	require.NoError(t, err)
 	assert.Contains(t, string(wire), `"plan_reason":"columns changed"`)
-	assert.Contains(t, string(wire), `"seed_preflight":{"mode":"check","engine_family":"schema_bound",`+
+	assert.Contains(t, string(wire), `"dependents_check":{"mode":"check","engine_family":"schema_bound",`+
 		`"relation":"analytics.seed_fx_rates_eur","allowed":["analytics.fx_rates_current"],"acknowledged":[]}`)
 
 	entry, skip, err = postgres.TranslateRunEventForTest(run.TaskDispatched{ID: uuid.New(), TenantID: "default",
@@ -347,7 +347,7 @@ func TestOutboxPublisher_RendersPlanReasonAndSeedPreflight(t *testing.T) {
 	_, wire, err = pkgoutbox.UnwrapTenant(entry.Payload)
 	require.NoError(t, err)
 	assert.NotContains(t, string(wire), "plan_reason", "a task with no reason sends none")
-	assert.NotContains(t, string(wire), "seed_preflight", "a task with no preflight sends none")
+	assert.NotContains(t, string(wire), "dependents_check", "a task with no dependents check sends none")
 
 	entry, skip, err = postgres.TranslateRunEventForTest(run.TaskRefused{ID: uuid.New(), TenantID: "default", TaskID: uuid.New(),
 		Key: "analytics.seed_fx_rates_eur", Operation: model.OperationFullRefresh,

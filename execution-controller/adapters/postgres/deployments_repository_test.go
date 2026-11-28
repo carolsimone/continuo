@@ -726,22 +726,22 @@ func TestAdd_CompileRow_FailedContainer_RoundTrip(t *testing.T) {
 	assert.Equal(t, "parse-prod", raw.String)
 }
 
-// A seed-build leg's preflight is stored in job_params with the row, so the
+// A seed-build leg's dependents check is stored in job_params with the row, so the
 // Job the dispatcher creates after a restart, built from the loaded command,
 // still runs it.
-func TestAdd_SeedBuildRow_TheSeedPreflightRoundTrips(t *testing.T) {
+func TestAdd_SeedBuildRow_TheDependentsCheckRoundTrips(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())
 	cmd := validSeedBuildCmd("rel-seed-pf", "seed.fx")
-	cmd.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding,
+	cmd.DependentsCheck = &seedreload.DependentsCheck{Mode: seedreload.ReportMode, Family: warehouse.LateBinding,
 		Relation: "public.seed_fx", Allowed: []string{"public.fx_current"}, Acknowledged: []string{}}
 	require.NoError(t, repo.Add(ctx, model.NewSeedBuildDeployment(cmd, nil, time.Now())))
 
 	got, err := repo.GetByReleaseNode(ctx, "rel-seed-pf", "seed.fx", model.ModeSeedBuild)
 
 	require.NoError(t, err)
-	assert.Equal(t, cmd.SeedPreflight, got.ValidationCommand().SeedPreflight)
-	assert.Equal(t, cmd.SeedPreflight, got.ValidationCommand().ToValidationJobSpec().SeedPreflight)
+	assert.Equal(t, cmd.DependentsCheck, got.ValidationCommand().DependentsCheck)
+	assert.Equal(t, cmd.DependentsCheck, got.ValidationCommand().ToValidationJobSpec().DependentsCheck)
 }

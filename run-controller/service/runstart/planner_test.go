@@ -642,9 +642,9 @@ func TestPlanner_SeedsPlansTheLoadAndTheRebuildsBelowIt(t *testing.T) {
 	full := model.OperationFullRefresh
 	assert.Equal(t, &full, taskOf(sel.Plan, seed).Operation)
 	assert.Equal(t, "columns changed", taskOf(sel.Plan, seed).Reason)
-	require.NotNil(t, taskOf(sel.Plan, seed).Preflight)
-	assert.Equal(t, seedreload.PreflightCheck, taskOf(sel.Plan, seed).Preflight.Mode)
-	assert.Equal(t, []string{string(current), string(latest)}, taskOf(sel.Plan, seed).Preflight.Allowed)
+	require.NotNil(t, taskOf(sel.Plan, seed).DependentsCheck)
+	assert.Equal(t, seedreload.CheckMode, taskOf(sel.Plan, seed).DependentsCheck.Mode)
+	assert.Equal(t, []string{string(current), string(latest)}, taskOf(sel.Plan, seed).DependentsCheck.Allowed)
 	assert.Equal(t, seed, taskOf(sel.Plan, current).RebuildOf)
 	assert.Equal(t, seed, taskOf(sel.Plan, latest).RebuildOf)
 	assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
@@ -711,7 +711,7 @@ func TestPlanner_EveryRunKindThatLoadsASeedAppliesTheRules(t *testing.T) {
 			sel := plan(t)
 			assert.Equal(t, seed, taskOf(sel.Plan, current).RebuildOf)
 			assert.Equal(t, seed, taskOf(sel.Plan, latest).RebuildOf)
-			require.NotNil(t, taskOf(sel.Plan, seed).Preflight)
+			require.NotNil(t, taskOf(sel.Plan, seed).DependentsCheck)
 			assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
 		})
 	}
@@ -729,7 +729,7 @@ func TestPlanner_ATestRunPlansNoReload(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []topology.NodeKey{seed}, keysOf(sel.Plan.Tasks))
 	for _, task := range sel.Plan.Tasks {
-		assert.Nil(t, task.Preflight, task.Key)
+		assert.Nil(t, task.DependentsCheck, task.Key)
 		assert.Empty(t, task.Reason, task.Key)
 		assert.Empty(t, task.RebuildOf, task.Key)
 		assert.Nil(t, task.Operation, task.Key)
@@ -957,7 +957,7 @@ func TestPlanner_ASingleNodeFullRefreshOfASeedIsAnOperatorsRequest(t *testing.T)
 // A full refresh, or a load of changed columns, of a seed with
 // +full_refresh: false on a schema_bound warehouse cannot be applied by any
 // command, so the request is refused and plans no run. On a late_binding warehouse every load re-creates the table,
-// so the same seed is planned and its preflight only reports.
+// so the same seed is planned and its dependents check only reports.
 func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.T) {
 	ctx := context.Background()
 	target := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
@@ -976,8 +976,8 @@ func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.
 	sel, err := lateBinding.SingleNode(ctx, u, tenant, target, model.OperationFullRefresh, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, taskOf(sel.Plan, seed).Refusal)
-	require.NotNil(t, taskOf(sel.Plan, seed).Preflight)
-	assert.Equal(t, seedreload.PreflightReport, taskOf(sel.Plan, seed).Preflight.Mode)
+	require.NotNil(t, taskOf(sel.Plan, seed).DependentsCheck)
+	assert.Equal(t, seedreload.ReportMode, taskOf(sel.Plan, seed).DependentsCheck.Mode)
 	assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
 
 	u, topo = fxUoW(nil)
@@ -994,7 +994,7 @@ func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.
 	assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
 }
 
-// The objects an operator names reach the seed's preflight, and the run is the
+// The objects an operator names reach the seed's dependents check, and the run is the
 // same DAG as a reload of the seed.
 func TestPlanner_SingleNodeFullRefreshAllowsTheNamedObjects(t *testing.T) {
 	target := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
@@ -1003,8 +1003,8 @@ func TestPlanner_SingleNodeFullRefreshAllowsTheNamedObjects(t *testing.T) {
 	sel, err := fxPlanner.SingleNode(context.Background(), u, tenant, target, model.OperationFullRefresh, nil, []string{"bi.fx_rates_report"})
 
 	require.NoError(t, err)
-	require.NotNil(t, taskOf(sel.Plan, seed).Preflight)
-	assert.Equal(t, []string{"bi.fx_rates_report"}, taskOf(sel.Plan, seed).Preflight.Acknowledged)
+	require.NotNil(t, taskOf(sel.Plan, seed).DependentsCheck)
+	assert.Equal(t, []string{"bi.fx_rates_report"}, taskOf(sel.Plan, seed).DependentsCheck.Acknowledged)
 	assert.Equal(t, []topology.NodeKey{current, latest, seed}, keysOf(sel.Plan.Tasks))
 }
 

@@ -51,16 +51,16 @@ type PrecedentHistoryReader interface {
 // current contract, its history and the field diff of two versions. Satisfied
 // by service/queries.ContractQueryService.
 type ContractHistoryReader interface {
-	// GetNodeContract returns the contract a live node has now, with its
+	// GetNodeDataContract returns the contract a live node has now, with its
 	// published YAML when includeDocument is set. A node with no contract
 	// returns contractversion.ErrNotFound.
-	GetNodeContract(ctx context.Context, tenantID, uniqueID string, includeDocument bool) (queries.NodeContract, error)
-	// ListNodeContractVersions lists the node's versions, newest first, up to
+	GetNodeDataContract(ctx context.Context, tenantID, uniqueID string, includeDocument bool) (queries.NodeContract, error)
+	// ListNodeDataContractVersions lists the node's versions, newest first, up to
 	// limit (every version when limit is 0).
-	ListNodeContractVersions(ctx context.Context, tenantID, uniqueID string, limit int) ([]contractversion.VersionView, error)
-	// GetNodeContractDiff lists the fields that differ between two versions. A
+	ListNodeDataContractVersions(ctx context.Context, tenantID, uniqueID string, limit int) ([]contractversion.VersionView, error)
+	// GetNodeDataContractDiff lists the fields that differ between two versions. A
 	// version the node has none of returns contractversion.ErrNotFound.
-	GetNodeContractDiff(ctx context.Context, tenantID, uniqueID string, fromVersion, toVersion int64) ([]contractversion.FieldChange, error)
+	GetNodeDataContractDiff(ctx context.Context, tenantID, uniqueID string, fromVersion, toVersion int64) ([]contractversion.FieldChange, error)
 }
 
 // QueryHandler implements the CatalogQuery gRPC service. Every RPC reads for
@@ -292,9 +292,9 @@ func (h *QueryHandler) GetPrecedents(ctx context.Context, req *catalogv1.GetPrec
 	return &catalogv1.GetPrecedentsResponse{Precedents: out}, nil
 }
 
-// GetNodeContract returns the contract a live node has now. A node with no
+// GetNodeDataContract returns the contract a live node has now. A node with no
 // contract, a retired node and an unknown unique_id are NOT_FOUND.
-func (h *QueryHandler) GetNodeContract(ctx context.Context, req *catalogv1.GetNodeContractRequest) (*catalogv1.GetNodeContractResponse, error) {
+func (h *QueryHandler) GetNodeDataContract(ctx context.Context, req *catalogv1.GetNodeDataContractRequest) (*catalogv1.GetNodeDataContractResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
 		return nil, err
@@ -302,22 +302,22 @@ func (h *QueryHandler) GetNodeContract(ctx context.Context, req *catalogv1.GetNo
 	if req.UniqueId == "" {
 		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
 	}
-	contract, err := h.contracts.GetNodeContract(ctx, tenantID, req.UniqueId, req.IncludeDocument)
+	contract, err := h.contracts.GetNodeDataContract(ctx, tenantID, req.UniqueId, req.IncludeDocument)
 	if err != nil {
 		if errors.Is(err, contractversion.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "node %q has no contract", req.UniqueId)
+			return nil, status.Errorf(codes.NotFound, "node %q has no data contract", req.UniqueId)
 		}
-		h.logger.Error("GetNodeContract failed", "unique_id", req.UniqueId, "error", err)
-		return nil, status.Errorf(codes.Internal, "GetNodeContract: %v", err)
+		h.logger.Error("GetNodeDataContract failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetNodeDataContract: %v", err)
 	}
 	view := contractVersionViewToProto(contract.Version)
 	view.DocumentYaml = contract.DocumentYAML
-	return &catalogv1.GetNodeContractResponse{Contract: view}, nil
+	return &catalogv1.GetNodeDataContractResponse{Contract: view}, nil
 }
 
-// ListNodeContractVersions lists a node's contract history, newest first.
+// ListNodeDataContractVersions lists a node's contract history, newest first.
 // limit 0 lists every version.
-func (h *QueryHandler) ListNodeContractVersions(ctx context.Context, req *catalogv1.ListNodeContractVersionsRequest) (*catalogv1.ListNodeContractVersionsResponse, error) {
+func (h *QueryHandler) ListNodeDataContractVersions(ctx context.Context, req *catalogv1.ListNodeDataContractVersionsRequest) (*catalogv1.ListNodeDataContractVersionsResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
 		return nil, err
@@ -328,12 +328,12 @@ func (h *QueryHandler) ListNodeContractVersions(ctx context.Context, req *catalo
 	if req.Limit < 0 {
 		return nil, status.Error(codes.InvalidArgument, "limit must be 0 (every version) or more")
 	}
-	versions, err := h.contracts.ListNodeContractVersions(ctx, tenantID, req.UniqueId, int(req.Limit))
+	versions, err := h.contracts.ListNodeDataContractVersions(ctx, tenantID, req.UniqueId, int(req.Limit))
 	if err != nil {
-		h.logger.Error("ListNodeContractVersions failed", "unique_id", req.UniqueId, "error", err)
-		return nil, status.Errorf(codes.Internal, "ListNodeContractVersions: %v", err)
+		h.logger.Error("ListNodeDataContractVersions failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "ListNodeDataContractVersions: %v", err)
 	}
-	resp := &catalogv1.ListNodeContractVersionsResponse{
+	resp := &catalogv1.ListNodeDataContractVersionsResponse{
 		Versions: make([]*catalogv1.ContractVersionView, 0, len(versions)),
 	}
 	for _, v := range versions {
@@ -342,10 +342,10 @@ func (h *QueryHandler) ListNodeContractVersions(ctx context.Context, req *catalo
 	return resp, nil
 }
 
-// GetNodeContractDiff lists the fields that differ between two versions of a
+// GetNodeDataContractDiff lists the fields that differ between two versions of a
 // node's contract. A version below 1 is INVALID_ARGUMENT, and a version the
 // node has no promotion for is NOT_FOUND.
-func (h *QueryHandler) GetNodeContractDiff(ctx context.Context, req *catalogv1.GetNodeContractDiffRequest) (*catalogv1.GetNodeContractDiffResponse, error) {
+func (h *QueryHandler) GetNodeDataContractDiff(ctx context.Context, req *catalogv1.GetNodeDataContractDiffRequest) (*catalogv1.GetNodeDataContractDiffResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
 		return nil, err
@@ -356,15 +356,15 @@ func (h *QueryHandler) GetNodeContractDiff(ctx context.Context, req *catalogv1.G
 	if req.FromVersion < 1 || req.ToVersion < 1 {
 		return nil, status.Error(codes.InvalidArgument, "from_version and to_version must be 1 or more")
 	}
-	changes, err := h.contracts.GetNodeContractDiff(ctx, tenantID, req.UniqueId, req.FromVersion, req.ToVersion)
+	changes, err := h.contracts.GetNodeDataContractDiff(ctx, tenantID, req.UniqueId, req.FromVersion, req.ToVersion)
 	if err != nil {
 		if errors.Is(err, contractversion.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "node %q has no contract version %d or %d", req.UniqueId, req.FromVersion, req.ToVersion)
+			return nil, status.Errorf(codes.NotFound, "node %q has no data contract version %d or %d", req.UniqueId, req.FromVersion, req.ToVersion)
 		}
-		h.logger.Error("GetNodeContractDiff failed", "unique_id", req.UniqueId, "error", err)
-		return nil, status.Errorf(codes.Internal, "GetNodeContractDiff: %v", err)
+		h.logger.Error("GetNodeDataContractDiff failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetNodeDataContractDiff: %v", err)
 	}
-	resp := &catalogv1.GetNodeContractDiffResponse{
+	resp := &catalogv1.GetNodeDataContractDiffResponse{
 		Changes: make([]*catalogv1.ContractFieldChange, 0, len(changes)),
 	}
 	for _, c := range changes {

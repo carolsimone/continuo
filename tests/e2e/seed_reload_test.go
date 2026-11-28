@@ -29,7 +29,7 @@ const (
 	// seedReloadOutsideView is a plain view over seed_table_1, and
 	// seedReloadOutsideMatView a materialized view over that view: one object
 	// between it and the seed's table, which information_schema.view_table_usage
-	// does not show and the preflight's recursive pg_depend walk finds.
+	// does not show and the dependents check's recursive pg_depend walk finds.
 	seedReloadOutsideView    = seedReloadOutsideSchema + ".seed_reader_base"
 	seedReloadOutsideMatView = seedReloadOutsideSchema + ".seed_reader"
 )
@@ -71,7 +71,7 @@ type seedReloadNotice struct {
 //  3. A view and a materialized view on it, which no continuo node builds,
 //     now read the seed's table. run-controller's recorded version is moved
 //     back, so the seed reconcile starts a second promote-seed run, whose
-//     check-mode preflight lists both objects (depths 1 and 2, not allowed,
+//     check-mode dependents check lists both objects (depths 1 and 2, not allowed,
 //     completeness exact) and stops the seed before dbt: the seed fails
 //     invalid/unowned_dependents, the view's task is skipped and nothing is
 //     dropped.
@@ -218,20 +218,20 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 		}
 		return false, nil
 	}, fmt.Sprintf("timeout waiting for the seed task of run %s to end", stoppedRun))
-	require.Equal(t, "failed", seedStatus, "the preflight stops the seed of run %s", stoppedRun)
+	require.Equal(t, "failed", seedStatus, "the dependents check stops the seed of run %s", stoppedRun)
 
 	attempt := latestTaskAttempt(t, ctx, clients, stoppedRun, "seed_table_1")
 	assert.Equal(t, "invalid", attempt.GetFailureClass())
 	assert.Equal(t, "unowned_dependents", attempt.GetFailureReason())
-	// The preflight names each object as "<schema>.<name> (<kind>, owner <owner>)",
+	// The dependents check names each object as "<schema>.<name> (<kind>, owner <owner>)",
 	// so the " (" keeps seed_reader from matching seed_reader_base.
 	assert.Contains(t, attempt.GetErrorMessage(), seedReloadOutsideView+" (")
 	assert.Contains(t, attempt.GetErrorMessage(), seedReloadOutsideMatView+" (")
-	preflight := attempt.GetSeedPreflight()
-	require.NotNil(t, preflight, "the seed's attempt carries its preflight's findings")
-	assert.Equal(t, "exact", preflight.GetCompleteness())
+	dependentsCheck := attempt.GetDependentsCheck()
+	require.NotNil(t, dependentsCheck, "the seed's attempt carries its dependents check's findings")
+	assert.Equal(t, "exact", dependentsCheck.GetCompleteness())
 	depths := map[string]int32{}
-	for _, d := range preflight.GetDependents() {
+	for _, d := range dependentsCheck.GetDependents() {
 		name := d.GetSchema() + "." + d.GetName()
 		if name != seedReloadOutsideView && name != seedReloadOutsideMatView {
 			continue
@@ -240,7 +240,7 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 		depths[name] = d.GetDepth()
 	}
 	assert.Equal(t, map[string]int32{seedReloadOutsideView: 1, seedReloadOutsideMatView: 2}, depths,
-		"the preflight lists the view at depth 1 and the materialized view on it at depth 2: %+v", preflight.GetDependents())
+		"the dependents check lists the view at depth 1 and the materialized view on it at depth 2: %+v", dependentsCheck.GetDependents())
 
 	pollUntil(t, ctx, time.Minute, time.Second, func() (bool, error) {
 		return runTaskStatus(ctx, clients, stoppedRun, "seed_table_1_view") == "skipped", nil

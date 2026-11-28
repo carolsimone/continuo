@@ -16,16 +16,16 @@ import (
 	grpcadapter "github.com/carolsimone/continuo/agent-remediation/adapters/grpc"
 )
 
-// contractCatalog answers GetNodeContract from a map, NOT_FOUND for a node it
+// contractCatalog answers GetNodeDataContract from a map, NOT_FOUND for a node it
 // does not hold, and records the requests.
 type contractCatalog struct {
 	catalogv1.UnimplementedCatalogQueryServer
 	docs     map[string]string
 	err      error
-	requests []*catalogv1.GetNodeContractRequest
+	requests []*catalogv1.GetNodeDataContractRequest
 }
 
-func (c *contractCatalog) GetNodeContract(_ context.Context, req *catalogv1.GetNodeContractRequest) (*catalogv1.GetNodeContractResponse, error) {
+func (c *contractCatalog) GetNodeDataContract(_ context.Context, req *catalogv1.GetNodeDataContractRequest) (*catalogv1.GetNodeDataContractResponse, error) {
 	c.requests = append(c.requests, req)
 	if c.err != nil {
 		return nil, c.err
@@ -34,7 +34,7 @@ func (c *contractCatalog) GetNodeContract(_ context.Context, req *catalogv1.GetN
 	if !ok {
 		return nil, status.Error(codes.NotFound, "no contract")
 	}
-	return &catalogv1.GetNodeContractResponse{Contract: &catalogv1.ContractVersionView{
+	return &catalogv1.GetNodeDataContractResponse{Contract: &catalogv1.ContractVersionView{
 		UniqueId: req.GetUniqueId(), Version: 3, DocumentYaml: doc, IsCurrent: true,
 	}}, nil
 }

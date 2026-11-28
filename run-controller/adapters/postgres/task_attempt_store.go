@@ -23,7 +23,7 @@ func loadAttempt(ctx context.Context, tx *sqlx.Tx, tenantID string, taskID uuid.
 		SELECT task_id, attempt, job_name, status, failure_class, failure_reason,
 		       dispatched_at, queued_at, started_at, finished_at,
 		       execution_seconds, exit_code, error_message, log_s3_key,
-		       run_results_uri, parse_cache, parse_cache_reason, seed_preflight_findings
+		       run_results_uri, parse_cache, parse_cache_reason, dependents_check_findings
 		FROM task_attempts
 		WHERE tenant_id = $3 AND task_id = $1 AND attempt = $2
 		FOR UPDATE`, taskID, attempt, tenantID)
@@ -41,9 +41,9 @@ func loadAttempt(ctx context.Context, tx *sqlx.Tx, tenantID string, taskID uuid.
 }
 
 // attemptFromRow maps a task_attempts row onto the domain attempt; it fails on
-// stored seed preflight findings it cannot decode.
+// stored dependents check findings it cannot decode.
 func attemptFromRow(r taskAttemptRow) (run.Attempt, error) {
-	findings, err := seedPreflightFindingsFromColumn(r.SeedFindings)
+	findings, err := dependentsCheckFindingsFromColumn(r.DependentsCheckFindings)
 	if err != nil {
 		return run.Attempt{}, err
 	}
@@ -66,7 +66,7 @@ func attemptFromRow(r taskAttemptRow) (run.Attempt, error) {
 		RunResultsURI:    r.RunResultsURI,
 		ParseCache:       r.ParseCache,
 		ParseCacheReason: r.ParseCacheReason,
-		SeedPreflight:    findings,
+		DependentsCheck:  findings,
 	}, nil
 }
 
@@ -81,7 +81,7 @@ func saveAttempt(ctx context.Context, tx *sqlx.Tx, tenantID string, a run.Attemp
 	if a.Status.IsFinal() {
 		checkIn = 0
 	}
-	findings, err := seedPreflightFindingsColumn(a.SeedPreflight)
+	findings, err := dependentsCheckFindingsColumn(a.DependentsCheck)
 	if err != nil {
 		return fmt.Errorf("save attempt %d of task_id %s: %w", a.Number, a.TaskID, err)
 	}
@@ -90,7 +90,7 @@ func saveAttempt(ctx context.Context, tx *sqlx.Tx, tenantID string, a run.Attemp
 			tenant_id, task_id, attempt, job_name, status, failure_class, failure_reason,
 			dispatched_at, queued_at, started_at, finished_at,
 			execution_seconds, exit_code, error_message, log_s3_key,
-			run_results_uri, parse_cache, parse_cache_reason, seed_preflight_findings, last_report_at, next_check_at)
+			run_results_uri, parse_cache, parse_cache_reason, dependents_check_findings, last_report_at, next_check_at)
 		VALUES ($19, $1, $2, $3, $4, $5, $6, COALESCE($7, now()), $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $20::jsonb, now(),
 		        CASE WHEN $18::float8 > 0 THEN now() + make_interval(secs => $18::float8) END)
 		ON CONFLICT (tenant_id, task_id, attempt) DO UPDATE SET
@@ -108,7 +108,7 @@ func saveAttempt(ctx context.Context, tx *sqlx.Tx, tenantID string, a run.Attemp
 			run_results_uri    = EXCLUDED.run_results_uri,
 			parse_cache        = EXCLUDED.parse_cache,
 			parse_cache_reason = EXCLUDED.parse_cache_reason,
-			seed_preflight_findings = EXCLUDED.seed_preflight_findings,
+			dependents_check_findings = EXCLUDED.dependents_check_findings,
 			last_report_at     = GREATEST(task_attempts.last_report_at, EXCLUDED.last_report_at),
 			next_check_at      = CASE WHEN EXCLUDED.status IN ('succeeded', 'failed', 'stopped') THEN NULL
 			                          WHEN $18::float8 > 0 THEN EXCLUDED.next_check_at

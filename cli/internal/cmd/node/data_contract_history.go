@@ -16,19 +16,19 @@ type contractHistoryPayload struct {
 	Versions []contractVersionEntry `json:"versions"`
 }
 
-// NewContractHistoryCommand builds `continuo node contract-history <unique_id> [limit]`.
-func NewContractHistoryCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+// NewDataContractHistoryCommand builds `continuo node data-contract-history <unique_id> [limit]`.
+func NewDataContractHistoryCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "contract-history <unique_id> [limit]",
-		Short: "List a node's contract versions, newest first",
-		Long: `List a node's contract versions, newest first.
+		Use:   "data-contract-history <unique_id> [limit]",
+		Short: "List a node's data contract versions, newest first",
+		Long: `List a node's data contract versions, newest first.
 
-Use when the user wants to see how a node's contract changed over time: one
+Use when the user wants to see how a node's data contract changed over time: one
 row for each promotion that changed it, with the release that made it current.
-Use "node contract-diff" to see which fields differ between two of the versions.
+Use "node data-contract-diff" to see which fields differ between two of the versions.
 
-A version number rises each time a promotion changes the node's contract, so a
-revert to an earlier contract is a new version: its same_as_version names the
+A version number rises each time a promotion changes the node's data contract, so a
+revert to an earlier data contract is a new version: its same_as_version names the
 earlier version with the same contract_hash. is_current marks the version the
 node has now; after a node is retired its history stays and none of it is
 current. A node with no history, or one the catalog does not know, gives an
@@ -45,7 +45,7 @@ Output (stdout, JSON):
   {"versions":[{"unique_id":string,"version":number,"contract_hash":string,
    "release_id":string,"promoted_at":string,"content_hash":string,
    "is_current":bool,"same_as_version":number,"continuo_contracts":string}]}
-  The rows are the shape of "node contract" without document_yaml. promoted_at
+  The rows are the shape of "node data-contract" without document_yaml. promoted_at
   is RFC 3339, in UTC. is_current and same_as_version are omitted when false
   and 0 (a version that is not current, a version that reverts nothing), and
   release_id, promoted_at and continuo_contracts when the version carries none.
@@ -54,14 +54,14 @@ Errors:
   usage      (exit 2)  wrong number of arguments, or a limit that is not a whole number from 0 up
   unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo node contract-history analytics.orders\n  continuo node contract-history analytics.py_daily_kpis 5",
+		Example: "  continuo node data-contract-history analytics.orders\n  continuo node data-contract-history analytics.py_daily_kpis 5",
 		Annotations: map[string]string{
 			"output_schema": `{"versions":[{"unique_id":"string","version":"number","contract_hash":"string","release_id":"string","promoted_at":"string","content_hash":"string","is_current":"boolean","same_as_version":"number","continuo_contracts":"string"}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 || len(args) > 2 {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("contract-history requires <unique_id> and an optional [limit]"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("data-contract-history requires <unique_id> and an optional [limit]"))
 			}
 			if len(args) == 2 {
 				if _, err := parseContractLimit(args[1]); err != nil {
@@ -85,7 +85,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.ListNodeContractVersions(ctx, args[0], limit)
+			resp, err := c.ListNodeDataContractVersions(ctx, args[0], limit)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

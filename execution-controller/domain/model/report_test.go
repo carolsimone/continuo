@@ -63,14 +63,14 @@ func TestReportOf_AStoppedAttemptCarriesItsFactsButNoFailure(t *testing.T) {
 		ExecutionSeconds: &secs, ExitCode: &code, LogKey: "logs/k"}, r)
 }
 
-// A report carries the findings of the attempt's seed preflight.
-func TestReportOf_CarriesTheSeedPreflightFindings(t *testing.T) {
+// A report carries the findings of the attempt's dependents check.
+func TestReportOf_CarriesTheDependentsCheckFindings(t *testing.T) {
 	accepted := time.Date(2026, 10, 20, 23, 1, 20, 0, time.UTC)
 	findings := &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true}
 	d := NewDeployment(command.DeployTask{TaskID: uuid.NewString()}, nil, accepted)
-	d.Observe(AttemptFacts{SeedPreflight: findings})
+	d.Observe(AttemptFacts{DependentsCheck: findings})
 
 	r := d.ReportOf(pkgmodel.AttemptStatusSucceeded, "")
 
-	assert.Same(t, findings, r.SeedPreflight)
+	assert.Same(t, findings, r.DependentsCheck)
 }

@@ -215,7 +215,7 @@ func (r *Check) Notices() []release.Notice { return r.notices }
 // computed against the production topology it would replace.
 func (r *Check) SetNotices(notices []release.Notice) { r.notices = slices.Clone(notices) }
 
-// ApplyWarehouseFindings records what the preflight of seed nodeID found in
+// ApplyWarehouseFindings records what the dependents check of seed nodeID found in
 // the warehouse on that seed's notice. It reports false when the check holds no
 // notice for the seed.
 func (r *Check) ApplyWarehouseFindings(nodeID string, f seedreload.Findings) bool {

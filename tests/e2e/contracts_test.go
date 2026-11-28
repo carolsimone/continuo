@@ -92,7 +92,7 @@ const (
 //  2. catalog records the py_probe contract as version 1 (on a stack where an
 //     earlier run already promoted it, the version after the highest one it
 //     holds, or that one again when the contract is unchanged), and
-//     `continuo node contract e2e_schema.py_probe` prints it with the
+//     `continuo node data-contract e2e_schema.py_probe` prints it with the
 //     contract's team.name;
 //  3. the live folder in MinIO holds e2e_schema.py_probe.odcs.yaml with that
 //     version as a string, and _index.json, written last, lists it;
@@ -135,12 +135,12 @@ func TestE2E_PythonRelease_IsPromotedAndPublished(t *testing.T) {
 	if first.Version > before {
 		assert.Equal(t, firstID, first.ReleaseID, "a new version records the release that made it current")
 	}
-	assert.True(t, first.IsCurrent, "node contract prints the current version")
+	assert.True(t, first.IsCurrent, "node data-contract prints the current version")
 	assert.Equal(t, topologyContractsVersion, first.ContinuoContracts, "the version records the library that read it")
 	assert.Equal(t, pyProbeTeam, documentTeam(t, first.DocumentYAML), "the document carries the contract's team.name")
 	assert.Equal(t, strconv.FormatInt(first.Version, 10), documentVersion(t, first.DocumentYAML),
 		"the published document's version is the counted version, as a string")
-	t.Logf("continuo node contract %s: version %d, %s", pyProbeUniqueID, first.Version, first.ContractHash)
+	t.Logf("continuo node data-contract %s: version %d, %s", pyProbeUniqueID, first.Version, first.ContractHash)
 
 	// ── 3. the live folder holds it ──────────────────────────────────────────
 	requireLiveContract(t, ctx, clients, firstID, first)
@@ -510,7 +510,7 @@ func setModelCriticality(t *testing.T, doc map[string]interface{}, uniqueID, cri
 	return filePath
 }
 
-// cliContract is the contract `continuo node contract` prints.
+// cliContract is the contract `continuo node data-contract` prints.
 type cliContract struct {
 	UniqueID          string `json:"unique_id"`
 	Version           int64  `json:"version"`
@@ -522,16 +522,16 @@ type cliContract struct {
 	DocumentYAML      string `json:"document_yaml"`
 }
 
-// showNodeContract runs `continuo node contract <uniqueID>` and returns the
+// showNodeContract runs `continuo node data-contract <uniqueID>` and returns the
 // contract it prints.
 func showNodeContract(t *testing.T, ctx context.Context, bin string, env []string, uniqueID string) cliContract {
 	t.Helper()
 	var shown struct {
 		Contract cliContract `json:"contract"`
 	}
-	runCLI(t, ctx, bin, env, &shown, "node", "contract", uniqueID)
+	runCLI(t, ctx, bin, env, &shown, "node", "data-contract", uniqueID)
 	require.Equal(t, uniqueID, shown.Contract.UniqueID)
-	require.NotEmpty(t, shown.Contract.DocumentYAML, "node contract prints the contract's document")
+	require.NotEmpty(t, shown.Contract.DocumentYAML, "node data-contract prints the contract's document")
 	return shown.Contract
 }
 
@@ -553,7 +553,7 @@ func contractsCLI(t *testing.T, ctx context.Context) (string, []string) {
 //     of its project, with its content_hash, whose team.name is the node's
 //     owner and whose schedule property is the schedule of the topology node;
 //   - catalog publishes it: once the live folder names the release,
-//     `continuo node contract` prints the bundle's contract (the same
+//     `continuo node data-contract` prints the bundle's contract (the same
 //     contract_hash) with its team.name.
 func assertDbtNodeContract(t *testing.T, ctx context.Context, clients *testClients, releaseID string, node topologyartifact.Node) {
 	t.Helper()
@@ -578,10 +578,10 @@ func assertDbtNodeContract(t *testing.T, ctx context.Context, clients *testClien
 	waitForLiveIndexOf(t, ctx, clients, releaseID, contractsBudget)
 	bin, env := contractsCLI(t, ctx)
 	shown := showNodeContract(t, ctx, bin, env, node.UniqueID)
-	assert.True(t, shown.IsCurrent, "node contract prints the current version")
-	assert.Equal(t, stored.ContractHash, shown.ContractHash, "node contract prints the contract the release's bundle holds")
+	assert.True(t, shown.IsCurrent, "node data-contract prints the current version")
+	assert.Equal(t, stored.ContractHash, shown.ContractHash, "node data-contract prints the contract the release's bundle holds")
 	assert.Equal(t, dbtProbeTeam, documentTeam(t, shown.DocumentYAML), "the printed document carries the contract's team.name")
-	t.Logf("✅ %s: dbt contract in the bundle of %s, version %d printed by `continuo node contract` (schedule %s, team %s)",
+	t.Logf("✅ %s: dbt contract in the bundle of %s, version %d printed by `continuo node data-contract` (schedule %s, team %s)",
 		node.UniqueID, releaseID, shown.Version, schedule, root.Team.Name)
 }
 
@@ -635,8 +635,8 @@ func (r odcsRoot) continuoProperty(name string) (string, bool) {
 // for uniqueID, 0 when it holds none.
 func highestContractVersion(t *testing.T, ctx context.Context, clients *testClients, uniqueID string) int64 {
 	t.Helper()
-	resp, err := clients.catalogClient.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: uniqueID})
-	require.NoError(t, err, "ListNodeContractVersions(%s)", uniqueID)
+	resp, err := clients.catalogClient.ListNodeDataContractVersions(ctx, &catalogv1.ListNodeDataContractVersionsRequest{UniqueId: uniqueID})
+	require.NoError(t, err, "ListNodeDataContractVersions(%s)", uniqueID)
 	var highest int64
 	for _, v := range resp.GetVersions() {
 		highest = max(highest, v.GetVersion())
@@ -744,7 +744,7 @@ func requireLiveContract(t *testing.T, ctx context.Context, clients *testClients
 	assert.Equal(t, strconv.FormatInt(contract.Version, 10), documentVersion(t, string(body)),
 		"%s carries the counted version as a string", fileName)
 	assert.Equal(t, documentTeam(t, contract.DocumentYAML), documentTeam(t, string(body)),
-		"%s is the contract node contract prints", fileName)
+		"%s is the contract node data-contract prints", fileName)
 }
 
 // assertNoValidationRequested asserts no validation.requested:v1 message names

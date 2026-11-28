@@ -56,9 +56,9 @@ type JobSpec struct {
 	// ContentHash is the node's content hash; a python node's pod receives it
 	// as CONTENT_HASH. Empty when the dispatch carries none.
 	ContentHash string
-	// SeedPreflight is the check a seed's pod runs against the warehouse
+	// DependentsCheck is the check a seed's pod runs against the warehouse
 	// before dbt loads the seed; nil when the dispatch asks for none.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 // ValidationJobSpec is the domain description of a single validation deploy.
@@ -94,9 +94,9 @@ type ValidationJobSpec struct {
 	// release check's compile Job lays over the project before compiling.
 	// Populated only for mode=compile dispatches of a fix's release check.
 	SourceOverlayURI string
-	// SeedPreflight is the report-mode check a seed-build pod runs against the
+	// DependentsCheck is the report-mode check a seed-build pod runs against the
 	// seed's production table before dbt; nil when the dispatch asks for none.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 // Deployer is the driven port the dispatcher uses to create Jobs.

@@ -78,7 +78,7 @@ func TestAssembleCsvContractFix_SectionsOmittedWhenAbsent(t *testing.T) {
 
 // TestAssembleCsvContractFix_ToolSchema pins the forced tool: the fix is
 // returned as a list of complete files, so a model that can only name one
-// file cannot express a multi-node contract change.
+// file cannot express a contract change that spans several nodes.
 func TestAssembleCsvContractFix_ToolSchema(t *testing.T) {
 	req := AssembleCsvContractFix(csvEvidence())
 

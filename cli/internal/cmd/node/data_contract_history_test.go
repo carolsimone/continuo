@@ -19,8 +19,8 @@ import (
 
 // fullContractHistory is a node's history, newest first: a revert (version 3
 // returns to the contract of version 1) above the change it undid.
-func fullContractHistory() *catalogv1.ListNodeContractVersionsResponse {
-	return &catalogv1.ListNodeContractVersionsResponse{Versions: []*catalogv1.ContractVersionView{
+func fullContractHistory() *catalogv1.ListNodeDataContractVersionsResponse {
+	return &catalogv1.ListNodeDataContractVersionsResponse{Versions: []*catalogv1.ContractVersionView{
 		{
 			UniqueId: "analytics.py_daily_kpis", Version: 3, ContractHash: "sha256:aaa", ReleaseId: "rel-3",
 			PromotedAt: "2026-11-14T09:30:00Z", ContentHash: "sha256:ccc", IsCurrent: true, SameAsVersion: 1,
@@ -33,10 +33,10 @@ func fullContractHistory() *catalogv1.ListNodeContractVersionsResponse {
 	}}
 }
 
-func TestContractHistory_MapsEveryFieldNewestFirstAndSendsZeroForNoLimit(t *testing.T) {
+func TestDataContractHistory_MapsEveryFieldNewestFirstAndSendsZeroForNoLimit(t *testing.T) {
 	fake := &fakeNodeCatalog{contractVersionsResp: fullContractHistory()}
 
-	stdout, stderr, exit := runContractCommand(t, NewContractHistoryCommand, fake, []string{"analytics.py_daily_kpis"}, false)
+	stdout, stderr, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, []string{"analytics.py_daily_kpis"}, false)
 
 	require.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
@@ -63,54 +63,54 @@ func TestContractHistory_MapsEveryFieldNewestFirstAndSendsZeroForNoLimit(t *test
 	assert.NotContains(t, payload.Versions[1], "same_as_version")
 }
 
-func TestContractHistory_NeverCarriesTheDocument(t *testing.T) {
+func TestDataContractHistory_NeverCarriesTheDocument(t *testing.T) {
 	resp := fullContractHistory()
 	resp.Versions[0].DocumentYaml = "kind: DataContract\n"
 	fake := &fakeNodeCatalog{contractVersionsResp: resp}
 
-	stdout, _, exit := runContractCommand(t, NewContractHistoryCommand, fake, []string{"analytics.py_daily_kpis"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, []string{"analytics.py_daily_kpis"}, false)
 
 	require.Equal(t, 0, exit)
 	assert.NotContains(t, stdout, "document_yaml")
 	assert.NotContains(t, stdout, "DataContract")
 }
 
-func TestContractHistory_ForwardsTheLimitPositional(t *testing.T) {
-	fake := &fakeNodeCatalog{contractVersionsResp: &catalogv1.ListNodeContractVersionsResponse{}}
+func TestDataContractHistory_ForwardsTheLimitPositional(t *testing.T) {
+	fake := &fakeNodeCatalog{contractVersionsResp: &catalogv1.ListNodeDataContractVersionsResponse{}}
 
-	_, _, exit := runContractCommand(t, NewContractHistoryCommand, fake, []string{"analytics.py_daily_kpis", "5"}, false)
+	_, _, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, []string{"analytics.py_daily_kpis", "5"}, false)
 
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, int32(5), fake.gotContractVersionsLimit)
 }
 
-func TestContractHistory_ALimitOfZeroMeansEveryVersion(t *testing.T) {
-	fake := &fakeNodeCatalog{contractVersionsResp: &catalogv1.ListNodeContractVersionsResponse{}}
+func TestDataContractHistory_ALimitOfZeroMeansEveryVersion(t *testing.T) {
+	fake := &fakeNodeCatalog{contractVersionsResp: &catalogv1.ListNodeDataContractVersionsResponse{}}
 
-	_, _, exit := runContractCommand(t, NewContractHistoryCommand, fake, []string{"analytics.py_daily_kpis", "0"}, false)
+	_, _, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, []string{"analytics.py_daily_kpis", "0"}, false)
 
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, int32(0), fake.gotContractVersionsLimit)
 }
 
-func TestContractHistory_ANodeWithNoHistoryIsAnEmptyArrayNotNull(t *testing.T) {
-	fake := &fakeNodeCatalog{contractVersionsResp: &catalogv1.ListNodeContractVersionsResponse{}}
+func TestDataContractHistory_ANodeWithNoHistoryIsAnEmptyArrayNotNull(t *testing.T) {
+	fake := &fakeNodeCatalog{contractVersionsResp: &catalogv1.ListNodeDataContractVersionsResponse{}}
 
-	stdout, _, exit := runContractCommand(t, NewContractHistoryCommand, fake, []string{"analytics.orders"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, []string{"analytics.orders"}, false)
 
 	assert.Equal(t, 0, exit)
 	assert.JSONEq(t, `{"versions":[]}`, stdout)
 }
 
-func TestContractHistory_OutputMatchesItsSchema(t *testing.T) {
+func TestDataContractHistory_OutputMatchesItsSchema(t *testing.T) {
 	fake := &fakeNodeCatalog{contractVersionsResp: fullContractHistory()}
-	stdout, _, exit := runContractCommand(t, NewContractHistoryCommand, fake, []string{"analytics.py_daily_kpis"}, false)
+	stdout, _, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, []string{"analytics.py_daily_kpis"}, false)
 	require.Equal(t, 0, exit)
 
-	assertEmitsItsSchema(t, NewContractHistoryCommand(nil, &config.Config{}, io.Discard, io.Discard), stdout)
+	assertEmitsItsSchema(t, NewDataContractHistoryCommand(nil, &config.Config{}, io.Discard, io.Discard), stdout)
 }
 
-func TestContractHistory_UsageErrorsExit2WithoutCallingTheServer(t *testing.T) {
+func TestDataContractHistory_UsageErrorsExit2WithoutCallingTheServer(t *testing.T) {
 	cases := map[string][]string{
 		"no arguments":          {},
 		"too many arguments":    {"analytics.orders", "5", "extra"},
@@ -122,7 +122,7 @@ func TestContractHistory_UsageErrorsExit2WithoutCallingTheServer(t *testing.T) {
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
 			fake := &fakeNodeCatalog{}
-			stdout, _, exit := runContractCommand(t, NewContractHistoryCommand, fake, args, false)
+			stdout, _, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, args, false)
 			assert.Equal(t, 2, exit)
 			var env map[string]output.CLIError
 			require.NoError(t, json.Unmarshal([]byte(stdout), &env))
@@ -132,23 +132,23 @@ func TestContractHistory_UsageErrorsExit2WithoutCallingTheServer(t *testing.T) {
 	}
 }
 
-func TestContractHistory_ARefusedLimitFromTheServerExits2(t *testing.T) {
+func TestDataContractHistory_ARefusedLimitFromTheServerExits2(t *testing.T) {
 	fake := &fakeNodeCatalog{contractVersionsErr: status.Error(codes.InvalidArgument, "limit must be 0 (every version) or more")}
 
-	_, _, exit := runContractCommand(t, NewContractHistoryCommand, fake, []string{"analytics.orders", "1"}, false)
+	_, _, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, []string{"analytics.orders", "1"}, false)
 
 	assert.Equal(t, 2, exit)
 }
 
-func TestContractHistory_UnavailableExits5AndInternalExits6(t *testing.T) {
-	_, _, exit := runContractCommand(t, NewContractHistoryCommand, &fakeNodeCatalog{contractVersionsErr: status.Error(codes.Unavailable, "down")}, []string{"analytics.orders"}, false)
+func TestDataContractHistory_UnavailableExits5AndInternalExits6(t *testing.T) {
+	_, _, exit := runContractCommand(t, NewDataContractHistoryCommand, &fakeNodeCatalog{contractVersionsErr: status.Error(codes.Unavailable, "down")}, []string{"analytics.orders"}, false)
 	assert.Equal(t, 5, exit)
-	_, _, exit = runContractCommand(t, NewContractHistoryCommand, &fakeNodeCatalog{contractVersionsErr: status.Error(codes.Internal, "boom")}, []string{"analytics.orders"}, false)
+	_, _, exit = runContractCommand(t, NewDataContractHistoryCommand, &fakeNodeCatalog{contractVersionsErr: status.Error(codes.Internal, "boom")}, []string{"analytics.orders"}, false)
 	assert.Equal(t, 6, exit)
 }
 
-func TestContractHistory_FactoryErrorExits5(t *testing.T) {
-	cmd := NewContractHistoryCommand(func(context.Context, string) (client.CatalogClient, error) {
+func TestDataContractHistory_FactoryErrorExits5(t *testing.T) {
+	cmd := NewDataContractHistoryCommand(func(context.Context, string) (client.CatalogClient, error) {
 		return nil, status.Error(codes.Unavailable, "dial failed")
 	}, &config.Config{Timeout: 2 * time.Second}, io.Discard, io.Discard)
 	cmd.SetArgs([]string{"analytics.orders"})
@@ -159,10 +159,10 @@ func TestContractHistory_FactoryErrorExits5(t *testing.T) {
 	assert.Equal(t, 5, cliErr.ExitCode())
 }
 
-func TestContractHistory_HumanModeWritesOneLinePerVersionToStderr(t *testing.T) {
+func TestDataContractHistory_HumanModeWritesOneLinePerVersionToStderr(t *testing.T) {
 	fake := &fakeNodeCatalog{contractVersionsResp: fullContractHistory()}
 
-	stdout, stderr, exit := runContractCommand(t, NewContractHistoryCommand, fake, []string{"analytics.py_daily_kpis"}, true)
+	stdout, stderr, exit := runContractCommand(t, NewDataContractHistoryCommand, fake, []string{"analytics.py_daily_kpis"}, true)
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
@@ -170,8 +170,8 @@ func TestContractHistory_HumanModeWritesOneLinePerVersionToStderr(t *testing.T) 
 	assert.Contains(t, stderr, "2  sha256:bbb  2026-11-13T09:30:00Z\n")
 }
 
-func TestContractHistory_IsDocumentedAsAReadOnlyCommandThatTheChatSetsNoFlagsOn(t *testing.T) {
-	cmd := NewContractHistoryCommand(nil, &config.Config{}, io.Discard, io.Discard)
+func TestDataContractHistory_IsDocumentedAsAReadOnlyCommandThatTheChatSetsNoFlagsOn(t *testing.T) {
+	cmd := NewDataContractHistoryCommand(nil, &config.Config{}, io.Discard, io.Discard)
 
 	assert.NotEmpty(t, cmd.Short)
 	assert.NotEmpty(t, cmd.Long)

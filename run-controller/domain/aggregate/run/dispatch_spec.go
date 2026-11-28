@@ -10,11 +10,11 @@ import (
 // a seed's pod runs before a load that drops its table. The task stores it
 // when its run is planned, and its first dispatch, each retry, each question
 // about an attempt and the grant of its node's lease all read it from there,
-// so no dispatch of a seed's load goes out without its preflight.
+// so no dispatch of a seed's load goes out without its dependents check.
 type DispatchSpec struct {
 	Operation model.Operation
 	// Reason is empty when the plan states none.
 	Reason string
-	// Preflight is nil on every task but a seed whose load drops its table.
-	Preflight *seedreload.Preflight
+	// DependentsCheck is nil on every task but a seed whose load drops its table.
+	DependentsCheck *seedreload.DependentsCheck
 }

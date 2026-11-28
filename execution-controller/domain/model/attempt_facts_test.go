@@ -65,11 +65,11 @@ func TestAttemptFacts_MergeKeepsTheFirstFindings(t *testing.T) {
 		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}
 	second := &seedreload.Findings{DropSemantics: "restrict", Completeness: "best_effort"}
 
-	merged, changed := model.AttemptFacts{}.Merge(model.AttemptFacts{SeedPreflight: first})
+	merged, changed := model.AttemptFacts{}.Merge(model.AttemptFacts{DependentsCheck: first})
 	assert.True(t, changed)
-	assert.Same(t, first, merged.SeedPreflight)
+	assert.Same(t, first, merged.DependentsCheck)
 
-	merged, changed = merged.Merge(model.AttemptFacts{SeedPreflight: second})
+	merged, changed = merged.Merge(model.AttemptFacts{DependentsCheck: second})
 	assert.False(t, changed)
-	assert.Same(t, first, merged.SeedPreflight, "the first findings stand")
+	assert.Same(t, first, merged.DependentsCheck, "the first findings stand")
 }

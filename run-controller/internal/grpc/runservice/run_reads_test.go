@@ -201,11 +201,11 @@ func TestListTasks_CarriesEachTasksOperationAndPlanReason(t *testing.T) {
 	assert.Empty(t, resp.GetTasks()[1].GetPlanReason())
 }
 
-func TestListRunAttempts_CarriesTheSeedPreflightFindings(t *testing.T) {
+func TestListRunAttempts_CarriesTheDependentsCheckFindings(t *testing.T) {
 	store := newStore()
 	runID := uuid.New()
 	store.putAttempts(tenantA, runID,
-		projection.TaskAttempt{TaskID: uuid.New(), Attempt: 0, DispatchedAt: base, SeedPreflight: &seedreload.Findings{
+		projection.TaskAttempt{TaskID: uuid.New(), Attempt: 0, DispatchedAt: base, DependentsCheck: &seedreload.Findings{
 			DropSemantics: "cascade", Completeness: "complete", Checked: true,
 			Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi_owner", Depth: 2, Allowed: true}},
 			Probes:     []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", OK: false, Error: "no such relation"}},
@@ -217,12 +217,12 @@ func TestListRunAttempts_CarriesTheSeedPreflightFindings(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, resp.GetAttempts(), 2)
-	assert.True(t, proto.Equal(&runv1.SeedPreflightFindings{
+	assert.True(t, proto.Equal(&runv1.DependentsCheckFindings{
 		DropSemantics: "cascade", Completeness: "complete", Checked: true,
-		Dependents: []*runv1.PreflightDependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi_owner", Depth: 2, Allowed: true}},
+		Dependents: []*runv1.DependentObject{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi_owner", Depth: 2, Allowed: true}},
 		Probes:     []*runv1.ViewProbe{{Schema: "bi", Name: "fx_rates_report", Ok: false, Error: "no such relation"}},
-	}, resp.GetAttempts()[0].GetSeedPreflight()))
-	assert.Nil(t, resp.GetAttempts()[1].GetSeedPreflight(), "an attempt that ran no preflight has none")
+	}, resp.GetAttempts()[0].GetDependentsCheck()))
+	assert.Nil(t, resp.GetAttempts()[1].GetDependentsCheck(), "an attempt that ran no dependents check has none")
 }
 
 func TestGetRunGraph_CarriesEachNodesOperationAndPlanReason(t *testing.T) {

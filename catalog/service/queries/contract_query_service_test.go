@@ -159,10 +159,10 @@ schema:
       - {name: total_amount, logicalType: number, physicalType: "NUMERIC(12,2)", required: true}
 `
 
-func TestGetNodeContract_ReturnsTheCurrentVersion(t *testing.T) {
+func TestGetNodeDataContract_ReturnsTheCurrentVersion(t *testing.T) {
 	reader := &fakeContractReader{history: kpisHistory()}
 
-	got, err := newContractService(reader).GetNodeContract(context.Background(), testTenant, kpisID, true)
+	got, err := newContractService(reader).GetNodeDataContract(context.Background(), testTenant, kpisID, true)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), got.Version.Version)
@@ -174,36 +174,36 @@ func TestGetNodeContract_ReturnsTheCurrentVersion(t *testing.T) {
 	assert.Equal(t, []string{testTenant}, reader.tenants, "one read, for the request's tenant")
 }
 
-func TestGetNodeContract_WithoutTheDocumentRendersNone(t *testing.T) {
+func TestGetNodeDataContract_WithoutTheDocumentRendersNone(t *testing.T) {
 	got, err := newContractService(&fakeContractReader{history: kpisHistory()}).
-		GetNodeContract(context.Background(), testTenant, kpisID, false)
+		GetNodeDataContract(context.Background(), testTenant, kpisID, false)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), got.Version.Version)
 	assert.Empty(t, got.DocumentYAML)
 }
 
-func TestGetNodeContract_NotFoundWithoutAContract(t *testing.T) {
+func TestGetNodeDataContract_NotFoundWithoutAContract(t *testing.T) {
 	_, err := newContractService(&fakeContractReader{history: kpisHistory()}).
-		GetNodeContract(context.Background(), testTenant, "analytics.no_contract", true)
+		GetNodeDataContract(context.Background(), testTenant, "analytics.no_contract", true)
 
 	assert.ErrorIs(t, err, contractversion.ErrNotFound)
 }
 
-func TestGetNodeContract_AReadFailureIsNotANotFound(t *testing.T) {
+func TestGetNodeDataContract_AReadFailureIsNotANotFound(t *testing.T) {
 	boom := errors.New("neo4j is down")
 
 	_, err := newContractService(&fakeContractReader{err: boom}).
-		GetNodeContract(context.Background(), testTenant, kpisID, true)
+		GetNodeDataContract(context.Background(), testTenant, kpisID, true)
 
 	assert.ErrorIs(t, err, boom)
 	assert.NotErrorIs(t, err, contractversion.ErrNotFound)
 }
 
-func TestListNodeContractVersions_NewestFirstWithIsCurrent(t *testing.T) {
+func TestListNodeDataContractVersions_NewestFirstWithIsCurrent(t *testing.T) {
 	reader := &fakeContractReader{history: kpisHistory()}
 
-	got, err := newContractService(reader).ListNodeContractVersions(context.Background(), testTenant, kpisID, 0)
+	got, err := newContractService(reader).ListNodeDataContractVersions(context.Background(), testTenant, kpisID, 0)
 
 	require.NoError(t, err)
 	require.Len(t, got, 3)
@@ -223,28 +223,28 @@ func TestListNodeContractVersions_NewestFirstWithIsCurrent(t *testing.T) {
 	assert.Equal(t, []string{testTenant}, reader.tenants)
 }
 
-func TestListNodeContractVersions_PassesTheLimitDown(t *testing.T) {
+func TestListNodeDataContractVersions_PassesTheLimitDown(t *testing.T) {
 	reader := &fakeContractReader{history: kpisHistory()}
 
-	got, err := newContractService(reader).ListNodeContractVersions(context.Background(), testTenant, kpisID, 2)
+	got, err := newContractService(reader).ListNodeDataContractVersions(context.Background(), testTenant, kpisID, 2)
 
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 	assert.Equal(t, 2, reader.gotLimit)
 }
 
-func TestListNodeContractVersions_ANodeWithNoHistoryHasAnEmptyList(t *testing.T) {
+func TestListNodeDataContractVersions_ANodeWithNoHistoryHasAnEmptyList(t *testing.T) {
 	got, err := newContractService(&fakeContractReader{history: kpisHistory()}).
-		ListNodeContractVersions(context.Background(), testTenant, "analytics.no_contract", 0)
+		ListNodeDataContractVersions(context.Background(), testTenant, "analytics.no_contract", 0)
 
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
 
-func TestGetNodeContractDiff_TheDesignsExample(t *testing.T) {
+func TestGetNodeDataContractDiff_TheDesignsExample(t *testing.T) {
 	reader := &fakeContractReader{history: kpisHistory()}
 
-	got, err := newContractService(reader).GetNodeContractDiff(context.Background(), testTenant, kpisID, 1, 2)
+	got, err := newContractService(reader).GetNodeDataContractDiff(context.Background(), testTenant, kpisID, 1, 2)
 
 	require.NoError(t, err)
 	assert.Equal(t, []contractversion.FieldChange{{
@@ -255,14 +255,14 @@ func TestGetNodeContractDiff_TheDesignsExample(t *testing.T) {
 	assert.Equal(t, []string{testTenant, testTenant}, reader.tenants, "both versions read for the request's tenant")
 }
 
-func TestGetNodeContractDiff_ARevertDiffersFromTheVersionBeforeItAndNotFromItsOrigin(t *testing.T) {
+func TestGetNodeDataContractDiff_ARevertDiffersFromTheVersionBeforeItAndNotFromItsOrigin(t *testing.T) {
 	service := newContractService(&fakeContractReader{history: kpisHistory()})
 
-	toOrigin, err := service.GetNodeContractDiff(context.Background(), testTenant, kpisID, 1, 3)
+	toOrigin, err := service.GetNodeDataContractDiff(context.Background(), testTenant, kpisID, 1, 3)
 	require.NoError(t, err)
 	assert.Empty(t, toOrigin, "version 3 holds version 1's contract")
 
-	fromPrevious, err := service.GetNodeContractDiff(context.Background(), testTenant, kpisID, 2, 3)
+	fromPrevious, err := service.GetNodeDataContractDiff(context.Background(), testTenant, kpisID, 2, 3)
 	require.NoError(t, err)
 	assert.Equal(t, []contractversion.FieldChange{{
 		Path:       "schema[0].properties[2].physicalType",
@@ -271,11 +271,11 @@ func TestGetNodeContractDiff_ARevertDiffersFromTheVersionBeforeItAndNotFromItsOr
 	}}, fromPrevious)
 }
 
-func TestGetNodeContractDiff_RefusesAVersionTheNodeDoesNotHave(t *testing.T) {
+func TestGetNodeDataContractDiff_RefusesAVersionTheNodeDoesNotHave(t *testing.T) {
 	service := newContractService(&fakeContractReader{history: kpisHistory()})
 
-	_, errTo := service.GetNodeContractDiff(context.Background(), testTenant, kpisID, 1, 9)
-	_, errFrom := service.GetNodeContractDiff(context.Background(), testTenant, kpisID, 9, 1)
+	_, errTo := service.GetNodeDataContractDiff(context.Background(), testTenant, kpisID, 1, 9)
+	_, errFrom := service.GetNodeDataContractDiff(context.Background(), testTenant, kpisID, 9, 1)
 
 	assert.ErrorIs(t, errTo, contractversion.ErrNotFound)
 	assert.ErrorIs(t, errFrom, contractversion.ErrNotFound)
@@ -298,14 +298,14 @@ func boundHistory() []contractversion.VersionView {
 	return history
 }
 
-// The document GetNodeContract returns is the published form the live folder
+// The document GetNodeDataContract returns is the published form the live folder
 // writes, ontology links absolute under the install's base URL included, and
 // its provenance names the ontology version the contract was resolved against.
-func TestGetNodeContract_ShowsAbsoluteLinks(t *testing.T) {
+func TestGetNodeDataContract_ShowsAbsoluteLinks(t *testing.T) {
 	service := queries.NewContractQueryService(&fakeContractReader{history: boundHistory()},
 		serialization.ODCSYAML{}, serialization.CanonicalJSON, "https://ontology.example/things")
 
-	got, err := service.GetNodeContract(context.Background(), testTenant, kpisID, true)
+	got, err := service.GetNodeDataContract(context.Background(), testTenant, kpisID, true)
 
 	require.NoError(t, err)
 	assert.Contains(t, got.DocumentYAML, "authoritativeDefinitions:\n  - {type: ontology, url: \"https://ontology.example/things/Kpi\"}\n")
@@ -318,9 +318,9 @@ func TestGetNodeContract_ShowsAbsoluteLinks(t *testing.T) {
 }
 
 // With no base URL the document keeps the links as stored.
-func TestGetNodeContract_WithNoBaseURLKeepsTheLinks(t *testing.T) {
+func TestGetNodeDataContract_WithNoBaseURLKeepsTheLinks(t *testing.T) {
 	got, err := newContractService(&fakeContractReader{history: boundHistory()}).
-		GetNodeContract(context.Background(), testTenant, kpisID, true)
+		GetNodeDataContract(context.Background(), testTenant, kpisID, true)
 
 	require.NoError(t, err)
 	assert.Contains(t, got.DocumentYAML, `{type: ontology, url: "continuo-ontology:Kpi"}`)

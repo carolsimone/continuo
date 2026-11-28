@@ -44,10 +44,10 @@ type DeployTask struct {
 	// python node's pod receives it as CONTENT_HASH to check its image
 	// against. Empty when the dispatch carries none.
 	ContentHash string
-	// SeedPreflight is the check a seed's pod runs against the warehouse, in
+	// DependentsCheck is the check a seed's pod runs against the warehouse, in
 	// an init container after every other one and before dbt, ahead of the
 	// load that drops the seed's table; nil when the dispatch asks for none.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 func (DeployTask) isCommand() {}
@@ -93,10 +93,10 @@ type ValidationDeployTask struct {
 	// every production release. Its DTO field is omitempty so an absent value
 	// keeps the job_params JSON byte-identical.
 	SourceOverlayURI string
-	// SeedPreflight is the report-mode check a seed-build pod runs against
+	// DependentsCheck is the report-mode check a seed-build pod runs against
 	// the seed's production table, ahead of dbt; nil for every other leg and
 	// for a seed whose request asks for none.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 func (ValidationDeployTask) isCommand() {}
@@ -105,21 +105,21 @@ func (ValidationDeployTask) isCommand() {}
 // port consumes. The mapping is a pure field copy — no infrastructure concern.
 func (c DeployTask) ToJobSpec() deploy.JobSpec {
 	return deploy.JobSpec{
-		JobName:        c.JobName,
-		TaskID:         c.TaskID,
-		RunID:          c.RunID,
-		ScheduleName:   c.ScheduleName,
-		ProjectName:    c.ProjectName,
-		SchemaName:     c.SchemaName,
-		TableName:      c.TableName,
-		NodeType:       c.NodeType,
-		ImageTag:       c.ImageTag,
-		SecretRef:      c.SecretRef,
-		Operation:      c.Operation,
-		Attempt:        c.Attempt,
-		TimeoutSeconds: c.TimeoutSeconds,
-		ContentHash:    c.ContentHash,
-		SeedPreflight:  c.SeedPreflight,
+		JobName:         c.JobName,
+		TaskID:          c.TaskID,
+		RunID:           c.RunID,
+		ScheduleName:    c.ScheduleName,
+		ProjectName:     c.ProjectName,
+		SchemaName:      c.SchemaName,
+		TableName:       c.TableName,
+		NodeType:        c.NodeType,
+		ImageTag:        c.ImageTag,
+		SecretRef:       c.SecretRef,
+		Operation:       c.Operation,
+		Attempt:         c.Attempt,
+		TimeoutSeconds:  c.TimeoutSeconds,
+		ContentHash:     c.ContentHash,
+		DependentsCheck: c.DependentsCheck,
 	}
 }
 
@@ -146,6 +146,6 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		ParseProdS3URI:       c.ParseProdS3URI,
 		ParseCandidateS3URI:  c.ParseCandidateS3URI,
 		SourceOverlayURI:     c.SourceOverlayURI,
-		SeedPreflight:        c.SeedPreflight,
+		DependentsCheck:      c.DependentsCheck,
 	}
 }

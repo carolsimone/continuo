@@ -62,8 +62,8 @@ type changedAncestorDTO struct {
 
 // validationNodeDTO is one validation-leg result: the node's artifacts, the
 // candidate facts that locate its source, how the leg prepared it
-// (validation_op: built from its own candidate code, or clone_from_prod for an
-// unchanged upstream copied from its production table), and — for a failing
+// (validation_op: built from its own candidate code, or build_from_prod for an
+// unchanged upstream built from its production table), and — for a failing
 // node — the changed ancestors that may be the root cause.
 type validationNodeDTO struct {
 	NodeID               string               `json:"node_id"`

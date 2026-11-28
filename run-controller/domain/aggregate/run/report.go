@@ -109,9 +109,9 @@ type AttemptReport struct {
 	RunResultsURI    *string
 	ParseCache       *string
 	ParseCacheReason *string
-	// SeedPreflight is what the preflight of a seed's load found in the
-	// warehouse; nil when no preflight ran.
-	SeedPreflight *seedreload.Findings
+	// DependentsCheck is what the dependents check of a seed's load found in the
+	// warehouse; nil when no dependents check ran.
+	DependentsCheck *seedreload.Findings
 }
 
 // Apply applies rep to the attempt by rank. A report that ranks higher than
@@ -163,8 +163,8 @@ func (a *Attempt) copyFacts(rep AttemptReport) {
 	if rep.ParseCacheReason != nil {
 		a.ParseCacheReason = rep.ParseCacheReason
 	}
-	if rep.SeedPreflight != nil {
-		a.SeedPreflight = rep.SeedPreflight
+	if rep.DependentsCheck != nil {
+		a.DependentsCheck = rep.DependentsCheck
 	}
 	if rep.JobName != "" {
 		a.JobName = rep.JobName

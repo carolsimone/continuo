@@ -358,3 +358,51 @@ names:
     use: manual run
   - pattern: 'KindTrigger|(?i)manual[ _-]trigger|cron\W{1,4}trigger|case .trigger|kind = .trigger|Equal\(t, .trigger'
     use: the run kind manual (KindManual)
+  # Dependents check group: the check, before a seed reload drops the seed's
+  # table, that lists every object reading that table is the dependents check
+  # (the dispatch field dependents_check, the init container dependents-check,
+  # VALIDATION_OP=dependents_check, its inputs DEPENDENTS_CHECK_*, the column
+  # task_attempts.dependents_check_findings). The first pattern covers every
+  # code form built from the old name (seed_preflight, SEED_PREFLIGHT_MODE,
+  # SeedPreflightFindings, seedPreflightColumn). Pre-flight stays
+  # agent-remediation's word for the checks a draft passes, so the bare word
+  # is retired only where it can mean nothing but the dependents check. The ui
+  # and cli copies of run.proto are held equal to run-controller's by
+  # `make guards`.
+  - pattern: '(?i)\w*seed[ _-]?pre-?flights?\w*'
+    use: dependents check (dependents_check, DependentsCheck, dependents-check, DEPENDENTS_CHECK_*)
+  - pattern: '(?i)\w*pre-?flights?\w*'
+    use: dependents check (dependents_check, DependentsCheck)
+    paths:
+      - execution-controller
+      - run-controller
+      - release-controller
+      - pkg/seedreload
+      - pkg/events
+      - pkg/validationresult
+      - tests/e2e/seed_reload_test.go
+      - ui/src/client/NodeTableBody.tsx
+      - ui/src/server/routes/runs.ts
+      - ui/tests/client/run-node-table.test.tsx
+      - cli/internal/cmd/release
+  # build_from_prod group: the release check builds a node that only feeds the
+  # changed nodes as an empty table with its production table's columns (its
+  # production shape); it copies no rows. The validation op is build_from_prod
+  # and the reject reason upstream_build_from_prod_failed.
+  - pattern: '(?i)\w*clon(e|ed|es|ing)[ _-]?(empty[ _-]?)?(from[ _-]?)?prod(uction)?\w*'
+    use: build_from_prod (BuildFromProd, build_empty_from_prod)
+  - pattern: '(?i)\w*upstream[ _-]?clones?\w*'
+    use: upstream_build_from_prod_failed (UpstreamBuildFromProdFailed)
+  - pattern: '(?i)\w*production[ _-]?cop(y|ies)\w*'
+    use: production shape
+  # Data contract group: the published description of a node's table is its
+  # data contract (the RPCs GetNodeDataContract, ListNodeDataContractVersions
+  # and GetNodeDataContractDiff, the commands node data-contract,
+  # node data-contract-history and node data-contract-diff, the node page's
+  # tab data-contract). Inside catalog, contract alone means a data contract.
+  - pattern: '\w*([gG]et|[lL]ist)NodeContract\w*|NodeContract(Panel|Response|DiffResponse)\w*'
+    use: GetNodeDataContract, ListNodeDataContractVersions, GetNodeDataContractDiff
+  - pattern: 'node contract(-history|-diff)?|node", "contract(-history|-diff)?'
+    use: node data-contract, node data-contract-history, node data-contract-diff
+  - pattern: 'tab=contract'
+    use: tab=data-contract

@@ -28,9 +28,9 @@ type TaskDispatch struct {
 	SecretRef      string
 	JobName        string
 	TimeoutSeconds int64
-	// SeedPreflight is the check a seed's pod runs against the warehouse
+	// DependentsCheck is the check a seed's pod runs against the warehouse
 	// before the load that drops its table; nil for every other task.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 // Command is the deploy command of the dispatched attempt.
@@ -40,6 +40,6 @@ func (d TaskDispatch) Command() command.DeployTask {
 		ProjectName: d.ProjectName, SchemaName: d.SchemaName, TableName: d.TableName, JobName: d.JobName,
 		NodeType: d.NodeType, ImageTag: d.ImageTag, SecretRef: d.SecretRef, Attempt: d.Attempt,
 		Operation: d.Operation, TimeoutSeconds: d.TimeoutSeconds, ContentHash: d.ContentHash,
-		SeedPreflight: d.SeedPreflight,
+		DependentsCheck: d.DependentsCheck,
 	}
 }

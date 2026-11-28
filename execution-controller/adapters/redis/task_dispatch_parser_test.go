@@ -93,16 +93,16 @@ func TestParseTaskDispatch_ReadsContentHash(t *testing.T) {
 	assert.Equal(t, "sha256:91d4c0", evt.ContentHash)
 }
 
-func TestParseTaskDispatch_ReadsTheSeedPreflight(t *testing.T) {
-	evt, err := ParseTaskDispatch(goldenDispatch(t, "task_dispatch_v1_seed_preflight.json"))
+func TestParseTaskDispatch_ReadsTheDependentsCheck(t *testing.T) {
+	evt, err := ParseTaskDispatch(goldenDispatch(t, "task_dispatch_v1_dependents_check.json"))
 	require.NoError(t, err)
-	assert.Equal(t, &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+	assert.Equal(t, &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound,
 		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"},
-		Acknowledged: []string{}}, evt.SeedPreflight)
+		Acknowledged: []string{}}, evt.DependentsCheck)
 	assert.Equal(t, "dbt-seed", evt.NodeType)
 	assert.Equal(t, uuid.MustParse("a1c3e5f7-2b4d-4f60-8a1c-3e5f7b9d1a2c"), evt.TaskID)
 
 	plain, err := ParseTaskDispatch(fixtureDispatch(t))
 	require.NoError(t, err)
-	assert.Nil(t, plain.SeedPreflight)
+	assert.Nil(t, plain.DependentsCheck)
 }

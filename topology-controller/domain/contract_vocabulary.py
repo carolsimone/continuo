@@ -37,7 +37,7 @@ class RejectReason(StrEnum):
     SEED_BUILD_FAILED = "seed_build_failed"
     VALIDATION_FAILED = "validation_failed"
     UPGRADE_INTERRUPTED = "upgrade_interrupted"
-    UPSTREAM_CLONE_FAILED = "upstream_clone_failed"
+    UPSTREAM_BUILD_FROM_PROD_FAILED = "upstream_build_from_prod_failed"
 
 
 REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.INVALID_SQL, RejectReason.UNQUALIFIED_REFERENCE, RejectReason.DUPLICATE_TABLE, RejectReason.SEED_BUILD_FAILED, RejectReason.VALIDATION_FAILED})
@@ -45,11 +45,11 @@ REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.IN
 
 
 class ValidationOp(StrEnum):
-    """How the validation leg prepares one node of a candidate release in the candidate schema. release-controller names it per node on validation.requested:v1 and on each per_node entry of a validation rejection on release.rejected:v1; execution-controller passes it to the validation runner as VALIDATION_OP; remediation never turns a failed clone_from_prod node into a failure to fix."""
+    """How the validation leg prepares one node of a candidate release in the candidate schema. release-controller names it per node on validation.requested:v1 and on each per_node entry of a validation rejection on release.rejected:v1; execution-controller passes it to the validation runner as VALIDATION_OP; remediation never turns a failed build_from_prod node into a failure to fix."""
     BUILD_FROM_SQL = "build_from_sql"
     BUILD_FROM_COLUMNS = "build_from_columns"
     CHECK_BINDS = "check_binds"
-    CLONE_FROM_PROD = "clone_from_prod"
+    BUILD_FROM_PROD = "build_from_prod"
 
 
 class HandoverReason(StrEnum):

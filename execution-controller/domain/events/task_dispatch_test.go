@@ -17,10 +17,10 @@ func TestTaskDispatch_CommandCarriesTheContentHash(t *testing.T) {
 	assert.Empty(t, events.TaskDispatch{}.Command().ContentHash)
 }
 
-func TestTaskDispatch_CommandCarriesTheSeedPreflight(t *testing.T) {
-	pf := &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"}
-	d := events.TaskDispatch{TenantID: "default", RunID: uuid.New(), TaskID: uuid.New(), SeedPreflight: pf}
+func TestTaskDispatch_CommandCarriesTheDependentsCheck(t *testing.T) {
+	pf := &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"}
+	d := events.TaskDispatch{TenantID: "default", RunID: uuid.New(), TaskID: uuid.New(), DependentsCheck: pf}
 
-	assert.Equal(t, pf, d.Command().SeedPreflight)
-	assert.Nil(t, events.TaskDispatch{}.Command().SeedPreflight)
+	assert.Equal(t, pf, d.Command().DependentsCheck)
+	assert.Nil(t, events.TaskDispatch{}.Command().DependentsCheck)
 }

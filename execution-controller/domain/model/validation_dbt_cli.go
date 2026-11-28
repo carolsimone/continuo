@@ -16,16 +16,16 @@ import (
 // Every node type — dbt model, snapshot, seed, test, and python model — runs
 // the same entrypoint; it dispatches on the VALIDATION_OP env var, one of the
 // validation_op vocabulary (build_from_sql | build_from_columns | check_binds |
-// clone_from_prod) or a candidate-schema op (ensure_schema | drop_schema):
+// build_from_prod) or a candidate-schema op (ensure_schema | drop_schema):
 // build_from_sql fetches the node's compiled SQL from S3 (CANDIDATE_SQL_URI)
 // and runs CREATE TABLE <candidate>.<table> AS (<sql>) WITH NO DATA;
 // build_from_columns (python nodes) fetches the published validation spec from
 // S3 (CANDIDATE_SPEC_URI) and creates the empty typed table from its declared
 // output columns; check_binds (dbt tests) fetches the compiled SQL and only
-// EXPLAINs it against the candidate schema; clone_from_prod clones an existing
-// prod table's shape empty; ensure_schema and drop_schema create and drop the
+// EXPLAINs it against the candidate schema; build_from_prod builds an empty table
+// shaped like the production table; ensure_schema and drop_schema create and drop the
 // candidate schema itself. Seeds need no distinct command here: they are pre-built
-// (new/changed) or cloned from prod (unchanged) by the release-controller,
+// (new/changed) or built from prod (unchanged) by the release-controller,
 // never validated via dbt.
 func ValidationCommand(nt pkg_model.NodeType, tableName string) []string {
 	return []string{"continuo-runtime", "validation-op"}

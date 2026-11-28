@@ -1003,10 +1003,10 @@ func TestAttemptReport_RecordsTheSeedColumnsHashOfTheLoadedVersion(t *testing.T)
 var reloadNow = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 
 // seedReloadTask is the task of the seed raw.countries whose load drops its
-// table, with the preflight its pod runs first.
+// table, with the dependents check its pod runs first.
 func seedReloadTask(op model.Operation) run.Task {
 	return run.Task{ProjectName: "svc", SchemaName: "raw", TableName: "countries", NodeKey: "raw.countries", ImageTag: "svc:7",
-		Operation: op, SeedPreflight: &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+		Operation: op, DependentsCheck: &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound,
 			Relation: "raw.countries", Allowed: []string{"stg.v"}}}
 }
 
@@ -1057,7 +1057,7 @@ func TestAttemptReportHandler_ASeedLoadThatDropsOpensAnOutageForEachRebuild(t *t
 		})
 	}
 
-	t.Run("a success of a task without a preflight opens nothing", func(t *testing.T) {
+	t.Run("a success of a task without a dependents check opens nothing", func(t *testing.T) {
 		u, outages, rep := seedReloadCase(rebuildTask(), run.AttemptSucceeded, "", 0)
 
 		require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, rep, uuid.New()))
@@ -1137,7 +1137,7 @@ func TestAttemptReportHandler_CountsTheOutcomeOfAReloadAfterCommit(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			u, _, rep := seedReloadCase(tc.task, tc.status, tc.reason, tc.maxRetries)
 			if tc.reason == model.FailureReasonUnownedDependents {
-				rep.Report.SeedPreflight = &seedreload.Findings{Checked: true, Dependents: []seedreload.Dependent{
+				rep.Report.DependentsCheck = &seedreload.Findings{Checked: true, Dependents: []seedreload.Dependent{
 					{Schema: "stg", Name: "v", Kind: "view", Allowed: true}, {Schema: "bi", Name: "report", Kind: "view"}}}
 			}
 			reloads := &fakeSeedReloads{}

@@ -229,10 +229,10 @@ func TestParseSeedBuildRequested_AbsentSourceOverlayURIIsEmpty(t *testing.T) {
 	assert.Empty(t, evt.SourceOverlayURI)
 }
 
-func TestParseSeedBuildRequested_ReadsEachSeedsPreflight(t *testing.T) {
+func TestParseSeedBuildRequested_ReadsEachSeedsDependentsCheck(t *testing.T) {
 	p := seedBuildPayload()
 	seeds := p["seeds"].([]map[string]any)
-	seeds[0]["seed_preflight"] = map[string]any{
+	seeds[0]["dependents_check"] = map[string]any{
 		"mode": "report", "engine_family": "late_binding", "relation": "public.country_codes",
 		"allowed": []string{"public.country_names"}, "acknowledged": []string{},
 	}
@@ -240,10 +240,10 @@ func TestParseSeedBuildRequested_ReadsEachSeedsPreflight(t *testing.T) {
 	evt, err := ParseSeedBuildRequested(seedBuildMsg(t, p, ""))
 
 	require.NoError(t, err)
-	require.NotNil(t, evt.Seeds[0].SeedPreflight)
-	assert.Equal(t, seedreload.Preflight{
-		Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "public.country_codes",
+	require.NotNil(t, evt.Seeds[0].DependentsCheck)
+	assert.Equal(t, seedreload.DependentsCheck{
+		Mode: seedreload.ReportMode, Family: warehouse.LateBinding, Relation: "public.country_codes",
 		Allowed: []string{"public.country_names"}, Acknowledged: []string{},
-	}, *evt.Seeds[0].SeedPreflight)
-	assert.Nil(t, evt.Seeds[1].SeedPreflight, "a seed without the key asks for no preflight")
+	}, *evt.Seeds[0].DependentsCheck)
+	assert.Nil(t, evt.Seeds[1].DependentsCheck, "a seed without the key asks for no dependents check")
 }

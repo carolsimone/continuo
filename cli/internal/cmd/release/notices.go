@@ -124,8 +124,8 @@ continuo does not own, and whether the load is predicted to go ahead or stop.
 
 Use when the user asks what a release does to a seed table, whether a release
 will reload a seed, which views a seed reload rebuilds, or why a release's seed
-stopped. A notice predicts and the run's preflight decides: the prediction is
-made when the release is built, and the preflight of the run that loads the
+stopped. A notice predicts and the run's dependents check decides: the prediction is
+made when the release is built, and the dependents check of the run that loads the
 seed settles what actually happens.
 
 Arguments:

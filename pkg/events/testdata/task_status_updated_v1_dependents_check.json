@@ -19,7 +19,7 @@
       "failure_reason": "unowned_dependents",
       "error_message": "unowned_dependents: bi.fx_rates_report (view, owner bi)",
       "log_s3_key": "logs/task-executions/finance/analytics/seed_fx_rates_eur/7d9f1b3a-5c2e-4a80-b6d4-1e3a5c7f9b2d.log",
-      "seed_preflight": {
+      "dependents_check": {
         "drop_semantics": "cascade",
         "completeness": "exact",
         "checked": true,
@@ -65,7 +65,7 @@
       "failure_reason": "unowned_dependents",
       "error_message": "unowned_dependents: bi.fx_rates_report (view, owner bi)",
       "log_s3_key": "logs/task-executions/finance/analytics/seed_fx_rates_eur/7d9f1b3a-5c2e-4a80-b6d4-1e3a5c7f9b2d.log",
-      "seed_preflight": {
+      "dependents_check": {
         "drop_semantics": "cascade",
         "completeness": "exact",
         "checked": true,

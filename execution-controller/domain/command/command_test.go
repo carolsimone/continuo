@@ -31,11 +31,11 @@ func TestDeployTask_ToJobSpec(t *testing.T) {
 	assert.Equal(t, "sha256:91d4c0", spec.ContentHash)
 }
 
-func TestDeployTask_ToJobSpecCarriesTheSeedPreflight(t *testing.T) {
-	pf := &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.seed_fx_rates_eur"}
+func TestDeployTask_ToJobSpecCarriesTheDependentsCheck(t *testing.T) {
+	pf := &seedreload.DependentsCheck{Mode: seedreload.ReportMode, Family: warehouse.LateBinding, Relation: "analytics.seed_fx_rates_eur"}
 
-	assert.Equal(t, pf, command.DeployTask{NodeType: "dbt-seed", SeedPreflight: pf}.ToJobSpec().SeedPreflight)
-	assert.Nil(t, command.DeployTask{NodeType: "dbt-seed"}.ToJobSpec().SeedPreflight)
+	assert.Equal(t, pf, command.DeployTask{NodeType: "dbt-seed", DependentsCheck: pf}.ToJobSpec().DependentsCheck)
+	assert.Nil(t, command.DeployTask{NodeType: "dbt-seed"}.ToJobSpec().DependentsCheck)
 }
 
 func TestValidationDeployTask_SatisfiesCommand(t *testing.T) {
@@ -114,15 +114,15 @@ func TestValidationDeployTask_ToValidationJobSpec_CarriesOp(t *testing.T) {
 		ReleaseID: "r", NodeID: "model.a", ProjectName: "s", SchemaName: "sc",
 		TableName: "a", NodeType: "dbt-model", ImageTag: "t", JobName: "j",
 		CandidateSchema: "_candidate_r", CandidateArtifactURI: "s3://b/a.sql",
-		ValidationOp: string(pkg_model.ValidationOpCloneFromProd), ProdSchema: "analytics",
+		ValidationOp: string(pkg_model.ValidationOpBuildFromProd), ProdSchema: "analytics",
 	}
 	spec := cmd.ToValidationJobSpec()
-	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), spec.ValidationOp)
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromProd), spec.ValidationOp)
 	assert.Equal(t, "analytics", spec.ProdSchema)
 }
 
-func TestValidationDeployTask_ToValidationJobSpec_CarriesTheSeedPreflight(t *testing.T) {
-	pf := &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.fx"}
-	spec := command.ValidationDeployTask{NodeID: "analytics.fx", SeedPreflight: pf}.ToValidationJobSpec()
-	assert.Same(t, pf, spec.SeedPreflight)
+func TestValidationDeployTask_ToValidationJobSpec_CarriesTheDependentsCheck(t *testing.T) {
+	pf := &seedreload.DependentsCheck{Mode: seedreload.ReportMode, Family: warehouse.LateBinding, Relation: "analytics.fx"}
+	spec := command.ValidationDeployTask{NodeID: "analytics.fx", DependentsCheck: pf}.ToValidationJobSpec()
+	assert.Same(t, pf, spec.DependentsCheck)
 }

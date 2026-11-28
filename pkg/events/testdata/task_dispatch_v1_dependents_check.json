@@ -21,7 +21,7 @@
       "secret_ref": "",
       "job_name": "finance-analytics-seed-fx-rates-eur-5b2e8f10",
       "timeout_seconds": 86400,
-      "seed_preflight": {
+      "dependents_check": {
         "mode": "check",
         "engine_family": "schema_bound",
         "relation": "analytics.seed_fx_rates_eur",
@@ -56,7 +56,7 @@
       "secret_ref": "",
       "job_name": "finance-analytics-seed-fx-rates-eur-5b2e8f10",
       "timeout_seconds": 86400,
-      "seed_preflight": {
+      "dependents_check": {
         "mode": "check",
         "engine_family": "schema_bound",
         "relation": "analytics.seed_fx_rates_eur",

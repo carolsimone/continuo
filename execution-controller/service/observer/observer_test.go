@@ -67,10 +67,10 @@ func TestProcess_WaitsForTheCacheToSync(t *testing.T) {
 	assert.Equal(t, time.Second, q.after["job-a"], "the name is queued again a second later")
 }
 
-// preflightBlock frames, with the sentinels, the result block the seed
-// preflight prints: an error carries one failure and a message that starts
+// dependentsCheckBlock frames, with the sentinels, the result block the seed
+// dependents check prints: an error carries one failure and a message that starts
 // with its reason.
-func preflightBlock(status, reason, extra string) string {
+func dependentsCheckBlock(status, reason, extra string) string {
 	message, failures := "", 0
 	if status == "error" {
 		failures = 1
@@ -82,7 +82,7 @@ func preflightBlock(status, reason, extra string) string {
 	if reason != "" {
 		reasonField = fmt.Sprintf(`"reason":%q,`, reason)
 	}
-	body := fmt.Sprintf(`{"schema_version":1,"status":%q,"message":%q,"failures":%d,"unique_id":"analytics.seed_fx_rates_eur",%s"op":"seed_preflight","drop_semantics":"cascade","completeness":"exact",%s}`,
+	body := fmt.Sprintf(`{"schema_version":1,"status":%q,"message":%q,"failures":%d,"unique_id":"analytics.seed_fx_rates_eur",%s"op":"dependents_check","drop_semantics":"cascade","completeness":"exact",%s}`,
 		status, message, failures, reasonField, extra)
 	return validationresult.SentinelBegin + "\n" + body + "\n" + validationresult.SentinelEnd
 }
@@ -107,91 +107,91 @@ func observerWithLogs(t *testing.T, logs *fakeLogs) *Observer {
 	return o
 }
 
-// seedDeployment is a production attempt of a seed whose pod runs a preflight
+// seedDeployment is a production attempt of a seed whose pod runs a dependents check
 // in mode.
-func seedDeployment(mode seedreload.PreflightMode) *model.Deployment {
+func seedDeployment(mode seedreload.DependentsCheckMode) *model.Deployment {
 	return model.NewDeployment(command.DeployTask{
 		TaskID: "task-1", RunID: "run-1", JobName: "analytics-seed-1", ProjectName: "analytics",
 		SchemaName: "analytics", TableName: "seed_fx_rates_eur", NodeType: string(pkgmodel.NodeTypeDbtSeed),
-		SeedPreflight: &seedreload.Preflight{Mode: mode, Relation: "analytics.seed_fx_rates_eur"},
+		DependentsCheck: &seedreload.DependentsCheck{Mode: mode, Relation: "analytics.seed_fx_rates_eur"},
 	}, nil, time.Now())
 }
 
 func TestReadLogs_ACheckThatFoundAnUnownedViewFailsTheAttemptUnownedDependents(t *testing.T) {
-	block := preflightBlock("error", "unowned_dependents", `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)
-	o := observerWithLogs(t, &fakeLogs{full: block, containers: map[string]string{model.SeedPreflightContainer: block}})
+	block := dependentsCheckBlock("error", "unowned_dependents", `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)
+	o := observerWithLogs(t, &fakeLogs{full: block, containers: map[string]string{model.DependentsCheckContainer: block}})
 
-	f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightCheck))
+	f := o.readLogs(context.Background(), seedDeployment(seedreload.CheckMode))
 
 	assert.Equal(t, pkgmodel.FailureReasonUnownedDependents, f.Reason)
 	assert.Equal(t, pkgmodel.FailureClassInvalid, f.Class())
 	assert.Contains(t, f.LogMessage, "bi.fx_rates_report (view, owner bi)")
-	require.NotNil(t, f.SeedPreflight)
-	assert.Equal(t, "bi.fx_rates_report", f.SeedPreflight.Outside()[0].Object())
+	require.NotNil(t, f.DependentsCheck)
+	assert.Equal(t, "bi.fx_rates_report", f.DependentsCheck.Outside()[0].Object())
 }
 
-// A pod log that cannot be read does not lose the preflight's refusal: the
-// preflight container's log is read on its own, so the attempt still fails
+// A pod log that cannot be read does not lose the dependents check's refusal: the
+// dependents check container's log is read on its own, so the attempt still fails
 // invalid unowned_dependents with its findings. No log key is kept, so the pod
 // log is read again on the attempt's next observation.
-func TestReadLogs_APreflightRefusalSurvivesAPodLogThatCannotBeRead(t *testing.T) {
-	block := preflightBlock("error", "unowned_dependents", `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)
-	o := observerWithLogs(t, &fakeLogs{podErr: errBoom, containers: map[string]string{model.SeedPreflightContainer: block}})
+func TestReadLogs_ADependentsCheckRefusalSurvivesAPodLogThatCannotBeRead(t *testing.T) {
+	block := dependentsCheckBlock("error", "unowned_dependents", `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)
+	o := observerWithLogs(t, &fakeLogs{podErr: errBoom, containers: map[string]string{model.DependentsCheckContainer: block}})
 
-	f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightCheck))
+	f := o.readLogs(context.Background(), seedDeployment(seedreload.CheckMode))
 
 	assert.Equal(t, pkgmodel.FailureReasonUnownedDependents, f.Reason)
 	assert.Equal(t, pkgmodel.FailureClassInvalid, f.Class())
-	require.NotNil(t, f.SeedPreflight)
-	assert.Equal(t, "bi.fx_rates_report", f.SeedPreflight.Outside()[0].Object())
+	require.NotNil(t, f.DependentsCheck)
+	assert.Equal(t, "bi.fx_rates_report", f.DependentsCheck.Outside()[0].Object())
 	assert.Empty(t, f.LogKey)
 }
 
-// The preflight's own log decides the reason: the pod's main log, which holds
+// The dependents check's own log decides the reason: the pod's main log, which holds
 // nothing of it, is no part of it.
-func TestReadLogs_ACheckBlockOnlyInThePreflightLogStillDecidesTheReason(t *testing.T) {
-	block := preflightBlock("error", "unowned_dependents", `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)
-	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
+func TestReadLogs_ACheckBlockOnlyInTheDependentsCheckLogStillDecidesTheReason(t *testing.T) {
+	block := dependentsCheckBlock("error", "unowned_dependents", `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)
+	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: block}})
 
-	f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightCheck))
+	f := o.readLogs(context.Background(), seedDeployment(seedreload.CheckMode))
 
 	assert.Equal(t, pkgmodel.FailureReasonUnownedDependents, f.Reason)
 	assert.Contains(t, f.LogMessage, "unowned_dependents: bi.fx_rates_report")
-	assert.Len(t, f.SeedPreflight.Dependents, 1)
+	assert.Len(t, f.DependentsCheck.Dependents, 1)
 }
 
 func TestReadLogs_AnUnreachableWarehouseInCheckModeIsInfra(t *testing.T) {
-	block := preflightBlock("error", "warehouse_unreachable", `"checked":false`)
-	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
+	block := dependentsCheckBlock("error", "warehouse_unreachable", `"checked":false`)
+	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: block}})
 
-	f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightCheck))
+	f := o.readLogs(context.Background(), seedDeployment(seedreload.CheckMode))
 
 	assert.Equal(t, pkgmodel.FailureReasonWarehouseUnreachable, f.Reason)
 	assert.Equal(t, pkgmodel.FailureClassInfra, f.Class())
-	require.NotNil(t, f.SeedPreflight)
-	assert.False(t, f.SeedPreflight.Checked)
+	require.NotNil(t, f.DependentsCheck)
+	assert.False(t, f.DependentsCheck.Checked)
 }
 
 func TestReadLogs_ACheckThatSucceededSetsNoReasonAndKeepsTheFindings(t *testing.T) {
-	block := preflightBlock("success", "", `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":true}]`)
-	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
+	block := dependentsCheckBlock("success", "", `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":true}]`)
+	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: block}})
 
-	f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightCheck))
+	f := o.readLogs(context.Background(), seedDeployment(seedreload.CheckMode))
 
 	assert.Empty(t, f.Reason)
-	require.NotNil(t, f.SeedPreflight)
-	assert.True(t, f.SeedPreflight.Checked)
-	assert.Empty(t, f.SeedPreflight.Outside())
+	require.NotNil(t, f.DependentsCheck)
+	assert.True(t, f.DependentsCheck.Checked)
+	assert.Empty(t, f.DependentsCheck.Outside())
 }
 
 func TestReadLogs_ACheckThatCouldNotListKeepsTheExitCodeMapping(t *testing.T) {
-	block := preflightBlock("error", "", `"checked":false`)
-	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
+	block := dependentsCheckBlock("error", "", `"checked":false`)
+	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: block}})
 
-	f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightCheck))
+	f := o.readLogs(context.Background(), seedDeployment(seedreload.CheckMode))
 
 	assert.Empty(t, f.Reason, "no reason is decided, so the exit code classifies the attempt")
-	require.NotNil(t, f.SeedPreflight)
+	require.NotNil(t, f.DependentsCheck)
 	exit := int32(1)
 	f.ExitCode = &exit
 	assert.Equal(t, pkgmodel.FailureReasonExitCode, model.Classify(f).Reason)
@@ -202,30 +202,30 @@ func TestReadLogs_ReportModeNeverSetsAReason(t *testing.T) {
 		block   string
 		checked bool
 	}{
-		"what a check would conclude":  {preflightBlock("success", "unowned_dependents", `"checked":true`), true},
-		"an unreachable warehouse":     {preflightBlock("success", "warehouse_unreachable", `"checked":false`), false},
-		"a bad input":                  {preflightBlock("error", "", `"checked":false`), false},
-		"an error that names a reason": {preflightBlock("error", "unowned_dependents", `"checked":true`), true},
+		"what a check would conclude":  {dependentsCheckBlock("success", "unowned_dependents", `"checked":true`), true},
+		"an unreachable warehouse":     {dependentsCheckBlock("success", "warehouse_unreachable", `"checked":false`), false},
+		"a bad input":                  {dependentsCheckBlock("error", "", `"checked":false`), false},
+		"an error that names a reason": {dependentsCheckBlock("error", "unowned_dependents", `"checked":true`), true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: tc.block}})
+			o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: tc.block}})
 
-			f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightReport))
+			f := o.readLogs(context.Background(), seedDeployment(seedreload.ReportMode))
 
 			assert.Empty(t, f.Reason)
-			require.NotNil(t, f.SeedPreflight)
-			assert.Equal(t, tc.checked, f.SeedPreflight.Checked)
+			require.NotNil(t, f.DependentsCheck)
+			assert.Equal(t, tc.checked, f.DependentsCheck.Checked)
 		})
 	}
 }
 
-func TestReadLogs_APreflightWithoutABlockKeepsTheExitCodeMapping(t *testing.T) {
-	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: "Traceback (most recent call last):\n  boom"}})
+func TestReadLogs_ADependentsCheckWithoutABlockKeepsTheExitCodeMapping(t *testing.T) {
+	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: "Traceback (most recent call last):\n  boom"}})
 
-	f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightCheck))
+	f := o.readLogs(context.Background(), seedDeployment(seedreload.CheckMode))
 
 	assert.Empty(t, f.Reason)
-	assert.Nil(t, f.SeedPreflight)
+	assert.Nil(t, f.DependentsCheck)
 	exit := int32(1)
 	f.ExitCode = &exit
 	verdict := model.Classify(f)
@@ -233,30 +233,30 @@ func TestReadLogs_APreflightWithoutABlockKeepsTheExitCodeMapping(t *testing.T) {
 	assert.Equal(t, pkgmodel.FailureClassTask, verdict.Reason.Class())
 }
 
-func TestReadLogs_APreflightLogThatCannotBeReadLeavesTheAttemptToItsExitCode(t *testing.T) {
+func TestReadLogs_ADependentsCheckLogThatCannotBeReadLeavesTheAttemptToItsExitCode(t *testing.T) {
 	o := observerWithLogs(t, &fakeLogs{err: errBoom})
 
-	f := o.readLogs(context.Background(), seedDeployment(seedreload.PreflightCheck))
+	f := o.readLogs(context.Background(), seedDeployment(seedreload.CheckMode))
 
 	assert.Empty(t, f.Reason)
-	assert.Nil(t, f.SeedPreflight)
+	assert.Nil(t, f.DependentsCheck)
 }
 
-// An attempt whose command asks for no preflight never reads the preflight
+// An attempt whose command asks for no dependents check never reads the dependents check
 // container, whatever block a log holds.
-func TestReadLogs_AnAttemptWithoutAPreflightReadsNoPreflightLog(t *testing.T) {
-	block := preflightBlock("error", "unowned_dependents", `"checked":true`)
-	logs := &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}}
+func TestReadLogs_AnAttemptWithoutADependentsCheckReadsNoDependentsCheckLog(t *testing.T) {
+	block := dependentsCheckBlock("error", "unowned_dependents", `"checked":true`)
+	logs := &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: block}}
 	o := observerWithLogs(t, logs)
 	d := model.NewDeployment(command.DeployTask{TaskID: "task-1", JobName: "job-1", ProjectName: "s", SchemaName: "a", TableName: "b"}, nil, time.Now())
 
 	f := o.readLogs(context.Background(), d)
 
 	assert.Empty(t, f.Reason)
-	assert.Nil(t, f.SeedPreflight)
+	assert.Nil(t, f.DependentsCheck)
 }
 
-// reportFindings are the findings of a report-mode preflight: one view
+// reportFindings are the findings of a report-mode dependents check: one view
 // outside the allowed set, one inside it.
 func reportFindings() *seedreload.Findings {
 	return &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true, Dependents: []seedreload.Dependent{
@@ -266,7 +266,7 @@ func reportFindings() *seedreload.Findings {
 
 func succeededFacts(findings *seedreload.Findings) model.AttemptFacts {
 	code := int32(0)
-	return model.AttemptFacts{ExitCode: &code, JobSucceeded: true, SeedPreflight: findings}
+	return model.AttemptFacts{ExitCode: &code, JobSucceeded: true, DependentsCheck: findings}
 }
 
 func observerWithProber(p *fakeProber) *Observer {
@@ -278,7 +278,7 @@ func observerWithProber(p *fakeProber) *Observer {
 func TestProbeViews_ProbesTheViewsOutsideTheAllowedSetOfASucceededLoad(t *testing.T) {
 	prober := &fakeProber{log: probeBlock(true, `[{"schema":"bi","name":"fx_rates_report","ok":false,"error":"VIEW_IS_STALE"}]`)}
 
-	got := observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(reportFindings()))
+	got := observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.ReportMode), succeededFacts(reportFindings()))
 
 	require.Len(t, prober.requests, 1)
 	assert.Equal(t, "analytics-seed-1", prober.requests[0].JobName)
@@ -287,12 +287,12 @@ func TestProbeViews_ProbesTheViewsOutsideTheAllowedSetOfASucceededLoad(t *testin
 	assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", Error: "VIEW_IS_STALE"}}, got)
 }
 
-func TestProbeViews_SpellsEachViewAsThePreflightReportedIt(t *testing.T) {
+func TestProbeViews_SpellsEachViewAsTheDependentsCheckReportedIt(t *testing.T) {
 	prober := &fakeProber{log: probeBlock(true, `[]`)}
 	findings := reportFindings()
 	findings.Dependents[1].Schema, findings.Dependents[1].Name = "BI", "Fx_Rates_Report"
 
-	observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(findings))
+	observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.ReportMode), succeededFacts(findings))
 
 	assert.Equal(t, []string{"BI.Fx_Rates_Report"}, prober.requests[0].Views)
 }
@@ -310,13 +310,13 @@ func TestProbeViews_DoesNotProbeWithoutAReasonTo(t *testing.T) {
 		dep   *model.Deployment
 		facts model.AttemptFacts
 	}{
-		"the load failed":                    {seedDeployment(seedreload.PreflightReport), failed},
-		"nothing is outside the allowed set": {seedDeployment(seedreload.PreflightReport), succeededFacts(allAllowed)},
-		"the preflight ran in check mode":    {seedDeployment(seedreload.PreflightCheck), succeededFacts(reportFindings())},
-		"the findings hold probes already":   {seedDeployment(seedreload.PreflightReport), succeededFacts(probed)},
-		"the preflight printed no findings":  {seedDeployment(seedreload.PreflightReport), succeededFacts(nil)},
-		"the command carries no preflight":   {model.NewDeployment(command.DeployTask{TaskID: "t"}, nil, time.Now()), succeededFacts(reportFindings())},
-		"the attempt is a release leg":       {model.NewSeedBuildDeployment(command.ValidationDeployTask{NodeID: "a.b"}, nil, time.Now()), succeededFacts(reportFindings())},
+		"the load failed":                          {seedDeployment(seedreload.ReportMode), failed},
+		"nothing is outside the allowed set":       {seedDeployment(seedreload.ReportMode), succeededFacts(allAllowed)},
+		"the dependents check ran in check mode":   {seedDeployment(seedreload.CheckMode), succeededFacts(reportFindings())},
+		"the findings hold probes already":         {seedDeployment(seedreload.ReportMode), succeededFacts(probed)},
+		"the dependents check printed no findings": {seedDeployment(seedreload.ReportMode), succeededFacts(nil)},
+		"the command carries no dependents check":  {model.NewDeployment(command.DeployTask{TaskID: "t"}, nil, time.Now()), succeededFacts(reportFindings())},
+		"the attempt is a release leg":             {model.NewSeedBuildDeployment(command.ValidationDeployTask{NodeID: "a.b"}, nil, time.Now()), succeededFacts(reportFindings())},
 	} {
 		t.Run(name, func(t *testing.T) {
 			prober := &fakeProber{log: probeBlock(true, `[]`)}
@@ -342,7 +342,7 @@ func TestProbeViews_AProbeThatCannotRunMarksEachViewNotProbed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			prober := &fakeProber{log: tc.log, err: tc.err}
 
-			got := observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(reportFindings()))
+			got := observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.ReportMode), succeededFacts(reportFindings()))
 
 			assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", OK: false, Error: tc.want}}, got)
 		})
@@ -355,39 +355,39 @@ func TestProbeViews_BoundsTheProbeByItsTimeout(t *testing.T) {
 	prober := &fakeProber{onProbe: func(ctx context.Context) { deadline, _ = ctx.Deadline() }, log: probeBlock(true, `[]`)}
 	before := time.Now()
 
-	observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(reportFindings()))
+	observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.ReportMode), succeededFacts(reportFindings()))
 
 	assert.WithinDuration(t, before.Add(probeTimeout), deadline, 2*time.Second)
 }
 
-// seedBuildDeployment is a seed-build leg whose pod runs a preflight in mode.
-func seedBuildDeployment(mode seedreload.PreflightMode) *model.Deployment {
+// seedBuildDeployment is a seed-build leg whose pod runs a dependents check in mode.
+func seedBuildDeployment(mode seedreload.DependentsCheckMode) *model.Deployment {
 	return model.NewSeedBuildDeployment(command.ValidationDeployTask{
 		ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur", JobName: "seedbuild-fx-rates", ProjectName: "analytics",
 		SchemaName: "analytics", TableName: "seed_fx_rates_eur", NodeType: string(pkgmodel.NodeTypeDbtSeed),
-		SeedPreflight: &seedreload.Preflight{Mode: mode, Relation: "analytics.seed_fx_rates_eur"},
+		DependentsCheck: &seedreload.DependentsCheck{Mode: mode, Relation: "analytics.seed_fx_rates_eur"},
 	}, nil, time.Now())
 }
 
-// The seed-build leg's pod runs its preflight in report mode, so its findings
+// The seed-build leg's pod runs its dependents check in report mode, so its findings
 // are recorded and no block, whatever it names or reports, decides a reason.
-func TestReadLogs_ASeedBuildReadsThePreflightFindingsAndSetsNoReason(t *testing.T) {
+func TestReadLogs_ASeedBuildReadsTheDependentsCheckFindingsAndSetsNoReason(t *testing.T) {
 	dependents := `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`
 	for name, block := range map[string]string{
-		"a success that names unowned_dependents": preflightBlock("success", "unowned_dependents", dependents),
-		"an error that names no reason":           preflightBlock("error", "", dependents),
-		"an error that names a reason":            preflightBlock("error", "unowned_dependents", dependents),
+		"a success that names unowned_dependents": dependentsCheckBlock("success", "unowned_dependents", dependents),
+		"an error that names no reason":           dependentsCheckBlock("error", "", dependents),
+		"an error that names a reason":            dependentsCheckBlock("error", "unowned_dependents", dependents),
 	} {
-		for _, mode := range []seedreload.PreflightMode{seedreload.PreflightReport, seedreload.PreflightCheck} {
+		for _, mode := range []seedreload.DependentsCheckMode{seedreload.ReportMode, seedreload.CheckMode} {
 			t.Run(name+" in "+string(mode), func(t *testing.T) {
-				o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
+				o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: block}})
 
 				f := o.readLogs(context.Background(), seedBuildDeployment(mode))
 
 				assert.Empty(t, f.Reason)
-				require.NotNil(t, f.SeedPreflight)
-				assert.True(t, f.SeedPreflight.Checked)
-				assert.Equal(t, "bi.fx_rates_report", f.SeedPreflight.Outside()[0].Object())
+				require.NotNil(t, f.DependentsCheck)
+				assert.True(t, f.DependentsCheck.Checked)
+				assert.Equal(t, "bi.fx_rates_report", f.DependentsCheck.Outside()[0].Object())
 				code := int32(0)
 				f.ExitCode, f.JobSucceeded = &code, true
 				assert.True(t, model.Classify(f).Succeeded, "the leg's result is the seed's own")
@@ -396,15 +396,15 @@ func TestReadLogs_ASeedBuildReadsThePreflightFindingsAndSetsNoReason(t *testing.
 	}
 }
 
-// A seed-build leg whose request asked for no preflight reads no preflight log.
-func TestReadLogs_ASeedBuildWithoutAPreflightReadsNoPreflightLog(t *testing.T) {
-	block := preflightBlock("success", "", `"checked":true`)
-	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
+// A seed-build leg whose request asked for no dependents check reads no dependents check log.
+func TestReadLogs_ASeedBuildWithoutADependentsCheckReadsNoDependentsCheckLog(t *testing.T) {
+	block := dependentsCheckBlock("success", "", `"checked":true`)
+	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.DependentsCheckContainer: block}})
 	d := model.NewSeedBuildDeployment(command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", ProjectName: "s", SchemaName: "a", TableName: "b"}, nil, time.Now())
 
 	f := o.readLogs(context.Background(), d)
 
-	assert.Nil(t, f.SeedPreflight)
+	assert.Nil(t, f.DependentsCheck)
 }
 
 // "Nothing to do" in a log is dbt's word that its selector matched no node,

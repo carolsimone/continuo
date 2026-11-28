@@ -11,9 +11,9 @@ const mockListNodeNames = vi.fn();
 const mockListNodeProjects = vi.fn();
 const mockGetNode = vi.fn();
 const mockGetNodeVersions = vi.fn();
-const mockGetNodeContract = vi.fn();
-const mockListNodeContractVersions = vi.fn();
-const mockGetNodeContractDiff = vi.fn();
+const mockGetNodeDataContract = vi.fn();
+const mockListNodeDataContractVersions = vi.fn();
+const mockGetNodeDataContractDiff = vi.fn();
 
 const mockRunClient = {
   listNodeTasks: mockListNodeTasks,
@@ -28,9 +28,9 @@ const REQUEST_ID = '5d21c0de-0000-4000-8000-000000000001';
 const mockGraphClient = {
   getNode: mockGetNode,
   getNodeVersions: mockGetNodeVersions,
-  getNodeContract: mockGetNodeContract,
-  listNodeContractVersions: mockListNodeContractVersions,
-  getNodeContractDiff: mockGetNodeContractDiff,
+  getNodeDataContract: mockGetNodeDataContract,
+  listNodeDataContractVersions: mockListNodeDataContractVersions,
+  getNodeDataContractDiff: mockGetNodeDataContractDiff,
 };
 
 function makeApp() {
@@ -49,9 +49,9 @@ describe('nodes router', () => {
     mockListNodeProjects.mockReset();
     mockGetNode.mockReset();
     mockGetNodeVersions.mockReset();
-    mockGetNodeContract.mockReset();
-    mockListNodeContractVersions.mockReset();
-    mockGetNodeContractDiff.mockReset();
+    mockGetNodeDataContract.mockReset();
+    mockListNodeDataContractVersions.mockReset();
+    mockGetNodeDataContractDiff.mockReset();
   });
 
   it('GET /:svc/:schema/:table/runs returns the node\'s tasks under tasks', async () => {
@@ -614,11 +614,11 @@ describe('nodes router', () => {
     ...over,
   });
 
-  describe('GET /:svc/:schema/:table/contract', () => {
+  describe('GET /:svc/:schema/:table/data-contract', () => {
     it('returns the current contract with its YAML and the version history', async () => {
-      mockGetNodeContract.mockImplementation((_req, cb) =>
+      mockGetNodeDataContract.mockImplementation((_req, cb) =>
         cb(null, { contract: contractRow({ document_yaml: 'id: analytics.py_daily_kpis\n' }) }));
-      mockListNodeContractVersions.mockImplementation((_req, cb) => cb(null, {
+      mockListNodeDataContractVersions.mockImplementation((_req, cb) => cb(null, {
         versions: [
           contractRow(),
           contractRow({ version: '2', is_current: false, same_as_version: '0', release_id: 'rel-5d6e7f8-219' }),
@@ -626,7 +626,7 @@ describe('nodes router', () => {
         ],
       }));
 
-      const res = await request(makeApp()).get('/api/nodes/py-service/analytics/py_daily_kpis/contract');
+      const res = await request(makeApp()).get('/api/nodes/py-service/analytics/py_daily_kpis/data-contract');
 
       expect(res.status).toBe(200);
       expect(res.body.contract).toEqual({
@@ -648,45 +648,45 @@ describe('nodes router', () => {
         [1, false, null],
       ]);
       expect(res.body.versions[0]).not.toHaveProperty('document_yaml');
-      expect(mockGetNodeContract).toHaveBeenCalledWith(
+      expect(mockGetNodeDataContract).toHaveBeenCalledWith(
         { unique_id: 'analytics.py_daily_kpis', include_document: true },
         expect.any(Function),
       );
-      expect(mockListNodeContractVersions).toHaveBeenCalledWith(
+      expect(mockListNodeDataContractVersions).toHaveBeenCalledWith(
         { unique_id: 'analytics.py_daily_kpis', limit: 0 },
         expect.any(Function),
       );
     });
 
     it('addresses the node by its lower-case unique id, whatever the spelling of the route', async () => {
-      mockGetNodeContract.mockImplementation((_req, cb) => cb({ code: grpc.status.NOT_FOUND, message: 'none' }));
-      mockListNodeContractVersions.mockImplementation((_req, cb) => cb(null, { versions: [] }));
+      mockGetNodeDataContract.mockImplementation((_req, cb) => cb({ code: grpc.status.NOT_FOUND, message: 'none' }));
+      mockListNodeDataContractVersions.mockImplementation((_req, cb) => cb(null, { versions: [] }));
 
-      await request(makeApp()).get('/api/nodes/py-service/Analytics/Py_Daily_KPIs/contract');
+      await request(makeApp()).get('/api/nodes/py-service/Analytics/Py_Daily_KPIs/data-contract');
 
-      expect(mockGetNodeContract.mock.calls[0][0].unique_id).toBe('analytics.py_daily_kpis');
-      expect(mockListNodeContractVersions.mock.calls[0][0].unique_id).toBe('analytics.py_daily_kpis');
+      expect(mockGetNodeDataContract.mock.calls[0][0].unique_id).toBe('analytics.py_daily_kpis');
+      expect(mockListNodeDataContractVersions.mock.calls[0][0].unique_id).toBe('analytics.py_daily_kpis');
     });
 
     it('answers a node with no contract with null and an empty history', async () => {
-      mockGetNodeContract.mockImplementation((_req, cb) =>
-        cb({ code: grpc.status.NOT_FOUND, message: 'node has no contract' }));
-      mockListNodeContractVersions.mockImplementation((_req, cb) => cb(null, { versions: [] }));
+      mockGetNodeDataContract.mockImplementation((_req, cb) =>
+        cb({ code: grpc.status.NOT_FOUND, message: 'node has no data contract' }));
+      mockListNodeDataContractVersions.mockImplementation((_req, cb) => cb(null, { versions: [] }));
 
-      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/contract');
+      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/data-contract');
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ contract: null, versions: [] });
     });
 
     it('keeps the history of a node that has no current contract', async () => {
-      mockGetNodeContract.mockImplementation((_req, cb) =>
+      mockGetNodeDataContract.mockImplementation((_req, cb) =>
         cb({ code: grpc.status.NOT_FOUND, message: 'node is retired' }));
-      mockListNodeContractVersions.mockImplementation((_req, cb) => cb(null, {
+      mockListNodeDataContractVersions.mockImplementation((_req, cb) => cb(null, {
         versions: [contractRow({ version: '2', is_current: false, same_as_version: '0' })],
       }));
 
-      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/contract');
+      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/data-contract');
 
       expect(res.status).toBe(200);
       expect(res.body.contract).toBeNull();
@@ -695,49 +695,49 @@ describe('nodes router', () => {
     });
 
     it('passes the status of any other catalog failure on and reads no history', async () => {
-      mockGetNodeContract.mockImplementation((_req, cb) =>
+      mockGetNodeDataContract.mockImplementation((_req, cb) =>
         cb({ code: grpc.status.UNAVAILABLE, message: 'catalog down' }));
 
-      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/contract');
+      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/data-contract');
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('catalog down');
-      expect(mockListNodeContractVersions).not.toHaveBeenCalled();
+      expect(mockListNodeDataContractVersions).not.toHaveBeenCalled();
     });
 
     it('passes on the status of a failed history read', async () => {
-      mockGetNodeContract.mockImplementation((_req, cb) => cb(null, { contract: contractRow() }));
-      mockListNodeContractVersions.mockImplementation((_req, cb) =>
+      mockGetNodeDataContract.mockImplementation((_req, cb) => cb(null, { contract: contractRow() }));
+      mockListNodeDataContractVersions.mockImplementation((_req, cb) =>
         cb({ code: grpc.status.UNAVAILABLE, message: 'history down' }));
 
-      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/contract');
+      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/data-contract');
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('history down');
     });
   });
 
-  describe('GET /:svc/:schema/:table/contract/diff', () => {
+  describe('GET /:svc/:schema/:table/data-contract/diff', () => {
     it('returns the fields two versions differ at', async () => {
-      mockGetNodeContractDiff.mockImplementation((_req, cb) => cb(null, {
+      mockGetNodeDataContractDiff.mockImplementation((_req, cb) => cb(null, {
         changes: [{ path: 'team.name', before_json: '"service-py"', after_json: '"analytics-eng"' }],
       }));
 
-      const res = await request(makeApp()).get('/api/nodes/py-service/analytics/py_daily_kpis/contract/diff?from=1&to=2');
+      const res = await request(makeApp()).get('/api/nodes/py-service/analytics/py_daily_kpis/data-contract/diff?from=1&to=2');
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({
         changes: [{ path: 'team.name', before_json: '"service-py"', after_json: '"analytics-eng"' }],
       });
-      expect(mockGetNodeContractDiff).toHaveBeenCalledWith(
+      expect(mockGetNodeDataContractDiff).toHaveBeenCalledWith(
         { unique_id: 'analytics.py_daily_kpis', from_version: 1, to_version: 2 },
         expect.any(Function),
       );
     });
 
     it('returns an empty list for two equal versions', async () => {
-      mockGetNodeContractDiff.mockImplementation((_req, cb) => cb(null, {}));
-      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/contract/diff?from=1&to=3');
+      mockGetNodeDataContractDiff.mockImplementation((_req, cb) => cb(null, {}));
+      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/data-contract/diff?from=1&to=3');
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ changes: [] });
     });
@@ -752,16 +752,16 @@ describe('nodes router', () => {
       ['a version below 1', 'from=0&to=2'],
       ['a number past what a version can be', 'from=1&to=99999999999999999999'],
     ])('rejects %s with 400 and asks catalog nothing', async (_label, query) => {
-      const res = await request(makeApp()).get(`/api/nodes/svc/schema/tbl/contract/diff?${query}`);
+      const res = await request(makeApp()).get(`/api/nodes/svc/schema/tbl/data-contract/diff?${query}`);
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/whole number/);
-      expect(mockGetNodeContractDiff).not.toHaveBeenCalled();
+      expect(mockGetNodeDataContractDiff).not.toHaveBeenCalled();
     });
 
     it('passes on a version catalog does not have as 404', async () => {
-      mockGetNodeContractDiff.mockImplementation((_req, cb) =>
+      mockGetNodeDataContractDiff.mockImplementation((_req, cb) =>
         cb({ code: grpc.status.NOT_FOUND, message: 'no version 9' }));
-      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/contract/diff?from=1&to=9');
+      const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/data-contract/diff?from=1&to=9');
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('no version 9');
     });

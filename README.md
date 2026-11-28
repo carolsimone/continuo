@@ -34,7 +34,7 @@ into one dependency graph, and it heals broken pipelines by having an LLM
   stitched together without declaring each other, including edges that cross
   project boundaries in both directions (dbt → Python → dbt).
 - **Blue/green validation for data.** Every release runs in a temporary
-  schema clone and is checked against its full downstream lineage. Only a
+  candidate schema and is checked against its full downstream lineage. Only a
   passing release becomes the production image.
 - **Production never runs a broken graph.** A rejected release leaves
   production on the last version that passed; schedules keep producing

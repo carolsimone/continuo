@@ -242,10 +242,10 @@ func TestJobParamsFromSpec_CarriesSecretRef(t *testing.T) {
 	assert.Empty(t, jobParamsFromSpec(deploy.JobSpec{}, pkg_model.NodeTypeDbtModel, "default").SecretRef)
 }
 
-// The preflight a seed-build request carries reaches the Job the Deployer
+// The dependents check a seed-build request carries reaches the Job the Deployer
 // creates, as the last init container.
-func TestDeploySeedBuild_ThreadsTheSeedPreflight(t *testing.T) {
-	setPreflightEnv(t)
+func TestDeploySeedBuild_ThreadsTheDependentsCheck(t *testing.T) {
+	setDependentsCheckEnv(t)
 	client := newValidationTestClient()
 	d := NewDeployer(client, "default", 15*time.Minute, 24*time.Hour)
 
@@ -253,11 +253,11 @@ func TestDeploySeedBuild_ThreadsTheSeedPreflight(t *testing.T) {
 		JobName: "seedbuild-fx-rates", ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur",
 		ProjectName: "analytics", SchemaName: "analytics", TableName: "seed_fx_rates_eur",
 		NodeType: string(pkg_model.NodeTypeDbtSeed), ImageTag: "abc123", CandidateSchema: "_candidate_rel_1",
-		SeedPreflight: &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"},
+		DependentsCheck: &seedreload.DependentsCheck{Mode: seedreload.ReportMode, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"},
 	})
 	require.NoError(t, err)
 
 	inits := fetchJob(t, client, "default", "seedbuild-fx-rates").Spec.Template.Spec.InitContainers
 	require.NotEmpty(t, inits)
-	assert.Equal(t, model.SeedPreflightContainer, inits[len(inits)-1].Name)
+	assert.Equal(t, model.DependentsCheckContainer, inits[len(inits)-1].Name)
 }

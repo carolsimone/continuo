@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails unless the agent-remediation Dockerfiles pin one continuo-python-runtime
-# PyPI version, at or above the runtime version continuo targets everywhere else.
+# PyPI version, the runtime version continuo targets everywhere else.
 #
 # agent-remediation packages a proposed fix by shelling out to the
 # `continuo-runtime` CLI (ContractPackager). That CLI comes from the
@@ -18,13 +18,10 @@
 # every image-ref location, and check-python-kind-parity.sh reads to compare
 # the runtime's accepted kinds against the contract. This check ties the PyPI
 # pin (a plain `==X.Y.Z`, not a ghcr image ref, so the image-pin guard's
-# extraction never sees it) to that X.Y.Z: the PyPI pin may be newer than the
-# validation image, never older. The two Dockerfiles pin one version.
-#
-# The PyPI pin may run ahead of the image: a runtime release can change what
-# `pack` writes, which agent-remediation needs at once, together with the
-# validation image's op names, which the image pin can take only once
-# execution-controller sends them.
+# extraction never sees it) to that X.Y.Z: the two Dockerfiles pin exactly
+# that version. One runtime release speaks one set of names, in what `pack`
+# writes and in the validation ops execution-controller sends, so the runtime
+# agent-remediation packs with and the validation image move together.
 set -uo pipefail
 
 REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -48,11 +45,6 @@ extract_pip_pin() {
     | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$'
 }
 
-# older_than A B: true when version A is older than version B.
-older_than() {
-  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]
-}
-
 check_pin() {
   local name="$1" file="$2"
   local pin
@@ -62,8 +54,8 @@ check_pin() {
     fail=1
     return
   fi
-  if older_than "$pin" "$target"; then
-    echo "check-agent-remediation-runtime-pin: ${name} pins continuo-python-runtime==${pin}, older than the ${target} continuo targets (docker-compose.yml validation image)" >&2
+  if [ "$pin" != "$target" ]; then
+    echo "check-agent-remediation-runtime-pin: ${name} pins continuo-python-runtime==${pin}, not the ${target} continuo targets (docker-compose.yml validation image)" >&2
     fail=1
   fi
 }

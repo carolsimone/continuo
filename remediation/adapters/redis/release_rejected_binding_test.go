@@ -314,13 +314,13 @@ func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
 // TestEvidenceFromRejected_DropsADeclaredReasonThatIsNotHealable verifies that
 // every reason the contract declares and marks not healable produces no
 // evidence, however its stage and per-node entries read. The node it carries
-// is failed and not a copy of production, so it would yield evidence if
-// nothing dropped the reason. upstream_clone_failed is the reason a release
-// gets when validation could not copy an unchanged upstream's production
+// is failed and not a build from production, so it would yield evidence if
+// nothing dropped the reason. upstream_build_from_prod_failed is the reason a release
+// gets when the release check could not build an unchanged upstream from its production
 // table, which a run of that node settles and no code change does.
 func TestEvidenceFromRejected_DropsADeclaredReasonThatIsNotHealable(t *testing.T) {
-	require.True(t, pkg_model.RejectReasonUpstreamCloneFailed.IsValid())
-	require.False(t, pkg_model.RejectReasonUpstreamCloneFailed.Healable())
+	require.True(t, pkg_model.RejectReasonUpstreamBuildFromProdFailed.IsValid())
+	require.False(t, pkg_model.RejectReasonUpstreamBuildFromProdFailed.Healable())
 
 	notHealable := 0
 	for _, reason := range pkg_model.RejectReasons() {
@@ -371,33 +371,33 @@ func TestEvidenceFromRejected_DropsNonHealableParseRejections(t *testing.T) {
 	})
 }
 
-// TestEvidenceFromRejected_SkipsClonedNodes verifies that in a release where a
-// changed node and a node copied from its production table both failed, only
+// TestEvidenceFromRejected_SkipsNodesBuiltFromProd verifies that in a release where a
+// changed node and a node built from its production table both failed, only
 // the changed node yields evidence. The reason stays validation_failed and the
-// copied node appears in per_node alone: no change to the release's code fixes
-// a copy of production.
-func TestEvidenceFromRejected_SkipsClonedNodes(t *testing.T) {
+// node built from production appears in per_node alone: no change to the release's code fixes
+// a build from production.
+func TestEvidenceFromRejected_SkipsNodesBuiltFromProd(t *testing.T) {
 	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
 		"repo":"o/r","commit_sha":"sha","failing_nodes":["analytics.s"],
 		"per_node":[
 			{"node_id":"analytics.s","status":"failed","validation_op":"build_from_sql","dbt_log_uri":"s3://b/s.log"},
-			{"node_id":"analytics.b","status":"failed","validation_op":"clone_from_prod","dbt_log_uri":"s3://b/b.log"}
+			{"node_id":"analytics.b","status":"failed","validation_op":"build_from_prod","dbt_log_uri":"s3://b/b.log"}
 		]}`)
 	evs, err := evidenceFromRejected(raw)
 	require.NoError(t, err)
-	require.Len(t, evs, 1, "the cloned node is never fixed")
+	require.Len(t, evs, 1, "the node built from production is never fixed")
 	assert.Equal(t, "analytics.s", evs[0].NodeID)
 	assert.Equal(t, pkg_model.RemediationSourceValidation, evs[0].Source)
 }
 
-// TestEvidenceFromRejected_KeepsAFailedNodeThatIsNotACopy verifies that a
-// failed node yields evidence for every validation op except the copy from
-// production, and when the producer sends no op at all (an older producer):
-// only validation_op clone_from_prod marks a node as a copy.
-func TestEvidenceFromRejected_KeepsAFailedNodeThatIsNotACopy(t *testing.T) {
+// TestEvidenceFromRejected_KeepsAFailedNodeNotBuiltFromProd verifies that a
+// failed node yields evidence for every validation op except build_from_prod
+// and when the producer sends no op at all (an older producer):
+// only validation_op build_from_prod marks a node as built from production.
+func TestEvidenceFromRejected_KeepsAFailedNodeNotBuiltFromProd(t *testing.T) {
 	ops := []string{""}
 	for _, op := range pkg_model.ValidationOps() {
-		if op != pkg_model.ValidationOpCloneFromProd {
+		if op != pkg_model.ValidationOpBuildFromProd {
 			ops = append(ops, string(op))
 		}
 	}
@@ -423,7 +423,7 @@ func TestEvidenceFromRejected_KeepsAFailedNodeThatIsNotACopy(t *testing.T) {
 // TestEvidenceFromRejected_KeepsAFailedNodeWithAnUndeclaredValidationOp
 // verifies that a validation_op this build does not declare (a newer
 // producer's) still decodes, since the field is a string, and that its failed
-// node yields evidence: only clone_from_prod marks a node as a copy.
+// node yields evidence: only build_from_prod marks a node as built from production.
 func TestEvidenceFromRejected_KeepsAFailedNodeWithAnUndeclaredValidationOp(t *testing.T) {
 	const op = "some_future_op"
 	require.False(t, pkg_model.ValidationOp(op).IsValid(), "the op must be one this build does not declare")
@@ -445,7 +445,7 @@ func TestRejectionHandler_LogsARejectionWithNoNodeToClassifyAtDebug(t *testing.T
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	h := newRejectionHandler(streams.ReleaseRejectedV1, handlers.Deps{}, logger)
-	payload := `{"release_id":"rel-7","stage":"validation","reason":"upstream_clone_failed",
+	payload := `{"release_id":"rel-7","stage":"validation","reason":"upstream_build_from_prod_failed",
 		"per_node":[{"node_id":"analytics.b","status":"failed","validation_op":"build_from_sql"}]}`
 
 	require.NoError(t, h(context.Background(), goredis.XMessage{ID: "1-0", Values: map[string]any{"payload": payload}}))
@@ -456,7 +456,7 @@ func TestRejectionHandler_LogsARejectionWithNoNodeToClassifyAtDebug(t *testing.T
 	assert.Equal(t, streams.ReleaseRejectedV1, line["stream"])
 	assert.Equal(t, "rel-7", line["release_id"])
 	assert.Equal(t, "validation", line["stage"])
-	assert.Equal(t, "upstream_clone_failed", line["reason"])
+	assert.Equal(t, "upstream_build_from_prod_failed", line["reason"])
 }
 
 // TestEvidenceFromRejected_UnknownReasonKeepsTodaysPath verifies that only a

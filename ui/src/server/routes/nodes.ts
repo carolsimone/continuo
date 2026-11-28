@@ -248,19 +248,19 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     );
   });
 
-  // GET /:project/:schema/:table/contract — the contract the node has now (with
+  // GET /:project/:schema/:table/data-contract — the data contract the node has now (with
   // its published YAML) and its version history, newest first. A node with no
   // current contract answers contract: null: a node that never had one has an
   // empty history, a retired node keeps the versions it had. The node is
   // addressed by its unique id, "<schema>.<table>" in lower case, as catalog
   // stores it.
-  router.get('/:project/:schema/:table/contract', (req, res) => {
+  router.get('/:project/:schema/:table/data-contract', (req, res) => {
     const uniqueId = `${req.params.schema}.${req.params.table}`.toLowerCase();
-    graphClient.getNodeContract({ unique_id: uniqueId, include_document: true }, (err: any, current: any) => {
+    graphClient.getNodeDataContract({ unique_id: uniqueId, include_document: true }, (err: any, current: any) => {
       if (err && err.code !== grpc.status.NOT_FOUND) {
         return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
       }
-      graphClient.listNodeContractVersions({ unique_id: uniqueId, limit: 0 }, (lerr: any, listed: any) => {
+      graphClient.listNodeDataContractVersions({ unique_id: uniqueId, limit: 0 }, (lerr: any, listed: any) => {
         if (lerr) return res.status(grpcToHttpStatus(lerr.code)).json({ error: lerr.message });
         const contract = err || !current?.contract
           ? null
@@ -270,17 +270,17 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     });
   });
 
-  // GET /:project/:schema/:table/contract/diff?from=<n>&to=<n> — the contract
+  // GET /:project/:schema/:table/data-contract/diff?from=<n>&to=<n> — the data contract
   // fields that differ between two versions of the node, one row per changed
   // path; two equal versions have none. before_json and after_json are the
   // value at the path as JSON text, empty where the version lacks the path.
-  router.get('/:project/:schema/:table/contract/diff', (req, res) => {
+  router.get('/:project/:schema/:table/data-contract/diff', (req, res) => {
     const from = parseContractVersion(req.query.from);
     const to = parseContractVersion(req.query.to);
     if (from === null || to === null) {
       return res.status(400).json({ error: 'from and to must be whole numbers from 1 up' });
     }
-    graphClient.getNodeContractDiff(
+    graphClient.getNodeDataContractDiff(
       {
         unique_id:    `${req.params.schema}.${req.params.table}`.toLowerCase(),
         from_version: from,

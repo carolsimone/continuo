@@ -145,7 +145,7 @@ func TestTaskCollection_ListByRunIDPagesTasksOfOneCreatedAtInTaskIDOrder(t *test
 	assert.Equal(t, want, got)
 }
 
-// Each task stores its own operation, plan reason, seed preflight and the seed
+// Each task stores its own operation, plan reason, dependents check and the seed
 // it rebuilds after, and every read a dispatch is built from returns them: the
 // attempt state a retry or a lease grant reads, the question about an open
 // attempt, the ready candidates a success dispatches, and the task reads.
@@ -159,14 +159,14 @@ func TestTaskCollection_StoresTheDispatchSpecAndReadsItBack(t *testing.T) {
 		run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, now)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, r.RunID()) })
-	pf := &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+	pf := &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound,
 		Relation: "e2e_schema.seed_fx_rates_eur", Allowed: []string{"e2e_schema.fx_rates_current"}, Acknowledged: []string{}}
-	seedSpec := run.DispatchSpec{Operation: model.OperationFullRefresh, Reason: "columns changed", Preflight: pf}
+	seedSpec := run.DispatchSpec{Operation: model.OperationFullRefresh, Reason: "columns changed", DependentsCheck: pf}
 	viewSpec := run.DispatchSpec{Operation: model.OperationRun, Reason: "rebuild: dropped by the load of e2e_schema.seed_fx_rates_eur"}
 	task := func(table string, key topology.NodeKey, status run.TaskStatus, spec run.DispatchSpec) run.Task {
 		return run.Task{TaskID: run.TaskIDFor(tenant, r.RunID(), key), ScheduleID: r.RunID(), CreatedAt: now,
 			ProjectName: "service-1", SchemaName: "e2e_schema", TableName: table, NodeKey: key, JobName: "job-" + table,
-			Status: status, MaxRetries: 2, Operation: spec.Operation, PlanReason: spec.Reason, SeedPreflight: spec.Preflight}
+			Status: status, MaxRetries: 2, Operation: spec.Operation, PlanReason: spec.Reason, DependentsCheck: spec.DependentsCheck}
 	}
 	seed := task("seed_fx_rates_eur", seedKey, run.TaskStatusDispatched, seedSpec)
 	seed.DispatchedAt = &now
@@ -207,7 +207,7 @@ func TestTaskCollection_StoresTheDispatchSpecAndReadsItBack(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, seedKey, gotView.RebuildOf)
 	assert.Equal(t, viewSpec, gotView.Spec())
-	assert.Nil(t, gotView.SeedPreflight, "a task with no preflight stores NULL")
+	assert.Nil(t, gotView.DependentsCheck, "a task with no dependents check stores NULL")
 	gotSeed, err := tasks.GetByID(ctx, seed.TaskID)
 	require.NoError(t, err)
 	assert.Equal(t, seedSpec, gotSeed.Spec())
@@ -221,7 +221,7 @@ func TestTaskCollection_StoresTheDispatchSpecAndReadsItBack(t *testing.T) {
 		assert.Equal(t, seedSpec, listed[1].Spec())
 	})
 	var stored string
-	require.NoError(t, db.Get(&stored, `SELECT seed_preflight::text FROM tasks WHERE task_id = $1`, seed.TaskID))
+	require.NoError(t, db.Get(&stored, `SELECT dependents_check::text FROM tasks WHERE task_id = $1`, seed.TaskID))
 	assert.JSONEq(t, `{"mode":"check","engine_family":"schema_bound","relation":"e2e_schema.seed_fx_rates_eur",
-		"allowed":["e2e_schema.fx_rates_current"],"acknowledged":[]}`, stored, "the column holds the dispatch's preflight shape")
+		"allowed":["e2e_schema.fx_rates_current"],"acknowledged":[]}`, stored, "the column holds the dispatch's dependents check shape")
 }

@@ -49,16 +49,16 @@ func (f *fakePrecedentsCatalog) GetCodeUnitVersions(context.Context, string, str
 	panic("GetCodeUnitVersions should not be called in precedents tests")
 }
 
-func (f *fakePrecedentsCatalog) GetNodeContract(context.Context, string, bool) (*catalogv1.GetNodeContractResponse, error) {
-	panic("GetNodeContract should not be called in precedents tests")
+func (f *fakePrecedentsCatalog) GetNodeDataContract(context.Context, string, bool) (*catalogv1.GetNodeDataContractResponse, error) {
+	panic("GetNodeDataContract should not be called in precedents tests")
 }
 
-func (f *fakePrecedentsCatalog) ListNodeContractVersions(context.Context, string, int32) (*catalogv1.ListNodeContractVersionsResponse, error) {
-	panic("ListNodeContractVersions should not be called in precedents tests")
+func (f *fakePrecedentsCatalog) ListNodeDataContractVersions(context.Context, string, int32) (*catalogv1.ListNodeDataContractVersionsResponse, error) {
+	panic("ListNodeDataContractVersions should not be called in precedents tests")
 }
 
-func (f *fakePrecedentsCatalog) GetNodeContractDiff(context.Context, string, int64, int64) (*catalogv1.GetNodeContractDiffResponse, error) {
-	panic("GetNodeContractDiff should not be called in precedents tests")
+func (f *fakePrecedentsCatalog) GetNodeDataContractDiff(context.Context, string, int64, int64) (*catalogv1.GetNodeDataContractDiffResponse, error) {
+	panic("GetNodeDataContractDiff should not be called in precedents tests")
 }
 
 func (f *fakePrecedentsCatalog) GetPrecedents(_ context.Context, signature, category, reason string, limit int32, includeCode bool) (*catalogv1.GetPrecedentsResponse, error) {

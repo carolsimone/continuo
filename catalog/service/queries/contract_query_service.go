@@ -44,16 +44,16 @@ func NewContractQueryService(reader ContractReader, renderer ports.PublishedRend
 	return &ContractQueryService{reader: reader, renderer: renderer, renderValue: renderValue, ontologyBaseURL: ontologyBaseURL}
 }
 
-// GetNodeContract returns the contract a live node has now. With
+// GetNodeDataContract returns the contract a live node has now. With
 // includeDocument it also renders the contract's published form, as the live
 // folder writes it (absolute ontology links included) but with no `servers`
 // list, since that list names an install's warehouse and this answer is the
 // contract itself. A node with no current contract returns
 // contractversion.ErrNotFound.
-func (s *ContractQueryService) GetNodeContract(ctx context.Context, tenantID, uniqueID string, includeDocument bool) (NodeContract, error) {
+func (s *ContractQueryService) GetNodeDataContract(ctx context.Context, tenantID, uniqueID string, includeDocument bool) (NodeContract, error) {
 	version, err := s.reader.Current(ctx, tenantID, uniqueID)
 	if err != nil {
-		return NodeContract{}, fmt.Errorf("ContractQueryService.GetNodeContract: %w", err)
+		return NodeContract{}, fmt.Errorf("ContractQueryService.GetNodeDataContract: %w", err)
 	}
 	out := NodeContract{Version: version}
 	if !includeDocument {
@@ -71,34 +71,34 @@ func (s *ContractQueryService) GetNodeContract(ctx context.Context, tenantID, un
 	}, s.ontologyBaseURL)
 	body, err := s.renderer.Render(published)
 	if err != nil {
-		return NodeContract{}, fmt.Errorf("ContractQueryService.GetNodeContract: render node %s version %d: %w", uniqueID, version.Version, err)
+		return NodeContract{}, fmt.Errorf("ContractQueryService.GetNodeDataContract: render node %s version %d: %w", uniqueID, version.Version, err)
 	}
 	out.DocumentYAML = string(body)
 	return out, nil
 }
 
-// ListNodeContractVersions lists a node's contract history, newest first, up
+// ListNodeDataContractVersions lists a node's contract history, newest first, up
 // to limit (every version when limit is 0). The rows carry no document. A node
 // with no history has an empty list.
-func (s *ContractQueryService) ListNodeContractVersions(ctx context.Context, tenantID, uniqueID string, limit int) ([]contractversion.VersionView, error) {
+func (s *ContractQueryService) ListNodeDataContractVersions(ctx context.Context, tenantID, uniqueID string, limit int) ([]contractversion.VersionView, error) {
 	versions, err := s.reader.History(ctx, tenantID, uniqueID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("ContractQueryService.ListNodeContractVersions: %w", err)
+		return nil, fmt.Errorf("ContractQueryService.ListNodeDataContractVersions: %w", err)
 	}
 	return versions, nil
 }
 
-// GetNodeContractDiff lists the paths at which two of a node's stored
+// GetNodeDataContractDiff lists the paths at which two of a node's stored
 // contracts differ, each side's value written by the service's value renderer.
 // A version the node has no promotion for returns contractversion.ErrNotFound.
-func (s *ContractQueryService) GetNodeContractDiff(ctx context.Context, tenantID, uniqueID string, fromVersion, toVersion int64) ([]contractversion.FieldChange, error) {
+func (s *ContractQueryService) GetNodeDataContractDiff(ctx context.Context, tenantID, uniqueID string, fromVersion, toVersion int64) ([]contractversion.FieldChange, error) {
 	from, err := s.reader.ByVersion(ctx, tenantID, uniqueID, fromVersion)
 	if err != nil {
-		return nil, fmt.Errorf("ContractQueryService.GetNodeContractDiff: version %d: %w", fromVersion, err)
+		return nil, fmt.Errorf("ContractQueryService.GetNodeDataContractDiff: version %d: %w", fromVersion, err)
 	}
 	to, err := s.reader.ByVersion(ctx, tenantID, uniqueID, toVersion)
 	if err != nil {
-		return nil, fmt.Errorf("ContractQueryService.GetNodeContractDiff: version %d: %w", toVersion, err)
+		return nil, fmt.Errorf("ContractQueryService.GetNodeDataContractDiff: version %d: %w", toVersion, err)
 	}
 	return contractversion.Diff(from.Document, to.Document, s.renderValue), nil
 }

@@ -55,9 +55,9 @@ type JobParams struct {
 	// ContentHash is the node's content hash; a python node's pod receives it
 	// as CONTENT_HASH. Empty when the dispatch carries none.
 	ContentHash string
-	// SeedPreflight is the check a seed's pod runs against the warehouse, as
+	// DependentsCheck is the check a seed's pod runs against the warehouse, as
 	// its last init container, before dbt loads the seed; nil for no check.
-	SeedPreflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 }
 
 // K8sClient provides methods to interact with Kubernetes

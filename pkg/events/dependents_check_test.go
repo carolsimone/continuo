@@ -12,21 +12,21 @@ import (
 	"github.com/carolsimone/continuo/pkg/warehouse"
 )
 
-func TestSeedPreflight_RoundTripsTheDomain(t *testing.T) {
-	d := &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur",
+func TestDependentsCheck_RoundTripsTheDomain(t *testing.T) {
+	d := &seedreload.DependentsCheck{Mode: seedreload.CheckMode, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur",
 		Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}
-	assert.Equal(t, d, events.SeedPreflightOf(d).ToDomain())
-	assert.Nil(t, events.SeedPreflightOf(nil))
-	assert.Nil(t, (*events.SeedPreflight)(nil).ToDomain())
+	assert.Equal(t, d, events.DependentsCheckOf(d).ToDomain())
+	assert.Nil(t, events.DependentsCheckOf(nil))
+	assert.Nil(t, (*events.DependentsCheck)(nil).ToDomain())
 }
 
-func TestSeedPreflight_RendersEmptyListsAsArrays(t *testing.T) {
-	raw, err := json.Marshal(events.SeedPreflightOf(&seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "a.s"}))
+func TestDependentsCheck_RendersEmptyListsAsArrays(t *testing.T) {
+	raw, err := json.Marshal(events.DependentsCheckOf(&seedreload.DependentsCheck{Mode: seedreload.ReportMode, Family: warehouse.LateBinding, Relation: "a.s"}))
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"mode":"report","engine_family":"late_binding","relation":"a.s","allowed":[],"acknowledged":[]}`, string(raw))
 }
 
-func TestSeedPreflightFindings_RoundTripsTheDomain(t *testing.T) {
+func TestDependentsCheckFindings_RoundTripsTheDomain(t *testing.T) {
 	d := &seedreload.Findings{
 		DropSemantics: "cascade", Completeness: "exact", Checked: true,
 		Dependents: []seedreload.Dependent{
@@ -35,13 +35,13 @@ func TestSeedPreflightFindings_RoundTripsTheDomain(t *testing.T) {
 		},
 		Probes: []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", Error: "VIEW_IS_STALE"}},
 	}
-	assert.Equal(t, d, events.SeedPreflightFindingsOf(d).ToDomain())
-	assert.Nil(t, events.SeedPreflightFindingsOf(nil))
-	assert.Nil(t, (*events.SeedPreflightFindings)(nil).ToDomain())
+	assert.Equal(t, d, events.DependentsCheckFindingsOf(d).ToDomain())
+	assert.Nil(t, events.DependentsCheckFindingsOf(nil))
+	assert.Nil(t, (*events.DependentsCheckFindings)(nil).ToDomain())
 }
 
-func TestSeedPreflightFindings_RendersNoDependentsAsAnArrayAndOmitsNoProbes(t *testing.T) {
-	raw, err := json.Marshal(events.SeedPreflightFindingsOf(&seedreload.Findings{DropSemantics: "late_binding", Completeness: "best_effort", Checked: true}))
+func TestDependentsCheckFindings_RendersNoDependentsAsAnArrayAndOmitsNoProbes(t *testing.T) {
+	raw, err := json.Marshal(events.DependentsCheckFindingsOf(&seedreload.Findings{DropSemantics: "late_binding", Completeness: "best_effort", Checked: true}))
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"drop_semantics":"late_binding","completeness":"best_effort","checked":true,"dependents":[]}`, string(raw))
 }
@@ -49,35 +49,35 @@ func TestSeedPreflightFindings_RendersNoDependentsAsAnArrayAndOmitsNoProbes(t *t
 // A payload that names no list, or names it null, marshals it as `[]` again:
 // the outbox publisher and the last-report resend decode a payload and encode
 // it back.
-func TestSeedPreflight_ADecodedPayloadWithoutListsMarshalsEmptyArrays(t *testing.T) {
+func TestDependentsCheck_ADecodedPayloadWithoutListsMarshalsEmptyArrays(t *testing.T) {
 	for _, in := range []string{
 		`{"mode":"report","engine_family":"late_binding","relation":"a.s"}`,
 		`{"mode":"report","engine_family":"late_binding","relation":"a.s","allowed":null,"acknowledged":null}`,
 	} {
-		var p events.SeedPreflight
+		var p events.DependentsCheck
 		require.NoError(t, json.Unmarshal([]byte(in), &p))
 		raw, err := json.Marshal(p)
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"mode":"report","engine_family":"late_binding","relation":"a.s","allowed":[],"acknowledged":[]}`, string(raw))
 
-		raw, err = json.Marshal(events.TaskDispatch{SeedPreflight: &p})
+		raw, err = json.Marshal(events.TaskDispatch{DependentsCheck: &p})
 		require.NoError(t, err)
 		assert.Contains(t, string(raw), `"allowed":[],"acknowledged":[]`)
 	}
 }
 
-func TestSeedPreflightFindings_ADecodedPayloadWithoutDependentsMarshalsAnEmptyArray(t *testing.T) {
+func TestDependentsCheckFindings_ADecodedPayloadWithoutDependentsMarshalsAnEmptyArray(t *testing.T) {
 	for _, in := range []string{
 		`{"drop_semantics":"late_binding","completeness":"best_effort","checked":true}`,
 		`{"drop_semantics":"late_binding","completeness":"best_effort","checked":true,"dependents":null}`,
 	} {
-		var f events.SeedPreflightFindings
+		var f events.DependentsCheckFindings
 		require.NoError(t, json.Unmarshal([]byte(in), &f))
 		raw, err := json.Marshal(f)
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"drop_semantics":"late_binding","completeness":"best_effort","checked":true,"dependents":[]}`, string(raw))
 
-		raw, err = json.Marshal(events.TaskStatusReport{SeedPreflight: &f})
+		raw, err = json.Marshal(events.TaskStatusReport{DependentsCheck: &f})
 		require.NoError(t, err)
 		assert.Contains(t, string(raw), `"dependents":[]`)
 	}

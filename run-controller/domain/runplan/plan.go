@@ -25,9 +25,9 @@ type PlannedTask struct {
 	// Reason says why the task runs with its operation; empty when the plan
 	// states none.
 	Reason string
-	// Preflight is the check a seed's load runs before it drops its table;
+	// DependentsCheck is the check a seed's load runs before it drops its table;
 	// nil on every other task.
-	Preflight *seedreload.Preflight
+	DependentsCheck *seedreload.DependentsCheck
 	// RebuildOf is the seed whose load drops the relation this task
 	// rebuilds, the smallest seed key when the run loads several seeds above
 	// it; empty on every other task.
