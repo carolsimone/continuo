@@ -12,7 +12,7 @@ require (
 	github.com/lib/pq v1.12.3
 	github.com/lnquy/cron v1.1.1
 	github.com/prometheus/client_golang v1.25.0
-	github.com/redis/go-redis/v9 v9.23.0
+	github.com/redis/go-redis/v9 v9.24.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.45.0
@@ -98,7 +98,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 )
