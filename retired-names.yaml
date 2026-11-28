@@ -456,7 +456,7 @@ names:
   # GitHub Actions workflow keeps its name outside agent-remediation.
   - pattern: 'AGENT_REMEDIATION_WORKFLOWS_DIR'
     use: AGENT_REMEDIATION_FILES_DIR
-  - pattern: 'agentRemediation\.workflows?\w*|agentRemediation[A-Z]?\w*Workflows?\w*|assertWorkflows\w*'
+  - pattern: 'agentRemediation\.workflows?\w*|agentRemediation[A-Z]?\w*Workflows?\w*|assertWorkflows?\w*'
     use: agentRemediation.files
   - pattern: '(agent-)?remediation-workflows|continuo-workflows'
     use: remediation-files (the volume, the ConfigMap <release>-agent-remediation-files)
@@ -513,5 +513,5 @@ names:
     paths: [ui, docs, README.md, AGENTS.md, SECURITY.md, deploy, cli, tests, run-controller, catalog, agent-chat, agent-remediation, topology-controller, release-controller, execution-controller, pkg, scripts, .claude/design-guideline]
   # Release group: what a past run ran on is its release, never a snapshot. A
   # dbt snapshot keeps its name.
-  - pattern: '(?i)(old|older|past|latest|live-release|this) snapshots?|snapshot[ _]of[ _]run|SnapshotOfRun|SnapshotTile|SnapshotStrip|SnapshotGroup|snapshot-tile|\w*RunsBySnapshot|isSnapshotSourceEligible|snapshotRun|snapshotLine'
+  - pattern: '(?i)(old|older|past|latest|live-release|this) snapshots?|snapshot[ _]of[ _]run|\w*SnapshotOfRun|SnapshotTile|SnapshotStrip|SnapshotGroup|snapshot-tile|\w*RunsBySnapshot|isSnapshotSourceEligible|snapshotRun|snapshotLine'
     use: release (release_of_run, ScheduleTile, PastRunStrip, ReleaseGroup)
