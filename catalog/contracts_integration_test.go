@@ -222,9 +222,9 @@ func (f *contractsFixture) recorded(messageID string) bool {
 	return ok
 }
 
-// inflight returns the in-flight marks on the tenant's export lease node.
+// inflight returns the in-flight marks on the tenant's backup lease node.
 func (f *contractsFixture) inflight() any {
-	return f.value(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) RETURN m.inflight_message_ids AS v`)
+	return f.value(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'backup'}) RETURN m.inflight_message_ids AS v`)
 }
 
 // A node's first promotion with a contract writes its version 1: one stored
@@ -358,7 +358,7 @@ func TestContractsHandler_AFailureAfterTransactionARedeliversCleanly(t *testing.
 	assert.Equal(t, int64(2), f.edges(), "transaction A committed")
 	assert.False(t, f.recorded("41-0"), "the marker waits for transaction B")
 	assert.Equal(t, []any{streams.CatalogReleaseContracts + "/41-0"}, f.inflight(),
-		"transaction A marks the message in flight, so an export waits for transaction B")
+		"transaction A marks the message in flight, so a backup waits for transaction B")
 
 	f.live.err = nil
 	require.NoError(t, f.handler.Handle(ctx, "41-0", nil, in))

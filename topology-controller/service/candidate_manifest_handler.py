@@ -20,7 +20,7 @@ from domain.model import (
     NodeRegistry,
     NodeType,
     ProjectProvenance,
-    SkippedNode,
+    ExcludedModel,
     TableRef,
 )
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
@@ -269,9 +269,9 @@ class CandidateManifestHandler:
     lookup, has no candidate artifact, no code-bundle entry and no image tag,
     because nothing in the release produces it.
 
-    A dbt node a parse leaves out (no owner, a local stub, an untagged node of
-    an installed dbt package) is never a failure: it is logged at INFO as it is
-    skipped and counted on the release's line, and release-controller is told
+    An excluded model, a dbt node a parse leaves out (no owner, a local stub, an
+    untagged node of an installed dbt package), is never a failure: it is logged
+    at INFO as it is excluded and counted on the release's line, and release-controller is told
     nothing of it. A model or snapshot of the manifest's own project with an
     owner and no schedule tag is not left out: it is a dormant node with an
     empty schedule, in the topology, the code bundle and the candidate schema
@@ -319,7 +319,7 @@ class CandidateManifestHandler:
     the handler does one contract's share of a parse (a python contract's checks
     and node, a dbt node's contract, checks, hashes and node), one manifest's
     work around its contracts (before the first: the manifest's reading and the
-    join of its tests, after the bookkeeping of the manifest before it: skip
+    join of its tests, after the bookkeeping of the manifest before it: exclusion
     logging, shared-code namespacing, project checks; after the last: the hashes
     of its tests), one node's resolve or one node's build, except in these
     stretches, each of which must end within the caller's staleness budget:
@@ -328,7 +328,7 @@ class CandidateManifestHandler:
       download included), the ontology's reading, that manifest's reading and
       that contract;
     - from the last manifest's parse through the first node's resolve: that
-      manifest's own bookkeeping (skip logging, shared-code namespacing,
+      manifest's own bookkeeping (exclusion logging, shared-code namespacing,
       project checks), the node registry and its lookup and the rewrite context
       (in-memory work linear in the number of nodes), then that resolve;
     - from the last node's resolve through the first node's build: the
@@ -442,11 +442,11 @@ class CandidateManifestHandler:
                 return
 
             parse_stage = Stage.PYTHON_PARSE if mf.kind == ManifestKind.PYTHON else Stage.DBT_PARSE
-            manifest_skips: list[SkippedNode] = []
+            manifest_exclusions: list[ExcludedModel] = []
             try:
                 with self._timings.stage(parse_stage, manifests=1) as record:
                     parsed = parser.parse(
-                        mf, skipped=manifest_skips, progress=self._progress, timings=self._timings,
+                        mf, excluded=manifest_exclusions, progress=self._progress, timings=self._timings,
                         validator=self._validator,
                     )
                     record.add(nodes=len(parsed.nodes))
@@ -484,9 +484,9 @@ class CandidateManifestHandler:
                     relationships_without_target.get(project, 0) + parsed.relationship_tests_without_target)
 
             # Reported before the declared-project checks below: a manifest
-            # whose every node was skipped fails as empty, and its skips are
+            # whose every model was excluded fails as empty, and its exclusions are
             # then the only trace of why.
-            self._record_parse(release_id, nodes, manifest_skips)
+            self._record_parse(release_id, nodes, manifest_exclusions)
 
             # Namespace this manifest's shared-code units by project so two
             # manifests pinning different versions of the same dbt package
@@ -924,20 +924,20 @@ class CandidateManifestHandler:
             "path_checksum_seeds": list(parsed.path_checksum_seeds),
         }
 
-    def _record_parse(self, release_id: str, nodes: list[ManifestNode], skips: list[SkippedNode]) -> None:
-        """Log each node a manifest's parse skipped, then add the manifest's
-        skips and nodes to the release's counts."""
-        for skip in skips:
+    def _record_parse(self, release_id: str, nodes: list[ManifestNode], exclusions: list[ExcludedModel]) -> None:
+        """Log each model a manifest's parse excluded, then add the manifest's
+        excluded models and nodes to the release's counts."""
+        for excluded in exclusions:
             logger.info(
-                "candidate: node skipped",
+                "candidate: model excluded",
                 extra={
                     "release_id": release_id,
-                    "project": skip.project,
-                    "node_id": skip.node_id,
-                    "reason": skip.reason.value,
+                    "project": excluded.project,
+                    "node_id": excluded.node_id,
+                    "reason": excluded.reason.value,
                 },
             )
-        self._timings.add_skips(skips)
+        self._timings.add_exclusions(exclusions)
         self._timings.add_nodes(nodes)
 
     def _reject_internal_unless_infra(self, release_id: str, exc: Exception) -> None:

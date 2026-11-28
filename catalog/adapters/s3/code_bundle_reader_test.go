@@ -68,7 +68,7 @@ func TestCodeBundleReader_BlankURIIsNotFoundWithoutARead(t *testing.T) {
 
 // A URI that names no object is a producer defect no retry repairs: the reader
 // reports a malformed bundle, which the versions handler dead-letters and the
-// rejections handler records without code, and reads nothing.
+// failure precedents handler records without code, and reads nothing.
 func TestCodeBundleReader_URIThatNamesNoObjectIsMalformedWithoutARead(t *testing.T) {
 	for _, tc := range []struct{ name, uri string }{
 		{"bucket without a key", "s3://continuo"},

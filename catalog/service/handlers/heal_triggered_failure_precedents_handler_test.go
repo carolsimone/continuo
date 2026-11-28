@@ -26,17 +26,17 @@ import (
 // fakeCaseBaseRepository records every call with the tenant it names, and
 // fails each call with err when err is set.
 type fakeCaseBaseRepository struct {
-	tenants              []string
-	recordRejectionCalls []casebase.Rejection
-	recordFixCalls       []casebase.Fix
-	recordFixPRs         []casebase.PullRequest
-	recordOutcomeCalls   []casebase.PullRequestOutcome
-	err                  error
+	tenants                     []string
+	recordFailurePrecedentCalls []casebase.FailurePrecedent
+	recordFixCalls              []casebase.Fix
+	recordFixPRs                []casebase.PullRequest
+	recordOutcomeCalls          []casebase.PullRequestOutcome
+	err                         error
 }
 
-func (f *fakeCaseBaseRepository) RecordRejection(_ context.Context, tenantID string, r casebase.Rejection) error {
+func (f *fakeCaseBaseRepository) RecordFailurePrecedent(_ context.Context, tenantID string, r casebase.FailurePrecedent) error {
 	f.tenants = append(f.tenants, tenantID)
-	f.recordRejectionCalls = append(f.recordRejectionCalls, r)
+	f.recordFailurePrecedentCalls = append(f.recordFailurePrecedentCalls, r)
 	return f.err
 }
 
@@ -71,15 +71,15 @@ func caseBaseMarker(group, messageID string, outboxEntryID *uuid.UUID) uow.Marke
 	return uow.Marker{TenantID: caseBaseTenant, Group: group, MessageID: messageID, OutboxEntryID: outboxEntryID}
 }
 
-func rejectionsMarker(messageID string, outboxEntryID *uuid.UUID) uow.Marker {
-	return caseBaseMarker(streams.CatalogHealTriggeredRejections, messageID, outboxEntryID)
+func failurePrecedentsMarker(messageID string, outboxEntryID *uuid.UUID) uow.Marker {
+	return caseBaseMarker(streams.CatalogHealTriggeredFailurePrecedents, messageID, outboxEntryID)
 }
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
-const rejectionsBundleURI = "s3://b/code-bundles/rel-1/bundle.json"
+const failurePrecedentsBundleURI = "s3://b/code-bundles/rel-1/bundle.json"
 
-func rejectionsBundle() codebundle.Bundle {
+func failurePrecedentsBundle() codebundle.Bundle {
 	return codebundle.Bundle{
 		ContractVersion: 1,
 		ReleaseID:       "rel-1",
@@ -92,11 +92,11 @@ func rejectionsBundle() codebundle.Bundle {
 	}
 }
 
-func rejectionInput() domainEvent.HealTriggered {
+func failurePrecedentInput() domainEvent.HealTriggered {
 	return domainEvent.HealTriggered{
 		Source:        "validation",
 		ReleaseID:     "rel-1",
-		CodeBundleURI: rejectionsBundleURI,
+		CodeBundleURI: failurePrecedentsBundleURI,
 		ClassifiedAt:  "2026-08-12T09:00:00Z",
 		Nodes: []domainEvent.HealTriggeredNode{
 			{
@@ -111,26 +111,26 @@ func rejectionInput() domainEvent.HealTriggered {
 	}
 }
 
-func newRejectionsHandler(u uow.UnitOfWork, reader *fakeBundleReader) *handlers.HealTriggeredRejectionsHandler {
-	return handlers.NewHealTriggeredRejectionsHandler(u, reader, newTestLogger())
+func newFailurePrecedentsHandler(u uow.UnitOfWork, reader *fakeBundleReader) *handlers.HealTriggeredFailurePrecedentsHandler {
+	return handlers.NewHealTriggeredFailurePrecedentsHandler(u, reader, newTestLogger())
 }
 
 // ── the write ────────────────────────────────────────────────────────────────
 
-// Every node's rejection is recorded under the message's tenant in one final
-// Write, so the marker commits with the rejections.
-func TestRejectionsHandler_RecordsRejectionWithBundleCode(t *testing.T) {
+// Every node's failure precedent is recorded under the message's tenant in one final
+// Write, so the marker commits with the failure precedents.
+func TestFailurePrecedentsHandler_RecordsFailurePrecedentWithBundleCode(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	reader := &fakeBundleReader{bundle: rejectionsBundle()}
+	reader := &fakeBundleReader{bundle: failurePrecedentsBundle()}
 
-	in := rejectionInput()
-	require.NoError(t, newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+	in := failurePrecedentInput()
+	require.NoError(t, newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
 
-	assert.Equal(t, []string{rejectionsBundleURI}, reader.calls)
-	require.Len(t, repo.recordRejectionCalls, 1)
-	assert.Equal(t, []string{caseBaseTenant}, repo.tenants, "the rejection is recorded under the message's tenant")
-	rej := repo.recordRejectionCalls[0]
+	assert.Equal(t, []string{failurePrecedentsBundleURI}, reader.calls)
+	require.Len(t, repo.recordFailurePrecedentCalls, 1)
+	assert.Equal(t, []string{caseBaseTenant}, repo.tenants, "the failure precedent is recorded under the message's tenant")
+	rej := repo.recordFailurePrecedentCalls[0]
 	assert.Equal(t, "rel-1", rej.ReleaseID)
 	assert.Equal(t, "analytics.revenue", rej.NodeID)
 	assert.Equal(t, "validation", rej.Stage)
@@ -144,16 +144,16 @@ func TestRejectionsHandler_RecordsRejectionWithBundleCode(t *testing.T) {
 	assert.Equal(t, wantAt, rej.At)
 	assert.Equal(t, "select 1", rej.RawCode)
 	assert.Equal(t, "h1", rej.ContentHash)
-	assert.Equal(t, []fakeGraphWrite{{Marker: rejectionsMarker("1-0", nil), Final: true}}, u.writes,
-		"one final Write: the marker commits with the rejections")
-	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	assert.Equal(t, []fakeGraphWrite{{Marker: failurePrecedentsMarker("1-0", nil), Final: true}}, u.writes,
+		"one final Write: the marker commits with the failure precedents")
+	assert.True(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }
 
-// A rejection is stored redacted: the error excerpt of the failure and the
+// A failure precedent is stored redacted: the error excerpt of the failure and the
 // node's code carry no credential, key or email address into the case base. The
 // reason, the signature and the content hash, which the classifier and the
 // producer computed, are kept.
-func TestRejectionsHandler_RedactsSecretsInTheStoredExcerptAndCode(t *testing.T) {
+func TestFailurePrecedentsHandler_RedactsSecretsInTheStoredExcerptAndCode(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
 	reader := &fakeBundleReader{bundle: codebundle.Bundle{
@@ -167,13 +167,13 @@ func TestRejectionsHandler_RedactsSecretsInTheStoredExcerptAndCode(t *testing.T)
 		},
 	}}
 
-	in := rejectionInput()
+	in := failurePrecedentInput()
 	in.Nodes[0].ErrorExcerpt = "connection to postgres://app:s3cr3t@db.internal:5432/x refused; token: abc123"
 
-	require.NoError(t, newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+	require.NoError(t, newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
 
-	require.Len(t, repo.recordRejectionCalls, 1)
-	rej := repo.recordRejectionCalls[0]
+	require.Len(t, repo.recordFailurePrecedentCalls, 1)
+	rej := repo.recordFailurePrecedentCalls[0]
 	assert.Equal(t, "connection to postgres://app:[redacted:secret]@db.internal:5432/x refused; token: [redacted:secret]", rej.ErrorExcerpt)
 	assert.Equal(t, "select 1 -- password=[redacted:secret] owner [redacted:email]", rej.RawCode)
 	assert.Equal(t, `column "foo" does not exist`, rej.Reason)
@@ -182,9 +182,9 @@ func TestRejectionsHandler_RedactsSecretsInTheStoredExcerptAndCode(t *testing.T)
 }
 
 // The batched trigger carries every fixable node from one rejected release
-// in a single message; the case base gets one :Rejection per node, in the one
+// in a single message; the case base gets one :FailurePrecedent per node, in the one
 // Write, and the bundle backing all of them is fetched exactly once.
-func TestRejectionsHandler_RecordsOneRejectionPerNode(t *testing.T) {
+func TestFailurePrecedentsHandler_RecordsOneFailurePrecedentPerNode(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
 	reader := &fakeBundleReader{bundle: codebundle.Bundle{
@@ -204,22 +204,22 @@ func TestRejectionsHandler_RecordsOneRejectionPerNode(t *testing.T) {
 			{NodeID: "s.b", Category: "logic", ErrorSignature: "sig", Reason: "logic:missing_object", DBTLogURI: "s3://l/b"},
 		},
 	}
-	require.NoError(t, newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
-	require.Len(t, repo.recordRejectionCalls, 2)
-	assert.Equal(t, "s.a", repo.recordRejectionCalls[0].NodeID)
-	assert.Equal(t, "select a", repo.recordRejectionCalls[0].RawCode)
-	assert.Equal(t, "s.b", repo.recordRejectionCalls[1].NodeID)
-	assert.Equal(t, "hb", repo.recordRejectionCalls[1].ContentHash)
+	require.NoError(t, newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+	require.Len(t, repo.recordFailurePrecedentCalls, 2)
+	assert.Equal(t, "s.a", repo.recordFailurePrecedentCalls[0].NodeID)
+	assert.Equal(t, "select a", repo.recordFailurePrecedentCalls[0].RawCode)
+	assert.Equal(t, "s.b", repo.recordFailurePrecedentCalls[1].NodeID)
+	assert.Equal(t, "hb", repo.recordFailurePrecedentCalls[1].ContentHash)
 	assert.Len(t, reader.calls, 1, "the bundle is read once per message, not once per node")
-	assert.Len(t, u.writes, 1, "every node's rejection is recorded in the one Write")
+	assert.Len(t, u.writes, 1, "every node's failure precedent is recorded in the one Write")
 }
 
 // The trigger carries every failing node, the ones the classifier marked
 // unfixable included. The case base records only the failures a fix can reach,
-// so an unfixable node gets no :Rejection and its code is not looked up, while
+// so an unfixable node gets no :FailurePrecedent and its code is not looked up, while
 // the fixable nodes of the same message are recorded as before, in the one
 // Write that carries the marker.
-func TestRejectionsHandler_SkipsUnfixableNodes(t *testing.T) {
+func TestFailurePrecedentsHandler_SkipsUnfixableNodes(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
 	reader := &fakeBundleReader{bundle: codebundle.Bundle{
@@ -233,7 +233,7 @@ func TestRejectionsHandler_SkipsUnfixableNodes(t *testing.T) {
 	}}
 
 	in := domainEvent.HealTriggered{
-		Source: "validation", ReleaseID: "rel-1", CodeBundleURI: rejectionsBundleURI,
+		Source: "validation", ReleaseID: "rel-1", CodeBundleURI: failurePrecedentsBundleURI,
 		ClassifiedAt: "2026-08-28T10:00:00Z",
 		Nodes: []domainEvent.HealTriggeredNode{
 			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object", DBTLogURI: "s3://l/a"},
@@ -241,30 +241,30 @@ func TestRejectionsHandler_SkipsUnfixableNodes(t *testing.T) {
 			{NodeID: "s.c", Category: "logic", ErrorSignature: "sig-c", Reason: "logic:syntax_error", DBTLogURI: "s3://l/c"},
 		},
 	}
-	require.NoError(t, newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+	require.NoError(t, newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
 
-	require.Len(t, repo.recordRejectionCalls, 2)
-	assert.Equal(t, "s.a", repo.recordRejectionCalls[0].NodeID)
-	assert.Equal(t, "select a", repo.recordRejectionCalls[0].RawCode)
-	assert.Equal(t, "s.c", repo.recordRejectionCalls[1].NodeID)
-	assert.Equal(t, "hc", repo.recordRejectionCalls[1].ContentHash)
-	assert.Equal(t, []string{rejectionsBundleURI}, reader.calls, "the bundle is read once, for the fixable nodes")
-	assert.Equal(t, []fakeGraphWrite{{Marker: rejectionsMarker("1-0", nil), Final: true}}, u.writes,
-		"one final Write: the marker commits with the fixable nodes' rejections")
-	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	require.Len(t, repo.recordFailurePrecedentCalls, 2)
+	assert.Equal(t, "s.a", repo.recordFailurePrecedentCalls[0].NodeID)
+	assert.Equal(t, "select a", repo.recordFailurePrecedentCalls[0].RawCode)
+	assert.Equal(t, "s.c", repo.recordFailurePrecedentCalls[1].NodeID)
+	assert.Equal(t, "hc", repo.recordFailurePrecedentCalls[1].ContentHash)
+	assert.Equal(t, []string{failurePrecedentsBundleURI}, reader.calls, "the bundle is read once, for the fixable nodes")
+	assert.Equal(t, []fakeGraphWrite{{Marker: failurePrecedentsMarker("1-0", nil), Final: true}}, u.writes,
+		"one final Write: the marker commits with the fixable nodes' failure precedents")
+	assert.True(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }
 
 // A trigger whose every node is unfixable has nothing for the case base: it
 // is not an error, so the message is acknowledged, and the marker alone is
 // written (in one final Write) so a redelivery finds the message processed.
 // The code bundle is not read: no node of the message needs its code.
-func TestRejectionsHandler_AllUnfixableRecordsOnlyTheMarker(t *testing.T) {
+func TestFailurePrecedentsHandler_AllUnfixableRecordsOnlyTheMarker(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	reader := &fakeBundleReader{bundle: rejectionsBundle()}
-	handler := newRejectionsHandler(u, reader)
+	reader := &fakeBundleReader{bundle: failurePrecedentsBundle()}
+	handler := newFailurePrecedentsHandler(u, reader)
 
-	in := rejectionInput()
+	in := failurePrecedentInput()
 	in.Nodes[0].Unfixable = true
 	in.Nodes = append(in.Nodes, domainEvent.HealTriggeredNode{
 		NodeID: "analytics.orders", Category: "infra_transient", ErrorSignature: "sig-2",
@@ -273,101 +273,101 @@ func TestRejectionsHandler_AllUnfixableRecordsOnlyTheMarker(t *testing.T) {
 
 	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
 
-	assert.Empty(t, repo.recordRejectionCalls, "no :Rejection for an unfixable node")
+	assert.Empty(t, repo.recordFailurePrecedentCalls, "no :FailurePrecedent for an unfixable node")
 	assert.Empty(t, reader.calls, "no bundle is read for a message with nothing to record")
-	assert.Equal(t, []fakeGraphWrite{{Marker: rejectionsMarker("1-0", nil), Final: true}}, u.writes,
+	assert.Equal(t, []fakeGraphWrite{{Marker: failurePrecedentsMarker("1-0", nil), Final: true}}, u.writes,
 		"the marker alone is written, in one final Write")
-	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	assert.True(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 
 	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
 	assert.Len(t, u.writes, 1, "a redelivery finds the marker and writes nothing")
 }
 
-func TestRejectionsHandler_EmptyNodesIsPermanent(t *testing.T) {
+func TestFailurePrecedentsHandler_EmptyNodesIsPermanent(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	reader := &fakeBundleReader{bundle: rejectionsBundle()}
+	reader := &fakeBundleReader{bundle: failurePrecedentsBundle()}
 
-	err := newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil,
+	err := newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil,
 		domainEvent.HealTriggered{ReleaseID: "rel-1", ClassifiedAt: "2026-08-28T10:00:00Z"})
 	require.ErrorIs(t, err, pkgevents.ErrPermanent)
-	assert.Empty(t, repo.recordRejectionCalls)
+	assert.Empty(t, repo.recordFailurePrecedentCalls)
 }
 
 // A compile-stage failure happens before any parse produces a bundle, so
 // CodeBundleURI is empty and there is nothing to fetch — the classification
 // is still worth recording without code.
-func TestRejectionsHandler_RecordsWithoutCodeWhenNoBundleURI(t *testing.T) {
+func TestFailurePrecedentsHandler_RecordsWithoutCodeWhenNoBundleURI(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
 	reader := &fakeBundleReader{}
 
-	in := rejectionInput()
+	in := failurePrecedentInput()
 	in.CodeBundleURI = ""
-	require.NoError(t, newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+	require.NoError(t, newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
 
 	assert.Empty(t, reader.calls)
-	require.Len(t, repo.recordRejectionCalls, 1)
-	assert.Empty(t, repo.recordRejectionCalls[0].RawCode)
-	assert.Empty(t, repo.recordRejectionCalls[0].ContentHash)
-	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	require.Len(t, repo.recordFailurePrecedentCalls, 1)
+	assert.Empty(t, repo.recordFailurePrecedentCalls[0].RawCode)
+	assert.Empty(t, repo.recordFailurePrecedentCalls[0].ContentHash)
+	assert.True(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }
 
 // A bundle that is unreadable will still be unreadable on redelivery. Losing
-// the code must not lose the precedent, so the rejection is recorded anyway.
-func TestRejectionsHandler_MalformedBundleDegradesToNoCode(t *testing.T) {
+// the code must not lose the precedent, so the failure precedent is recorded anyway.
+func TestFailurePrecedentsHandler_MalformedBundleDegradesToNoCode(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
 	reader := &fakeBundleReader{err: fmt.Errorf("%w: bad json", ports.ErrBundleMalformed)}
 
-	err := newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput())
+	err := newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput())
 	require.NoError(t, err, "losing the code must not lose the precedent")
-	require.Len(t, repo.recordRejectionCalls, 1)
-	assert.Empty(t, repo.recordRejectionCalls[0].RawCode)
-	assert.Empty(t, repo.recordRejectionCalls[0].ContentHash)
-	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	require.Len(t, repo.recordFailurePrecedentCalls, 1)
+	assert.Empty(t, repo.recordFailurePrecedentCalls[0].RawCode)
+	assert.Empty(t, repo.recordFailurePrecedentCalls[0].ContentHash)
+	assert.True(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }
 
 // A bundle absent from object storage right now may still land, so the
 // message is retried rather than recorded without code: nothing is written.
-func TestRejectionsHandler_MissingBundleRetries(t *testing.T) {
+func TestFailurePrecedentsHandler_MissingBundleRetries(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	reader := &fakeBundleReader{err: fmt.Errorf("%w: %s", ports.ErrBundleNotFound, rejectionsBundleURI)}
+	reader := &fakeBundleReader{err: fmt.Errorf("%w: %s", ports.ErrBundleNotFound, failurePrecedentsBundleURI)}
 
-	err := newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput())
+	err := newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput())
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, pkgevents.ErrPermanent),
 		"an absent bundle may still land, so the message must be retried")
-	assert.Empty(t, repo.recordRejectionCalls)
+	assert.Empty(t, repo.recordFailurePrecedentCalls)
 	assert.Empty(t, u.writes)
-	assert.False(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	assert.False(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }
 
 // The bundle read fine but this particular node is not in it (e.g. it never
-// reached parse). The rejection is still worth recording without code.
-func TestRejectionsHandler_NodeAbsentFromBundleRecordsWithoutCode(t *testing.T) {
+// reached parse). The failure precedent is still worth recording without code.
+func TestFailurePrecedentsHandler_NodeAbsentFromBundleRecordsWithoutCode(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	b := rejectionsBundle()
+	b := failurePrecedentsBundle()
 	delete(b.Nodes, "analytics.revenue")
 	reader := &fakeBundleReader{bundle: b}
 
-	err := newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput())
+	err := newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput())
 	require.NoError(t, err)
-	require.Len(t, repo.recordRejectionCalls, 1)
-	assert.Empty(t, repo.recordRejectionCalls[0].RawCode)
-	assert.Empty(t, repo.recordRejectionCalls[0].ContentHash)
-	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	require.Len(t, repo.recordFailurePrecedentCalls, 1)
+	assert.Empty(t, repo.recordFailurePrecedentCalls[0].RawCode)
+	assert.Empty(t, repo.recordFailurePrecedentCalls[0].ContentHash)
+	assert.True(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }
 
 // A payload missing an identity field, carrying no nodes, or an
 // unparseable classified_at can never be fixed by redelivery: it is refused
 // as permanent before any marker lookup or transaction, and never reaches the
 // repository. An unparseable classified_at is caught here rather than left to
-// zero-value At, which would make the rejection eligible to be "resolved by"
+// zero-value At, which would make the failure precedent eligible to be "resolved by"
 // essentially any version.
-func TestRejectionsHandler_PoisonPayloadIsPermanent(t *testing.T) {
+func TestFailurePrecedentsHandler_PoisonPayloadIsPermanent(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func(*domainEvent.HealTriggered)
@@ -389,15 +389,15 @@ func TestRejectionsHandler_PoisonPayloadIsPermanent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeCaseBaseRepository{}
 			u := newCaseBaseUnitOfWork(repo)
-			reader := &fakeBundleReader{bundle: rejectionsBundle()}
+			reader := &fakeBundleReader{bundle: failurePrecedentsBundle()}
 
-			in := rejectionInput()
+			in := failurePrecedentInput()
 			tc.mutate(&in)
 
-			err := newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in)
+			err := newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in)
 			require.Error(t, err)
 			assert.True(t, errors.Is(err, pkgevents.ErrPermanent))
-			assert.Empty(t, repo.recordRejectionCalls)
+			assert.Empty(t, repo.recordFailurePrecedentCalls)
 			assert.Empty(t, u.processed, "decided before any marker lookup")
 			assert.Empty(t, u.writes, "decided before any transaction")
 			assert.Empty(t, reader.calls)
@@ -408,109 +408,109 @@ func TestRejectionsHandler_PoisonPayloadIsPermanent(t *testing.T) {
 // The URI resolved to a bundle for a different release. Unlike the versions
 // handler (which drops the message — writing the wrong code would corrupt
 // the version graph), losing the code here must not lose the precedent: the
-// rejection is still recorded, without code, and the message ACKs rather
+// failure precedent is still recorded, without code, and the message ACKs rather
 // than retrying (retrying the same URI would only fetch the same wrong
 // bundle again).
-func TestRejectionsHandler_BundleForAnotherReleaseRecordsWithoutCode(t *testing.T) {
+func TestFailurePrecedentsHandler_BundleForAnotherReleaseRecordsWithoutCode(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	b := rejectionsBundle()
+	b := failurePrecedentsBundle()
 	b.ReleaseID = "rel-99"
 	reader := &fakeBundleReader{bundle: b}
 
-	err := newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput())
+	err := newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput())
 	require.NoError(t, err)
-	require.Len(t, repo.recordRejectionCalls, 1)
-	assert.Empty(t, repo.recordRejectionCalls[0].RawCode)
-	assert.Empty(t, repo.recordRejectionCalls[0].ContentHash)
-	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	require.Len(t, repo.recordFailurePrecedentCalls, 1)
+	assert.Empty(t, repo.recordFailurePrecedentCalls[0].RawCode)
+	assert.Empty(t, repo.recordFailurePrecedentCalls[0].ContentHash)
+	assert.True(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }
 
 // ── the marker ───────────────────────────────────────────────────────────────
 
 // A message whose marker is recorded is acknowledged without reading the
 // bundle or opening a write.
-func TestRejectionsHandler_FoundMarkerReadsNoObjectStorage(t *testing.T) {
+func TestFailurePrecedentsHandler_FoundMarkerReadsNoObjectStorage(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	reader := &fakeBundleReader{bundle: rejectionsBundle()}
-	handler := newRejectionsHandler(u, reader)
+	reader := &fakeBundleReader{bundle: failurePrecedentsBundle()}
+	handler := newFailurePrecedentsHandler(u, reader)
 
-	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput()))
-	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput()))
+	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput()))
+	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput()))
 
-	assert.Len(t, repo.recordRejectionCalls, 1, "a redelivered message is not recorded again")
+	assert.Len(t, repo.recordFailurePrecedentCalls, 1, "a redelivered message is not recorded again")
 	assert.Len(t, reader.calls, 1, "nor its bundle read")
 	assert.Len(t, u.writes, 1, "nor a write opened")
 }
 
 // The same outbox row re-sent under a fresh message id is found by its outbox
 // entry id, and the marker the write records carries it.
-func TestRejectionsHandler_OutboxEntryIDReachesTheMarker(t *testing.T) {
+func TestFailurePrecedentsHandler_OutboxEntryIDReachesTheMarker(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	reader := &fakeBundleReader{bundle: rejectionsBundle()}
+	reader := &fakeBundleReader{bundle: failurePrecedentsBundle()}
 	entry := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-	handler := newRejectionsHandler(u, reader)
+	handler := newFailurePrecedentsHandler(u, reader)
 
-	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", &entry, rejectionInput()))
+	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", &entry, failurePrecedentInput()))
 	require.Len(t, u.writes, 1)
-	assert.Equal(t, rejectionsMarker("1-0", &entry), u.writes[0].Marker)
+	assert.Equal(t, failurePrecedentsMarker("1-0", &entry), u.writes[0].Marker)
 
-	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "2-0", &entry, rejectionInput()))
-	assert.Len(t, repo.recordRejectionCalls, 1, "the re-sent row is recognised by its outbox entry id")
+	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "2-0", &entry, failurePrecedentInput()))
+	assert.Len(t, repo.recordFailurePrecedentCalls, 1, "the re-sent row is recognised by its outbox entry id")
 	assert.Len(t, reader.calls, 1)
 }
 
 // A message another delivery finished between the lookup and the write is
 // acknowledged: its Write finds the marker and records nothing.
-func TestRejectionsHandler_ProcessedMeanwhileWritesNothing(t *testing.T) {
+func TestFailurePrecedentsHandler_ProcessedMeanwhileWritesNothing(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
-	u.record(rejectionsMarker("1-0", nil))
+	u.record(failurePrecedentsMarker("1-0", nil))
 
-	require.NoError(t, newRejectionsHandler(racingUnitOfWork{u}, &fakeBundleReader{bundle: rejectionsBundle()}).
-		Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput()))
-	assert.Empty(t, repo.recordRejectionCalls)
+	require.NoError(t, newFailurePrecedentsHandler(racingUnitOfWork{u}, &fakeBundleReader{bundle: failurePrecedentsBundle()}).
+		Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput()))
+	assert.Empty(t, repo.recordFailurePrecedentCalls)
 	assert.Len(t, u.writes, 1)
 }
 
 // A failed marker lookup is returned before anything else happens, so the
 // consumer retries the message.
-func TestRejectionsHandler_MarkerLookupFailureIsReturned(t *testing.T) {
+func TestFailurePrecedentsHandler_MarkerLookupFailureIsReturned(t *testing.T) {
 	lookup := errors.New("neo4j: connection refused")
 	u := newCaseBaseUnitOfWork(&fakeCaseBaseRepository{})
 	u.processedErr = lookup
-	reader := &fakeBundleReader{bundle: rejectionsBundle()}
+	reader := &fakeBundleReader{bundle: failurePrecedentsBundle()}
 
-	err := newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput())
+	err := newFailurePrecedentsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput())
 	require.ErrorIs(t, err, lookup)
 	assert.False(t, errors.Is(err, pkgevents.ErrPermanent))
 	assert.Empty(t, reader.calls)
 	assert.Empty(t, u.writes)
 }
 
-// A rejection the graph fails to record fails the message with no marker, so
-// the redelivery records every rejection again.
-func TestRejectionsHandler_FailedRecordLeavesNoMarker(t *testing.T) {
+// A failure precedent the graph fails to record fails the message with no marker, so
+// the redelivery records every failure precedent again.
+func TestFailurePrecedentsHandler_FailedRecordLeavesNoMarker(t *testing.T) {
 	repo := &fakeCaseBaseRepository{err: errors.New("neo4j: transient failure")}
 	u := newCaseBaseUnitOfWork(repo)
 
-	err := newRejectionsHandler(u, &fakeBundleReader{bundle: rejectionsBundle()}).
-		Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput())
+	err := newFailurePrecedentsHandler(u, &fakeBundleReader{bundle: failurePrecedentsBundle()}).
+		Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput())
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, pkgevents.ErrPermanent))
-	assert.False(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	assert.False(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }
 
-// A write paused by an export or a restore reaches the consumer as
+// A write paused by a backup or a restore reaches the consumer as
 // uow.ErrWritesPaused, which it backs off on as for an outage.
-func TestRejectionsHandler_PausedWriteIsReturnedAsPaused(t *testing.T) {
+func TestFailurePrecedentsHandler_PausedWriteIsReturnedAsPaused(t *testing.T) {
 	u := newCaseBaseUnitOfWork(&fakeCaseBaseRepository{})
 	u.writeErr = fmt.Errorf("tenant %q: %w", caseBaseTenant, uow.ErrWritesPaused)
 
-	err := newRejectionsHandler(u, &fakeBundleReader{bundle: rejectionsBundle()}).
-		Handle(context.Background(), caseBaseTenant, "1-0", nil, rejectionInput())
+	err := newFailurePrecedentsHandler(u, &fakeBundleReader{bundle: failurePrecedentsBundle()}).
+		Handle(context.Background(), caseBaseTenant, "1-0", nil, failurePrecedentInput())
 	require.ErrorIs(t, err, uow.ErrWritesPaused)
-	assert.False(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+	assert.False(t, u.isRecorded(failurePrecedentsMarker("1-0", nil)))
 }

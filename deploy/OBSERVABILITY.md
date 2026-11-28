@@ -95,11 +95,11 @@ Every series also carries a `component` label.
 | `continuo_seed_reload_stops_total` | counter | `reason` | `run-controller` |
 | `continuo_views_missing` | gauge | `state` (`missing`, `stale`) | `run-controller` |
 | `continuo_view_outage_seconds` | histogram | none beyond `component` | `run-controller` |
-| `continuo_catalog_exports_total` | counter | `outcome` (`success`, `failure`, `skipped`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
-| `continuo_catalog_export_duration_seconds` | histogram | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
-| `continuo_catalog_export_bytes` | gauge | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
-| `continuo_catalog_export_records` | gauge | `kind` (`node`, `relationship`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
-| `continuo_catalog_export_last_success_timestamp_seconds` | gauge | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_backups_total` | counter | `outcome` (`success`, `failure`, `skipped`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_backup_duration_seconds` | histogram | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_backup_bytes` | gauge | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_backup_records` | gauge | `kind` (`node`, `relationship`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_backup_last_success_timestamp_seconds` | gauge | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
 | `continuo_catalog_contract_versions_written_total` | counter | none beyond `component` | `catalog` |
 | `continuo_catalog_live_contract_writes_total` | counter | `op` (`put`, `delete`, `index`), `outcome` (`ok`, `failed`) | `catalog` |
 | `continuo_catalog_contracts_duration_seconds` | histogram | `step` (`ingest`, `live_rewrite`) | `catalog` |
@@ -107,7 +107,7 @@ Every series also carries a `component` label.
 | `continuo_topology_releases_total` | counter | `outcome`, `failure_kind` | `topology-controller` |
 | `continuo_topology_release_nodes` | gauge | `family` | `topology-controller` |
 | `continuo_topology_release_columns` | gauge | `family` | `topology-controller` |
-| `continuo_topology_release_skipped_nodes` | gauge | `reason` (`no_owner`, `local_stub`, `installed_package`) | `topology-controller` |
+| `continuo_topology_release_excluded_models` | gauge | `reason` (`no_owner`, `local_stub`, `installed_package`) | `topology-controller` |
 | `continuo_topology_release_dormant_nodes` | gauge | none beyond `component` | `topology-controller` |
 | `continuo_topology_release_peak_rss_bytes` | gauge | none beyond `component` | `topology-controller` |
 | `continuo_topology_contract_failures_total` | counter | `stage` (`generate`, `validate`, `normalise`, `hash`, `ontology`), `reason` (a `continuo-contracts` validation reason, `manifest_shape` or `seed_header`, or, on the stage `ontology`, the name of an ontology rule) | `topology-controller` |
@@ -263,12 +263,12 @@ groups:
           severity: warning
         annotations:
           summary: "{{ $value }} cancelling runs are overdue and still wait for attempts to stop"
-      - alert: CatalogExportStale
-        expr: time() - continuo_catalog_export_last_success_timestamp_seconds > 26 * 3600
+      - alert: CatalogBackupStale
+        expr: time() - continuo_catalog_backup_last_success_timestamp_seconds > 26 * 3600
         labels:
           severity: warning
         annotations:
-          summary: "The last stored catalog export is older than 26 hours"
+          summary: "The last stored catalog backup is older than 26 hours"
       - alert: CatalogLiveContractWriteFailed
         expr: increase(continuo_catalog_live_contract_writes_total{outcome="failed"}[15m]) > 0
         labels:
@@ -298,7 +298,7 @@ groups:
           summary: "topology-controller's {{ $labels.stage }} stage took over 30 s; liveness restarts the pod about 80 s after its last heartbeat"
 ```
 
-`RemediationHasNoType` fires when a failing node of a rejected release was handed over with the reason `no_type`, so no fix was tried for it. Either no remediation type matches the node, and someone should add a type file that does, or the node is a dbt test, which is never a fix target and is handed over this way whichever types exist. The release page says which. `RemediationSystemFailure` fires when a remediation stopped because the runner could go no further, which leaves the release's failing nodes unattended until the dead-lettered trigger is redriven. The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`. `CatalogLiveContractWriteFailed` fires when the object store refuses a write of the live contracts folder. That usually means catalog's role lacks one of the grants in the chart README's "S3 access" table. catalog retries the promotion until the folder is written. A rewrite that cannot read `_index.json` (not JSON, or another `schema_version`) writes nothing and logs an error naming the key: delete that `_index.json`, and the next rewrite puts every file again. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite`, `candidate_upload`, `contract_generation`, `contract_validation` and `canonical_hashing`: these per-node stages refresh the heartbeat after every node or contract, so their summed time says nothing about it. `dbt_parse` refreshes the heartbeat after every contract of a model, seed or snapshot and once more when the manifest's parse ends, and `python_parse` of a Python project after every contract. So the rule is a coarse near-budget heuristic over a stage's total time in one release. Python bucket labels are written `30.0`, not `30`.
+`RemediationHasNoType` fires when a failing node of a rejected release was handed over with the reason `no_type`, so no fix was tried for it. Either no remediation type matches the node, and someone should add a type file that does, or the node is a dbt test, which is never a fix target and is handed over this way whichever types exist. The release page says which. `RemediationSystemFailure` fires when a remediation stopped because the runner could go no further, which leaves the release's failing nodes unattended until the dead-lettered trigger is redriven. The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogBackupStale` applies only with `catalog.backup.enabled`. `CatalogLiveContractWriteFailed` fires when the object store refuses a write of the live contracts folder. That usually means catalog's role lacks one of the grants in the chart README's "S3 access" table. catalog retries the promotion until the folder is written. A rewrite that cannot read `_index.json` (not JSON, or another `schema_version`) writes nothing and logs an error naming the key: delete that `_index.json`, and the next rewrite puts every file again. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite`, `candidate_upload`, `contract_generation`, `contract_validation` and `canonical_hashing`: these per-node stages refresh the heartbeat after every node or contract, so their summed time says nothing about it. `dbt_parse` refreshes the heartbeat after every contract of a model, seed or snapshot and once more when the manifest's parse ends, and `python_parse` of a Python project after every contract. So the rule is a coarse near-budget heuristic over a stage's total time in one release. Python bucket labels are written `30.0`, not `30`.
 
 ## Datadog
 

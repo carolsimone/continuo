@@ -955,7 +955,7 @@ fi
 # An upgrading operator with catalog's backup on is told once what S3 access
 # the exports need and how to turn them off; an installing one, and one who
 # turned the backup off, are told nothing.
-backup_note='To run no exports, set catalog.backup.enabled=false.'
+backup_note='To run no backups, set catalog.backup.enabled=false.'
 [ "$(grep -cF "$backup_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
   || { echo "FAIL: the upgrade notes do not say exactly once what S3 access catalog's backup needs"; exit 1; }
 grep -qF 's3:AbortMultipartUpload' "${tmp}/notes-upgrade.txt" \

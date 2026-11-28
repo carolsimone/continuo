@@ -62,7 +62,7 @@ func NewReleasePromotedVersionsHandler(
 //     message ID. A processed message is acknowledged without reading object
 //     storage.
 //  2. A promotion with a bundle first asks the unit of work whether the
-//     tenant's writes are paused by an export or a restore, and returns
+//     tenant's writes are paused by a backup or a restore, and returns
 //     uow.ErrWritesPaused without reading object storage when they are.
 //     Otherwise it reads the code bundle and the topology artifact, outside
 //     any transaction. A malformed or oversized bundle, a corrupt artifact, or a
@@ -201,7 +201,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		"node_versions_created", total.NodeVersionsCreated,
 		"unit_versions_created", total.UnitVersionsCreated,
 		"current_pointers_moved", total.CurrentPointersMoved,
-		"rejections_resolved", total.RejectionsResolved,
+		"precedents_resolved", total.PrecedentsResolved,
 		"compiled_only_moves", len(total.CompiledOnlyMoved),
 		"compiled_only_move_ids", firstIDs(total.CompiledOnlyMoved, maxLoggedCompiledOnlyMoves),
 	)
@@ -223,7 +223,7 @@ func addWriteResults(a, b codeversion.WriteResult) codeversion.WriteResult {
 		NodeVersionsCreated:  a.NodeVersionsCreated + b.NodeVersionsCreated,
 		UnitVersionsCreated:  a.UnitVersionsCreated + b.UnitVersionsCreated,
 		CurrentPointersMoved: a.CurrentPointersMoved + b.CurrentPointersMoved,
-		RejectionsResolved:   a.RejectionsResolved + b.RejectionsResolved,
+		PrecedentsResolved:   a.PrecedentsResolved + b.PrecedentsResolved,
 		CompiledOnlyMoved:    append(slices.Clone(a.CompiledOnlyMoved), b.CompiledOnlyMoved...),
 	}
 }

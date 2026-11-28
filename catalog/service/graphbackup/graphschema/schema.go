@@ -1,6 +1,6 @@
 // Package graphschema is the one table of the catalog graph's node labels,
 // the properties that identify a node of each label within its tenant, and
-// the relationship types that join them. The Neo4j schema, the export and
+// the relationship types that join them. The Neo4j schema, the backup and
 // import of a tenant's graph, and the Cypher tenant guard all read it.
 package graphschema
 
@@ -15,7 +15,7 @@ const (
 	NodeVersion      Label = "NodeVersion"
 	CodeUnit         Label = "CodeUnit"
 	CodeUnitVersion  Label = "CodeUnitVersion"
-	Rejection        Label = "Rejection"
+	FailurePrecedent Label = "FailurePrecedent"
 	ErrorSignature   Label = "ErrorSignature"
 	Fix              Label = "Fix"
 	PullRequest      Label = "PullRequest"
@@ -34,7 +34,7 @@ var labels = []struct {
 	{NodeVersion, []string{"unique_id", "content_hash"}},
 	{CodeUnit, []string{"unit_id"}},
 	{CodeUnitVersion, []string{"unit_id", "checksum"}},
-	{Rejection, []string{"release_id", "node_id"}},
+	{FailurePrecedent, []string{"release_id", "node_id"}},
 	{ErrorSignature, []string{"signature"}},
 	{Fix, []string{"fix_id"}},
 	{PullRequest, []string{"fix_id", "project"}},

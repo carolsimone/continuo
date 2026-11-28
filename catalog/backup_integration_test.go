@@ -28,7 +28,7 @@ import (
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/service/backup"
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/objectstore"
@@ -41,20 +41,20 @@ import (
 )
 
 // The backup as main wires it, against the test Neo4j and an object store in
-// memory: the production lease, graph exporter and importer, unit of work and
+// memory: the production lease, graph saver and loader, unit of work and
 // backup store, with the backup service of catalog/service/backup. They live
 // in the composition root because the service layer's tests never reach the
 // object store.
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// recordedMetrics records the outcome of every export.
+// recordedMetrics records the outcome of every backup.
 type recordedMetrics struct {
 	mu       sync.Mutex
 	outcomes []string
 }
 
-func (m *recordedMetrics) ExportObserved(outcome string, _ time.Duration, _ int64, _, _ int64) {
+func (m *recordedMetrics) BackupObserved(outcome string, _ time.Duration, _ int64, _, _ int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.outcomes = append(m.outcomes, outcome)
@@ -74,7 +74,7 @@ func envOr(key, fallback string) string {
 }
 
 // graphFixture is the test Neo4j, an object store in memory behind the
-// production backup store, and the production lease, exporter, importer and
+// production backup store, and the production lease, taker, loader and
 // unit of work. Each test takes tenants of its own; the cleanup DETACH
 // DELETEs every node of those tenants.
 type graphFixture struct {
@@ -82,9 +82,9 @@ type graphFixture struct {
 	client   neo4jinfra.Neo4jClient
 	mem      *objectstoretest.Memory
 	store    ports.BackupStore
-	lease    ports.ExportLease
-	graph    ports.GraphExporter
-	importer ports.GraphImporter
+	lease    ports.BackupLease
+	graph    ports.GraphSaver
+	loader ports.GraphLoader
 	uow      uow.UnitOfWork
 	tenants  []string
 }
@@ -106,9 +106,9 @@ func newGraphFixture(t *testing.T) *graphFixture {
 	mem := objectstoretest.NewMemory("continuo")
 	f := &graphFixture{
 		t: t, client: client, mem: mem, store: s3infra.NewBackupStore(mem),
-		lease:    neo4jinfra.NewExportLease(client, quietLogger()),
-		graph:    neo4jinfra.NewGraphExporter(client, "b3-test", quietLogger()),
-		importer: neo4jinfra.NewGraphImporter(client, quietLogger()),
+		lease:    neo4jinfra.NewBackupLease(client, quietLogger()),
+		graph:    neo4jinfra.NewGraphSaver(client, "b3-test", quietLogger()),
+		loader: neo4jinfra.NewGraphLoader(client, quietLogger()),
 		uow:      neo4jinfra.NewUnitOfWork(client, quietLogger()),
 	}
 	t.Cleanup(func() {
@@ -125,12 +125,12 @@ func (f *graphFixture) tenant(name string) string {
 	return id
 }
 
-func (f *graphFixture) exporter(store ports.BackupStore, metrics ports.BackupMetrics, clock func() time.Time) *backup.Exporter {
-	return backup.NewExporter(f.lease, f.graph, store, metrics, 7, clock, quietLogger())
+func (f *graphFixture) taker(store ports.BackupStore, metrics ports.BackupMetrics, clock func() time.Time) *backup.Taker {
+	return backup.NewTaker(f.lease, f.graph, store, metrics, 7, clock, quietLogger())
 }
 
 func (f *graphFixture) restorer() *backup.Restorer {
-	return backup.NewRestorer(f.lease, f.importer, f.store, quietLogger())
+	return backup.NewRestorer(f.lease, f.loader, f.store, quietLogger())
 }
 
 // exec runs cypher in an auto-commit transaction with $tenant_id bound.
@@ -161,7 +161,7 @@ func (f *graphFixture) query(tenantID, cypher string) []*neo4j.Record {
 }
 
 // seed writes a small graph for tenantID: two :Node, a :NodeVersion each
-// node points at, a dependency between them, and a case-base rejection, then
+// node points at, a dependency between them, and a case-base failure precedent, then
 // runs the startup migration so the graph has the shape the catalog keeps.
 func (f *graphFixture) seed(tenantID string) {
 	f.t.Helper()
@@ -170,7 +170,7 @@ CREATE (a:Node {tenant_id: $tenant_id, unique_id: 'svc.a', active: true, schedul
 CREATE (b:Node {tenant_id: $tenant_id, unique_id: 'svc.b', active: true, schedule_name: 'daily'})
 CREATE (va:NodeVersion {tenant_id: $tenant_id, unique_id: 'svc.a', content_hash: 'h-a'})
 CREATE (vb:NodeVersion {tenant_id: $tenant_id, unique_id: 'svc.b', content_hash: 'h-b'})
-CREATE (r:Rejection {tenant_id: $tenant_id, release_id: 'r1', node_id: 'svc.b', at: datetime('2026-10-20T09:00:00Z')})
+CREATE (r:FailurePrecedent {tenant_id: $tenant_id, release_id: 'r1', node_id: 'svc.b', at: datetime('2026-10-20T09:00:00Z')})
 CREATE (b)-[:DEPENDS_ON]->(a)
 CREATE (a)-[:CURRENT {promoted_at: datetime('2026-10-20T09:00:00Z')}]->(va)
 CREATE (b)-[:CURRENT {promoted_at: datetime('2026-10-20T09:00:00Z')}]->(vb)
@@ -178,7 +178,7 @@ CREATE (vb)-[:FAILED]->(r)`, nil)
 	require.NoError(f.t, neo4jinfra.InitSchema(context.Background(), f.client, quietLogger()))
 }
 
-// dump renders tenantID's graph, its export lease node aside, as sorted
+// dump renders tenantID's graph, its backup lease node aside, as sorted
 // lines: each node's labels and properties, and each relationship's type,
 // properties and ends.
 func (f *graphFixture) dump(tenantID string) []string {
@@ -190,7 +190,7 @@ func (f *graphFixture) dump(tenantID string) []string {
 		return string(b)
 	}
 	for _, rec := range f.query(tenantID, `
-MATCH (n {tenant_id: $tenant_id}) WHERE NOT (n:Meta AND n.key = 'export')
+MATCH (n {tenant_id: $tenant_id}) WHERE NOT (n:Meta AND n.key = 'backup')
 RETURN labels(n) AS labels, properties(n) AS props`) {
 		labels, _ := rec.Get("labels")
 		props, _ := rec.Get("props")
@@ -209,10 +209,10 @@ RETURN type(r) AS type, properties(r) AS props, properties(a) AS from, propertie
 	return out
 }
 
-// leaseNode reports whether tenantID has an export lease node, and its
+// leaseNode reports whether tenantID has a backup lease node, and its
 // holder.
 func (f *graphFixture) leaseNode(tenantID string) (exists bool, holder any) {
-	recs := f.query(tenantID, `MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) RETURN m.holder AS holder`)
+	recs := f.query(tenantID, `MATCH (m:Meta {tenant_id: $tenant_id, key: 'backup'}) RETURN m.holder AS holder`)
 	if len(recs) == 0 {
 		return false, nil
 	}
@@ -233,7 +233,7 @@ func (f *graphFixture) processed(tenantID, id string) bool {
 	return ok
 }
 
-// stored returns the keys of the exports the backup store holds for
+// stored returns the keys of the backs up the backup store holds for
 // tenantID.
 func (f *graphFixture) stored(tenantID string) []string {
 	f.t.Helper()
@@ -246,8 +246,8 @@ func (f *graphFixture) stored(tenantID string) []string {
 	return keys
 }
 
-// records reads the export stored at key.
-func (f *graphFixture) records(key string) (export.Header, []any) {
+// records reads the backup stored at key.
+func (f *graphFixture) records(key string) (graphbackup.Header, []any) {
 	f.t.Helper()
 	src, err := f.store.OpenRead(context.Background(), key)
 	require.NoError(f.t, err)
@@ -263,9 +263,9 @@ func (f *graphFixture) records(key string) (export.Header, []any) {
 	}
 }
 
-// exportKey is the key the backup store gives tenantID's export taken at at:
+// backupKey is the key the backup store gives tenantID's backup taken at at:
 // tenants/<tenant>/backups/catalog/<UTC second>.jsonl.gz.
-func exportKey(tenantID string, at time.Time) string {
+func backupKey(tenantID string, at time.Time) string {
 	return "tenants/" + tenantID + "/backups/catalog/" + at.UTC().Format("20060102T150405Z") + ".jsonl.gz"
 }
 
@@ -280,9 +280,9 @@ func (f *graphFixture) putGzip(key, body string) {
 	require.NoError(f.t, f.mem.Put(context.Background(), objectstore.Ref{Key: key}, buf.Bytes(), "application/gzip"))
 }
 
-// gateStore wraps a BackupStore so the first record of the first export it
+// gateStore wraps a BackupStore so the first record of the first backup it
 // opens waits: entered closes when that record arrives, and the write goes
-// on once proceed is closed. The lease is held by then, since the export
+// on once proceed is closed. The lease is held by then, since the backup
 // writes only after it took the lease.
 type gateStore struct {
 	ports.BackupStore
@@ -295,22 +295,22 @@ func newGateStore(store ports.BackupStore) *gateStore {
 	return &gateStore{BackupStore: store, entered: make(chan struct{}), proceed: make(chan struct{})}
 }
 
-func (g *gateStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.ExportSink, string, error) {
+func (g *gateStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.BackupSink, string, error) {
 	w, key, err := g.BackupStore.Open(ctx, tenantID, at, progress)
 	if err != nil {
 		return nil, "", err
 	}
-	return &gateSink{ExportSink: w, gate: g}, key, nil
+	return &gateSink{BackupSink: w, gate: g}, key, nil
 }
 
 type gateSink struct {
-	ports.ExportSink
+	ports.BackupSink
 	gate   *gateStore
 	passed bool
 }
 
-// WriteHeader is the first record of every export.
-func (w *gateSink) WriteHeader(h export.Header) error {
+// WriteHeader is the first record of every backup.
+func (w *gateSink) WriteHeader(h graphbackup.Header) error {
 	if !w.passed {
 		w.passed = true
 		first := false
@@ -319,7 +319,7 @@ func (w *gateSink) WriteHeader(h export.Header) error {
 			<-w.gate.proceed
 		}
 	}
-	return w.ExportSink.WriteHeader(h)
+	return w.BackupSink.WriteHeader(h)
 }
 
 func waitFor(t *testing.T, ch <-chan struct{}, what string) {
@@ -331,16 +331,16 @@ func waitFor(t *testing.T, ch <-chan struct{}, what string) {
 	}
 }
 
-// A write that starts while an export holds the tenant's lease backs off with
-// ErrWritesPaused; once the export is stored the same write lands, and the
-// export holds the graph as it was before the write.
-func TestExporter_WritesPausedDuringExportAndLandAfter(t *testing.T) {
+// A write that starts while a backup holds the tenant's lease backs off with
+// ErrWritesPaused; once the backup is stored the same write lands, and the
+// backup holds the graph as it was before the write.
+func TestTaker_WritesPausedDuringBackupAndLandAfter(t *testing.T) {
 	f := newGraphFixture(t)
 	tenantID := f.tenant("paused")
 	f.seed(tenantID)
 	before := f.dump(tenantID)
 	gate := newGateStore(f.store)
-	ex := f.exporter(gate, &recordedMetrics{}, time.Now)
+	ex := f.taker(gate, &recordedMetrics{}, time.Now)
 
 	type outcome struct {
 		res backup.Result
@@ -348,53 +348,53 @@ func TestExporter_WritesPausedDuringExportAndLandAfter(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		res, err := ex.ExportTenant(context.Background(), tenantID)
+		res, err := ex.TakeTenant(context.Background(), tenantID)
 		done <- outcome{res, err}
 	}()
-	waitFor(t, gate.entered, "the export to start writing")
+	waitFor(t, gate.entered, "the backup to start writing")
 
 	err := f.write(tenantID, "m-during")
-	require.ErrorIs(t, err, uow.ErrWritesPaused, "a write during the export backs off")
+	require.ErrorIs(t, err, uow.ErrWritesPaused, "a write during the backup backs off")
 	assert.False(t, f.processed(tenantID, "m-during"))
 
 	close(gate.proceed)
 	got := <-done
 	require.NoError(t, got.err)
 
-	require.NoError(t, f.write(tenantID, "m-during"), "the write lands once the export released the lease")
+	require.NoError(t, f.write(tenantID, "m-during"), "the write lands once the backup released the lease")
 	assert.True(t, f.processed(tenantID, "m-during"))
-	assert.Equal(t, []string{got.res.ObjectKey}, f.stored(tenantID), "the export is stored")
+	assert.Equal(t, []string{got.res.ObjectKey}, f.stored(tenantID), "the backup is stored")
 
 	h, recs := f.records(got.res.ObjectKey)
 	assert.Equal(t, tenantID, h.TenantID)
 	assert.Equal(t, int64(len(recs)), got.res.Nodes+got.res.Relationships)
 	for _, rec := range recs {
-		if n, ok := rec.(export.NodeRecord); ok {
-			assert.NotContains(t, n.Labels, "ProcessedMessage", "the write that backed off is not in the export")
+		if n, ok := rec.(graphbackup.NodeRecord); ok {
+			assert.NotContains(t, n.Labels, "ProcessedMessage", "the write that backed off is not in the backup")
 		}
 	}
-	assert.Equal(t, int64(len(before)), got.res.Nodes+got.res.Relationships, "the export holds the graph as it was")
+	assert.Equal(t, int64(len(before)), got.res.Nodes+got.res.Relationships, "the backup holds the graph as it was")
 }
 
-// A lease left by an exporter that crashed (taken and never renewed or
-// released) skips exports and pauses writes until it expires; then both go
+// A lease left by a taker that crashed (taken and never renewed or
+// released) skips backups and pauses writes until it expires; then both go
 // on.
-func TestExporter_CrashedHolderLeaseExpires(t *testing.T) {
+func TestTaker_CrashedHolderLeaseExpires(t *testing.T) {
 	f := newGraphFixture(t)
 	tenantID := f.tenant("crashed")
 	f.seed(tenantID)
-	require.NoError(t, f.lease.Acquire(context.Background(), tenantID, ports.LeaseExport, "export/crashed-pod/1", 1500*time.Millisecond))
+	require.NoError(t, f.lease.Acquire(context.Background(), tenantID, ports.LeaseBackup, "backup/crashed-pod/1", 1500*time.Millisecond))
 	metrics := &recordedMetrics{}
-	ex := f.exporter(f.store, metrics, time.Now)
+	ex := f.taker(f.store, metrics, time.Now)
 
-	_, err := ex.ExportTenant(context.Background(), tenantID)
+	_, err := ex.TakeTenant(context.Background(), tenantID)
 	require.ErrorIs(t, err, backup.ErrSkipped)
 	require.ErrorIs(t, f.write(tenantID, "m-paused"), uow.ErrWritesPaused)
 	assert.Empty(t, f.stored(tenantID))
 
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		_, err = ex.ExportTenant(context.Background(), tenantID)
+		_, err = ex.TakeTenant(context.Background(), tenantID)
 		if !errors.Is(err, backup.ErrSkipped) || time.Now().After(deadline) {
 			break
 		}
@@ -403,92 +403,92 @@ func TestExporter_CrashedHolderLeaseExpires(t *testing.T) {
 	require.NoError(t, err, "the crashed holder's lease expired")
 	assert.Len(t, f.stored(tenantID), 1)
 	require.NoError(t, f.write(tenantID, "m-paused"))
-	assert.Equal(t, ports.ExportSuccess, metrics.seen()[len(metrics.seen())-1])
-	assert.Equal(t, ports.ExportSkipped, metrics.seen()[0])
+	assert.Equal(t, ports.BackupSuccess, metrics.seen()[len(metrics.seen())-1])
+	assert.Equal(t, ports.BackupSkipped, metrics.seen()[0])
 }
 
-// While one export of a tenant runs, a second export of the same tenant is
+// While one backup of a tenant runs, a second backup of the same tenant is
 // skipped: it stores no object and counts as skipped.
-func TestExporter_SecondExportOfTheSameTenantSkips(t *testing.T) {
+func TestTaker_SecondBackupOfTheSameTenantSkips(t *testing.T) {
 	f := newGraphFixture(t)
 	tenantID := f.tenant("second")
 	f.seed(tenantID)
 	gate := newGateStore(f.store)
 	firstMetrics, secondMetrics := &recordedMetrics{}, &recordedMetrics{}
-	first := f.exporter(gate, firstMetrics, time.Now)
-	second := f.exporter(f.store, secondMetrics, time.Now)
+	first := f.taker(gate, firstMetrics, time.Now)
+	second := f.taker(f.store, secondMetrics, time.Now)
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := first.ExportTenant(context.Background(), tenantID)
+		_, err := first.TakeTenant(context.Background(), tenantID)
 		done <- err
 	}()
-	waitFor(t, gate.entered, "the first export to start writing")
+	waitFor(t, gate.entered, "the first backup to start writing")
 
-	_, err := second.ExportTenant(context.Background(), tenantID)
+	_, err := second.TakeTenant(context.Background(), tenantID)
 	require.ErrorIs(t, err, backup.ErrSkipped)
-	assert.Equal(t, []string{ports.ExportSkipped}, secondMetrics.seen())
-	assert.Empty(t, f.stored(tenantID), "the skipped export stores nothing")
+	assert.Equal(t, []string{ports.BackupSkipped}, secondMetrics.seen())
+	assert.Empty(t, f.stored(tenantID), "the skipped backup stores nothing")
 
 	close(gate.proceed)
 	require.NoError(t, <-done)
-	assert.Len(t, f.stored(tenantID), 1, "only the first export is stored")
-	assert.Equal(t, []string{ports.ExportSuccess}, firstMetrics.seen())
+	assert.Len(t, f.stored(tenantID), 1, "only the first backup is stored")
+	assert.Equal(t, []string{ports.BackupSuccess}, firstMetrics.seen())
 }
 
-// A store that refuses the upload fails the export before the lease: the
+// A store that refuses the upload fails the backup before the lease: the
 // tenant's lease node is never touched, so its writes are never paused.
-func TestExporter_StoreRefusesOpenBeforeTheLease(t *testing.T) {
+func TestTaker_StoreRefusesOpenBeforeTheLease(t *testing.T) {
 	f := newGraphFixture(t)
 	tenantID := f.tenant("refused")
 	f.seed(tenantID)
 	at := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
-	f.mem.FailPut(objectstore.Ref{Key: exportKey(tenantID, at)}, errors.New("AccessDenied"))
+	f.mem.FailPut(objectstore.Ref{Key: backupKey(tenantID, at)}, errors.New("AccessDenied"))
 	metrics := &recordedMetrics{}
-	ex := f.exporter(f.store, metrics, func() time.Time { return at })
+	ex := f.taker(f.store, metrics, func() time.Time { return at })
 
-	_, err := ex.ExportTenant(context.Background(), tenantID)
+	_, err := ex.TakeTenant(context.Background(), tenantID)
 	require.ErrorContains(t, err, "AccessDenied")
 	exists, _ := f.leaseNode(tenantID)
 	assert.False(t, exists, "no lease was taken: the lease node was never created")
-	assert.Equal(t, []string{ports.ExportFailure}, metrics.seen())
+	assert.Equal(t, []string{ports.BackupFailure}, metrics.seen())
 	require.NoError(t, f.write(tenantID, "m-after"), "a write is not paused")
 }
 
-// A cancel while the export uploads (a shutdown) leaves no object and no
-// held lease: the next export and the next write go on at once.
-func TestExporter_ACancelDuringTheUploadLeavesNoObjectAndNoHeldLease(t *testing.T) {
+// A cancel while the backup uploads (a shutdown) leaves no object and no
+// held lease: the next backup and the next write go on at once.
+func TestTaker_ACancelDuringTheUploadLeavesNoObjectAndNoHeldLease(t *testing.T) {
 	f := newGraphFixture(t)
 	tenantID := f.tenant("cancelled")
 	f.seed(tenantID)
 	gate := newGateStore(f.store)
-	ex := f.exporter(gate, &recordedMetrics{}, time.Now)
+	ex := f.taker(gate, &recordedMetrics{}, time.Now)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := ex.ExportTenant(ctx, tenantID)
+		_, err := ex.TakeTenant(ctx, tenantID)
 		done <- err
 	}()
-	waitFor(t, gate.entered, "the export to start writing")
+	waitFor(t, gate.entered, "the backup to start writing")
 	cancel()
 	close(gate.proceed)
 	require.ErrorIs(t, <-done, context.Canceled)
 
-	assert.Empty(t, f.stored(tenantID), "a cancelled export stores nothing")
+	assert.Empty(t, f.stored(tenantID), "a cancelled backup stores nothing")
 	_, holder := f.leaseNode(tenantID)
 	assert.Nil(t, holder, "the lease was released")
 	require.NoError(t, f.write(tenantID, "m-after"))
-	_, err := f.exporter(f.store, &recordedMetrics{}, time.Now).ExportTenant(context.Background(), tenantID)
+	_, err := f.taker(f.store, &recordedMetrics{}, time.Now).TakeTenant(context.Background(), tenantID)
 	require.NoError(t, err)
 }
 
-// A tenant that holds no node but its lease node exports to a header alone,
+// A tenant that holds no node but its lease node backups to a header alone,
 // which a restore accepts.
-func TestExporter_ExportsAnEmptyTenant(t *testing.T) {
+func TestTaker_BackupsAnEmptyTenant(t *testing.T) {
 	f := newGraphFixture(t)
 	tenantID := f.tenant("empty")
-	res, err := f.exporter(f.store, &recordedMetrics{}, time.Now).ExportTenant(context.Background(), tenantID)
+	res, err := f.taker(f.store, &recordedMetrics{}, time.Now).TakeTenant(context.Background(), tenantID)
 	require.NoError(t, err)
 	assert.Zero(t, res.Nodes)
 	assert.Zero(t, res.Relationships)
@@ -510,7 +510,7 @@ func TestRestorer_ValidatesBeforeItWipes(t *testing.T) {
 	f.seed(tenantID)
 	before := f.dump(tenantID)
 	header := func(tenant, nodes string) string {
-		return fmt.Sprintf(`{"format_version":1,"tenant_id":%q,"exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":%s,"relationships":{}}`, tenant, nodes)
+		return fmt.Sprintf(`{"format_version":1,"tenant_id":%q,"taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":%s,"relationships":{}}`, tenant, nodes)
 	}
 	nodeLine := func(tenant, label, uid string) string {
 		return fmt.Sprintf(`{"node":[%q],"props":{"tenant_id":%q,"unique_id":%q}}`, label, tenant, uid)
@@ -524,7 +524,7 @@ func TestRestorer_ValidatesBeforeItWipes(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			i++
-			key := exportKey(tenantID, time.Date(2026, 10, 30, 2, 0, i, 0, time.UTC))
+			key := backupKey(tenantID, time.Date(2026, 10, 30, 2, 0, i, 0, time.UTC))
 			f.putGzip(key, body)
 
 			_, err := f.restorer().Restore(context.Background(), key)
@@ -537,7 +537,7 @@ func TestRestorer_ValidatesBeforeItWipes(t *testing.T) {
 	}
 }
 
-// A restore returns the tenant's graph to the export: everything written
+// A restore returns the tenant's graph to the backup: everything written
 // after it is gone, everything it held is back, and the lease is free.
 func TestRestorer_WipesLoadsAndReleases(t *testing.T) {
 	f := newGraphFixture(t)
@@ -548,19 +548,19 @@ func TestRestorer_WipesLoadsAndReleases(t *testing.T) {
 	g := f.dump(tenantID)
 	others := f.dump(bystander)
 
-	res, err := f.exporter(f.store, &recordedMetrics{}, time.Now).ExportTenant(context.Background(), tenantID)
+	res, err := f.taker(f.store, &recordedMetrics{}, time.Now).TakeTenant(context.Background(), tenantID)
 	require.NoError(t, err)
 
 	f.exec(tenantID, `MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'svc.a'}) SET n.active = false, n.extra = 'changed'`, nil)
 	f.exec(tenantID, `MATCH (:Node {tenant_id: $tenant_id, unique_id: 'svc.b'})-[d:DEPENDS_ON]->() DELETE d`, nil)
 	f.exec(tenantID, `CREATE (:Node {tenant_id: $tenant_id, unique_id: 'svc.c', active: true})`, nil)
-	require.NoError(t, f.write(tenantID, "m-after-export"))
+	require.NoError(t, f.write(tenantID, "m-after-backup"))
 	require.NotEqual(t, g, f.dump(tenantID))
 
 	got, err := f.restorer().Restore(context.Background(), res.ObjectKey)
 	require.NoError(t, err)
 	assert.Equal(t, backup.RestoreResult{Nodes: res.Nodes, Relationships: res.Relationships}, got)
-	assert.Equal(t, g, f.dump(tenantID), "the graph is the exported one again")
+	assert.Equal(t, g, f.dump(tenantID), "the graph is the backed up one again")
 	assert.Equal(t, others, f.dump(bystander), "another tenant's graph is untouched")
 	_, holder := f.leaseNode(tenantID)
 	assert.Nil(t, holder, "the lease is free")
@@ -569,7 +569,7 @@ func TestRestorer_WipesLoadsAndReleases(t *testing.T) {
 
 // countingObjects is an object store whose writers count the bytes they are
 // given and keep none, so the production backup store over it measures what
-// an export itself holds: the codec, the compressor and the records in
+// a backup itself holds: the codec, the compressor and the records in
 // flight. It lists nothing and reads nothing.
 type countingObjects struct{ written atomic.Int64 }
 
@@ -662,12 +662,12 @@ func peakLiveHeapDuring(fn func()) uint64 {
 	return peak.Load()
 }
 
-// An export holds one fetch page of records and the compressor's window,
-// whatever the size of the graph: exporting a graph ten times larger leaves
-// the peak heap within twice the smaller export's peak plus 16 MiB. The
+// A backup holds one fetch page of records and the compressor's window,
+// whatever the size of the graph: backing up a graph ten times larger leaves
+// the peak heap within twice the smaller backup's peak plus 16 MiB. The
 // object store under the production backup store counts bytes and keeps
-// none, so only the export's own memory is measured.
-func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
+// none, so only the backup's own memory is measured.
+func TestTake_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 	const (
 		n       = 2000
 		payload = 6 << 10
@@ -679,12 +679,12 @@ func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 
 	measure := func(tenantID string) (uint64, backup.Result, int64) {
 		objects := &countingObjects{}
-		ex := f.exporter(s3infra.NewBackupStore(objects), &recordedMetrics{}, time.Now)
+		ex := f.taker(s3infra.NewBackupStore(objects), &recordedMetrics{}, time.Now)
 		var res backup.Result
 		var err error
-		peak := peakLiveHeapDuring(func() { res, err = ex.ExportTenant(context.Background(), tenantID) })
+		peak := peakLiveHeapDuring(func() { res, err = ex.TakeTenant(context.Background(), tenantID) })
 		require.NoError(t, err)
-		require.Equal(t, objects.written.Load(), res.Bytes, "the export reports the bytes the store took")
+		require.Equal(t, objects.written.Load(), res.Bytes, "the backup reports the bytes the store took")
 		return peak, res, objects.written.Load()
 	}
 	peakSmall, resSmall, bytesSmall := measure(small)
@@ -696,17 +696,17 @@ func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 		10*n, resLarge.Nodes+resLarge.Relationships, bytesLarge/mib, float64(peakLarge)/mib, float64(2*peakSmall+16*mib)/mib)
 	bound := 2*peakSmall + 16*mib
 	require.Equal(t, int64(10*n), resLarge.Nodes)
-	require.Greater(t, bytesLarge, 9*bytesSmall, "the larger export writes about ten times the bytes")
+	require.Greater(t, bytesLarge, 9*bytesSmall, "the larger backup writes about ten times the bytes")
 	require.Greater(t, bytesLarge, int64(64*mib),
-		"the larger export writes far more than the bound's slack, so an export that held it whole would break the bound")
+		"the larger backup writes far more than the bound's slack, so a backup that held it whole would break the bound")
 	assert.LessOrEqual(t, peakLarge, bound,
-		"the peak heap of an export ten times larger stays within twice the smaller one's plus 16 MiB")
+		"the peak heap of a backup ten times larger stays within twice the smaller one's plus 16 MiB")
 }
 
-// An export started between two batches of one message waits for the message's
+// A backup started between two batches of one message waits for the message's
 // last batch, so the stored file holds all of the message's data and its
 // processed-message marker.
-func TestExport_WaitsForAMessageBetweenBatches(t *testing.T) {
+func TestTake_WaitsForAMessageBetweenBatches(t *testing.T) {
 	ctx := context.Background()
 	f := newGraphFixture(t)
 	tenantID := f.tenant("inflight")
@@ -717,19 +717,19 @@ func TestExport_WaitsForAMessageBetweenBatches(t *testing.T) {
 	}
 
 	batch("batch-1", false)
-	ex := f.exporter(f.store, &recordedMetrics{}, time.Now)
+	ex := f.taker(f.store, &recordedMetrics{}, time.Now)
 	done := make(chan error, 1)
 	go func() {
-		_, err := ex.ExportTenant(ctx, tenantID)
+		_, err := ex.TakeTenant(ctx, tenantID)
 		done <- err
 	}()
 
 	time.Sleep(500 * time.Millisecond)
 	_, holder := f.leaseNode(tenantID)
-	assert.Nil(t, holder, "the export waits and takes no lease between the message's batches")
+	assert.Nil(t, holder, "the backup waits and takes no lease between the message's batches")
 	select {
 	case err := <-done:
-		t.Fatalf("the export ended between the message's batches: %v", err)
+		t.Fatalf("the backup ended between the message's batches: %v", err)
 	default:
 	}
 
@@ -738,7 +738,7 @@ func TestExport_WaitsForAMessageBetweenBatches(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("the export did not go ahead after the message's last batch")
+		t.Fatal("the backup did not go ahead after the message's last batch")
 	}
 
 	keys := f.stored(tenantID)
@@ -747,7 +747,7 @@ func TestExport_WaitsForAMessageBetweenBatches(t *testing.T) {
 	var probes []string
 	markers := 0
 	for _, rec := range recs {
-		n, ok := rec.(export.NodeRecord)
+		n, ok := rec.(graphbackup.NodeRecord)
 		if !ok {
 			continue
 		}
@@ -758,6 +758,6 @@ func TestExport_WaitsForAMessageBetweenBatches(t *testing.T) {
 			markers++
 		}
 	}
-	assert.ElementsMatch(t, []string{"batch-1", "batch-2"}, probes, "the export holds both of the message's batches")
-	assert.Equal(t, 1, markers, "the export holds the message's marker")
+	assert.ElementsMatch(t, []string{"batch-1", "batch-2"}, probes, "the backup holds both of the message's batches")
+	assert.Equal(t, 1, markers, "the backup holds the message's marker")
 }

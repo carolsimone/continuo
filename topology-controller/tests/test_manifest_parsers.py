@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from domain.exceptions import InvalidCompileExtrasError, InvalidOdcsBundleError
-from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode, SkipReason
+from domain.model import ManifestFile, ManifestKind, ParsedArtifact, ExcludedModel, ExclusionReason
 from service.contract_validation import ContractValidator
 from service.manifest_parsers import parser_for
 from tests.odcs_fixtures import bundle_file, demo_nodes, release_timings
@@ -63,15 +63,15 @@ def test_the_dbt_entry_reads_a_manifest_that_names_no_project_against_the_declar
     del manifest["metadata"]
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
-    skipped: list[SkippedNode] = []
+    excluded: list[ExcludedModel] = []
 
-    parsed = _parse(ManifestKind.DBT, ManifestFile(path=str(path), declared_project="shop-core"), skipped=skipped)
+    parsed = _parse(ManifestKind.DBT, ManifestFile(path=str(path), declared_project="shop-core"), excluded=excluded)
 
     assert sorted(n.table_name for n in parsed.nodes) == ["countries", "monthly_report", "orders"]
-    assert [(s.node_id, s.reason) for s in skipped] == [
-        ("model.evalpkg.pkg_model", SkipReason.INSTALLED_PACKAGE),
-        ("seed.evalpkg.pkg_seed", SkipReason.INSTALLED_PACKAGE),
-        ("model.evalpkg.pkg_no_owner", SkipReason.NO_OWNER),
+    assert [(s.node_id, s.reason) for s in excluded] == [
+        ("model.evalpkg.pkg_model", ExclusionReason.INSTALLED_PACKAGE),
+        ("seed.evalpkg.pkg_seed", ExclusionReason.INSTALLED_PACKAGE),
+        ("model.evalpkg.pkg_no_owner", ExclusionReason.NO_OWNER),
     ]
 
 

@@ -13,7 +13,7 @@ func TestHeadroom(t *testing.T) {
 		limit, inFlight, batch int
 		want                   int
 	}{
-		{"free slots below batch", 50, 47, 50, 3},
+		{"free capacity below batch", 50, 47, 50, 3},
 		{"batch caps a large headroom", 50, 0, 20, 20},
 		{"at the cap", 50, 50, 50, 0},
 		{"cap lowered below what is in flight", 10, 40, 50, 0},

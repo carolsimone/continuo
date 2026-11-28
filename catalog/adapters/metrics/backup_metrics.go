@@ -1,5 +1,5 @@
 // Package metrics holds catalog's own Prometheus series: those of the
-// nightly export of each tenant's graph and those of its contract versions
+// nightly backup of each tenant's graph and those of its contract versions
 // and live contracts folder.
 package metrics
 
@@ -15,21 +15,21 @@ import (
 )
 
 const (
-	// lastSuccessCacheFor is how long a read of the stored exports serves the
+	// lastSuccessCacheFor is how long a read of the stored backups serves the
 	// last-success gauge, so frequent scrapes list the store at most once a
 	// minute.
 	lastSuccessCacheFor = time.Minute
 	// lastSuccessReadTimeout bounds one read of the tenants and their
-	// exports, well under Prometheus's default scrape timeout of 10 s.
+	// backups, well under Prometheus's default scrape timeout of 10 s.
 	lastSuccessReadTimeout = 5 * time.Second
 )
 
-// BackupMetrics counts the exports this process runs, by outcome, and
+// BackupMetrics counts the backups this process runs, by outcome, and
 // reports the duration, size and records of the last stored one. Its
 // last-success gauge is read from the store when scraped, so it holds every
-// export, whichever process took it, and survives a restart.
+// backup, whichever process took it, and survives a restart.
 type BackupMetrics struct {
-	exports     *prometheus.CounterVec
+	backups     *prometheus.CounterVec
 	duration    prometheus.Histogram
 	bytes       prometheus.Gauge
 	records     *prometheus.GaugeVec
@@ -38,50 +38,50 @@ type BackupMetrics struct {
 
 var _ ports.BackupMetrics = (*BackupMetrics)(nil)
 
-// NewBackupMetrics registers continuo_catalog_exports_total,
-// continuo_catalog_export_duration_seconds, continuo_catalog_export_bytes,
-// continuo_catalog_export_records and
-// continuo_catalog_export_last_success_timestamp_seconds on reg. The last of
-// those reads the tenants' stored exports through freshness; clock times its
+// NewBackupMetrics registers continuo_catalog_backups_total,
+// continuo_catalog_backup_duration_seconds, continuo_catalog_backup_bytes,
+// continuo_catalog_backup_records and
+// continuo_catalog_backup_last_success_timestamp_seconds on reg. The last of
+// those reads the tenants' stored backups through freshness; clock times its
 // cache.
-func NewBackupMetrics(reg *pkgmetrics.Registry, freshness ports.ExportFreshness, clock func() time.Time, logger *slog.Logger) *BackupMetrics {
+func NewBackupMetrics(reg *pkgmetrics.Registry, freshness ports.BackupFreshness, clock func() time.Time, logger *slog.Logger) *BackupMetrics {
 	m := &BackupMetrics{
-		exports: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "continuo_catalog_exports_total",
-			Help: "Exports of a tenant's catalog graph this process ran, by outcome: success (the export was stored), failure (nothing was stored) or skipped (another export or a restore held the tenant's lease).",
+		backups: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "continuo_catalog_backups_total",
+			Help: "Backups of a tenant's catalog graph this process ran, by outcome: success (the backup was stored), failure (nothing was stored) or skipped (another backup or a restore held the tenant's lease).",
 		}, []string{"outcome"}),
 		duration: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "continuo_catalog_export_duration_seconds",
-			Help:    "Seconds each stored export held its tenant's export lease, during which the tenant's catalog writes were paused.",
+			Name:    "continuo_catalog_backup_duration_seconds",
+			Help:    "Seconds each stored backup held its tenant's backup lease, during which the tenant's catalog writes were paused.",
 			Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200},
 		}),
 		bytes: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "continuo_catalog_export_bytes",
-			Help: "Size in bytes of the last export this process stored.",
+			Name: "continuo_catalog_backup_bytes",
+			Help: "Size in bytes of the last backup this process stored.",
 		}),
 		records: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "continuo_catalog_export_records",
-			Help: "Records of the last export this process stored, by kind: node or relationship.",
+			Name: "continuo_catalog_backup_records",
+			Help: "Records of the last backup this process stored, by kind: node or relationship.",
 		}, []string{"kind"}),
 		lastSuccess: &lastSuccess{
-			desc: prometheus.NewDesc("continuo_catalog_export_last_success_timestamp_seconds",
-				"Unix time of the newest stored export of the tenant whose newest export is the oldest, 0 when a tenant has none; read from object storage at most once a minute.",
+			desc: prometheus.NewDesc("continuo_catalog_backup_last_success_timestamp_seconds",
+				"Unix time of the newest stored backup of the tenant whose newest backup is the oldest, 0 when a tenant has none; read from object storage at most once a minute.",
 				nil, nil),
 			freshness: freshness, clock: clock, logger: logger,
 		},
 	}
-	for _, outcome := range []string{ports.ExportSuccess, ports.ExportFailure, ports.ExportSkipped} {
-		m.exports.WithLabelValues(outcome)
+	for _, outcome := range []string{ports.BackupSuccess, ports.BackupFailure, ports.BackupSkipped} {
+		m.backups.WithLabelValues(outcome)
 	}
-	reg.Register(m.exports, m.duration, m.bytes, m.records, m.lastSuccess)
+	reg.Register(m.backups, m.duration, m.bytes, m.records, m.lastSuccess)
 	return m
 }
 
-// ExportObserved counts one export under its outcome; a success also sets
+// BackupObserved counts one backup under its outcome; a success also sets
 // the duration, size and record series.
-func (m *BackupMetrics) ExportObserved(outcome string, d time.Duration, bytes int64, nodes, rels int64) {
-	m.exports.WithLabelValues(outcome).Inc()
-	if outcome != ports.ExportSuccess {
+func (m *BackupMetrics) BackupObserved(outcome string, d time.Duration, bytes int64, nodes, rels int64) {
+	m.backups.WithLabelValues(outcome).Inc()
+	if outcome != ports.BackupSuccess {
 		return
 	}
 	m.duration.Observe(d.Seconds())
@@ -91,14 +91,14 @@ func (m *BackupMetrics) ExportObserved(outcome string, d time.Duration, bytes in
 }
 
 // lastSuccess is the collector of the last-success gauge. A scrape reads the
-// exports' freshness at most once per lastSuccessCacheFor; a
+// backups' freshness at most once per lastSuccessCacheFor; a
 // read that fails is logged and the last value stays. The read holds no lock,
 // so a scrape that comes while another one reads serves the last value at
 // once instead of waiting. With no tenant, or no read that succeeded yet, the
 // gauge has no sample.
 type lastSuccess struct {
 	desc      *prometheus.Desc
-	freshness ports.ExportFreshness
+	freshness ports.BackupFreshness
 	clock     func() time.Time
 	logger    *slog.Logger
 
@@ -125,7 +125,7 @@ func (c *lastSuccess) Collect(ch chan<- prometheus.Metric) {
 		value, known, err := c.read()
 		c.mu.Lock()
 		if err != nil {
-			c.logger.Warn("the last catalog export could not be read from object storage; its gauge keeps the last value", "error", err)
+			c.logger.Warn("the last catalog backup could not be read from object storage; its gauge keeps the last value", "error", err)
 		} else {
 			c.value, c.known = value, known
 		}
@@ -140,12 +140,12 @@ func (c *lastSuccess) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-// read returns the oldest of the tenants' newest exports, in Unix seconds
+// read returns the oldest of the tenants' newest backups, in Unix seconds
 // (0 when a tenant has none), and false when there is no tenant.
 func (c *lastSuccess) read() (float64, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), lastSuccessReadTimeout)
 	defer cancel()
-	at, known, err := c.freshness.OldestNewestExport(ctx)
+	at, known, err := c.freshness.OldestNewestBackup(ctx)
 	if err != nil || !known {
 		return 0, false, err
 	}
@@ -155,12 +155,12 @@ func (c *lastSuccess) read() (float64, bool, error) {
 	return float64(at.UnixNano()) / 1e9, true, nil
 }
 
-// NopBackupMetrics drops the observations of the exports a process takes. A
-// process that ends with its export, such as catalog-backup, uses it: the
-// last-success gauge reads the store, where its export lands too.
+// NopBackupMetrics drops the observations of the backs up a process takes. A
+// process that ends with its backup, such as catalog-backup, uses it: the
+// last-success gauge reads the store, where its backup lands too.
 type NopBackupMetrics struct{}
 
 var _ ports.BackupMetrics = NopBackupMetrics{}
 
-// ExportObserved drops the observation.
-func (NopBackupMetrics) ExportObserved(string, time.Duration, int64, int64, int64) {}
+// BackupObserved drops the observation.
+func (NopBackupMetrics) BackupObserved(string, time.Duration, int64, int64, int64) {}

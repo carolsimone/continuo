@@ -16,7 +16,7 @@ import (
 
 // tenantGuardExempt names the files of this package whose Cypher acts on every
 // tenant at once, so their statements are not held to the tenant rule: the
-// schema DDL, the startup migration, the marker sweeper, the export loop's
+// schema DDL, the startup migration, the marker sweeper, the backup loop's
 // list of tenants and the contract history sweeper's. Every other non-test
 // file is.
 var tenantGuardExempt = []string{"schema.go", "migrate.go", "marker_sweeper.go", "tenants.go", "contract_history_tenants.go"}
@@ -79,7 +79,7 @@ func TestCypherGuard_FailsAStatementWithoutTheTenant(t *testing.T) {
 		{"reached through a relationship",
 			"`MATCH (n:Node {tenant_id: $tenant_id})-[:CURRENT]->(v:NodeVersion) RETURN v`", "(v:NodeVersion)"},
 		{"in an EXISTS subquery",
-			"`MATCH (r:Rejection {tenant_id: $tenant_id}) RETURN exists { (r)-[:RESOLVED_BY]->(:Fix) } AS x`", "(:Fix)"},
+			"`MATCH (r:FailurePrecedent {tenant_id: $tenant_id}) RETURN exists { (r)-[:RESOLVED_BY]->(:Fix) } AS x`", "(:Fix)"},
 		{"tenant read from another node",
 			"`MATCH (n:Node {tenant_id: $tenant_id}) MATCH (m:Meta {tenant_id: n.tenant_id}) RETURN m`", "(m:Meta {tenant_id: n.tenant_id})"},
 		{"another parameter", "`MATCH (n:Node {tenant_id: $tenant}) RETURN n`", "(n:Node {tenant_id: $tenant})"},
@@ -123,8 +123,8 @@ func TestCypherGuard_FailsAStatementWithoutTheTenant(t *testing.T) {
 func TestCypherGuard_AcceptsTenantBoundStatements(t *testing.T) {
 	statements := []string{
 		"`MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid})-[:CURRENT]->(v:NodeVersion {tenant_id: $tenant_id}) RETURN v`",
-		"`MERGE (m:Meta {key: 'export', tenant_id: $tenant_id}) RETURN m`",
-		"`MATCH (rej:Rejection {tenant_id: $tenant_id}) OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res) WHERE res:NodeVersion OR res:Fix RETURN res`",
+		"`MERGE (m:Meta {key: 'backup', tenant_id: $tenant_id}) RETURN m`",
+		"`MATCH (rej:FailurePrecedent {tenant_id: $tenant_id}) OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res) WHERE res:NodeVersion OR res:Fix RETURN res`",
 		"`MATCH (n:Node {tenant_id: $tenant_id}) RETURN coalesce(n.active, true), count(DISTINCT n), duration({days: $d}), collect(n { .unique_id, x: coalesce(n.a, n.b) })`",
 		"`MATCH (n:Node {\n\t\ttenant_id: $tenant_id,\n\t\tunique_id: $uid\n\t}) RETURN n`",
 		`"no statement here (x: y)"`,
@@ -142,7 +142,7 @@ func TestCypherGuard_AcceptsTenantBoundStatements(t *testing.T) {
 }
 
 // TestCypherGuard_ExemptsOnlyTheListedFiles shows that the same statement is
-// a violation in every file but the exempt ones, the backup's export and
+// a violation in every file but the exempt ones, the backup's backup and
 // import included.
 func TestCypherGuard_ExemptsOnlyTheListedFiles(t *testing.T) {
 	src := []byte("package neo4jinfra\n\nconst statement = `MATCH (n:Node) DETACH DELETE n`\n")
@@ -155,7 +155,7 @@ func TestCypherGuard_ExemptsOnlyTheListedFiles(t *testing.T) {
 			t.Errorf("%s is exempt, but the guard reported %v", name, scan.violations)
 		}
 	}
-	for _, name := range []string{"export.go", "import.go", "node_query_repository.go"} {
+	for _, name := range []string{"backup.go", "import.go", "node_query_repository.go"} {
 		scan, err := scanCypher(map[string][]byte{name: src})
 		if err != nil {
 			t.Fatal(err)

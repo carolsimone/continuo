@@ -616,7 +616,7 @@ def test_progress_is_called_after_each_dbt_contract(tmp_path, monkeypatch):
 
     parse_manifest(path, progress=lambda: events.append("progress"))
 
-    # A failed contract is followed by a call too; a skipped node and a test get none.
+    # A failed contract is followed by a call too; an excluded model and a test get none.
     assert events == ["generate", "progress", "generate", "progress", "progress", "generate", "progress"]
 
 

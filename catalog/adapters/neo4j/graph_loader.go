@@ -9,13 +9,13 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/carolsimone/continuo/catalog/service/export"
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// importBatchRows is how many nodes, or relationships, one import
+// importBatchRows is how many nodes, or relationships, one restore
 // transaction creates.
 const importBatchRows = 500
 
@@ -23,17 +23,17 @@ const importBatchRows = 500
 const wipeBatchRows = 1000
 
 var (
-	// errImportTenantNotEmpty means the tenant holds nodes besides its lease
-	// node, so an import would mix them with the export's.
-	errImportTenantNotEmpty = errors.New("neo4j: the tenant holds nodes besides its export lease node; wipe it before an import")
-	// errImportOutOfOrder means a node came after the first relationship.
-	errImportOutOfOrder = errors.New("neo4j: a node after the relationships")
-	// errImportUnresolvedEnd means a relationship's ends did not name exactly
-	// one node each among the nodes the import loaded.
-	errImportUnresolvedEnd = errors.New("neo4j: a relationship end names no single node of the import")
-	// errImportCountMismatch means the records read, or the graph loaded,
-	// disagree with the export's counts.
-	errImportCountMismatch = errors.New("neo4j: the import's counts disagree with the export")
+	// errLoadTenantNotEmpty means the tenant holds nodes besides its lease
+	// node, so an restore would mix them with the backup's.
+	errLoadTenantNotEmpty = errors.New("neo4j: the tenant holds nodes besides its backup lease node; wipe it before an restore")
+	// errLoadOutOfOrder means a node came after the first relationship.
+	errLoadOutOfOrder = errors.New("neo4j: a node after the relationships")
+	// errLoadUnresolvedEnd means a relationship's ends did not name exactly
+	// one node each among the nodes the restore loaded.
+	errLoadUnresolvedEnd = errors.New("neo4j: a relationship end names no single node of the restore")
+	// errLoadCountMismatch means the records read, or the graph loaded,
+	// disagree with the backup's counts.
+	errLoadCountMismatch = errors.New("neo4j: the restore's counts disagree with the backup")
 )
 
 // wipeCypher deletes the tenant's nodes but its lease node, with their
@@ -99,17 +99,17 @@ func identityMatch(label graphschema.Label, keys string) string {
 	return strings.Join(parts, ", ")
 }
 
-// graphImporter implements ports.GraphImporter on the catalog graph.
-type graphImporter struct {
+// graphLoader implements ports.GraphLoader on the catalog graph.
+type graphLoader struct {
 	client Neo4jClient
 	logger *slog.Logger
 }
 
-var _ ports.GraphImporter = (*graphImporter)(nil)
+var _ ports.GraphLoader = (*graphLoader)(nil)
 
-// NewGraphImporter returns an importer into client's graph.
-func NewGraphImporter(client Neo4jClient, logger *slog.Logger) ports.GraphImporter {
-	return &graphImporter{client: client, logger: logger}
+// NewGraphLoader returns an loader into client's graph.
+func NewGraphLoader(client Neo4jClient, logger *slog.Logger) ports.GraphLoader {
+	return &graphLoader{client: client, logger: logger}
 }
 
 // autoCommit runs each statement as an auto-commit transaction of its
@@ -120,9 +120,9 @@ func (a autoCommit) Run(ctx context.Context, cypher string, params map[string]an
 	return a.session.Run(ctx, cypher, params)
 }
 
-// Wipe deletes every node of the tenant but its export lease node, with its
+// Wipe deletes every node of the tenant but its backup lease node, with its
 // relationships, in batches that each commit.
-func (i *graphImporter) Wipe(ctx context.Context, tenantID string) error {
+func (i *graphLoader) Wipe(ctx context.Context, tenantID string) error {
 	if tenantID == "" {
 		return errEmptyTenant
 	}
@@ -132,7 +132,7 @@ func (i *graphImporter) Wipe(ctx context.Context, tenantID string) error {
 	if err != nil {
 		return err
 	}
-	res, err := run.Run(ctx, wipeCypher, map[string]any{"lease_key": export.LeaseNodeKey, "batch_rows": wipeBatchRows})
+	res, err := run.Run(ctx, wipeCypher, map[string]any{"lease_key": graphbackup.LeaseNodeKey, "batch_rows": wipeBatchRows})
 	if err != nil {
 		return fmt.Errorf("neo4j: wipe the graph of tenant %q: %w", tenantID, err)
 	}
@@ -145,71 +145,71 @@ func (i *graphImporter) Wipe(ctx context.Context, tenantID string) error {
 	return nil
 }
 
-// Import loads in into the tenant's wiped graph: its nodes in batches of
+// Restore loads in into the tenant's wiped graph: its nodes in batches of
 // importBatchRows, then its relationships, each end matched by its label and
 // identity within the tenant. Every record is checked against the schema and
 // the tenant before any statement is built from it, and the statements are
-// built from the schema's constants, never from the record's text. An export
-// lease node in the export is not loaded. Import then checks that the records
+// built from the schema's constants, never from the record's text. A backup
+// lease node in the backup is not loaded. Restore then checks that the records
 // matched the header's counts and that the graph holds exactly what it
 // loaded, and ends with the startup migration (InitSchema), which brings an
-// export written by an older catalog to the current shape. A failure leaves
+// backup written by an older catalog to the current shape. A failure leaves
 // what earlier batches loaded; a restore wipes again before it retries.
-func (i *graphImporter) Import(ctx context.Context, tenantID string, in ports.RecordReader) error {
+func (i *graphLoader) Load(ctx context.Context, tenantID string, in ports.RecordReader) error {
 	if tenantID == "" {
 		return errEmptyTenant
 	}
 	loaded, err := i.load(ctx, tenantID, in)
 	if err != nil {
-		return fmt.Errorf("neo4j: import the graph of tenant %q: %w", tenantID, err)
+		return fmt.Errorf("neo4j: restore the graph of tenant %q: %w", tenantID, err)
 	}
 	// InitSchema migrates every tenant's graph, not only this one's, and runs
-	// from the operator's process outside the export gate. That is safe: on a
+	// from the operator's process outside the backup gate. That is safe: on a
 	// graph already migrated, which every live tenant's is since catalog runs
 	// it at startup, each of its steps changes nothing, so it touches only the
-	// nodes this import loaded in an older shape.
+	// nodes this restore loaded in an older shape.
 	if err := InitSchema(ctx, i.client, i.logger); err != nil {
-		return fmt.Errorf("neo4j: import the graph of tenant %q: %w", tenantID, err)
+		return fmt.Errorf("neo4j: restore the graph of tenant %q: %w", tenantID, err)
 	}
-	i.logger.Info("tenant graph imported", "tenant_id", tenantID, "nodes", loaded.nodes, "relationships", loaded.rels)
+	i.logger.Info("tenant graph restored", "tenant_id", tenantID, "nodes", loaded.nodes, "relationships", loaded.rels)
 	return nil
 }
 
-// importCounts counts records per label and per relationship type.
-type importCounts struct {
+// loadCounts counts records per label and per relationship type.
+type loadCounts struct {
 	nodes map[string]int64
 	rels  map[string]int64
 }
 
-func newImportCounts() importCounts {
-	return importCounts{nodes: map[string]int64{}, rels: map[string]int64{}}
+func newLoadCounts() loadCounts {
+	return loadCounts{nodes: map[string]int64{}, rels: map[string]int64{}}
 }
 
-func (i *graphImporter) load(ctx context.Context, tenantID string, in ports.RecordReader) (importCounts, error) {
+func (i *graphLoader) load(ctx context.Context, tenantID string, in ports.RecordReader) (loadCounts, error) {
 	h := in.Header()
 	if err := h.Check(); err != nil {
-		return importCounts{}, err
+		return loadCounts{}, err
 	}
 	if h.TenantID != tenantID {
-		return importCounts{}, fmt.Errorf("the export is of tenant %q: %w", h.TenantID, export.ErrTenantMismatch)
+		return loadCounts{}, fmt.Errorf("the backup is of tenant %q: %w", h.TenantID, graphbackup.ErrTenantMismatch)
 	}
 
 	session := i.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = session.Close(ctx) }()
-	l := &importLoader{
+	l := &recordLoader{
 		ctx: ctx, session: session, tenantID: tenantID,
 		nodeBatches: map[string]*nodeBatch{}, relBatches: map[relGroup][]any{},
-		read: newImportCounts(), loaded: newImportCounts(),
+		read: newLoadCounts(), loaded: newLoadCounts(),
 	}
 	var found bool
 	if err := l.inTx(false, func(run TenantRunner) (err error) {
-		found, err = singleBool(ctx, run, tenantHoldsNodesCypher, map[string]any{"lease_key": export.LeaseNodeKey}, "found")
+		found, err = singleBool(ctx, run, tenantHoldsNodesCypher, map[string]any{"lease_key": graphbackup.LeaseNodeKey}, "found")
 		return err
 	}); err != nil {
-		return importCounts{}, fmt.Errorf("check the tenant holds no nodes: %w", err)
+		return loadCounts{}, fmt.Errorf("check the tenant holds no nodes: %w", err)
 	}
 	if found {
-		return importCounts{}, errImportTenantNotEmpty
+		return loadCounts{}, errLoadTenantNotEmpty
 	}
 
 	for {
@@ -218,32 +218,32 @@ func (i *graphImporter) load(ctx context.Context, tenantID string, in ports.Reco
 			break
 		}
 		if err != nil {
-			return importCounts{}, fmt.Errorf("read the export: %w", err)
+			return loadCounts{}, fmt.Errorf("read the backup: %w", err)
 		}
 		switch x := rec.(type) {
-		case export.NodeRecord:
+		case graphbackup.NodeRecord:
 			err = l.node(x)
-		case export.RelRecord:
+		case graphbackup.RelRecord:
 			err = l.rel(x)
 		default:
-			err = fmt.Errorf("%w: a record of type %T", export.ErrInvalidRecord, rec)
+			err = fmt.Errorf("%w: a record of type %T", graphbackup.ErrInvalidRecord, rec)
 		}
 		if err != nil {
-			return importCounts{}, err
+			return loadCounts{}, err
 		}
 	}
 	if !maps.Equal(l.read.nodes, nonZero(h.Nodes)) || !maps.Equal(l.read.rels, nonZero(h.Relationships)) {
-		return importCounts{}, fmt.Errorf("%w: the header counts nodes %v and relationships %v, the export holds %v and %v",
-			errImportCountMismatch, h.Nodes, h.Relationships, l.read.nodes, l.read.rels)
+		return loadCounts{}, fmt.Errorf("%w: the header counts nodes %v and relationships %v, the backup holds %v and %v",
+			errLoadCountMismatch, h.Nodes, h.Relationships, l.read.nodes, l.read.rels)
 	}
 	if err := l.flushNodes(); err != nil {
-		return importCounts{}, err
+		return loadCounts{}, err
 	}
 	if err := l.flushRels(); err != nil {
-		return importCounts{}, err
+		return loadCounts{}, err
 	}
 	if err := l.checkGraph(); err != nil {
-		return importCounts{}, err
+		return loadCounts{}, err
 	}
 	return l.loaded, nil
 }
@@ -260,23 +260,23 @@ type relGroup struct {
 	from, to graphschema.Label
 }
 
-// importLoader batches an import's records and creates them.
-type importLoader struct {
+// recordLoader batches an restore's records and creates them.
+type recordLoader struct {
 	ctx         context.Context
 	session     neo4j.SessionWithContext
 	tenantID    string
 	nodeBatches map[string]*nodeBatch
 	relBatches  map[relGroup][]any
 	inRels      bool
-	read        importCounts
-	loaded      importCounts
+	read        loadCounts
+	loaded      loadCounts
 }
 
 // node checks a node record and queues it for its labels' batch. It does not
-// queue the export lease node.
-func (l *importLoader) node(n export.NodeRecord) error {
+// queue the backup lease node.
+func (l *recordLoader) node(n graphbackup.NodeRecord) error {
 	if l.inRels {
-		return errImportOutOfOrder
+		return errLoadOutOfOrder
 	}
 	if err := n.Check(l.tenantID); err != nil {
 		return err
@@ -293,7 +293,7 @@ func (l *importLoader) node(n export.NodeRecord) error {
 	}
 	row := make(map[string]any, len(n.Props))
 	for k, v := range n.Props {
-		if k != export.TenantProperty {
+		if k != graphbackup.TenantProperty {
 			row[k] = v
 		}
 	}
@@ -316,7 +316,7 @@ func (l *importLoader) node(n export.NodeRecord) error {
 // rel checks a relationship record and queues it for its group's batch. The
 // first relationship flushes every pending node, so each end exists before a
 // relationship names it.
-func (l *importLoader) rel(r export.RelRecord) error {
+func (l *recordLoader) rel(r graphbackup.RelRecord) error {
 	if err := r.Check(); err != nil {
 		return err
 	}
@@ -352,7 +352,7 @@ func (l *importLoader) rel(r export.RelRecord) error {
 	return nil
 }
 
-func (l *importLoader) flushNodes() error {
+func (l *recordLoader) flushNodes() error {
 	for key, b := range l.nodeBatches {
 		if err := l.createNodes(key, b); err != nil {
 			return err
@@ -361,7 +361,7 @@ func (l *importLoader) flushNodes() error {
 	return nil
 }
 
-func (l *importLoader) flushRels() error {
+func (l *recordLoader) flushRels() error {
 	for g := range l.relBatches {
 		if err := l.createRels(g); err != nil {
 			return err
@@ -371,7 +371,7 @@ func (l *importLoader) flushRels() error {
 }
 
 // createNodes creates a batch's nodes in one transaction and empties it.
-func (l *importLoader) createNodes(key string, b *nodeBatch) error {
+func (l *recordLoader) createNodes(key string, b *nodeBatch) error {
 	if len(b.rows) == 0 {
 		return nil
 	}
@@ -380,7 +380,7 @@ func (l *importLoader) createNodes(key string, b *nodeBatch) error {
 		return fmt.Errorf("create %d nodes %v: %w", len(b.rows), b.labels, err)
 	}
 	if created != int64(len(b.rows)) {
-		return fmt.Errorf("%w: created %d of %d nodes %v", errImportCountMismatch, created, len(b.rows), b.labels)
+		return fmt.Errorf("%w: created %d of %d nodes %v", errLoadCountMismatch, created, len(b.rows), b.labels)
 	}
 	b.rows = b.rows[:0]
 	return nil
@@ -388,7 +388,7 @@ func (l *importLoader) createNodes(key string, b *nodeBatch) error {
 
 // createRels creates a group's relationships in one transaction and empties
 // it. Each must find exactly its two ends.
-func (l *importLoader) createRels(g relGroup) error {
+func (l *recordLoader) createRels(g relGroup) error {
 	rows := l.relBatches[g]
 	if len(rows) == 0 {
 		return nil
@@ -399,7 +399,7 @@ func (l *importLoader) createRels(g relGroup) error {
 	}
 	if created != int64(len(rows)) {
 		return fmt.Errorf("%w: %d :%s relationships from a :%s to a :%s created %d",
-			errImportUnresolvedEnd, len(rows), g.typ, g.from, g.to, created)
+			errLoadUnresolvedEnd, len(rows), g.typ, g.from, g.to, created)
 	}
 	delete(l.relBatches, g)
 	return nil
@@ -407,7 +407,7 @@ func (l *importLoader) createRels(g relGroup) error {
 
 // create runs a create statement over rows in one transaction and returns
 // how many it created.
-func (l *importLoader) create(cypher string, rows []any) (int64, error) {
+func (l *recordLoader) create(cypher string, rows []any) (int64, error) {
 	var created int64
 	err := l.inTx(true, func(run TenantRunner) (err error) {
 		created, err = singleInt(l.ctx, run, cypher, map[string]any{"rows": rows}, "created")
@@ -417,12 +417,12 @@ func (l *importLoader) create(cypher string, rows []any) (int64, error) {
 }
 
 // checkGraph compares the tenant's graph, its lease node aside, with what the
-// import loaded.
-func (l *importLoader) checkGraph() error {
-	params := map[string]any{"lease_key": export.LeaseNodeKey}
-	inGraph := newImportCounts()
+// restore loaded.
+func (l *recordLoader) checkGraph() error {
+	params := map[string]any{"lease_key": graphbackup.LeaseNodeKey}
+	inGraph := newLoadCounts()
 	err := l.inTx(false, func(run TenantRunner) error {
-		if err := eachRecord(l.ctx, run, exportNodeCountsCypher, params, func(rec *neo4j.Record) error {
+		if err := eachRecord(l.ctx, run, backupNodeCountsCypher, params, func(rec *neo4j.Record) error {
 			labels, err := stringListColumn(rec, "labels")
 			if err != nil {
 				return err
@@ -438,7 +438,7 @@ func (l *importLoader) checkGraph() error {
 		}); err != nil {
 			return err
 		}
-		return eachRecord(l.ctx, run, exportRelCountsCypher, params, func(rec *neo4j.Record) error {
+		return eachRecord(l.ctx, run, backupRelCountsCypher, params, func(rec *neo4j.Record) error {
 			typ, err := stringColumn(rec, "type")
 			if err != nil {
 				return err
@@ -456,7 +456,7 @@ func (l *importLoader) checkGraph() error {
 	}
 	if !maps.Equal(inGraph.nodes, l.loaded.nodes) || !maps.Equal(inGraph.rels, l.loaded.rels) {
 		return fmt.Errorf("%w: loaded nodes %v and relationships %v, the graph holds %v and %v",
-			errImportCountMismatch, l.loaded.nodes, l.loaded.rels, inGraph.nodes, inGraph.rels)
+			errLoadCountMismatch, l.loaded.nodes, l.loaded.rels, inGraph.nodes, inGraph.rels)
 	}
 	return nil
 }
@@ -464,7 +464,7 @@ func (l *importLoader) checkGraph() error {
 // inTx runs body in one explicit transaction of the loader's session, bound
 // to its tenant, and commits it when commit is true and body succeeds. It
 // does not retry.
-func (l *importLoader) inTx(commit bool, body func(run TenantRunner) error) error {
+func (l *recordLoader) inTx(commit bool, body func(run TenantRunner) error) error {
 	tx, err := l.session.BeginTransaction(l.ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)

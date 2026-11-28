@@ -70,8 +70,8 @@ func (h *PrOpenedFixesHandler) Handle(
 	}
 
 	// One PR fixes every node it resolves, so each of those nodes gets its own
-	// :Fix attached to its own rejection. Recording only the representative
-	// node would leave the rest of a batched fix's rejections without a PROPOSED
+	// :Fix attached to its own failure precedent. Recording only the representative
+	// node would leave the rest of a batched fix's failure precedents without a PROPOSED
 	// edge, and precedent for them would stop reporting the fix PR. The PR facts
 	// themselves are the same for every node in the batch — one PR, one
 	// project — so the same PullRequest value is recorded on each call.

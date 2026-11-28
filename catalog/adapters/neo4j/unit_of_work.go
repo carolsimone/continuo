@@ -13,7 +13,7 @@ import (
 
 // unitOfWork implements uow.UnitOfWork on Neo4j: a message's writes and its
 // processed-message marker commit in one transaction, behind the tenant's
-// export gate.
+// backup gate.
 //
 // The gate serialises a tenant's writes. A Write that loses a race for the
 // same message waits on the gate until the winner commits, then finds the
@@ -32,7 +32,7 @@ func NewUnitOfWork(client Neo4jClient, logger *slog.Logger) uow.UnitOfWork {
 }
 
 // Processed reads the marker of m in a read transaction. It takes no gate, so
-// it answers while an export or a restore holds the tenant's lease.
+// it answers while a backup or a restore holds the tenant's lease.
 func (u *unitOfWork) Processed(ctx context.Context, m uow.Marker) (bool, error) {
 	if err := validateMarker(m); err != nil {
 		return false, err
@@ -53,7 +53,7 @@ func (u *unitOfWork) Processed(ctx context.Context, m uow.Marker) (bool, error) 
 }
 
 // WritesPaused reads the tenant's lease node in a read transaction. It takes no
-// gate, so it answers while an export or a restore holds the lease.
+// gate, so it answers while a backup or a restore holds the lease.
 func (u *unitOfWork) WritesPaused(ctx context.Context, tenantID string) (bool, error) {
 	session := u.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
@@ -75,13 +75,13 @@ func (u *unitOfWork) WritesPaused(ctx context.Context, tenantID string) (bool, e
 		return b, nil
 	})
 	if err != nil {
-		return false, fmt.Errorf("read export lease: %w", err)
+		return false, fmt.Errorf("read backup lease: %w", err)
 	}
 	return paused, nil
 }
 
 // Write runs fn in one write transaction for m's tenant, in this order: lock
-// the export gate (ErrWritesPaused while a lease is held), re-check the
+// the backup gate (ErrWritesPaused while a lease is held), re-check the
 // marker (found: remove m's in-flight mark, skip fn, return nil), run fn,
 // CREATE the marker when final and otherwise mark m in flight, remove m's
 // in-flight mark when final, unlock the gate, commit. Any error rolls the
@@ -94,12 +94,12 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 		return errors.New("neo4j: a write needs a function to run")
 	}
 	return inWriteTx(ctx, u.client, m.TenantID, func(run TenantRunner) (bool, error) {
-		gate, err := lockExportGate(ctx, run)
+		gate, err := lockBackupGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
 		if gate.held {
-			u.logger.Debug("catalog write paused by the export lease",
+			u.logger.Debug("catalog write paused by the backup lease",
 				"tenant_id", m.TenantID, "group", m.Group, "message_id", m.MessageID)
 			return false, fmt.Errorf("tenant %q: %w", m.TenantID, uow.ErrWritesPaused)
 		}
@@ -115,7 +115,7 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 			if err := clearInFlight(ctx, run, inflightKey(m)); err != nil {
 				return false, err
 			}
-			if err := unlockExportGate(ctx, run); err != nil {
+			if err := unlockBackupGate(ctx, run); err != nil {
 				return false, err
 			}
 			return true, nil
@@ -133,7 +133,7 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 		} else if err := markInFlight(ctx, run, inflightKey(m)); err != nil {
 			return false, err
 		}
-		if err := unlockExportGate(ctx, run); err != nil {
+		if err := unlockBackupGate(ctx, run); err != nil {
 			return false, err
 		}
 		return true, nil

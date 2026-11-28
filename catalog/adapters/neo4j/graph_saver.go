@@ -10,76 +10,76 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/service/export"
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// exportFetchSize is how many records an export pulls from Neo4j at a time;
-// the export holds no more than that and the record it writes.
-const exportFetchSize = 500
+// backupFetchSize is how many records a backup pulls from Neo4j at a time;
+// the backup holds no more than that and the record it writes.
+const backupFetchSize = 500
 
 var (
-	// errExportUnrestorable means a relationship of the tenant's graph joins
-	// a node of another tenant (or of none) or the export lease node: the
-	// export would leave it out, so the restore could not return the graph.
-	errExportUnrestorable = errors.New("neo4j: the tenant's graph holds a relationship an export cannot carry")
-	// errExportChanged means the records streamed disagree with the counts
-	// the header was written with: the graph changed during the export.
-	errExportChanged = errors.New("neo4j: the tenant's graph changed during the export")
+	// errBackupUnrestorable means a relationship of the tenant's graph joins
+	// a node of another tenant (or of none) or the backup lease node: the
+	// backup would leave it out, so the restore could not return the graph.
+	errBackupUnrestorable = errors.New("neo4j: the tenant's graph holds a relationship a backup cannot carry")
+	// errBackupChanged means the records streamed disagree with the counts
+	// the header was written with: the graph changed during the backup.
+	errBackupChanged = errors.New("neo4j: the tenant's graph changed during the backup")
 )
 
-// Every statement of the export and the import leaves out the tenant's export
-// lease node, (:Meta {key: $lease_key}): it is neither exported nor restored.
+// Every statement of the backup and the restore leaves out the tenant's backup
+// lease node, (:Meta {key: $lease_key}): it is neither backed up nor restored.
 
-// exportNodeCountsCypher counts the tenant's nodes per set of labels.
-const exportNodeCountsCypher = `
+// backupNodeCountsCypher counts the tenant's nodes per set of labels.
+const backupNodeCountsCypher = `
 MATCH (n {tenant_id: $tenant_id})
 WHERE NOT (coalesce(n.key, '') = $lease_key AND n:Meta)
 RETURN labels(n) AS labels, count(*) AS nodes`
 
-// exportRelCountsCypher counts the relationships between the tenant's nodes
+// backupRelCountsCypher counts the relationships between the tenant's nodes
 // per type.
-const exportRelCountsCypher = `
+const backupRelCountsCypher = `
 MATCH (a {tenant_id: $tenant_id})-[r]->(b {tenant_id: $tenant_id})
 WHERE NOT (coalesce(a.key, '') = $lease_key AND a:Meta)
   AND NOT (coalesce(b.key, '') = $lease_key AND b:Meta)
 RETURN type(r) AS type, count(*) AS relationships`
 
-// exportStrayRelsCypher counts the relationships of the tenant's nodes the
-// export would leave out: those to a node of another tenant or of none, and
+// backupStrayRelsCypher counts the relationships of the tenant's nodes the
+// backup would leave out: those to a node of another tenant or of none, and
 // those of the lease node.
-const exportStrayRelsCypher = `
+const backupStrayRelsCypher = `
 MATCH (a {tenant_id: $tenant_id})-[r]-(b)
 WHERE b.tenant_id IS NULL OR b.tenant_id <> $tenant_id
    OR (coalesce(a.key, '') = $lease_key AND a:Meta)
    OR (coalesce(b.key, '') = $lease_key AND b:Meta)
 RETURN count(DISTINCT r) AS stray`
 
-// exportClockCypher reads the database clock, which the export lease runs on.
-const exportClockCypher = `RETURN datetime() AS now`
+// backupClockCypher reads the database clock, which the backup lease runs on.
+const backupClockCypher = `RETURN datetime() AS now`
 
-// exportNodesCypher streams the tenant's nodes.
-const exportNodesCypher = `
+// backupNodesCypher streams the tenant's nodes.
+const backupNodesCypher = `
 MATCH (n {tenant_id: $tenant_id})
 WHERE NOT (coalesce(n.key, '') = $lease_key AND n:Meta)
 RETURN labels(n) AS labels, properties(n) AS props`
 
-// exportRelsFormat streams the relationships between the tenant's nodes with
+// backupRelsFormat streams the relationships between the tenant's nodes with
 // each end's labels and identity properties; %s is the projection of every
 // identity property of the schema.
-const exportRelsFormat = `
+const backupRelsFormat = `
 MATCH (a {tenant_id: $tenant_id})-[r]->(b {tenant_id: $tenant_id})
 WHERE NOT (coalesce(a.key, '') = $lease_key AND a:Meta)
   AND NOT (coalesce(b.key, '') = $lease_key AND b:Meta)
 RETURN type(r) AS type, labels(a) AS from_labels, a {%s} AS from_key,
        labels(b) AS to_labels, b {%s} AS to_key, properties(r) AS props`
 
-// exportRelsCypher is exportRelsFormat with the schema's identity properties.
-var exportRelsCypher = func() string {
+// backupRelsCypher is backupRelsFormat with the schema's identity properties.
+var backupRelsCypher = func() string {
 	p := identityProjection()
-	return fmt.Sprintf(exportRelsFormat, p, p)
+	return fmt.Sprintf(backupRelsFormat, p, p)
 }()
 
 // identityProjection is a map projection of every property that identifies a
@@ -100,42 +100,42 @@ func identityProjection() string {
 	return strings.Join(parts, ", ")
 }
 
-// graphExporter implements ports.GraphExporter on the catalog graph.
-type graphExporter struct {
+// graphSaver implements ports.GraphSaver on the catalog graph.
+type graphSaver struct {
 	client         Neo4jClient
 	catalogVersion string
 	logger         *slog.Logger
 }
 
-var _ ports.GraphExporter = (*graphExporter)(nil)
+var _ ports.GraphSaver = (*graphSaver)(nil)
 
-// NewGraphExporter returns an exporter of client's graph whose headers name
+// NewGraphSaver returns a saver of client's graph whose headers name
 // catalogVersion.
-func NewGraphExporter(client Neo4jClient, catalogVersion string, logger *slog.Logger) ports.GraphExporter {
-	return &graphExporter{client: client, catalogVersion: catalogVersion, logger: logger}
+func NewGraphSaver(client Neo4jClient, catalogVersion string, logger *slog.Logger) ports.GraphSaver {
+	return &graphSaver{client: client, catalogVersion: catalogVersion, logger: logger}
 }
 
-// Export counts the tenant's nodes per label and relationships per type,
+// Backup counts the tenant's nodes per label and relationships per type,
 // writes the header, then streams the nodes and the relationships to out, all
-// in one read transaction that pulls exportFetchSize records at a time. The
-// tenant's writes are paused by its export lease, so the counts hold; a
-// stream that disagrees with them fails the export. A graph the export
+// in one read transaction that pulls backupFetchSize records at a time. The
+// tenant's writes are paused by its backup lease, so the counts hold; a
+// stream that disagrees with them fails the backup. A graph the backup
 // cannot carry (a label or type outside the schema, a value of another type,
 // a relationship to another tenant or of the lease node, a relationship end
 // without its identity) fails it too, before the header when the counts
 // show it.
-func (e *graphExporter) Export(ctx context.Context, tenantID string, out ports.RecordWriter) error {
+func (e *graphSaver) Save(ctx context.Context, tenantID string, out ports.RecordWriter) error {
 	if tenantID == "" {
 		return errEmptyTenant
 	}
-	if err := e.export(ctx, tenantID, out); err != nil {
-		return fmt.Errorf("neo4j: export the graph of tenant %q: %w", tenantID, err)
+	if err := e.save(ctx, tenantID, out); err != nil {
+		return fmt.Errorf("neo4j: save the graph of tenant %q: %w", tenantID, err)
 	}
 	return nil
 }
 
-func (e *graphExporter) export(ctx context.Context, tenantID string, out ports.RecordWriter) error {
-	session := e.client.NewSession(ctx, neo4j.AccessModeRead, func(c *neo4j.SessionConfig) { c.FetchSize = exportFetchSize })
+func (e *graphSaver) save(ctx context.Context, tenantID string, out ports.RecordWriter) error {
+	session := e.client.NewSession(ctx, neo4j.AccessModeRead, func(c *neo4j.SessionConfig) { c.FetchSize = backupFetchSize })
 	defer func() { _ = session.Close(ctx) }()
 	// An explicit transaction, not a managed one: the driver retries a
 	// managed transaction, and records already written cannot be unwritten.
@@ -166,31 +166,31 @@ func (e *graphExporter) export(ctx context.Context, tenantID string, out ports.R
 	}
 	if !maps.Equal(nodes, nonZero(h.Nodes)) || !maps.Equal(rels, nonZero(h.Relationships)) {
 		return fmt.Errorf("%w: counted nodes %v and relationships %v, streamed %v and %v",
-			errExportChanged, h.Nodes, h.Relationships, nodes, rels)
+			errBackupChanged, h.Nodes, h.Relationships, nodes, rels)
 	}
-	e.logger.Debug("tenant graph exported", "tenant_id", tenantID, "nodes", nodes, "relationships", rels)
+	e.logger.Debug("tenant graph backed up", "tenant_id", tenantID, "nodes", nodes, "relationships", rels)
 	return nil
 }
 
-// header counts the tenant's graph and refuses one the export cannot carry
+// header counts the tenant's graph and refuses one the backup cannot carry
 // before anything is written.
-func (e *graphExporter) header(ctx context.Context, run TenantRunner, tenantID string) (export.Header, error) {
-	params := map[string]any{"lease_key": export.LeaseNodeKey}
-	stray, err := singleInt(ctx, run, exportStrayRelsCypher, params, "stray")
+func (e *graphSaver) header(ctx context.Context, run TenantRunner, tenantID string) (graphbackup.Header, error) {
+	params := map[string]any{"lease_key": graphbackup.LeaseNodeKey}
+	stray, err := singleInt(ctx, run, backupStrayRelsCypher, params, "stray")
 	if err != nil {
-		return export.Header{}, fmt.Errorf("count relationships an export cannot carry: %w", err)
+		return graphbackup.Header{}, fmt.Errorf("count relationships a backup cannot carry: %w", err)
 	}
 	if stray > 0 {
-		return export.Header{}, fmt.Errorf("%w: %d relationships to another tenant's node or of the export lease node", errExportUnrestorable, stray)
+		return graphbackup.Header{}, fmt.Errorf("%w: %d relationships to another tenant's node or of the backup lease node", errBackupUnrestorable, stray)
 	}
 
 	nodes := map[string]int64{}
-	if err := eachRecord(ctx, run, exportNodeCountsCypher, params, func(rec *neo4j.Record) error {
+	if err := eachRecord(ctx, run, backupNodeCountsCypher, params, func(rec *neo4j.Record) error {
 		labels, err := stringListColumn(rec, "labels")
 		if err != nil {
 			return err
 		}
-		if _, err := (export.NodeRecord{Labels: labels}).SchemaLabels(); err != nil {
+		if _, err := (graphbackup.NodeRecord{Labels: labels}).SchemaLabels(); err != nil {
 			return err
 		}
 		n, err := intColumn(rec, "nodes")
@@ -202,16 +202,16 @@ func (e *graphExporter) header(ctx context.Context, run TenantRunner, tenantID s
 		}
 		return nil
 	}); err != nil {
-		return export.Header{}, fmt.Errorf("count nodes: %w", err)
+		return graphbackup.Header{}, fmt.Errorf("count nodes: %w", err)
 	}
 
 	rels := map[string]int64{}
-	if err := eachRecord(ctx, run, exportRelCountsCypher, params, func(rec *neo4j.Record) error {
+	if err := eachRecord(ctx, run, backupRelCountsCypher, params, func(rec *neo4j.Record) error {
 		typ, err := stringColumn(rec, "type")
 		if err != nil {
 			return err
 		}
-		if _, err := (export.RelRecord{Type: typ}).SchemaType(); err != nil {
+		if _, err := (graphbackup.RelRecord{Type: typ}).SchemaType(); err != nil {
 			return err
 		}
 		n, err := intColumn(rec, "relationships")
@@ -221,11 +221,11 @@ func (e *graphExporter) header(ctx context.Context, run TenantRunner, tenantID s
 		rels[typ] += n
 		return nil
 	}); err != nil {
-		return export.Header{}, fmt.Errorf("count relationships: %w", err)
+		return graphbackup.Header{}, fmt.Errorf("count relationships: %w", err)
 	}
 
 	var now time.Time
-	if err := eachRecord(ctx, run, exportClockCypher, nil, func(rec *neo4j.Record) error {
+	if err := eachRecord(ctx, run, backupClockCypher, nil, func(rec *neo4j.Record) error {
 		v, _ := rec.Get("now")
 		t, ok := v.(time.Time)
 		if !ok {
@@ -234,15 +234,15 @@ func (e *graphExporter) header(ctx context.Context, run TenantRunner, tenantID s
 		now = t.UTC()
 		return nil
 	}); err != nil {
-		return export.Header{}, fmt.Errorf("read the database clock: %w", err)
+		return graphbackup.Header{}, fmt.Errorf("read the database clock: %w", err)
 	}
 
-	h := export.Header{
-		FormatVersion: export.FormatVersion, TenantID: tenantID, ExportedAt: now,
+	h := graphbackup.Header{
+		FormatVersion: graphbackup.FormatVersion, TenantID: tenantID, TakenAt: now,
 		CatalogVersion: e.catalogVersion, Nodes: nodes, Relationships: rels,
 	}
 	if err := h.Check(); err != nil {
-		return export.Header{}, err
+		return graphbackup.Header{}, err
 	}
 	return h, nil
 }
@@ -251,7 +251,7 @@ func (e *graphExporter) header(ctx context.Context, run TenantRunner, tenantID s
 // label.
 func streamNodes(ctx context.Context, run TenantRunner, tenantID string, out ports.RecordWriter) (map[string]int64, error) {
 	counts := map[string]int64{}
-	err := eachRecord(ctx, run, exportNodesCypher, map[string]any{"lease_key": export.LeaseNodeKey}, func(rec *neo4j.Record) error {
+	err := eachRecord(ctx, run, backupNodesCypher, map[string]any{"lease_key": graphbackup.LeaseNodeKey}, func(rec *neo4j.Record) error {
 		labels, err := stringListColumn(rec, "labels")
 		if err != nil {
 			return err
@@ -260,7 +260,7 @@ func streamNodes(ctx context.Context, run TenantRunner, tenantID string, out por
 		if err != nil {
 			return err
 		}
-		n := export.NodeRecord{Labels: labels, Props: props}
+		n := graphbackup.NodeRecord{Labels: labels, Props: props}
 		if err := n.Check(tenantID); err != nil {
 			return err
 		}
@@ -282,7 +282,7 @@ func streamNodes(ctx context.Context, run TenantRunner, tenantID string, out por
 // counts them per type.
 func streamRels(ctx context.Context, run TenantRunner, out ports.RecordWriter) (map[string]int64, error) {
 	counts := map[string]int64{}
-	err := eachRecord(ctx, run, exportRelsCypher, map[string]any{"lease_key": export.LeaseNodeKey}, func(rec *neo4j.Record) error {
+	err := eachRecord(ctx, run, backupRelsCypher, map[string]any{"lease_key": graphbackup.LeaseNodeKey}, func(rec *neo4j.Record) error {
 		typ, err := stringColumn(rec, "type")
 		if err != nil {
 			return err
@@ -299,7 +299,7 @@ func streamRels(ctx context.Context, run TenantRunner, out ports.RecordWriter) (
 		if err != nil {
 			return err
 		}
-		r := export.RelRecord{Type: typ, From: from, To: to, Props: props}
+		r := graphbackup.RelRecord{Type: typ, From: from, To: to, Props: props}
 		if err := r.Check(); err != nil {
 			return err
 		}
@@ -317,26 +317,26 @@ func streamRels(ctx context.Context, run TenantRunner, out ports.RecordWriter) (
 
 // endRef names a relationship end by the first of its labels in the
 // schema's order and that label's identity properties.
-func endRef(rec *neo4j.Record, labelsKey, keyKey string) (export.NodeRef, error) {
+func endRef(rec *neo4j.Record, labelsKey, keyKey string) (graphbackup.NodeRef, error) {
 	labels, err := stringListColumn(rec, labelsKey)
 	if err != nil {
-		return export.NodeRef{}, err
+		return graphbackup.NodeRef{}, err
 	}
 	keyProps, err := mapColumn(rec, keyKey)
 	if err != nil {
-		return export.NodeRef{}, err
+		return graphbackup.NodeRef{}, err
 	}
-	end := export.NodeRecord{Labels: labels, Props: keyProps}
+	end := graphbackup.NodeRecord{Labels: labels, Props: keyProps}
 	schemaLabels, err := end.SchemaLabels()
 	if err != nil {
-		return export.NodeRef{}, err
+		return graphbackup.NodeRef{}, err
 	}
 	label := schemaLabels[0]
 	key, ok := end.Identity(label)
 	if !ok {
-		return export.NodeRef{}, fmt.Errorf("%w: a :%s without its identity %v", export.ErrInvalidRecord, label, graphschema.Identity(label))
+		return graphbackup.NodeRef{}, fmt.Errorf("%w: a :%s without its identity %v", graphbackup.ErrInvalidRecord, label, graphschema.Identity(label))
 	}
-	return export.NodeRef{Label: string(label), Key: key}, nil
+	return graphbackup.NodeRef{Label: string(label), Key: key}, nil
 }
 
 // eachRecord runs a statement and hands each record to fn as the driver

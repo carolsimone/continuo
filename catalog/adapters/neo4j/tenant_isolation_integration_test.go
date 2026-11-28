@@ -23,7 +23,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
-	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
+	"github.com/carolsimone/continuo/catalog/serialization/backupfile"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -63,8 +63,8 @@ type isolationRow struct {
 
 // isolationRepositories are the repositories of this package: the readers
 // the gRPC server and the live contracts folder serve from, the four that
-// write through uow.Tx, the export lease, the live-folder lease and state,
-// the unit of work, and the export and import of a tenant's graph. Each
+// write through uow.Tx, the backup lease, the live-folder lease and state,
+// the unit of work, and the backup and import of a tenant's graph. Each
 // exported method of each has a row.
 var isolationRepositories = []any{
 	(*NodeQueryRepository)(nil),
@@ -75,11 +75,11 @@ var isolationRepositories = []any{
 	(*codeVersionRepository)(nil),
 	(*caseBaseRepository)(nil),
 	(*contractVersionRepository)(nil),
-	(*exportLease)(nil),
+	(*backupLease)(nil),
 	(*LiveFolderLease)(nil),
 	(*unitOfWork)(nil),
-	(*graphExporter)(nil),
-	(*graphImporter)(nil),
+	(*graphSaver)(nil),
+	(*graphLoader)(nil),
 }
 
 type isolationFixture struct {
@@ -90,14 +90,14 @@ type isolationFixture struct {
 	versions   *CodeVersionQueryRepository
 	precedents *PrecedentQueryRepository
 	contracts  *ContractQueryRepository
-	lease      ports.ExportLease
+	lease      ports.BackupLease
 	live       *LiveFolderLease
 	// sharedMessage is a message id B's topology group processed; A never did.
 	sharedMessage string
 	// wroteA reports whether the unit of work ran A's write.
 	wroteA bool
-	// exportedA is A's export, and beforeWipe A's graph when it was taken.
-	exportedA                       []byte
+	// takenA is A's backup, and beforeWipe A's graph when it was taken.
+	takenA                          []byte
 	beforeWipeNodes, beforeWipeRels []string
 }
 
@@ -187,7 +187,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 		versions:      NewCodeVersionQueryRepository(a.client, quietLogger()),
 		precedents:    NewPrecedentQueryRepository(a.client, quietLogger()),
 		contracts:     NewContractQueryRepository(a.client),
-		lease:         NewExportLease(a.client, quietLogger()),
+		lease:         NewBackupLease(a.client, quietLogger()),
 		live:          NewLiveFolderLease(a.client, quietLogger()),
 		sharedMessage: "iso-shared-" + uuid.NewString(),
 	}
@@ -208,10 +208,10 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	require.NoError(t, err)
 	require.True(t, acquired)
 
-	// B has processed sharedMessage and holds its export lease, so neither may
+	// B has processed sharedMessage and holds its backup lease, so neither may
 	// skip or pause a write of A.
 	require.NoError(t, f.b.uow.Write(f.ctx, f.topologyMarker(f.b.tenant), true, func(context.Context, uow.Tx) error { return nil }))
-	require.NoError(t, f.lease.Acquire(f.ctx, f.b.tenant, ports.LeaseExport, "b-holder", 10*time.Minute))
+	require.NoError(t, f.lease.Acquire(f.ctx, f.b.tenant, ports.LeaseBackup, "b-holder", 10*time.Minute))
 	return f
 }
 
@@ -255,11 +255,11 @@ func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB b
 		f.writeContracts(contractPromotion(rel, seq), contracts...)
 	}
 
-	rej := rejectionOf("r-failed", isoDown, isoSig, promotedAtOf(1).Add(30*time.Minute))
+	rej := failurePrecedentOf("r-failed", isoDown, isoSig, promotedAtOf(1).Add(30*time.Minute))
 	rej.ErrorExcerpt = "excerpt-" + mark
-	f.recordRejection(rej)
+	f.recordFailurePrecedent(rej)
 	if withOnlyB {
-		f.recordRejection(rejectionOf("r-failed", isoOnlyB, isoOnlyBSig, promotedAtOf(1).Add(30*time.Minute)))
+		f.recordFailurePrecedent(failurePrecedentOf("r-failed", isoOnlyB, isoOnlyBSig, promotedAtOf(1).Add(30*time.Minute)))
 	}
 	pr := openPullRequest(isoFix, "svc", 7, promotedAtOf(2))
 	pr.PrURL = "https://github.com/org/repo/pull/" + mark
@@ -286,7 +286,7 @@ func (f *isolationFixture) topologyMarker(tenant string) uow.Marker {
 }
 
 // snapshotB renders every node of tenant B, its processed-message markers and
-// its export lease included, and every relationship that touches one, from
+// its backup lease included, and every relationship that touches one, from
 // either side, as sorted lines.
 func (f *isolationFixture) snapshotB() []string {
 	f.t.Helper()
@@ -410,7 +410,7 @@ func (f *isolationFixture) rows() []isolationRow {
 			onlyA(t, bySig)
 			byReason, err := f.precedents.Precedents(ctx, tenant(), "", "cat", "reason", 10, true)
 			require.NoError(t, err)
-			require.Len(t, byReason, 1, "the category and reason match A's one rejection, not B's two")
+			require.Len(t, byReason, 1, "the category and reason match A's one failure precedent, not B's two")
 			onlyA(t, byReason)
 			none, err := f.precedents.Precedents(ctx, tenant(), isoOnlyBSig, "", "", 10, true)
 			require.NoError(t, err)
@@ -485,7 +485,7 @@ func (f *isolationFixture) rows() []isolationRow {
 				mark, "A's mark, not B's")
 		}},
 		{"LiveFolderLease.RecordSettings", func(t *testing.T) {
-			require.NoError(t, f.live.RecordSettings(ctx, tenant(), "settings-2-"+isoMarkA), "B's export lease does not pause A's writes")
+			require.NoError(t, f.live.RecordSettings(ctx, tenant(), "settings-2-"+isoMarkA), "B's backup lease does not pause A's writes")
 			mark, err := f.live.Read(ctx, tenant())
 			require.NoError(t, err)
 			assert.Equal(t, "settings-2-"+isoMarkA, mark.SettingsSHA256)
@@ -504,8 +504,8 @@ func (f *isolationFixture) rows() []isolationRow {
 			require.NoError(t, f.live.Release(ctx, tenant(), isoHolder))
 			require.NoError(t, f.live.Release(ctx, f.b.tenant, isoHolder), "releasing another holder's lease is a no-op")
 		}},
-		{"caseBaseRepository.RecordRejection", func(t *testing.T) {
-			f.a.recordRejection(rejectionOf("r-failed-again", isoOnlyB, isoOnlyBSig, promotedAtOf(3)))
+		{"caseBaseRepository.RecordFailurePrecedent", func(t *testing.T) {
+			f.a.recordFailurePrecedent(failurePrecedentOf("r-failed-again", isoOnlyB, isoOnlyBSig, promotedAtOf(3)))
 			assert.Equal(t, int64(1), f.a.failedEdges("r-failed-again", isoOnlyB))
 		}},
 		{"caseBaseRepository.RecordFix", func(t *testing.T) {
@@ -531,7 +531,7 @@ func (f *isolationFixture) rows() []isolationRow {
 		{"unitOfWork.WritesPaused", func(t *testing.T) {
 			paused, err := f.a.uow.WritesPaused(ctx, tenant())
 			require.NoError(t, err)
-			assert.False(t, paused, "B's export lease does not pause A's writes")
+			assert.False(t, paused, "B's backup lease does not pause A's writes")
 			paused, err = f.a.uow.WritesPaused(ctx, f.b.tenant)
 			require.NoError(t, err)
 			assert.True(t, paused, "B's own writes are paused by its lease")
@@ -541,44 +541,44 @@ func (f *isolationFixture) rows() []isolationRow {
 				f.wroteA = true
 				return nil
 			})
-			require.NoError(t, err, "B's export lease does not pause A's writes")
+			require.NoError(t, err, "B's backup lease does not pause A's writes")
 			assert.True(t, f.wroteA, "B's marker does not skip A's write")
 		}},
-		{"exportLease.Acquire", func(t *testing.T) {
-			require.NoError(t, f.lease.Acquire(ctx, tenant(), ports.LeaseExport, isoHolder, time.Minute),
+		{"backupLease.Acquire", func(t *testing.T) {
+			require.NoError(t, f.lease.Acquire(ctx, tenant(), ports.LeaseBackup, isoHolder, time.Minute),
 				"B's lease does not hold A's")
 		}},
-		{"exportLease.Renew", func(t *testing.T) {
+		{"backupLease.Renew", func(t *testing.T) {
 			require.NoError(t, f.lease.Renew(ctx, tenant(), isoHolder, time.Minute))
 			err := f.lease.Renew(ctx, f.b.tenant, isoHolder, time.Minute)
 			assert.True(t, errors.Is(err, ports.ErrLeaseLost), "A's holder does not hold B's lease")
 		}},
-		{"exportLease.Release", func(t *testing.T) {
+		{"backupLease.Release", func(t *testing.T) {
 			require.NoError(t, f.lease.Release(ctx, tenant(), isoHolder))
 			require.NoError(t, f.lease.Release(ctx, f.b.tenant, isoHolder), "releasing another holder's lease is a no-op")
 		}},
-		{"graphExporter.Export", func(t *testing.T) {
+		{"graphSaver.Save", func(t *testing.T) {
 			var buf bytes.Buffer
-			require.NoError(t, NewGraphExporter(f.a.client, "iso", quietLogger()).Export(ctx, tenant(), exportfile.NewWriter(&buf)))
-			f.exportedA = buf.Bytes()
-			_, err := exportfile.Validate(bytes.NewReader(f.exportedA), tenant())
+			require.NoError(t, NewGraphSaver(f.a.client, "iso", quietLogger()).Save(ctx, tenant(), backupfile.NewWriter(&buf)))
+			f.takenA = buf.Bytes()
+			_, err := backupfile.Validate(bytes.NewReader(f.takenA), tenant())
 			require.NoError(t, err)
-			assert.Contains(t, string(f.exportedA), isoMarkA)
-			assert.NotContains(t, string(f.exportedA), isoMarkB, "the export holds tenant B's data")
-			assert.NotContains(t, string(f.exportedA), f.b.tenant, "the export names tenant B")
+			assert.Contains(t, string(f.takenA), isoMarkA)
+			assert.NotContains(t, string(f.takenA), isoMarkB, "the backup holds tenant B's data")
+			assert.NotContains(t, string(f.takenA), f.b.tenant, "the backup names tenant B")
 		}},
-		{"graphImporter.Wipe", func(t *testing.T) {
+		{"graphLoader.Wipe", func(t *testing.T) {
 			g := &graphFixture{t: t, client: f.a.client}
 			f.beforeWipeNodes, f.beforeWipeRels = g.dump(tenant())
-			require.NoError(t, NewGraphImporter(f.a.client, quietLogger()).Wipe(ctx, tenant()))
+			require.NoError(t, NewGraphLoader(f.a.client, quietLogger()).Wipe(ctx, tenant()))
 			nodes, rels := g.dump(tenant())
 			assert.Empty(t, nodes)
 			assert.Empty(t, rels)
 		}},
-		{"graphImporter.Import", func(t *testing.T) {
-			r, err := exportfile.NewReader(bytes.NewReader(f.exportedA))
+		{"graphLoader.Load", func(t *testing.T) {
+			r, err := backupfile.NewReader(bytes.NewReader(f.takenA))
 			require.NoError(t, err)
-			require.NoError(t, NewGraphImporter(f.a.client, quietLogger()).Import(ctx, tenant(), r))
+			require.NoError(t, NewGraphLoader(f.a.client, quietLogger()).Load(ctx, tenant(), r))
 			nodes, rels := (&graphFixture{t: t, client: f.a.client}).dump(tenant())
 			assert.Equal(t, f.beforeWipeNodes, nodes, "the import returns tenant A's nodes as they were")
 			assert.Equal(t, f.beforeWipeRels, rels, "the import returns tenant A's relationships as they were")

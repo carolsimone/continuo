@@ -63,7 +63,7 @@ def test_singular_test_without_attached_node_is_tracked_through_depends_on(tmp_p
 
 
 def test_test_on_an_untracked_node_is_skipped(tmp_path):
-    untracked = _model("draft"); untracked["config"] = {}  # no owner: the model itself is skipped
+    untracked = _model("draft"); untracked["config"] = {}  # no owner: the model itself is excluded
     manifest = {"macros": {}, "nodes": {
         "model.svc_a.draft": untracked,
         "test.svc_a.not_null_draft_id.1": _generic_test("not_null_draft_id", "model.svc_a.draft", "select 1"),

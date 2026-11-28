@@ -1,4 +1,4 @@
-package export_test
+package graphbackup_test
 
 import (
 	"errors"
@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/service/export"
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 )
 
 const tenant = "t1"
 
-func node(labels []string, props map[string]any) export.NodeRecord {
+func node(labels []string, props map[string]any) graphbackup.NodeRecord {
 	all := map[string]any{"tenant_id": tenant}
 	for k, v := range props {
 		all[k] = v
 	}
-	return export.NodeRecord{Labels: labels, Props: all}
+	return graphbackup.NodeRecord{Labels: labels, Props: all}
 }
 
 func TestNodeRecord_CheckAcceptsEveryValueKind(t *testing.T) {
@@ -44,21 +44,21 @@ func TestNodeRecord_CheckAcceptsEveryValueKind(t *testing.T) {
 func TestNodeRecord_CheckRefusesALabelOutsideTheSchema(t *testing.T) {
 	for _, label := range []string{"Table", "Run", "node", "", "Node {tenant_id: 'x'}) DETACH DELETE (n", "Node:Meta"} {
 		err := node([]string{"Node", label}, nil).Check(tenant)
-		if !errors.Is(err, export.ErrOutsideSchema) {
+		if !errors.Is(err, graphbackup.ErrOutsideSchema) {
 			t.Errorf("label %q: Check = %v, want ErrOutsideSchema", label, err)
 		}
 	}
 }
 
 func TestNodeRecord_CheckRefusesAnotherTenant(t *testing.T) {
-	cases := map[string]export.NodeRecord{
+	cases := map[string]graphbackup.NodeRecord{
 		"another tenant": {Labels: []string{"Node"}, Props: map[string]any{"tenant_id": "t2"}},
 		"no tenant":      {Labels: []string{"Node"}, Props: map[string]any{"unique_id": "a"}},
 		"not a string":   {Labels: []string{"Node"}, Props: map[string]any{"tenant_id": int64(1)}},
 		"no properties":  {Labels: []string{"Node"}},
 	}
 	for name, n := range cases {
-		if err := n.Check(tenant); !errors.Is(err, export.ErrTenantMismatch) {
+		if err := n.Check(tenant); !errors.Is(err, graphbackup.ErrTenantMismatch) {
 			t.Errorf("%s: Check = %v, want ErrTenantMismatch", name, err)
 		}
 	}
@@ -84,14 +84,14 @@ func TestNodeRecord_CheckRefusesAValueTheGraphCannotHold(t *testing.T) {
 	}
 	for name, v := range cases {
 		err := node([]string{"Node"}, map[string]any{"p": v}).Check(tenant)
-		if !errors.Is(err, export.ErrUnsupportedValue) {
+		if !errors.Is(err, graphbackup.ErrUnsupportedValue) {
 			t.Errorf("%s: Check = %v, want ErrUnsupportedValue", name, err)
 		}
 	}
 }
 
 func TestNodeRecord_CheckRefusesABadShape(t *testing.T) {
-	cases := map[string]export.NodeRecord{
+	cases := map[string]graphbackup.NodeRecord{
 		"no label":             {Props: map[string]any{"tenant_id": tenant}},
 		"a label twice":        {Labels: []string{"Node", "Node"}, Props: map[string]any{"tenant_id": tenant}},
 		"empty property name":  node([]string{"Node"}, map[string]any{"": "x"}),
@@ -99,7 +99,7 @@ func TestNodeRecord_CheckRefusesABadShape(t *testing.T) {
 		"invalid UTF-8 name":   node([]string{"Node"}, map[string]any{"\xff": "x"}),
 	}
 	for name, n := range cases {
-		if err := n.Check(tenant); !errors.Is(err, export.ErrInvalidRecord) {
+		if err := n.Check(tenant); !errors.Is(err, graphbackup.ErrInvalidRecord) {
 			t.Errorf("%s: Check = %v, want ErrInvalidRecord", name, err)
 		}
 	}
@@ -113,7 +113,7 @@ func TestNodeRecord_SchemaLabelsAreTheSchemasConstantsInSchemaOrder(t *testing.T
 	if len(got) != 2 || got[0] != graphschema.Node || got[1] != graphschema.ProcessedMessage {
 		t.Errorf("SchemaLabels = %v, want [Node ProcessedMessage]", got)
 	}
-	if _, err := node([]string{"Evil"}, nil).SchemaLabels(); !errors.Is(err, export.ErrOutsideSchema) {
+	if _, err := node([]string{"Evil"}, nil).SchemaLabels(); !errors.Is(err, graphbackup.ErrOutsideSchema) {
 		t.Errorf("SchemaLabels of a label outside the schema = %v, want ErrOutsideSchema", err)
 	}
 }
@@ -121,13 +121,13 @@ func TestNodeRecord_SchemaLabelsAreTheSchemasConstantsInSchemaOrder(t *testing.T
 func TestNodeRecord_IsLease(t *testing.T) {
 	cases := []struct {
 		name string
-		n    export.NodeRecord
+		n    graphbackup.NodeRecord
 		want bool
 	}{
-		{"the lease node", node([]string{"Meta"}, map[string]any{"key": "export", "holder": "h"}), true},
-		{"the lease node with another label", node([]string{"Node", "Meta"}, map[string]any{"key": "export"}), true},
+		{"the lease node", node([]string{"Meta"}, map[string]any{"key": "backup", "holder": "h"}), true},
+		{"the lease node with another label", node([]string{"Node", "Meta"}, map[string]any{"key": "backup"}), true},
 		{"another meta node", node([]string{"Meta"}, map[string]any{"key": "current_release"}), false},
-		{"key export on another label", node([]string{"Node"}, map[string]any{"key": "export"}), false},
+		{"key backup on another label", node([]string{"Node"}, map[string]any{"key": "backup"}), false},
 		{"a meta node without a key", node([]string{"Meta"}, nil), false},
 	}
 	for _, c := range cases {
@@ -142,7 +142,7 @@ func TestNodeRecord_IsLease(t *testing.T) {
 // compares numbers by value (1 equals 1.0) and NaN equals nothing, so a file
 // such a value passed the check of would fail to load after the wipe.
 func TestNodeRecord_CheckRefusesAnIdentityThatIsNotText(t *testing.T) {
-	cases := map[string]export.NodeRecord{
+	cases := map[string]graphbackup.NodeRecord{
 		"an integer unique_id":  node([]string{"Node"}, map[string]any{"unique_id": int64(1)}),
 		"a float unique_id":     node([]string{"Node"}, map[string]any{"unique_id": 1.0}),
 		"a NaN content_hash":    node([]string{"NodeVersion"}, map[string]any{"unique_id": "a", "content_hash": math.NaN()}),
@@ -152,7 +152,7 @@ func TestNodeRecord_CheckRefusesAnIdentityThatIsNotText(t *testing.T) {
 		"a second label's role": node([]string{"Node", "Meta"}, map[string]any{"unique_id": "a", "key": int64(2)}),
 	}
 	for name, n := range cases {
-		if err := n.Check(tenant); !errors.Is(err, export.ErrInvalidRecord) {
+		if err := n.Check(tenant); !errors.Is(err, graphbackup.ErrInvalidRecord) {
 			t.Errorf("%s: Check = %v, want ErrInvalidRecord", name, err)
 		}
 		labels, _ := n.SchemaLabels()
@@ -169,13 +169,13 @@ func TestNodeRecord_CheckRefusesAnIdentityThatIsNotText(t *testing.T) {
 	if err := node([]string{"Node"}, map[string]any{"unique_id": "a", "seq": int64(1)}).Check(tenant); err != nil {
 		t.Errorf("a node whose identity is text: Check = %v", err)
 	}
-	for name, r := range map[string]export.NodeRef{
+	for name, r := range map[string]graphbackup.NodeRef{
 		"an integer key": ref("Node", int64(1)),
 		"a float key":    ref("Node", 1.0),
 		"a NaN key":      ref("NodeVersion", "a", math.NaN()),
 		"a boolean key":  ref("ProcessedMessage", "g", false),
 	} {
-		if err := r.Check(); !errors.Is(err, export.ErrInvalidRecord) {
+		if err := r.Check(); !errors.Is(err, graphbackup.ErrInvalidRecord) {
 			t.Errorf("%s: Check = %v, want ErrInvalidRecord", name, err)
 		}
 	}
@@ -192,10 +192,12 @@ func TestNodeRecord_IdentityFollowsTheSchema(t *testing.T) {
 	}
 }
 
-func ref(label string, key ...any) export.NodeRef { return export.NodeRef{Label: label, Key: key} }
+func ref(label string, key ...any) graphbackup.NodeRef {
+	return graphbackup.NodeRef{Label: label, Key: key}
+}
 
 func TestRelRecord_Check(t *testing.T) {
-	good := export.RelRecord{
+	good := graphbackup.RelRecord{
 		Type: "CURRENT", From: ref("Node", "a"), To: ref("NodeVersion", "a", "h"),
 		Props: map[string]any{"promoted_at": time.Unix(0, 0).UTC(), "release_id": "r1"},
 	}
@@ -208,19 +210,19 @@ func TestRelRecord_Check(t *testing.T) {
 
 	cases := []struct {
 		name string
-		edit func(r *export.RelRecord)
+		edit func(r *graphbackup.RelRecord)
 		want error
 	}{
-		{"type outside the schema", func(r *export.RelRecord) { r.Type = "PREVIOUS" }, export.ErrOutsideSchema},
-		{"type that injects Cypher", func(r *export.RelRecord) { r.Type = "CURRENT]->(x) DETACH DELETE x //" }, export.ErrOutsideSchema},
-		{"end label outside the schema", func(r *export.RelRecord) { r.To = ref("Table", "a") }, export.ErrOutsideSchema},
-		{"key shorter than the identity", func(r *export.RelRecord) { r.To = ref("NodeVersion", "a") }, export.ErrInvalidRecord},
-		{"key longer than the identity", func(r *export.RelRecord) { r.From = ref("Node", "a", "b") }, export.ErrInvalidRecord},
-		{"null key value", func(r *export.RelRecord) { r.From = ref("Node", nil) }, export.ErrUnsupportedValue},
-		{"list key value", func(r *export.RelRecord) { r.From = ref("Node", []any{"a"}) }, export.ErrUnsupportedValue},
-		{"end is the lease node", func(r *export.RelRecord) { r.From = ref("Meta", "export") }, export.ErrInvalidRecord},
-		{"property the graph cannot hold", func(r *export.RelRecord) { r.Props = map[string]any{"p": 1} }, export.ErrUnsupportedValue},
-		{"empty property name", func(r *export.RelRecord) { r.Props = map[string]any{"": "x"} }, export.ErrInvalidRecord},
+		{"type outside the schema", func(r *graphbackup.RelRecord) { r.Type = "PREVIOUS" }, graphbackup.ErrOutsideSchema},
+		{"type that injects Cypher", func(r *graphbackup.RelRecord) { r.Type = "CURRENT]->(x) DETACH DELETE x //" }, graphbackup.ErrOutsideSchema},
+		{"end label outside the schema", func(r *graphbackup.RelRecord) { r.To = ref("Table", "a") }, graphbackup.ErrOutsideSchema},
+		{"key shorter than the identity", func(r *graphbackup.RelRecord) { r.To = ref("NodeVersion", "a") }, graphbackup.ErrInvalidRecord},
+		{"key longer than the identity", func(r *graphbackup.RelRecord) { r.From = ref("Node", "a", "b") }, graphbackup.ErrInvalidRecord},
+		{"null key value", func(r *graphbackup.RelRecord) { r.From = ref("Node", nil) }, graphbackup.ErrUnsupportedValue},
+		{"list key value", func(r *graphbackup.RelRecord) { r.From = ref("Node", []any{"a"}) }, graphbackup.ErrUnsupportedValue},
+		{"end is the lease node", func(r *graphbackup.RelRecord) { r.From = ref("Meta", "backup") }, graphbackup.ErrInvalidRecord},
+		{"property the graph cannot hold", func(r *graphbackup.RelRecord) { r.Props = map[string]any{"p": 1} }, graphbackup.ErrUnsupportedValue},
+		{"empty property name", func(r *graphbackup.RelRecord) { r.Props = map[string]any{"": "x"} }, graphbackup.ErrInvalidRecord},
 	}
 	for _, c := range cases {
 		r := good
@@ -232,8 +234,8 @@ func TestRelRecord_Check(t *testing.T) {
 }
 
 func TestHeader_Check(t *testing.T) {
-	good := export.Header{
-		FormatVersion: export.FormatVersion, TenantID: tenant, ExportedAt: time.Unix(1, 0).UTC(),
+	good := graphbackup.Header{
+		FormatVersion: graphbackup.FormatVersion, TenantID: tenant, TakenAt: time.Unix(1, 0).UTC(),
 		Nodes: map[string]int64{"Node": 2, "Meta": 0}, Relationships: map[string]int64{"DEPENDS_ON": 1},
 	}
 	if err := good.Check(); err != nil {
@@ -241,15 +243,15 @@ func TestHeader_Check(t *testing.T) {
 	}
 	cases := []struct {
 		name string
-		edit func(h *export.Header)
+		edit func(h *graphbackup.Header)
 		want error
 	}{
-		{"another format version", func(h *export.Header) { h.FormatVersion = 2 }, export.ErrInvalidRecord},
-		{"no tenant", func(h *export.Header) { h.TenantID = "" }, export.ErrInvalidRecord},
-		{"no export time", func(h *export.Header) { h.ExportedAt = time.Time{} }, export.ErrInvalidRecord},
-		{"label outside the schema", func(h *export.Header) { h.Nodes = map[string]int64{"Table": 1} }, export.ErrOutsideSchema},
-		{"type outside the schema", func(h *export.Header) { h.Relationships = map[string]int64{"EXECUTES": 1} }, export.ErrOutsideSchema},
-		{"negative count", func(h *export.Header) { h.Nodes = map[string]int64{"Node": -1} }, export.ErrInvalidRecord},
+		{"another format version", func(h *graphbackup.Header) { h.FormatVersion = 2 }, graphbackup.ErrInvalidRecord},
+		{"no tenant", func(h *graphbackup.Header) { h.TenantID = "" }, graphbackup.ErrInvalidRecord},
+		{"no backup time", func(h *graphbackup.Header) { h.TakenAt = time.Time{} }, graphbackup.ErrInvalidRecord},
+		{"label outside the schema", func(h *graphbackup.Header) { h.Nodes = map[string]int64{"Table": 1} }, graphbackup.ErrOutsideSchema},
+		{"type outside the schema", func(h *graphbackup.Header) { h.Relationships = map[string]int64{"EXECUTES": 1} }, graphbackup.ErrOutsideSchema},
+		{"negative count", func(h *graphbackup.Header) { h.Nodes = map[string]int64{"Node": -1} }, graphbackup.ErrInvalidRecord},
 	}
 	for _, c := range cases {
 		h := good

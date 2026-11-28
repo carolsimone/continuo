@@ -1,10 +1,10 @@
-// Package export is the record model of a tenant's graph export: a header,
+// Package graphbackup is the record model of a tenant's graph backup: a header,
 // one record per node, then one record per relationship, whose ends are named
 // by the identities of graphschema. It also holds the checks a record passes
-// before it is written to an export file and before it is loaded back into
+// before it is written to a backup file and before it is loaded back into
 // the graph, so neither side takes a label, a type, a tenant or a value the
 // catalog graph cannot hold.
-package export
+package graphbackup
 
 import (
 	"errors"
@@ -13,44 +13,44 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 )
 
-// FormatVersion is the version of the export layout this code writes and
+// FormatVersion is the version of the backup layout this code writes and
 // reads.
 const FormatVersion = 1
 
 // TenantProperty is the property that names a node's tenant.
 const TenantProperty = "tenant_id"
 
-// LeaseNodeKey is the key of the (:Meta) node that holds a tenant's export
-// lease. That node is neither exported nor restored: a restored lease would
+// LeaseNodeKey is the key of the (:Meta) node that holds a tenant's backup
+// lease. That node is neither backed up nor restored: a restored lease would
 // pause the tenant's writes.
-const LeaseNodeKey = "export"
+const LeaseNodeKey = "backup"
 
 var (
 	// ErrOutsideSchema means a label or a relationship type is not one of the
 	// catalog graph's.
 	ErrOutsideSchema = errors.New("outside the catalog graph schema")
 	// ErrTenantMismatch means a header or a node names another tenant than
-	// the export's, or none.
-	ErrTenantMismatch = errors.New("another tenant than the export's")
+	// the backup's, or none.
+	ErrTenantMismatch = errors.New("another tenant than the backup's")
 	// ErrUnsupportedValue means a property or key value is not one the
 	// catalog graph holds: a string, a bool, an int64, a float64, a datetime,
 	// or a list of values of one of those kinds.
 	ErrUnsupportedValue = errors.New("a value the catalog graph cannot hold")
 	// ErrInvalidRecord means a header or a record is shaped otherwise than an
-	// export of the catalog graph.
-	ErrInvalidRecord = errors.New("an invalid export record")
+	// backup of the catalog graph.
+	ErrInvalidRecord = errors.New("an invalid backup record")
 )
 
-// Header opens an export: who and what it holds. Nodes counts the node
+// Header opens a backup: who and what it holds. Nodes counts the node
 // records per label (a node with two labels counts under each), and
 // Relationships the relationship records per type.
 type Header struct {
 	FormatVersion  int
 	TenantID       string
-	ExportedAt     time.Time
+	TakenAt        time.Time
 	CatalogVersion string
 	Nodes          map[string]int64
 	Relationships  map[string]int64
@@ -69,7 +69,7 @@ type RelRecord struct {
 	Props    map[string]any
 }
 
-// NodeRef names a node of the export's tenant by one of its labels and the
+// NodeRef names a node of the backup's tenant by one of its labels and the
 // values of that label's identity properties (graphschema.Identity), in
 // order.
 type NodeRef struct {
@@ -78,7 +78,7 @@ type NodeRef struct {
 }
 
 // Check refuses a header of another format version, without a tenant or an
-// export time, or whose counts name a label or type outside the schema or
+// backup time, or whose counts name a label or type outside the schema or
 // are negative.
 func (h Header) Check() error {
 	if h.FormatVersion != FormatVersion {
@@ -87,8 +87,8 @@ func (h Header) Check() error {
 	if h.TenantID == "" {
 		return fmt.Errorf("%w: the header names no tenant", ErrInvalidRecord)
 	}
-	if h.ExportedAt.IsZero() {
-		return fmt.Errorf("%w: the header has no export time", ErrInvalidRecord)
+	if h.TakenAt.IsZero() {
+		return fmt.Errorf("%w: the header has no backup time", ErrInvalidRecord)
 	}
 	for label, n := range h.Nodes {
 		if _, ok := schemaLabel(label); !ok {
@@ -167,7 +167,7 @@ func (n NodeRecord) SchemaLabels() ([]graphschema.Label, error) {
 	return out, nil
 }
 
-// IsLease reports whether n is a tenant's export lease node.
+// IsLease reports whether n is a tenant's backup lease node.
 func (n NodeRecord) IsLease() bool {
 	for _, l := range n.Labels {
 		if l == string(graphschema.Meta) {
@@ -199,7 +199,7 @@ func (n NodeRecord) Identity(l graphschema.Label) (key []any, ok bool) {
 
 // Check refuses a relationship of a type outside the schema, an end that is
 // not a node of the schema named by its label's identity, an end that is the
-// export lease node, or a property the graph cannot hold.
+// backup lease node, or a property the graph cannot hold.
 func (r RelRecord) Check() error {
 	if _, err := r.SchemaType(); err != nil {
 		return err
@@ -227,7 +227,7 @@ func (r RelRecord) SchemaType() (graphschema.RelType, error) {
 // Check refuses a reference by a label outside the schema, a key that does
 // not match the label's identity (another number of values, or a value that
 // is not text: every identity property of the schema is a string), or the
-// export lease node.
+// backup lease node.
 func (ref NodeRef) Check() error {
 	l, err := ref.SchemaLabel()
 	if err != nil {
@@ -246,7 +246,7 @@ func (ref NodeRef) Check() error {
 		}
 	}
 	if l == graphschema.Meta && ref.Key[0] == LeaseNodeKey {
-		return fmt.Errorf("%w: an end is the export lease node", ErrInvalidRecord)
+		return fmt.Errorf("%w: an end is the backup lease node", ErrInvalidRecord)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-package exportfile
+package backupfile
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 )
 
 // A property value is written as follows, and read back as the same Go value:
@@ -50,7 +50,7 @@ func encodeValue(v any) (any, error) {
 		return nil, nil
 	case string:
 		if !utf8.ValidString(x) {
-			return nil, fmt.Errorf("%w: a string that is not UTF-8", export.ErrUnsupportedValue)
+			return nil, fmt.Errorf("%w: a string that is not UTF-8", graphbackup.ErrUnsupportedValue)
 		}
 		return x, nil
 	case bool:
@@ -76,7 +76,7 @@ func encodeValue(v any) (any, error) {
 		}
 		return out, nil
 	default:
-		return nil, fmt.Errorf("%w: a value of type %T", export.ErrUnsupportedValue, v)
+		return nil, fmt.Errorf("%w: a value of type %T", graphbackup.ErrUnsupportedValue, v)
 	}
 }
 
@@ -97,7 +97,7 @@ func formatDateTime(t time.Time) (string, error) {
 	_, off := t.Zone()
 	_, backOff := back.Zone()
 	if !back.Equal(t) || backOff != off || back.Location().String() != t.Location().String() {
-		return "", fmt.Errorf("%w: datetime %v cannot be written exactly", export.ErrUnsupportedValue, t)
+		return "", fmt.Errorf("%w: datetime %v cannot be written exactly", graphbackup.ErrUnsupportedValue, t)
 	}
 	return text, nil
 }
@@ -110,28 +110,28 @@ func parseDateTime(s string) (time.Time, error) {
 	if strings.HasSuffix(s, "]") {
 		i := strings.LastIndexByte(s, '[')
 		if i < 0 {
-			return time.Time{}, fmt.Errorf("%w: datetime %q", export.ErrUnsupportedValue, s)
+			return time.Time{}, fmt.Errorf("%w: datetime %q", graphbackup.ErrUnsupportedValue, s)
 		}
 		text, name, named = s[:i], s[i+1:len(s)-1], true
 	}
 	t, err := time.Parse(time.RFC3339Nano, text)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("%w: datetime %q: %v", export.ErrUnsupportedValue, s, err)
+		return time.Time{}, fmt.Errorf("%w: datetime %q: %v", graphbackup.ErrUnsupportedValue, s, err)
 	}
 	_, off := t.Zone()
 	if !named {
 		return t.In(time.FixedZone(offsetZone, off)), nil
 	}
 	if name == "" || name == "Local" || name == offsetZone {
-		return time.Time{}, fmt.Errorf("%w: datetime %q names no zone Neo4j knows", export.ErrUnsupportedValue, s)
+		return time.Time{}, fmt.Errorf("%w: datetime %q names no zone Neo4j knows", graphbackup.ErrUnsupportedValue, s)
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("%w: datetime %q: %v", export.ErrUnsupportedValue, s, err)
+		return time.Time{}, fmt.Errorf("%w: datetime %q: %v", graphbackup.ErrUnsupportedValue, s, err)
 	}
 	in := t.In(loc)
 	if _, zoneOff := in.Zone(); zoneOff != off {
-		return time.Time{}, fmt.Errorf("%w: datetime %q: the offset is not %s's at that time", export.ErrUnsupportedValue, s, name)
+		return time.Time{}, fmt.Errorf("%w: datetime %q: the offset is not %s's at that time", graphbackup.ErrUnsupportedValue, s, name)
 	}
 	return in, nil
 }
@@ -173,7 +173,7 @@ func decodeValue(raw []byte) (any, error) {
 		return decodeTyped(trimmed)
 	case c == '-' || c >= '0' && c <= '9':
 		return nil, fmt.Errorf("%w: a plain JSON number %s; an integer is {%q:\"…\"} and a float {%q:\"…\"}",
-			export.ErrUnsupportedValue, trimmed, intTag, floatTag)
+			graphbackup.ErrUnsupportedValue, trimmed, intTag, floatTag)
 	default:
 		return nil, fmt.Errorf("%w: %q is not a value", ErrMalformed, trimmed)
 	}
@@ -187,12 +187,12 @@ func decodeTyped(raw []byte) (any, error) {
 		return nil, err
 	}
 	if len(members) != 1 {
-		return nil, fmt.Errorf("%w: an object value must have one member %s, %s or %s", export.ErrUnsupportedValue, intTag, floatTag, datetimeTag)
+		return nil, fmt.Errorf("%w: an object value must have one member %s, %s or %s", graphbackup.ErrUnsupportedValue, intTag, floatTag, datetimeTag)
 	}
 	tag := members[0].name
 	var text string
 	if err := json.Unmarshal(members[0].value, &text); err != nil {
-		return nil, fmt.Errorf("%w: %s holds %s, want a JSON string", export.ErrUnsupportedValue, tag, members[0].value)
+		return nil, fmt.Errorf("%w: %s holds %s, want a JSON string", graphbackup.ErrUnsupportedValue, tag, members[0].value)
 	}
 	var v any
 	var canonical string
@@ -200,13 +200,13 @@ func decodeTyped(raw []byte) (any, error) {
 	case intTag:
 		i, err := strconv.ParseInt(text, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s %q: %v", export.ErrUnsupportedValue, tag, text, err)
+			return nil, fmt.Errorf("%w: %s %q: %v", graphbackup.ErrUnsupportedValue, tag, text, err)
 		}
 		v, canonical = i, strconv.FormatInt(i, 10)
 	case floatTag:
 		f, err := strconv.ParseFloat(text, 64)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s %q: %v", export.ErrUnsupportedValue, tag, text, err)
+			return nil, fmt.Errorf("%w: %s %q: %v", graphbackup.ErrUnsupportedValue, tag, text, err)
 		}
 		v, canonical = f, strconv.FormatFloat(f, 'g', -1, 64)
 	case datetimeTag:
@@ -219,10 +219,10 @@ func decodeTyped(raw []byte) (any, error) {
 		}
 		v = t
 	default:
-		return nil, fmt.Errorf("%w: unknown typed value %q", export.ErrUnsupportedValue, tag)
+		return nil, fmt.Errorf("%w: unknown typed value %q", graphbackup.ErrUnsupportedValue, tag)
 	}
 	if text != canonical {
-		return nil, fmt.Errorf("%w: %s %q is written %q", export.ErrUnsupportedValue, tag, text, canonical)
+		return nil, fmt.Errorf("%w: %s %q is written %q", graphbackup.ErrUnsupportedValue, tag, text, canonical)
 	}
 	return v, nil
 }

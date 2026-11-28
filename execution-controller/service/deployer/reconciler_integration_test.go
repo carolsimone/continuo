@@ -42,7 +42,7 @@ func TestReconciler_ReturnsStaleReservationsToPending(t *testing.T) {
 
 	require.NoError(t, newTestReconciler(db).ReconcileOnce(context.Background()))
 
-	assert.Equal(t, "pending", countStatusOf(t, db, stale), "a reservation whose launcher is gone gives its slot back; the claim re-admits it")
+	assert.Equal(t, "pending", countStatusOf(t, db, stale), "a reservation whose launcher is gone gives its Job capacity back; the claim re-admits it")
 	assert.Equal(t, "reserved", countStatusOf(t, db, fresh), "a fresh reservation belongs to a live launcher")
 	assert.Equal(t, 0, outboxCountByType(t, db, event.EventTypeTaskStatusReport), "the reconciler reports nothing")
 }

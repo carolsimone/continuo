@@ -2,7 +2,7 @@ package ports
 
 import "time"
 
-// BackupSchedule is the times a tenant's graph is exported, in UTC.
+// BackupSchedule is the times a tenant's graph is backed up, in UTC.
 type BackupSchedule interface {
 	// Next returns the first slot after the given time, in UTC, or the zero
 	// time when the schedule names no later slot.

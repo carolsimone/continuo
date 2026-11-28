@@ -65,14 +65,14 @@ func NewReleasePromotedContractsHandler(
 //  1. Look the group's marker up, by messageID or by outboxEntryID. A
 //     processed message is acknowledged without reading object storage.
 //  2. A promotion with no contract bundle records only its marker.
-//  3. While an export or a restore holds the tenant's lease it returns
+//  3. While a backup or a restore holds the tenant's lease it returns
 //     uow.ErrWritesPaused without reading object storage. Otherwise it reads
 //     the bundle and verifies its SHA-256, outside any transaction. A bundle
 //     the reader refuses as invalid, or one of another tenant or release, is
 //     permanent; a missing bundle or an outage is retried.
 //  4. Transaction A reads the nodes' contract states, plans the promotion
 //     (contractversion.Plan) and writes the plan, and marks the message in
-//     flight, so no export starts before transaction B. The versions counter
+//     flight, so no backup starts before transaction B. The versions counter
 //     moves once it has committed.
 //  5. Rewrite the tenant's live contracts folder. While the rewrite runs, a
 //     write that is not final renews the message's in-flight mark every
@@ -207,7 +207,7 @@ func (h *ReleasePromotedContractsHandler) Handle(
 
 // rewrite runs the live rewrite while renewing the message's in-flight mark,
 // each renewal bounded by inflightRenew. A renewal that fails or runs out of
-// time is logged and the rewrite goes on: once the mark lapses an export may
+// time is logged and the rewrite goes on: once the mark lapses a backup may
 // start before transaction B, which then backs off, and the redelivery finds
 // transaction A's writes and the rewrite done.
 func (h *ReleasePromotedContractsHandler) rewrite(ctx context.Context, marker uow.Marker, in domainModel.PromoteReleaseInput) (string, error) {

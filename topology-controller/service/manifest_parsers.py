@@ -16,7 +16,7 @@ from domain.exceptions import (
     InvalidNodeSettingError,
     InvalidOdcsBundleError,
 )
-from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode
+from domain.model import ManifestFile, ManifestKind, ParsedArtifact, ExcludedModel
 from service.compile_extras import load_compile_extras
 from service.contract_validation import ContractValidator
 from service.odcs_bundle_parser import parse_odcs_bundle
@@ -26,7 +26,7 @@ from service.release_timings import ReleaseTimings
 
 class ParseFn(Protocol):
     """A kind's parse function: the downloaded artifact to its nodes and shared
-    code. A node the parse leaves out without failing is appended to `skipped`
+    code. A model the parse excludes without failing is appended to `excluded`
     when it is given. `progress` is called as the parse works through its nodes,
     `timings` is the release's timing record and `validator` checks each contract
     (the one the process keeps, so a contract unchanged since an earlier release
@@ -36,7 +36,7 @@ class ParseFn(Protocol):
         self,
         mf: ManifestFile,
         *,
-        skipped: list[SkippedNode] | None = None,
+        excluded: list[ExcludedModel] | None = None,
         progress: Callable[[], None],
         timings: ReleaseTimings,
         validator: ContractValidator,
@@ -45,7 +45,7 @@ class ParseFn(Protocol):
 
 
 def _parse_dbt(
-    mf: ManifestFile, *, skipped: list[SkippedNode] | None = None,
+    mf: ManifestFile, *, excluded: list[ExcludedModel] | None = None,
     progress: Callable[[], None], timings: ReleaseTimings, validator: ContractValidator,
 ) -> ParsedArtifact:
     """Parse a dbt manifest with the compile extras downloaded beside it, when
@@ -54,7 +54,7 @@ def _parse_dbt(
     not name it. Each node's contract is checked with `validator`."""
     extras = load_compile_extras(mf.extras_path, mf.declared_project) if mf.extras_path else None
     return parse_manifest(
-        mf.path, mf.image_tag, extras, skipped=skipped, declared_project=mf.declared_project,
+        mf.path, mf.image_tag, extras, excluded=excluded, declared_project=mf.declared_project,
         validator=validator, progress=progress, timings=timings,
     )
 

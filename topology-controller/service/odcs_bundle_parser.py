@@ -38,7 +38,7 @@ from continuo_contracts.vocabulary import continuo_values
 
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.exceptions import InvalidOdcsBundleError, MalformedContractError
-from domain.model import ContractFamily, FailedNode, ManifestFile, ManifestNode, NodeContract, ParsedArtifact, SkippedNode
+from domain.model import ContractFamily, FailedNode, ManifestFile, ManifestNode, NodeContract, ParsedArtifact, ExcludedModel
 from domain.node_timeout import timeout_seconds
 from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION, version_triple
@@ -323,7 +323,7 @@ def _check_one_node_per_id(nodes: list[ManifestNode]) -> None:
 def parse_odcs_bundle(
     mf: ManifestFile,
     *,
-    skipped: list[SkippedNode] | None = None,
+    excluded: list[ExcludedModel] | None = None,
     progress: Callable[[], None],
     timings: ReleaseTimings,
     validator: ContractValidator,
@@ -332,8 +332,8 @@ def parse_odcs_bundle(
     """Parse a Python producer bundle into the nodes of its valid contracts and
     one FailedNode for each invalid one.
 
-    `skipped` is accepted so every parse function takes the same arguments and is
-    never appended to: a contract is read or it fails, it is never left out.
+    `excluded` is accepted so every parse function takes the same arguments and is
+    never appended to: a contract is read or it fails, it is never excluded.
     `progress` is called once after each contract. The library's check of each contract,
     and nothing else of reading it (the YAML load and the node's build stay in the parse),
     is the `contract_validation` stage of `timings`, as a dbt node's check is; `timings`

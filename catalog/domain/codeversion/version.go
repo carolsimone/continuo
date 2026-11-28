@@ -84,9 +84,9 @@ type WriteResult struct {
 	NodeVersionsCreated  int
 	UnitVersionsCreated  int
 	CurrentPointersMoved int
-	// RejectionsResolved counts open :Rejection nodes this write linked to a
+	// PrecedentsResolved counts open :FailurePrecedent nodes this write linked to a
 	// newly-current version via [:RESOLVED_BY].
-	RejectionsResolved int
+	PrecedentsResolved int
 	// CompiledOnlyMoved lists the unique ids of the nodes whose new version
 	// keeps the current version's source part and changes its non-empty
 	// compiled part. It is nil when no node moved so.

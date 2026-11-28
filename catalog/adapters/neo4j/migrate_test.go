@@ -35,9 +35,9 @@ var oldSchemaStatements = []string{
 	"CREATE CONSTRAINT code_unit_unique FOR (c:CodeUnit) REQUIRE c.unit_id IS UNIQUE",
 	"CREATE CONSTRAINT code_unit_version_unique FOR (v:CodeUnitVersion) REQUIRE (v.unit_id, v.checksum) IS UNIQUE",
 	"CREATE INDEX code_unit_version_unit_id FOR (v:CodeUnitVersion) ON (v.unit_id)",
-	"CREATE CONSTRAINT rejection_unique FOR (r:Rejection) REQUIRE (r.release_id, r.node_id) IS UNIQUE",
-	"CREATE INDEX rejection_node_id FOR (r:Rejection) ON (r.node_id)",
-	"CREATE INDEX rejection_category_reason FOR (r:Rejection) ON (r.category, r.reason)",
+	"CREATE CONSTRAINT failure_precedent_unique FOR (r:FailurePrecedent) REQUIRE (r.release_id, r.node_id) IS UNIQUE",
+	"CREATE INDEX failure_precedent_node_id FOR (r:FailurePrecedent) ON (r.node_id)",
+	"CREATE INDEX failure_precedent_category_reason FOR (r:FailurePrecedent) ON (r.category, r.reason)",
 	"CREATE CONSTRAINT error_signature_unique FOR (s:ErrorSignature) REQUIRE s.signature IS UNIQUE",
 	"CREATE INDEX error_signature_category_reason FOR (s:ErrorSignature) ON (s.category, s.reason)",
 	"CREATE CONSTRAINT fix_unique FOR (p:Fix) REQUIRE p.fix_id IS UNIQUE",
@@ -79,7 +79,7 @@ CREATE (cu:CodeUnit {unit_id: $m + '.svc.macro.cents', code_version_promoted_at:
 CREATE (cuv:CodeUnitVersion {unit_id: cu.unit_id, checksum: 'c0de', test_marker: $m})
 CREATE (cu)-[:CURRENT {promoted_at: datetime('2026-10-20T09:00:00Z'), release_id: 'r7'}]->(cuv)
 CREATE (va)-[:USES_CODE]->(cuv)
-CREATE (rej:Rejection {release_id: 'r6', node_id: d.unique_id, category: 'compile', reason: 'syntax',
+CREATE (rej:FailurePrecedent {release_id: 'r6', node_id: d.unique_id, category: 'compile', reason: 'syntax',
                        at: datetime('2026-10-17T09:00:00Z'), test_marker: $m})
 CREATE (sig:ErrorSignature {signature: $m + '-signature', category: 'compile', reason: 'syntax', test_marker: $m})
 CREATE (rej)-[:HAS_SIGNATURE]->(sig)
@@ -226,7 +226,7 @@ func (f *oldShapeFixture) assertMigrated(when string) {
 
 	assert.Equal(t, map[string]int64{
 		"Node": 3 + bulkTables, "Meta": 1, "NodeVersion": 2, "CodeUnit": 1, "CodeUnitVersion": 1,
-		"Rejection": 1, "ErrorSignature": 1, "Fix": 1, "PullRequest": 1,
+		"FailurePrecedent": 1, "ErrorSignature": 1, "Fix": 1, "PullRequest": 1,
 	}, f.labelCounts(), "%s: the test's nodes per label", when)
 	for _, label := range []string{"Table", "Run", "TopologyRoot"} {
 		row := f.one(fmt.Sprintf("MATCH (n:%s) RETURN count(n) AS n", label))
@@ -267,7 +267,7 @@ func (f *oldShapeFixture) assertMigrated(when string) {
 	retired := f.one(`MATCH (d:Node {unique_id: $m + '.table_d'})
 		RETURN d.active AS active, d.retired_at IS NOT NULL AS retired,
 		       COUNT { (d)-[:CURRENT]->(:NodeVersion) } AS current,
-		       COUNT { (d)-[:FAILED]->(:Rejection) } AS failed,
+		       COUNT { (d)-[:FAILED]->(:FailurePrecedent) } AS failed,
 		       COUNT { (:Fix)-[:EDITED]->(d) } AS edited,
 		       COUNT { (d)-[:DEPENDS_ON]->() } AS depends_on`)
 	assert.Equal(t, false, retired["active"], when)
@@ -311,7 +311,7 @@ func TestMigrate_ResumesAfterPartialRun(t *testing.T) {
 
 	assert.Equal(t, map[string]int64{
 		"Node": 3 + bulkTables, "Meta": 1, "NodeVersion": 2, "CodeUnit": 1, "CodeUnitVersion": 1,
-		"Rejection": 1, "ErrorSignature": 1, "Fix": 1, "PullRequest": 1,
+		"FailurePrecedent": 1, "ErrorSignature": 1, "Fix": 1, "PullRequest": 1,
 	}, f.labelCounts(), "the partial run relabelled :Table and deleted the run history")
 	tenants := f.one(`MATCH (n) WHERE n.test_marker = $m
 		RETURN count(n) AS total, count(CASE WHEN n.tenant_id = 'default' THEN 1 END) AS in_default`)

@@ -29,7 +29,7 @@ func envOr(key, fallback string) string {
 }
 
 // integrationClient connects to the test Neo4j and applies the component's
-// schema, whose meta_key_unique constraint makes the export gate's MERGE of a
+// schema, whose meta_key_unique constraint makes the backup gate's MERGE of a
 // tenant's lease node race-free.
 func integrationClient(t *testing.T) Neo4jClient {
 	t.Helper()
@@ -113,19 +113,19 @@ func (f *uowFixture) markers() int64 {
 	return f.count(`MATCH (n:ProcessedMessage {tenant_id: $tenant_id}) RETURN count(n) AS n`)
 }
 
-// leaseNode returns the tenant's export lease node's properties, or nil when
+// leaseNode returns the tenant's backup lease node's properties, or nil when
 // the tenant has none.
 func (f *uowFixture) leaseNode() map[string]any {
 	f.t.Helper()
 	ctx := context.Background()
 	s := f.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = s.Close(ctx) }()
-	res, err := s.Run(ctx, `MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) RETURN properties(m) AS p`,
+	res, err := s.Run(ctx, `MATCH (m:Meta {tenant_id: $tenant_id, key: 'backup'}) RETURN properties(m) AS p`,
 		map[string]any{"tenant_id": f.tenant})
 	require.NoError(f.t, err)
 	recs, err := res.Collect(ctx)
 	require.NoError(f.t, err)
-	require.LessOrEqual(f.t, len(recs), 1, "one export lease node per tenant")
+	require.LessOrEqual(f.t, len(recs), 1, "one backup lease node per tenant")
 	if len(recs) == 0 {
 		return nil
 	}
@@ -138,7 +138,7 @@ func (f *uowFixture) leaseNode() map[string]any {
 func (f *uowFixture) assertGateUnlocked() {
 	f.t.Helper()
 	node := f.leaseNode()
-	require.NotNil(f.t, node, "every write leaves the tenant's export lease node behind")
+	require.NotNil(f.t, node, "every write leaves the tenant's backup lease node behind")
 	assert.NotContains(f.t, node, "_lock")
 }
 
@@ -271,7 +271,7 @@ func TestUnitOfWork_RefusesAnIncompleteMarker(t *testing.T) {
 
 // TestUnitOfWork_TwoPodsRaceOneMarker runs two unit-of-work instances, each on
 // its own driver as two catalog pods would, against one message at the same
-// moment. The tenant's export gate serialises them: the first to lock it runs
+// moment. The tenant's backup gate serialises them: the first to lock it runs
 // fn and commits the marker; the second waits on the lock, then finds the
 // marker and skips fn. Two rounds cover a tenant whose lease node the race
 // creates and one whose node already exists.
@@ -335,10 +335,10 @@ func TestUnitOfWork_WritesBackOffWhileLeaseHeld(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 	m := f.marker("1762077600000-0", nil)
 
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute))
 
 	called := false
 	err := u.Write(ctx, m, true, func(ctx context.Context, tx uow.Tx) error {
@@ -359,7 +359,7 @@ func TestUnitOfWork_WriteLandsAfterLeaseRelease(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 	m := f.marker("1762077600000-0", nil)
 	probe := func(ctx context.Context, tx uow.Tx) error { return f.writeProbe(ctx, tx, "after-release") }
 
@@ -501,7 +501,7 @@ func TestUnitOfWork_WritesPausedFollowsTheLease(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 	paused := func() bool {
 		ok, err := u.WritesPaused(ctx, f.tenant)
 		require.NoError(t, err)
@@ -509,9 +509,9 @@ func TestUnitOfWork_WritesPausedFollowsTheLease(t *testing.T) {
 	}
 
 	assert.False(t, paused(), "a tenant with no lease node is not paused")
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute))
 	assert.True(t, paused())
-	require.NoError(t, lease.Release(ctx, f.tenant, "exporter-1"))
+	require.NoError(t, lease.Release(ctx, f.tenant, "taker-1"))
 	assert.False(t, paused())
 }
 
@@ -524,21 +524,21 @@ func (f *uowFixture) versionsMarker(messageID string) uow.Marker {
 
 // Two groups read the same stream message under the same message id. The
 // topology group's final write must not end the versions group's mark, or an
-// export would start between the versions group's batches.
+// backup would start between the versions group's batches.
 func TestUnitOfWork_AnotherGroupsFinalWriteKeepsTheMessageInFlight(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 	const id = "1762077600000-0"
 
 	f.writeProbeBatch(u, f.versionsMarker(id), false, "versions-1")
 	f.writeProbeBatch(u, f.marker(id, nil), true, "topology-final")
-	require.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute), ports.ErrWritesInFlight,
+	require.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute), ports.ErrWritesInFlight,
 		"the topology group's final write leaves the versions group between its batches")
 
 	f.writeProbeBatch(u, f.versionsMarker(id), true, "versions-final")
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute))
 }
 
 // A redelivery of a message one group already finished finds that group's
@@ -547,12 +547,12 @@ func TestUnitOfWork_AnotherGroupsFoundMarkerKeepsTheMessageInFlight(t *testing.T
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 	const id = "1762077600000-0"
 
 	f.writeProbeBatch(u, f.marker(id, nil), true, "topology-final")
 	f.writeProbeBatch(u, f.versionsMarker(id), false, "versions-1")
 	f.writeProbeBatch(u, f.marker(id, nil), true, "topology-redelivered")
-	require.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute), ports.ErrWritesInFlight,
+	require.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute), ports.ErrWritesInFlight,
 		"the topology group's redelivery leaves the versions group between its batches")
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// AdmissionRepository admits deployments to execution slots and finds the
+// AdmissionRepository admits deployments within Job capacity and finds the
 // reservations whose launch was lost. LockScope, CountInFlight and
 // ReserveNext run in one transaction the caller holds: LockScope serialises
 // every claimer of the scope until that transaction ends, so the count stays
@@ -17,7 +17,7 @@ type AdmissionRepository interface {
 	// LockScope locks scope's capacity record for the rest of the transaction.
 	// It fails when the record does not exist.
 	LockScope(ctx context.Context, scope string) error
-	// CountInFlight counts the deployments holding a slot (reserved, starting,
+	// CountInFlight counts the deployments holding Job capacity (reserved, starting,
 	// running, terminating).
 	CountInFlight(ctx context.Context) (int, error)
 	// ReserveNext moves up to limit due pending deployments to reserved and
@@ -32,7 +32,7 @@ type AdmissionRepository interface {
 	LoadReserved(ctx context.Context, id uuid.UUID) (*model.Deployment, error)
 	// ReturnStaleReserved moves deployments reserved for longer than olderThan
 	// back to pending and returns their ids. A reservation that old lost the
-	// dispatcher that took it; returning it frees the slot, and the claim
+	// dispatcher that took it; returning it frees its Job capacity, and the claim
 	// re-admits it in fair order. A reservation a launcher holds is skipped.
 	ReturnStaleReserved(ctx context.Context, olderThan time.Duration) ([]uuid.UUID, error)
 }

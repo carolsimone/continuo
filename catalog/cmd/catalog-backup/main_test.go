@@ -20,33 +20,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeExporter records the tenants it was asked to export and answers each
+// fakeTaker records the tenants it was asked to back up and answers each
 // with its configured result or error.
-type fakeExporter struct {
+type fakeTaker struct {
 	calls   []string
 	results map[string]backup.Result
 	errs    map[string]error
-	// onExport runs inside the export of a tenant, before it answers.
-	onExport func(ctx context.Context, tenantID string)
+	// onTake runs inside the backup of a tenant, before it answers.
+	onTake func(ctx context.Context, tenantID string)
 }
 
-// ExportEach follows backup.Exporter's contract: the tenants in order, each
+// TakeEach follows backup.Taker's contract: the tenants in order, each
 // reported as it ends, and none started once ctx has ended.
-func (f *fakeExporter) ExportEach(ctx context.Context, tenants []string, each func(string, backup.Result, error)) []string {
+func (f *fakeTaker) TakeEach(ctx context.Context, tenants []string, each func(string, backup.Result, error)) []string {
 	for i, tenantID := range tenants {
 		if ctx.Err() != nil {
 			return tenants[i:]
 		}
-		res, err := f.exportTenant(ctx, tenantID)
+		res, err := f.takeTenant(ctx, tenantID)
 		each(tenantID, res, err)
 	}
 	return nil
 }
 
-func (f *fakeExporter) exportTenant(ctx context.Context, tenantID string) (backup.Result, error) {
+func (f *fakeTaker) takeTenant(ctx context.Context, tenantID string) (backup.Result, error) {
 	f.calls = append(f.calls, tenantID)
-	if f.onExport != nil {
-		f.onExport(ctx, tenantID)
+	if f.onTake != nil {
+		f.onTake(ctx, tenantID)
 	}
 	if err := f.errs[tenantID]; err != nil {
 		return backup.Result{}, err
@@ -66,7 +66,7 @@ func (f *fakeRestorer) Restore(_ context.Context, key string) (backup.RestoreRes
 	return f.res, f.err
 }
 
-// fakeStore lists each tenant's configured exports.
+// fakeStore lists each tenant's configured backups.
 type fakeStore struct {
 	objects map[string][]ports.BackupObject
 	err     error
@@ -88,7 +88,7 @@ func (f *fakeTenants) Tenants(context.Context) ([]string, error) { return f.tena
 // harness runs the command over the fakes and counts how often it connected
 // and released its connections.
 type harness struct {
-	exporter   *fakeExporter
+	taker      *fakeTaker
 	restorer   *fakeRestorer
 	store      *fakeStore
 	tenants    *fakeTenants
@@ -99,7 +99,7 @@ type harness struct {
 
 func newHarness() *harness {
 	return &harness{
-		exporter: &fakeExporter{results: map[string]backup.Result{}, errs: map[string]error{}},
+		taker:    &fakeTaker{results: map[string]backup.Result{}, errs: map[string]error{}},
 		restorer: &fakeRestorer{},
 		store:    &fakeStore{objects: map[string][]ports.BackupObject{}},
 		tenants:  &fakeTenants{},
@@ -112,7 +112,7 @@ func (h *harness) connect(_ context.Context, logger *slog.Logger) (deps, func(),
 		return deps{}, nil, h.connectErr
 	}
 	logger.Info("connected to the fakes")
-	return deps{exporter: h.exporter, restorer: h.restorer, store: h.store, tenants: h.tenants}, func() { h.closes++ }, nil
+	return deps{taker: h.taker, restorer: h.restorer, store: h.store, tenants: h.tenants}, func() { h.closes++ }, nil
 }
 
 func (h *harness) run(t *testing.T, args ...string) (code int, stdout, stderr string) {
@@ -128,7 +128,7 @@ func (h *harness) runCtx(t *testing.T, ctx context.Context, args ...string) (cod
 }
 
 func (h *harness) result(tenant string, bytesWritten, nodes, rels int64, held time.Duration) {
-	h.exporter.results[tenant] = backup.Result{
+	h.taker.results[tenant] = backup.Result{
 		ObjectKey:     "tenants/" + tenant + "/backups/catalog/20261030T020000Z.jsonl.gz",
 		Bytes:         bytesWritten,
 		Nodes:         nodes,
@@ -163,19 +163,19 @@ func keysOf(m map[string]any) []string {
 
 const acmeKey = "tenants/acme/backups/catalog/20261030T020000Z.jsonl.gz"
 
-// export with no --tenant exports every tenant the catalog holds and prints
+// backup with no --tenant backs up every tenant the catalog holds and prints
 // one JSON object per tenant on stdout: the object key, the bytes, nodes and
 // relationships stored and the seconds the tenant's writes were paused.
-func TestExport_PrintsOneResultPerTenant(t *testing.T) {
+func TestTake_PrintsOneResultPerTenant(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"acme", "default"}
 	h.result("acme", 1234, 10, 20, 1500*time.Millisecond)
 	h.result("default", 99, 1, 0, 250*time.Millisecond)
 
-	code, stdout, stderr := h.run(t, "export")
+	code, stdout, stderr := h.run(t, "take")
 
 	require.Equal(t, exitOK, code, stderr)
-	assert.Equal(t, []string{"acme", "default"}, h.exporter.calls)
+	assert.Equal(t, []string{"acme", "default"}, h.taker.calls)
 	got := lines(t, stdout)
 	require.Len(t, got, 2)
 	for _, line := range got {
@@ -193,27 +193,27 @@ func TestExport_PrintsOneResultPerTenant(t *testing.T) {
 	assert.Equal(t, 1, h.closes, "the connections are released")
 }
 
-// --tenant exports that tenant alone.
-func TestExport_TenantFlagExportsOnlyThatTenant(t *testing.T) {
+// --tenant backups that tenant alone.
+func TestTake_TenantFlagBackupsOnlyThatTenant(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"acme", "default"}
 	h.result("acme", 5, 1, 1, time.Second)
 
-	code, stdout, stderr := h.run(t, "export", "--tenant", "acme")
+	code, stdout, stderr := h.run(t, "take", "--tenant", "acme")
 
 	require.Equal(t, exitOK, code, stderr)
-	assert.Equal(t, []string{"acme"}, h.exporter.calls)
+	assert.Equal(t, []string{"acme"}, h.taker.calls)
 	assert.Len(t, lines(t, stdout), 1)
 }
 
-// A lease held by another export or a restore skips the tenant: exit 3, and
+// A lease held by another backup or a restore skips the tenant: exit 3, and
 // nothing about it on stdout.
-func TestExport_SkippedExitsThree(t *testing.T) {
+func TestTake_SkippedExitsThree(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"acme"}
-	h.exporter.errs["acme"] = fmt.Errorf("export of tenant %q: %w", "acme", backup.ErrSkipped)
+	h.taker.errs["acme"] = fmt.Errorf("backup of tenant %q: %w", "acme", backup.ErrSkipped)
 
-	code, stdout, stderr := h.run(t, "export", "--tenant", "acme")
+	code, stdout, stderr := h.run(t, "take", "--tenant", "acme")
 
 	require.Equal(t, exitSkipped, code)
 	assert.Empty(t, stdout)
@@ -223,17 +223,17 @@ func TestExport_SkippedExitsThree(t *testing.T) {
 
 // Among several tenants, a skipped one does not hide the others' results, but
 // the exit code still says something was skipped.
-func TestExport_ASkippedTenantAmongSeveralExitsThreeAfterTheOthers(t *testing.T) {
+func TestTake_ASkippedTenantAmongSeveralExitsThreeAfterTheOthers(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"a", "b", "c"}
 	h.result("a", 1, 1, 1, time.Second)
-	h.exporter.errs["b"] = backup.ErrSkipped
+	h.taker.errs["b"] = backup.ErrSkipped
 	h.result("c", 3, 3, 3, time.Second)
 
-	code, stdout, _ := h.run(t, "export")
+	code, stdout, _ := h.run(t, "take")
 
 	require.Equal(t, exitSkipped, code)
-	assert.Equal(t, []string{"a", "b", "c"}, h.exporter.calls)
+	assert.Equal(t, []string{"a", "b", "c"}, h.taker.calls)
 	got := lines(t, stdout)
 	require.Len(t, got, 2)
 	assert.Contains(t, got[0]["object_key"], "tenants/a/")
@@ -242,18 +242,18 @@ func TestExport_ASkippedTenantAmongSeveralExitsThreeAfterTheOthers(t *testing.T)
 
 // A tenant that fails does not stop the others: their results are printed, the
 // failure is named on stderr and the exit code is 1, which outranks a skip.
-func TestExport_AFailingTenantAmongSeveralGoesOn(t *testing.T) {
+func TestTake_AFailingTenantAmongSeveralGoesOn(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"a", "b", "c", "d"}
 	h.result("a", 1, 1, 1, time.Second)
-	h.exporter.errs["b"] = errors.New("the store refused the upload")
-	h.exporter.errs["c"] = backup.ErrSkipped
+	h.taker.errs["b"] = errors.New("the store refused the upload")
+	h.taker.errs["c"] = backup.ErrSkipped
 	h.result("d", 4, 4, 4, time.Second)
 
-	code, stdout, stderr := h.run(t, "export")
+	code, stdout, stderr := h.run(t, "take")
 
 	require.Equal(t, exitError, code)
-	assert.Equal(t, []string{"a", "b", "c", "d"}, h.exporter.calls)
+	assert.Equal(t, []string{"a", "b", "c", "d"}, h.taker.calls)
 	got := lines(t, stdout)
 	require.Len(t, got, 2)
 	assert.Contains(t, got[0]["object_key"], "tenants/a/")
@@ -262,69 +262,69 @@ func TestExport_AFailingTenantAmongSeveralGoesOn(t *testing.T) {
 	assert.Contains(t, stderr, `tenant_id=b`)
 }
 
-// A catalog that holds no tenant has nothing to export: exit 0, nothing on
+// A catalog that holds no tenant has nothing to back up: exit 0, nothing on
 // stdout, and stderr says why.
-func TestExport_NoTenantIsNothingToExport(t *testing.T) {
+func TestTake_NoTenantIsNothingToBackup(t *testing.T) {
 	h := newHarness()
 
-	code, stdout, stderr := h.run(t, "export")
+	code, stdout, stderr := h.run(t, "take")
 
 	require.Equal(t, exitOK, code, stderr)
 	assert.Empty(t, stdout)
-	assert.Empty(t, h.exporter.calls)
+	assert.Empty(t, h.taker.calls)
 	assert.Contains(t, stderr, "no tenant")
 	assert.Contains(t, stderr, "--tenant")
 }
 
-func TestExport_TenantListFailureIsAnError(t *testing.T) {
+func TestTake_TenantListFailureIsAnError(t *testing.T) {
 	h := newHarness()
 	h.tenants.err = errors.New("neo4j is down")
 
-	code, stdout, stderr := h.run(t, "export")
+	code, stdout, stderr := h.run(t, "take")
 
 	require.Equal(t, exitError, code)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "neo4j is down")
-	assert.Empty(t, h.exporter.calls)
+	assert.Empty(t, h.taker.calls)
 }
 
 // --tenant names a tenant by its id. A tenant the catalog holds no graph for
-// is exported as an empty graph, the way the first export of an install that
+// is backed up as an empty graph, the way the first backup of an install that
 // has not written yet is taken, and stderr warns that the id is not one the
 // catalog lists.
-func TestExport_TenantTheCatalogDoesNotListIsExportedWithAWarning(t *testing.T) {
+func TestTake_TenantTheCatalogDoesNotListIsBackedUpWithAWarning(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"default"}
 	h.result("typo", 20, 0, 0, time.Second)
 
-	code, stdout, stderr := h.run(t, "export", "--tenant", "typo")
+	code, stdout, stderr := h.run(t, "take", "--tenant", "typo")
 
 	require.Equal(t, exitOK, code, stderr)
-	assert.Equal(t, []string{"typo"}, h.exporter.calls)
+	assert.Equal(t, []string{"typo"}, h.taker.calls)
 	require.Len(t, lines(t, stdout), 1)
 	assert.Contains(t, stderr, "typo")
 	assert.Contains(t, stderr, "not listed")
 }
 
-// A tenant that is listed is exported without a warning.
-func TestExport_AListedTenantHasNoWarning(t *testing.T) {
+// A tenant that is listed is backed up without a warning.
+func TestTake_AListedTenantHasNoWarning(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"acme"}
 	h.result("acme", 1, 1, 1, time.Second)
 
-	_, _, stderr := h.run(t, "export", "--tenant", "acme")
+	_, _, stderr := h.run(t, "take", "--tenant", "acme")
 
 	assert.NotContains(t, stderr, "not listed")
 }
 
-// Failing to read the tenant list does not stop an export of a tenant the
+// Failing to read the tenant list does not stop a backup of a tenant the
 // operator named: the warning is only a courtesy.
-func TestExport_NamedTenantExportsEvenWhenTheTenantListFails(t *testing.T) {
+func TestTake_NamedTenantBackupsEvenWhenTheTenantListFails(t *testing.T) {
 	h := newHarness()
 	h.tenants.err = errors.New("neo4j is down")
 	h.result("acme", 1, 1, 1, time.Second)
 
-	code, stdout, _ := h.run(t, "export", "--tenant", "acme")
+	code, stdout, _ := h.run(t, "take", "--tenant", "acme")
 
 	require.Equal(t, exitOK, code)
 	assert.Len(t, lines(t, stdout), 1)
@@ -332,51 +332,51 @@ func TestExport_NamedTenantExportsEvenWhenTheTenantListFails(t *testing.T) {
 
 // A tenant id that cannot name a backup prefix is a usage error, before the
 // command connects to anything.
-func TestExport_TenantIDThatNamesNoPrefixIsUsage(t *testing.T) {
+func TestTake_TenantIDThatNamesNoPrefixIsUsage(t *testing.T) {
 	for _, id := range []string{"", ".", "..", "a/b", "../x"} {
 		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
 			h := newHarness()
 
-			code, stdout, stderr := h.run(t, "export", "--tenant", id)
+			code, stdout, stderr := h.run(t, "take", "--tenant", id)
 
 			require.Equal(t, exitUsage, code)
 			assert.Empty(t, stdout)
 			assert.NotEmpty(t, stderr)
 			assert.Zero(t, h.connects)
-			assert.Empty(t, h.exporter.calls)
+			assert.Empty(t, h.taker.calls)
 		})
 	}
 }
 
 // The command is cancelled by SIGINT/SIGTERM through its context: the context
-// reaches every export, and no tenant after the cancelled one is started.
-func TestExport_ACancelledContextStopsTheTenantLoop(t *testing.T) {
+// reaches every backup, and no tenant after the cancelled one is started.
+func TestTake_ACancelledContextStopsTheTenantLoop(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"a", "b", "c"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h.exporter.onExport = func(ctx context.Context, tenantID string) {
+	h.taker.onTake = func(ctx context.Context, tenantID string) {
 		if tenantID == "a" {
 			cancel()
 			<-ctx.Done()
 		}
 	}
-	h.exporter.errs["a"] = context.Canceled
+	h.taker.errs["a"] = context.Canceled
 
-	code, stdout, stderr := h.runCtx(t, ctx, "export")
+	code, stdout, stderr := h.runCtx(t, ctx, "take")
 
 	require.Equal(t, exitError, code)
-	assert.Equal(t, []string{"a"}, h.exporter.calls)
+	assert.Equal(t, []string{"a"}, h.taker.calls)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "interrupted")
 	assert.Equal(t, 1, h.closes)
 }
 
-func TestExport_ConnectFailureIsAnError(t *testing.T) {
+func TestTake_ConnectFailureIsAnError(t *testing.T) {
 	h := newHarness()
 	h.connectErr = errors.New("missing or invalid env vars: NEO4J_URI")
 
-	code, stdout, stderr := h.run(t, "export")
+	code, stdout, stderr := h.run(t, "take")
 
 	require.Equal(t, exitError, code)
 	assert.Empty(t, stdout)
@@ -459,7 +459,7 @@ func TestRestore_TenantComesFromTheKey(t *testing.T) {
 	}
 }
 
-// A key that is not one the exporter writes is a usage error, before the
+// A key that is not one the taker writes is a usage error, before the
 // command connects: another prefix, a URI, a partial name, a path that climbs.
 func TestRestore_KeyOutsideTheBackupPrefixIsUsage(t *testing.T) {
 	for _, key := range []string{
@@ -506,18 +506,18 @@ func TestRestore_NeedsExactlyOneKey(t *testing.T) {
 	}
 }
 
-// A key with no export stored at it is an error that says so and where to look
+// A key with no backup stored at it is an error that says so and where to look
 // for the keys that exist; the graph is untouched.
-func TestRestore_MissingExportIsAnError(t *testing.T) {
+func TestRestore_MissingBackupIsAnError(t *testing.T) {
 	h := newHarness()
-	h.restorer.err = fmt.Errorf("the export %s cannot be restored, and the graph of tenant \"acme\" is untouched: %w", acmeKey, ports.ErrBackupNotFound)
+	h.restorer.err = fmt.Errorf("the backup %s cannot be restored, and the graph of tenant \"acme\" is untouched: %w", acmeKey, ports.ErrBackupNotFound)
 
 	code, stdout, stderr := h.run(t, "restore", acmeKey, "--yes")
 
 	require.Equal(t, exitError, code)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, acmeKey)
-	assert.Contains(t, stderr, "no export is stored")
+	assert.Contains(t, stderr, "no backup is stored")
 	assert.Contains(t, stderr, "catalog-backup list --tenant acme")
 	assert.Contains(t, stderr, "untouched")
 }
@@ -526,7 +526,7 @@ func TestRestore_MissingExportIsAnError(t *testing.T) {
 // exit 1, and stderr says so and tells the operator to run the restore again.
 func TestRestore_PartialRestoreSaysToRunItAgain(t *testing.T) {
 	h := newHarness()
-	h.restorer.err = fmt.Errorf("restore of tenant %q from %s: load the export: %w: %w", "acme", acmeKey, backup.ErrPartialRestore, errors.New("connection reset"))
+	h.restorer.err = fmt.Errorf("restore of tenant %q from %s: load the backup: %w: %w", "acme", acmeKey, backup.ErrPartialRestore, errors.New("connection reset"))
 
 	code, stdout, stderr := h.run(t, "restore", acmeKey, "--yes")
 
@@ -552,7 +552,7 @@ func TestRestore_SkippedExitsThree(t *testing.T) {
 
 func TestRestore_OtherFailureIsAnError(t *testing.T) {
 	h := newHarness()
-	h.restorer.err = errors.New("the export cannot be restored: bad checksum")
+	h.restorer.err = errors.New("the backup cannot be restored: bad checksum")
 
 	code, stdout, stderr := h.run(t, "restore", acmeKey, "--yes")
 
@@ -574,7 +574,7 @@ func TestRestore_ConnectFailureIsAnError(t *testing.T) {
 	assert.Empty(t, h.restorer.keys)
 }
 
-// list prints a JSON array of the stored exports, newest first, across
+// list prints a JSON array of the stored backups, newest first, across
 // tenants when no --tenant is named.
 func TestList_PrintsNewestFirst(t *testing.T) {
 	h := newHarness()
@@ -584,7 +584,7 @@ func TestList_PrintsNewestFirst(t *testing.T) {
 		require.NoError(t, err)
 		return ts
 	}
-	// The time each export was taken orders the list, not the time its
+	// The time each backup was taken orders the list, not the time its
 	// object was last modified.
 	h.store.objects["acme"] = []ports.BackupObject{
 		{Key: "tenants/acme/backups/catalog/20261029T020000Z.jsonl.gz", TenantID: "acme", TakenAt: at("2026-10-29T02:00:00Z"), Size: 300, LastModified: at("2026-10-31T02:00:05Z")},
@@ -633,7 +633,7 @@ func TestList_TenantFlagListsThatTenantOnly(t *testing.T) {
 	assert.Equal(t, acmeKey, got[0]["key"])
 }
 
-// With no export at all, list prints an empty array, not null.
+// With no backup at all, list prints an empty array, not null.
 func TestList_NothingStoredPrintsAnEmptyArray(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"acme"}
@@ -645,7 +645,7 @@ func TestList_NothingStoredPrintsAnEmptyArray(t *testing.T) {
 }
 
 // A bare list takes its tenants from the graph, which a Neo4j loss empties
-// while the bucket still holds the exports. With no tenant listed it still
+// while the bucket still holds the backups. With no tenant listed it still
 // prints an empty array and exits 0, and stderr says to name a tenant.
 func TestList_BareListWithNoTenantWarnsToNameOne(t *testing.T) {
 	h := newHarness()
@@ -660,7 +660,7 @@ func TestList_BareListWithNoTenantWarnsToNameOne(t *testing.T) {
 }
 
 // The warning is for a bare list that found no tenant: a tenant that is named
-// or listed has none, whether or not it holds an export.
+// or listed has none, whether or not it holds a backup.
 func TestList_NoWarningWhenATenantIsNamedOrListed(t *testing.T) {
 	for name, args := range map[string][]string{
 		"named, nothing stored":  {"list", "--tenant", "acme"},
@@ -679,8 +679,8 @@ func TestList_NoWarningWhenATenantIsNamedOrListed(t *testing.T) {
 	}
 }
 
-// A tenant the catalog does not list simply has no exports.
-func TestList_UnknownTenantHasNoExports(t *testing.T) {
+// A tenant the catalog does not list simply has no backups.
+func TestList_UnknownTenantHasNoBackups(t *testing.T) {
 	h := newHarness()
 	h.tenants.tenants = []string{"acme"}
 
@@ -690,7 +690,7 @@ func TestList_UnknownTenantHasNoExports(t *testing.T) {
 	assert.JSONEq(t, `[]`, stdout)
 }
 
-// A tenant whose exports cannot be listed fails the whole listing, with
+// A tenant whose backups cannot be listed fails the whole listing, with
 // nothing on stdout: a partial list would read as a complete one.
 func TestList_FailureIsAnErrorWithNothingOnStdout(t *testing.T) {
 	h := newHarness()
@@ -725,11 +725,11 @@ func TestUsageErrorsExitTwoBeforeConnecting(t *testing.T) {
 	for name, args := range map[string][]string{
 		"no arguments":          {},
 		"unknown subcommand":    {"backup"},
-		"unknown flag":          {"export", "--all"},
-		"unexpected argument":   {"export", "acme"},
+		"unknown flag":          {"take", "--all"},
+		"unexpected argument":   {"take", "acme"},
 		"list unknown flag":     {"list", "--yes"},
 		"restore with bad flag": {"restore", acmeKey, "--force"},
-		"export takes no yes":   {"export", "--yes"},
+		"take takes no yes":     {"take", "--yes"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness()
@@ -746,7 +746,7 @@ func TestUsageErrorsExitTwoBeforeConnecting(t *testing.T) {
 
 // -h prints the usage on stderr, never on stdout, and exits 0.
 func TestHelpPrintsUsageOnStderr(t *testing.T) {
-	for _, args := range [][]string{{"-h"}, {"--help"}, {"help"}, {"export", "-h"}, {"restore", "--help"}, {"list", "-h"}} {
+	for _, args := range [][]string{{"-h"}, {"--help"}, {"help"}, {"take", "-h"}, {"restore", "--help"}, {"list", "-h"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := newHarness()
 
@@ -767,33 +767,33 @@ func TestDiagnosticsGoToStderr(t *testing.T) {
 	h.tenants.tenants = []string{"acme"}
 	h.result("acme", 1, 1, 1, time.Second)
 
-	_, stdout, stderr := h.run(t, "export")
+	_, stdout, stderr := h.run(t, "take")
 
 	assert.Contains(t, stderr, "connected to the fakes")
 	assert.NotContains(t, stdout, "connected to the fakes")
 }
 
 // stdout carries only JSON, in the success paths and in every error path:
-// each line of an export is an object, list is one array, restore is one
+// each line of a backup is an object, list is one array, restore is one
 // object, and a failing command prints nothing.
 func TestStdoutIsOnlyJSON(t *testing.T) {
 	scenarios := map[string]func(h *harness) (args []string, wantEmpty bool){
-		"export ok": func(h *harness) ([]string, bool) {
+		"backup ok": func(h *harness) ([]string, bool) {
 			h.tenants.tenants = []string{"acme"}
 			h.result("acme", 1, 2, 3, time.Second)
-			return []string{"export"}, false
+			return []string{"take"}, false
 		},
-		"export skipped": func(h *harness) ([]string, bool) {
+		"backup skipped": func(h *harness) ([]string, bool) {
 			h.tenants.tenants = []string{"acme"}
-			h.exporter.errs["acme"] = backup.ErrSkipped
-			return []string{"export"}, true
+			h.taker.errs["acme"] = backup.ErrSkipped
+			return []string{"take"}, true
 		},
-		"export failed": func(h *harness) ([]string, bool) {
+		"backup failed": func(h *harness) ([]string, bool) {
 			h.tenants.tenants = []string{"acme"}
-			h.exporter.errs["acme"] = errors.New("boom")
-			return []string{"export"}, true
+			h.taker.errs["acme"] = errors.New("boom")
+			return []string{"take"}, true
 		},
-		"export no tenant": func(h *harness) ([]string, bool) { return []string{"export"}, true },
+		"take no tenant": func(h *harness) ([]string, bool) { return []string{"take"}, true },
 		"list ok": func(h *harness) ([]string, bool) {
 			h.tenants.tenants = []string{"acme"}
 			h.store.objects["acme"] = []ports.BackupObject{{Key: acmeKey, Size: 1}}
@@ -869,8 +869,8 @@ func TestLoadConfig_NeedsOnlyNeo4jAndS3(t *testing.T) {
 	assert.Equal(t, 7, cfg.keep, "the chart's default keep applies when CATALOG_BACKUP_KEEP is unset")
 }
 
-// A hand-run export prunes with the install's keep, so it never deletes more
-// than the scheduled export would.
+// A hand-run backup prunes with the install's keep, so it never deletes more
+// than the scheduled backup would.
 func TestLoadConfig_KeepIsTheInstallsKeep(t *testing.T) {
 	clearEnv(t)
 	setRequired(t)

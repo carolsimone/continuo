@@ -19,16 +19,16 @@ import (
 func TestLease_SecondAcquireIsHeld(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute))
 	assert.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseRestore, "restorer-1", time.Minute), ports.ErrLeaseHeld)
-	assert.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute), ports.ErrLeaseHeld,
+	assert.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute), ports.ErrLeaseHeld,
 		"the holder renews its lease; it cannot acquire it twice")
 
 	node := f.leaseNode()
-	assert.Equal(t, "exporter-1", node["holder"])
-	assert.Equal(t, string(ports.LeaseExport), node["kind"])
+	assert.Equal(t, "taker-1", node["holder"])
+	assert.Equal(t, string(ports.LeaseBackup), node["kind"])
 	assert.NotContains(t, node, "_lock")
 }
 
@@ -48,12 +48,12 @@ func TestLease_ConcurrentAcquiresGrantOne(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := range contenders {
-		lease := NewExportLease(integrationClient(t), quietLogger())
+		lease := NewBackupLease(integrationClient(t), quietLogger())
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			results[i] = lease.Acquire(ctx, f.tenant, ports.LeaseExport, fmt.Sprintf("exporter-%d", i), time.Minute)
+			results[i] = lease.Acquire(ctx, f.tenant, ports.LeaseBackup, fmt.Sprintf("taker-%d", i), time.Minute)
 		}()
 	}
 	close(start)
@@ -63,7 +63,7 @@ func TestLease_ConcurrentAcquiresGrantOne(t *testing.T) {
 	for i, err := range results {
 		if err == nil {
 			require.Empty(t, granted, "a second contender was granted the lease")
-			granted = fmt.Sprintf("exporter-%d", i)
+			granted = fmt.Sprintf("taker-%d", i)
 			continue
 		}
 		require.ErrorIs(t, err, ports.ErrLeaseHeld, "contender %d", i)
@@ -74,7 +74,7 @@ func TestLease_ConcurrentAcquiresGrantOne(t *testing.T) {
 
 // TestLease_TenantsHoldSeparateGatesAndLeases runs two tenants side by side.
 // Each tenant's gate and lease live on its own (:Meta {tenant_id, key:
-// 'export'}) node, so the tenants' first writes create their lease nodes at
+// 'backup'}) node, so the tenants' first writes create their lease nodes at
 // the same moment, one tenant writes while the other's write holds its gate,
 // both take their leases at once, and a lease one tenant holds pauses only
 // that tenant's writes.
@@ -123,17 +123,17 @@ func TestLease_TenantsHoldSeparateGatesAndLeases(t *testing.T) {
 	require.NoError(t, <-aDone)
 
 	// Both tenants take their leases at the same moment.
-	holders := map[*uowFixture]string{a: "exporter-a", b: "exporter-b"}
+	holders := map[*uowFixture]string{a: "taker-a", b: "taker-b"}
 	errs := make(chan error, len(holders))
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for f, holder := range holders {
-		lease := NewExportLease(integrationClient(t), quietLogger())
+		lease := NewBackupLease(integrationClient(t), quietLogger())
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			if err := lease.Acquire(ctx, f.tenant, ports.LeaseExport, holder, time.Minute); err != nil {
+			if err := lease.Acquire(ctx, f.tenant, ports.LeaseBackup, holder, time.Minute); err != nil {
 				errs <- fmt.Errorf("tenant %s: %w", f.tenant, err)
 			}
 		}()
@@ -144,12 +144,12 @@ func TestLease_TenantsHoldSeparateGatesAndLeases(t *testing.T) {
 	for err := range errs {
 		require.NoError(t, err, "a tenant's lease is granted whatever another tenant holds")
 	}
-	assert.Equal(t, "exporter-a", a.leaseNode()["holder"])
-	assert.Equal(t, "exporter-b", b.leaseNode()["holder"])
+	assert.Equal(t, "taker-a", a.leaseNode()["holder"])
+	assert.Equal(t, "taker-b", b.leaseNode()["holder"])
 
-	// Tenant b's export ends; tenant a's lease pauses tenant a's writes only.
-	lease := NewExportLease(a.client, quietLogger())
-	require.NoError(t, lease.Release(ctx, b.tenant, "exporter-b"))
+	// Tenant b's backup ends; tenant a's lease pauses tenant a's writes only.
+	lease := NewBackupLease(a.client, quietLogger())
+	require.NoError(t, lease.Release(ctx, b.tenant, "taker-b"))
 	require.NoError(t, u.Write(ctx, b.marker("1762077700000-0", nil), true, probe(b, "b-second")),
 		"tenant a's lease does not pause tenant b's writes")
 	require.ErrorIs(t, u.Write(ctx, a.marker("1762077700000-0", nil), true, probe(a, "a-paused")), uow.ErrWritesPaused)
@@ -158,7 +158,7 @@ func TestLease_TenantsHoldSeparateGatesAndLeases(t *testing.T) {
 	assert.Equal(t, int64(1), a.markers())
 	assert.Equal(t, int64(2), b.probes())
 	assert.Equal(t, int64(2), b.markers())
-	assert.Equal(t, "exporter-a", a.leaseNode()["holder"], "tenant b's release leaves tenant a's lease alone")
+	assert.Equal(t, "taker-a", a.leaseNode()["holder"], "tenant b's release leaves tenant a's lease alone")
 	a.assertGateUnlocked()
 	b.assertGateUnlocked()
 }
@@ -166,39 +166,39 @@ func TestLease_TenantsHoldSeparateGatesAndLeases(t *testing.T) {
 func TestLease_RefusesAnInvalidRequest(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 
-	assert.Error(t, lease.Acquire(ctx, "", ports.LeaseExport, "exporter-1", time.Minute), "no tenant")
-	assert.Error(t, lease.Acquire(ctx, f.tenant, ports.LeaseKind("backup"), "exporter-1", time.Minute), "unknown kind")
-	assert.Error(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "", time.Minute), "no holder")
-	assert.Error(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", 0), "no ttl")
-	assert.Error(t, lease.Renew(ctx, f.tenant, "exporter-1", 0), "no ttl")
+	assert.Error(t, lease.Acquire(ctx, "", ports.LeaseBackup, "taker-1", time.Minute), "no tenant")
+	assert.Error(t, lease.Acquire(ctx, f.tenant, ports.LeaseKind("copy"), "taker-1", time.Minute), "unknown kind")
+	assert.Error(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "", time.Minute), "no holder")
+	assert.Error(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", 0), "no ttl")
+	assert.Error(t, lease.Renew(ctx, f.tenant, "taker-1", 0), "no ttl")
 	assert.Nil(t, f.leaseNode(), "a refused request writes nothing")
 }
 
 func TestLease_RenewByOtherHolderIsLost(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 
-	assert.ErrorIs(t, lease.Renew(ctx, f.tenant, "exporter-1", time.Minute), ports.ErrLeaseLost,
+	assert.ErrorIs(t, lease.Renew(ctx, f.tenant, "taker-1", time.Minute), ports.ErrLeaseLost,
 		"a tenant with no lease has nothing to renew")
 
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", 10*time.Second))
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", 10*time.Second))
 	before := f.leaseNode()["until"].(time.Time)
 
-	assert.ErrorIs(t, lease.Renew(ctx, f.tenant, "exporter-2", time.Hour), ports.ErrLeaseLost)
+	assert.ErrorIs(t, lease.Renew(ctx, f.tenant, "taker-2", time.Hour), ports.ErrLeaseLost)
 	assert.Equal(t, before, f.leaseNode()["until"].(time.Time), "a refused renewal leaves the lease as it was")
-	assert.Equal(t, "exporter-1", f.leaseNode()["holder"])
+	assert.Equal(t, "taker-1", f.leaseNode()["holder"])
 
-	require.NoError(t, lease.Renew(ctx, f.tenant, "exporter-1", time.Hour))
+	require.NoError(t, lease.Renew(ctx, f.tenant, "taker-1", time.Hour))
 	after := f.leaseNode()["until"].(time.Time)
 	assert.True(t, after.After(before.Add(30*time.Minute)), "the holder's renewal moves until to the new ttl: %v -> %v", before, after)
 	assert.NotContains(t, f.leaseNode(), "_lock")
 }
 
 // TestLease_ExpiresWhenHolderCrashes takes a two-second lease and never
-// renews it, as an exporter that crashed would leave it. While it is live,
+// renews it, as a taker that crashed would leave it. While it is live,
 // writes back off and a second holder's Acquire is refused, and the test
 // checks the refusal came before the lease's ttl ran out, so a stall of the
 // test cannot pass it. The second holder then polls until the lease's until
@@ -209,30 +209,30 @@ func TestLease_ExpiresWhenHolderCrashes(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 	probe := func(ctx context.Context, tx uow.Tx) error { return f.writeProbe(ctx, tx, "after-expiry") }
 	const ttl = 2 * time.Second
 
 	start := time.Now()
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "crashed-exporter", ttl))
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "crashed-taker", ttl))
 	require.ErrorIs(t, u.Write(ctx, f.marker("1762077600000-0", nil), true, probe), uow.ErrWritesPaused)
-	err := lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-2", time.Minute)
+	err := lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-2", time.Minute)
 	refusedAfter := time.Since(start)
 	require.ErrorIs(t, err, ports.ErrLeaseHeld, "a live lease, though its holder crashed, is not taken over")
 	require.Less(t, refusedAfter, ttl, "the refusal came while the lease was live, so it proves the lease held")
 
 	require.Eventually(t, func() bool {
-		return lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-2", time.Minute) == nil
+		return lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-2", time.Minute) == nil
 	}, 15*time.Second, 100*time.Millisecond, "an expired lease is taken over")
 	assert.GreaterOrEqual(t, time.Since(start), ttl, "the lease was not taken over before it expired")
 
-	assert.ErrorIs(t, lease.Renew(ctx, f.tenant, "crashed-exporter", time.Minute), ports.ErrLeaseLost,
+	assert.ErrorIs(t, lease.Renew(ctx, f.tenant, "crashed-taker", time.Minute), ports.ErrLeaseLost,
 		"an expired lease cannot be renewed: writes may have landed since it lapsed")
-	require.NoError(t, lease.Release(ctx, f.tenant, "crashed-exporter"))
-	assert.Equal(t, "exporter-2", f.leaseNode()["holder"], "a release by the old holder leaves the new lease alone")
+	require.NoError(t, lease.Release(ctx, f.tenant, "crashed-taker"))
+	assert.Equal(t, "taker-2", f.leaseNode()["holder"], "a release by the old holder leaves the new lease alone")
 	require.ErrorIs(t, u.Write(ctx, f.marker("1762077600000-0", nil), true, probe), uow.ErrWritesPaused)
 
-	require.NoError(t, lease.Release(ctx, f.tenant, "exporter-2"))
+	require.NoError(t, lease.Release(ctx, f.tenant, "taker-2"))
 	require.NoError(t, u.Write(ctx, f.marker("1762077600000-0", nil), true, probe), "a released lease no longer pauses writes")
 	assert.Equal(t, int64(1), f.probes())
 	assert.Equal(t, int64(1), f.markers())
@@ -240,12 +240,12 @@ func TestLease_ExpiresWhenHolderCrashes(t *testing.T) {
 
 // TestLease_AcquireWaitsForInFlightWrite holds a write's transaction open and
 // checks that Acquire blocks on the tenant's lease node until that write
-// commits: an export never starts while a write is half done.
+// commits: a backup never starts while a write is half done.
 func TestLease_AcquireWaitsForInFlightWrite(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 
 	// Create the tenant's lease node first, so the in-flight write below
 	// locks an existing node.
@@ -274,7 +274,7 @@ func TestLease_AcquireWaitsForInFlightWrite(t *testing.T) {
 	}
 
 	acquired := make(chan error, 1)
-	go func() { acquired <- lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute) }()
+	go func() { acquired <- lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute) }()
 	select {
 	case err := <-acquired:
 		t.Fatalf("Acquire returned (%v) while a write held the tenant's lease node", err)
@@ -285,46 +285,46 @@ func TestLease_AcquireWaitsForInFlightWrite(t *testing.T) {
 	require.NoError(t, <-writeDone, "the in-flight write commits")
 	require.NoError(t, <-acquired, "Acquire takes the lease once the write has committed")
 
-	assert.Equal(t, int64(1), f.probes(), "the write that was in flight landed before the export began")
+	assert.Equal(t, int64(1), f.probes(), "the write that was in flight landed before the backup began")
 	assert.Equal(t, int64(2), f.markers())
-	assert.Equal(t, "exporter-1", f.leaseNode()["holder"])
+	assert.Equal(t, "taker-1", f.leaseNode()["holder"])
 	require.ErrorIs(t, u.Write(ctx, f.marker("1762077700000-0", nil), true, func(context.Context, uow.Tx) error { return nil }),
 		uow.ErrWritesPaused, "a write that starts after the lease is taken backs off")
 }
 
-func TestLease_ExportWaitsForWritesInFlight(t *testing.T) {
+func TestLease_BackupWaitsForWritesInFlight(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 	a := f.marker("1762077600000-0", nil)
 
 	f.writeProbeBatch(u, a, false, "batch-1")
-	err := lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute)
+	err := lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute)
 	require.ErrorIs(t, err, ports.ErrWritesInFlight)
-	assert.NotContains(t, f.leaseNode(), "holder", "a refused export takes no lease")
+	assert.NotContains(t, f.leaseNode(), "holder", "a refused backup takes no lease")
 	f.assertGateUnlocked()
 
 	f.writeProbeBatch(u, a, true, "batch-2")
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
-	assert.Equal(t, "exporter-1", f.leaseNode()["holder"])
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute))
+	assert.Equal(t, "taker-1", f.leaseNode()["holder"])
 }
 
 // A handler that dies between two batches never sends its final write; its
-// mark lapses, and the next export goes ahead rather than wait for a
+// mark lapses, and the next backup goes ahead rather than wait for a
 // redelivery that may take hours.
-func TestLease_ExportTakesOverALapsedInFlightMark(t *testing.T) {
+func TestLease_BackupTakesOverALapsedInFlightMark(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 
 	f.writeProbeBatch(u, f.marker("1762077600000-0", nil), false, "batch-1")
 	f.expireInFlight()
 
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute))
 	node := f.leaseNode()
-	assert.Equal(t, "exporter-1", node["holder"])
+	assert.Equal(t, "taker-1", node["holder"])
 	assert.NotContains(t, node, "inflight_message_ids")
 	assert.NotContains(t, node, "inflight_untils")
 }
@@ -333,7 +333,7 @@ func TestLease_RestoreIgnoresWritesInFlight(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 
 	f.writeProbeBatch(u, f.marker("1762077600000-0", nil), false, "batch-1")
 	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseRestore, "restorer-1", time.Minute))
@@ -346,7 +346,7 @@ func (f *uowFixture) expireInFlight() {
 	ctx := context.Background()
 	s := f.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = s.Close(ctx) }()
-	res, err := s.Run(ctx, `MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+	res, err := s.Run(ctx, `MATCH (m:Meta {tenant_id: $tenant_id, key: 'backup'})
 SET m.inflight_untils = [u IN m.inflight_untils | datetime() - duration('PT1S')]`, map[string]any{"tenant_id": f.tenant})
 	require.NoError(f.t, err)
 	_, err = res.Consume(ctx)
@@ -359,7 +359,7 @@ func TestLease_AnAbandonedMessageIsNotRevivedByAnotherMessage(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 
 	f.writeProbeBatch(u, f.marker("1762077600000-0", nil), false, "a-1")
 	f.expireInFlight()
@@ -367,6 +367,6 @@ func TestLease_AnAbandonedMessageIsNotRevivedByAnotherMessage(t *testing.T) {
 	f.writeProbeBatch(u, b, false, "b-1")
 	f.writeProbeBatch(u, b, true, "b-final")
 
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute),
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute),
 		"A's mark lapsed before B wrote, so B's last batch leaves nothing live")
 }

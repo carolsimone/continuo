@@ -30,17 +30,17 @@ type Neo4jConfig struct {
 	Password string
 }
 
-// BackupConfig is the nightly export of each tenant's graph to object
+// BackupConfig is the nightly backup of each tenant's graph to object
 // storage, from the chart's catalog.backup.* values.
 type BackupConfig struct {
-	// Enabled runs the export on Schedule (CATALOG_BACKUP_ENABLED, default
+	// Enabled runs the backup on Schedule (CATALOG_BACKUP_ENABLED, default
 	// true).
 	Enabled bool
-	// Schedule is when the export runs, in UTC: five cron fields or an @
+	// Schedule is when the backup runs, in UTC: five cron fields or an @
 	// descriptor robfig/cron's standard parser reads, with no timezone
 	// prefix (CATALOG_BACKUP_SCHEDULE, default "0 2 * * *").
 	Schedule string
-	// Keep is how many of each tenant's newest exports are kept, at least 1
+	// Keep is how many of each tenant's newest backups are kept, at least 1
 	// (CATALOG_BACKUP_KEEP, default 7).
 	Keep int
 }
@@ -104,7 +104,7 @@ type Config struct {
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
 
-	// Backup is the nightly export of each tenant's graph.
+	// Backup is the nightly backup of each tenant's graph.
 	Backup BackupConfig
 
 	// WarehouseEngine is WAREHOUSE_ENGINE, the install's warehouse engine
@@ -195,9 +195,9 @@ func loadBackup(v *pkgconfig.Validator, schedules ports.BackupScheduleParser) Ba
 	return b
 }
 
-// LoadBackupKeep reads how many of each tenant's newest exports are kept,
+// LoadBackupKeep reads how many of each tenant's newest backups are kept,
 // CATALOG_BACKUP_KEEP (default 7). A value that is not a whole number of at
-// least 1 is recorded on v and the default is returned. An export run by hand
+// least 1 is recorded on v and the default is returned. A backup run by hand
 // prunes with the same keep as the scheduled one.
 func LoadBackupKeep(v *pkgconfig.Validator) int {
 	raw := os.Getenv(backupKeepKey)

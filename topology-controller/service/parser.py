@@ -8,8 +8,8 @@ column fingerprint, CSV header and column types, and the parse reports the
 project's provenance: the manifest's dbt version, the extras' package versions
 and the seeds whose source part is still dbt's `path` checksum. A model, seed or
 snapshot a gate leaves out (no owner, a local stub, an untagged node of an
-installed dbt package) is reported through the caller's `skipped` list, never
-raised. A model or snapshot of the project with an owner and no tag is kept
+installed dbt package) is an excluded model, reported through the caller's
+`excluded` list, never raised. A model or snapshot of the project with an owner and no tag is kept
 with an empty schedule (a dormant node); a seed of the project with no tag
 takes the `seed` schedule. Which nodes are left out comes from
 continuo-contracts' `dbt` module, so a producer's CI and this parse answer alike.
@@ -48,8 +48,8 @@ from domain.model import (
     ParsedArtifact,
     SeedExtras,
     ProjectProvenance,
-    SkippedNode,
-    SkipReason,
+    ExcludedModel,
+    ExclusionReason,
     relation_key,
 )
 from domain.node_timeout import timeout_seconds
@@ -120,10 +120,10 @@ def _tolerant_project(node: dict) -> str:
     return first.replace("_", "-") if isinstance(first, str) else ""
 
 
-def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
-    """The report of a node a gate left out. A node the parse never builds can
+def _excluded(node_id: str, node: dict, reason: ExclusionReason) -> ExcludedModel:
+    """The report of a model a gate excluded. A node the parse never builds can
     lack an fqn, or carry one of another shape, without raising."""
-    return SkippedNode(node_id=node_id, project=_tolerant_project(node), reason=reason)
+    return ExcludedModel(node_id=node_id, project=_tolerant_project(node), reason=reason)
 
 
 def _project(node_id: str, node: dict) -> str:
@@ -420,7 +420,7 @@ def parse_manifest(
     image_tag: str = "",
     extras: CompileExtras | None = None,
     *,
-    skipped: list[SkippedNode] | None = None,
+    excluded: list[ExcludedModel] | None = None,
     declared_project: str = "",
     validator: ContractValidator,
     progress: Callable[[], None] = _no_progress,
@@ -440,8 +440,8 @@ def parse_manifest(
     the result's `unchecked_seeds`.
 
     A model, seed or snapshot that a gate leaves out is never an error: when
-    `skipped` is given, the node is appended to it with its reason, and nothing
-    is logged here, so the caller reports every skip in one place. The gates are
+    `excluded` is given, the model is appended to it with its reason, and nothing
+    is logged here, so the caller reports every excluded model in one place. The gates are
     `dbt.skip_reason`'s and run in this order: no owner, a `local_stub` tag, then
     no tag on a node of an installed dbt package. dbt applies a project's
     top-level `+meta` to the nodes of its installed packages too, so a package's
@@ -527,8 +527,8 @@ def parse_manifest(
         except Exception as error:
             raise _library_defect(node_id, error) from error
         if reason is not None:
-            if skipped is not None:
-                skipped.append(_skipped(node_id, node, SkipReason(reason)))
+            if excluded is not None:
+                excluded.append(_excluded(node_id, node, ExclusionReason(reason)))
             continue
 
         _require_fqn(node_id, node)

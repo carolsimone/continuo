@@ -4,8 +4,8 @@
 // uses, never on the concrete client, and translates the store's errors into
 // its port's. The readers parse the URI they are given once with
 // objectstore.ParseRef. The backup store owns the layout of its keys
-// (backup_key.go) and the file format of an export: gzipped JSON lines, which
-// package exportfile encodes and decodes.
+// (backup_key.go) and the file format of a backup: gzipped JSON lines, which
+// package backupfile encodes and decodes.
 package s3
 
 import (

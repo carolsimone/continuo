@@ -42,7 +42,7 @@ const (
 	ReleaseCheckFinishedV1 = "release_check.finished:v1"
 	// RoundRequestedV1 — An operator's "Try again" on a rejected release; release-controller sends the next round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
 	RoundRequestedV1 = "round.requested:v1"
-	// HealTriggeredV1 — One batched trigger per rejected release and round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
+	// HealTriggeredV1 — One batched trigger per rejected release and round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base failure precedents group.
 	HealTriggeredV1 = "heal.triggered:v1"
 	// FixProposedV1 — One verified fix per (release, round, try), carrying every node the try resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	FixProposedV1 = "fix.proposed:v1"
@@ -104,8 +104,8 @@ const (
 	RemediationRoundRequested = "remediation-round-requested"
 	// AgentRemediationHealTriggered — agent-remediation consumer group on heal.triggered:v1.
 	AgentRemediationHealTriggered = "agent-remediation-heal-triggered"
-	// CatalogHealTriggeredRejections — catalog consumer group on heal.triggered:v1.
-	CatalogHealTriggeredRejections = "catalog-heal-triggered-rejections"
+	// CatalogHealTriggeredFailurePrecedents — catalog consumer group on heal.triggered:v1.
+	CatalogHealTriggeredFailurePrecedents = "catalog-heal-triggered-failure-precedents"
 	// CatalogFixPrOpenedFixes — catalog consumer group on fix.pr_opened:v1.
 	CatalogFixPrOpenedFixes = "catalog-fix-pr-opened-fixes"
 	// CatalogFixPrClosedProvenance — catalog consumer group on fix.pr_closed:v1.
@@ -160,7 +160,7 @@ var Groups = map[string][]string{
 	ReleaseRejectedV1:       {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
 	ReleaseCheckFinishedV1:  {ExecutionControllerReleaseCheckFinished},
 	RoundRequestedV1:        {RemediationRoundRequested},
-	HealTriggeredV1:         {AgentRemediationHealTriggered, CatalogHealTriggeredRejections},
+	HealTriggeredV1:         {AgentRemediationHealTriggered, CatalogHealTriggeredFailurePrecedents},
 	FixProposedV1:           {},
 	RemediationHandedOverV1: {},
 	FixPrOpenedV1:           {CatalogFixPrOpenedFixes},

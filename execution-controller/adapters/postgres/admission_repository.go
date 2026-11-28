@@ -62,7 +62,7 @@ func (r *admissionRepository) CountInFlight(ctx context.Context) (int, error) {
 // turns. The final order alternates the two lanes, so a lane with many queued
 // rows cannot starve the other, and one large run or release cannot starve the
 // rest of its lane. A production row of a fenced run (in cancelled_runs) is
-// never due: no slot is taken for it, and the fence ends it stopped. The
+// never due: it takes no Job capacity, and the fence ends it stopped. The
 // UPDATE re-checks status under the row lock.
 const reserveNextQuery = `
 	WITH due AS (

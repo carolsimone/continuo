@@ -43,11 +43,11 @@ func (f *swapFixture) seedLiveNode(uniqueID string) {
 		map[string]any{"uid": uniqueID})
 }
 
-// seedRejection records an open failure of nodeID: a :Rejection with no
+// seedOpenFailurePrecedent records an open failure of nodeID: a :FailurePrecedent with no
 // [:RESOLVED_BY].
-func (f *swapFixture) seedRejection(releaseID, nodeID string, at time.Time) {
+func (f *swapFixture) seedOpenFailurePrecedent(releaseID, nodeID string, at time.Time) {
 	f.t.Helper()
-	f.exec(`CREATE (:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id, at: $at})`,
+	f.exec(`CREATE (:FailurePrecedent {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id, at: $at})`,
 		map[string]any{"release_id": releaseID, "node_id": nodeID, "at": at})
 }
 
@@ -344,7 +344,7 @@ func TestWriteBatch_BundleNodeAbsentFromArtifactIsSkipped(t *testing.T) {
 func TestWriteBatch_ReplayLeavesTheSameGraph(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode("analytics.revenue")
-	f.seedRejection("r0", "analytics.revenue", promotedAtOf(0))
+	f.seedOpenFailurePrecedent("r0", "analytics.revenue", promotedAtOf(0))
 	ref := codeversion.UnitRef{UnitID: "svc:macro.cents", Checksum: "c1"}
 	in := withUnits(batchOf("r1", 1,
 		versionOf("analytics.revenue", "sha256:r1", ref),
@@ -352,7 +352,7 @@ func TestWriteBatch_ReplayLeavesTheSameGraph(t *testing.T) {
 		codeversion.CodeUnitVersion{UnitID: "svc:macro.cents", Checksum: "c1", Source: "macro"})
 
 	first := f.writeBatch(in)
-	require.Equal(t, 1, first.RejectionsResolved)
+	require.Equal(t, 1, first.PrecedentsResolved)
 	before := f.snapshot()
 
 	again := f.writeBatch(in)
@@ -466,61 +466,61 @@ func TestWriteBatch_SharedCodeUnitChangeMovesItsCurrent(t *testing.T) {
 // A version that becomes current resolves every failure of its node recorded
 // before the promotion and still open; a failure recorded after it stays
 // open, and a resolved one keeps its fix.
-func TestWriteBatch_LinksOpenRejectionsToTheNewVersion(t *testing.T) {
+func TestWriteBatch_LinksOpenFailurePrecedentsToTheNewVersion(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode("analytics.revenue")
-	f.seedRejection("rel-early", "analytics.revenue", promotedAtOf(0))
-	f.seedRejection("rel-late", "analytics.revenue", promotedAtOf(2))
+	f.seedOpenFailurePrecedent("rel-early", "analytics.revenue", promotedAtOf(0))
+	f.seedOpenFailurePrecedent("rel-late", "analytics.revenue", promotedAtOf(2))
 	resolvedBy := func(releaseID string) []string {
-		return f.column(`MATCH (:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: 'analytics.revenue'})
+		return f.column(`MATCH (:FailurePrecedent {tenant_id: $tenant_id, release_id: $release_id, node_id: 'analytics.revenue'})
 			-[:RESOLVED_BY]->(v:NodeVersion {tenant_id: $tenant_id}) RETURN v.content_hash AS v`, map[string]any{"release_id": releaseID})
 	}
 
 	res := f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
-	assert.Equal(t, 1, res.RejectionsResolved)
+	assert.Equal(t, 1, res.PrecedentsResolved)
 	assert.Equal(t, []string{"sha256:v1"}, resolvedBy("rel-early"))
-	assert.Empty(t, resolvedBy("rel-late"), "a rejection dated after the promotion is not linked")
+	assert.Empty(t, resolvedBy("rel-late"), "a failure precedent dated after the promotion is not linked")
 
 	again := f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
-	assert.Zero(t, again.RejectionsResolved, "a replay links nothing again")
+	assert.Zero(t, again.PrecedentsResolved, "a replay links nothing again")
 
 	later := f.writeBatch(batchOf("rel-3", 3, versionOf("analytics.revenue", "sha256:v3")))
-	assert.Equal(t, 1, later.RejectionsResolved, "only the still-open rejection is linked")
-	assert.Equal(t, []string{"sha256:v1"}, resolvedBy("rel-early"), "a resolved rejection keeps its fix")
+	assert.Equal(t, 1, later.PrecedentsResolved, "only the still-open failure precedent is linked")
+	assert.Equal(t, []string{"sha256:v1"}, resolvedBy("rel-early"), "a resolved failure precedent keeps its fix")
 	assert.Equal(t, []string{"sha256:v3"}, resolvedBy("rel-late"))
 }
 
-// The open-rejection guard looks at [:RESOLVED_BY] edges to a :NodeVersion
+// The guard on open failure precedents looks at [:RESOLVED_BY] edges to a :NodeVersion
 // only: a merged fix PR's [:RESOLVED_BY] to a :Fix does not stop the
 // promotion's own link.
 func TestWriteBatch_ForwardLinkGuardIsPerNodeVersionFamily(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode("analytics.revenue")
-	f.seedRejection("rel-fix", "analytics.revenue", promotedAtOf(0))
-	f.exec(`MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel-fix'})
+	f.seedOpenFailurePrecedent("rel-fix", "analytics.revenue", promotedAtOf(0))
+	f.exec(`MATCH (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: 'rel-fix'})
 		MERGE (p:Fix {tenant_id: $tenant_id, fix_id: 'fix-1'})
 		MERGE (rej)-[:RESOLVED_BY]->(p)`, nil)
 
 	res := f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
-	assert.Equal(t, 1, res.RejectionsResolved)
+	assert.Equal(t, 1, res.PrecedentsResolved)
 	assert.Equal(t, int64(2), f.count(`
-		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-fix'})-[r:RESOLVED_BY]->() RETURN count(r) AS n`, nil),
-		"the rejection carries the fix's edge and the version's")
+		MATCH (:FailurePrecedent {tenant_id: $tenant_id, release_id: 'rel-fix'})-[r:RESOLVED_BY]->() RETURN count(r) AS n`, nil),
+		"the failure precedent carries the fix's edge and the version's")
 }
 
 // A promotion older than the node's watermark is not the code the node runs,
-// so it resolves nothing, even when it is later than the rejection.
-func TestWriteBatch_StaleRedeliveryCannotLinkAnOpenRejection(t *testing.T) {
+// so it resolves nothing, even when it is later than the failure precedent.
+func TestWriteBatch_StaleRedeliveryCannotLinkAnOpenFailurePrecedent(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode("analytics.watermark")
 	f.writeBatch(batchOf("rel-base", 1, versionOf("analytics.watermark", "sha256:base")))
-	f.seedRejection("rel-target", "analytics.watermark", promotedAtOf(1).Add(30*time.Minute))
+	f.seedOpenFailurePrecedent("rel-target", "analytics.watermark", promotedAtOf(1).Add(30*time.Minute))
 	f.writeBatch(batchOf("rel-samehash", 3, versionOf("analytics.watermark", "sha256:base")))
 
 	res := f.writeBatch(batchOf("rel-stale", 2, versionOf("analytics.watermark", "sha256:reverted")))
 	assert.Zero(t, res.CurrentPointersMoved)
-	assert.Zero(t, res.RejectionsResolved)
-	assert.Zero(t, f.count(`MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-target'})-[r:RESOLVED_BY]->() RETURN count(r) AS n`, nil))
+	assert.Zero(t, res.PrecedentsResolved)
+	assert.Zero(t, f.count(`MATCH (:FailurePrecedent {tenant_id: $tenant_id, release_id: 'rel-target'})-[r:RESOLVED_BY]->() RETURN count(r) AS n`, nil))
 }
 
 // The [:RESOLVED_BY] edge carries the resolving promotion's time and release:
@@ -529,11 +529,11 @@ func TestWriteBatch_StaleRedeliveryCannotLinkAnOpenRejection(t *testing.T) {
 func TestWriteBatch_StampsResolvedByEdgeWithPromotionMetadata(t *testing.T) {
 	f := newSwapFixture(t)
 	f.seedLiveNode("analytics.revenue")
-	f.seedRejection("rel-early", "analytics.revenue", promotedAtOf(0))
+	f.seedOpenFailurePrecedent("rel-early", "analytics.revenue", promotedAtOf(0))
 
-	require.Equal(t, 1, f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1"))).RejectionsResolved)
+	require.Equal(t, 1, f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1"))).PrecedentsResolved)
 
-	recs := f.rows(`MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-early'})-[rb:RESOLVED_BY]->() RETURN properties(rb) AS p`, nil)
+	recs := f.rows(`MATCH (:FailurePrecedent {tenant_id: $tenant_id, release_id: 'rel-early'})-[rb:RESOLVED_BY]->() RETURN properties(rb) AS p`, nil)
 	require.Len(t, recs, 1)
 	p, _ := recs[0].Get("p")
 	edge := p.(map[string]any)

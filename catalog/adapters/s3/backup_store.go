@@ -10,13 +10,13 @@ import (
 	"slices"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/serialization/backupfile"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/pkg/objectstore"
 )
 
-// backupContentType is the content type of a stored export: gzipped JSON
+// backupContentType is the content type of a stored backup: gzipped JSON
 // lines.
 const backupContentType = "application/gzip"
 
@@ -30,8 +30,8 @@ type backupObjects interface {
 }
 
 // BackupStore implements ports.BackupStore in the object store's default
-// bucket: one object per export, at the key backup_key.go lays out, holding
-// the export file exportfile encodes, gzipped. It reads, lists and deletes
+// bucket: one object per backup, at the key backup_key.go lays out, holding
+// the backup file backupfile encodes, gzipped. It reads, lists and deletes
 // only keys of that layout, so it never touches another object.
 type BackupStore struct {
 	BackupKeys
@@ -40,10 +40,10 @@ type BackupStore struct {
 
 var (
 	_ ports.BackupStore  = (*BackupStore)(nil)
-	_ ports.ExportSink   = (*exportSink)(nil)
-	_ ports.ExportSource = (*exportSource)(nil)
-	_ ports.RecordWriter = (*exportfile.Writer)(nil)
-	_ ports.RecordReader = (*exportfile.Reader)(nil)
+	_ ports.BackupSink   = (*backupSink)(nil)
+	_ ports.BackupSource = (*backupSource)(nil)
+	_ ports.RecordWriter = (*backupfile.Writer)(nil)
+	_ ports.RecordReader = (*backupfile.Reader)(nil)
 )
 
 // NewBackupStore builds a BackupStore over objects.
@@ -51,23 +51,23 @@ func NewBackupStore(objects backupObjects) *BackupStore {
 	return &BackupStore{objects: objects}
 }
 
-// Open opens the multipart upload of tenantID's export taken at at, and
+// Open opens the multipart upload of tenantID's backup taken at at, and
 // returns the sink that encodes its records into it. progress, when not nil,
 // is called after each write to the upload returns.
-func (s *BackupStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.ExportSink, string, error) {
-	key, err := exportKey(tenantID, at)
+func (s *BackupStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.BackupSink, string, error) {
+	key, err := backupKey(tenantID, at)
 	if err != nil {
 		return nil, "", err
 	}
 	w, err := s.objects.OpenWriter(ctx, objectstore.Ref{Key: key}, backupContentType)
 	if err != nil {
-		return nil, "", fmt.Errorf("open the export %s: %w", key, storeError(key, err))
+		return nil, "", fmt.Errorf("open the backup %s: %w", key, storeError(key, err))
 	}
-	return newExportSink(w, key, progress), key, nil
+	return newBackupSink(w, key, progress), key, nil
 }
 
-// OpenRead streams the export at key and reads its header.
-func (s *BackupStore) OpenRead(ctx context.Context, key string) (ports.ExportSource, error) {
+// OpenRead streams the backup at key and reads its header.
+func (s *BackupStore) OpenRead(ctx context.Context, key string) (ports.BackupSource, error) {
 	body, err := s.stream(ctx, key)
 	if err != nil {
 		return nil, err
@@ -75,33 +75,33 @@ func (s *BackupStore) OpenRead(ctx context.Context, key string) (ports.ExportSou
 	zr, err := gzip.NewReader(body)
 	if err != nil {
 		_ = body.Close()
-		return nil, fmt.Errorf("decompress the export %s: %w", key, err)
+		return nil, fmt.Errorf("decompress the backup %s: %w", key, err)
 	}
-	r, err := exportfile.NewReader(zr)
+	r, err := backupfile.NewReader(zr)
 	if err != nil {
 		_ = body.Close()
-		return nil, fmt.Errorf("read the export %s: %w", key, err)
+		return nil, fmt.Errorf("read the backup %s: %w", key, err)
 	}
-	return &exportSource{Reader: r, body: body}, nil
+	return &backupSource{Reader: r, body: body}, nil
 }
 
-// Validate streams the export at key once through exportfile.Validate.
-func (s *BackupStore) Validate(ctx context.Context, key, tenantID string) (export.Header, error) {
+// Validate streams the backup at key once through backupfile.Validate.
+func (s *BackupStore) Validate(ctx context.Context, key, tenantID string) (graphbackup.Header, error) {
 	body, err := s.stream(ctx, key)
 	if err != nil {
-		return export.Header{}, err
+		return graphbackup.Header{}, err
 	}
 	defer func() { _ = body.Close() }()
 	zr, err := gzip.NewReader(body)
 	if err != nil {
-		return export.Header{}, fmt.Errorf("decompress the export %s: %w", key, err)
+		return graphbackup.Header{}, fmt.Errorf("decompress the backup %s: %w", key, err)
 	}
-	return exportfile.Validate(zr, tenantID)
+	return backupfile.Validate(zr, tenantID)
 }
 
-// stream opens the object stored at the export key key.
+// stream opens the object stored at the backup key key.
 func (s *BackupStore) stream(ctx context.Context, key string) (io.ReadCloser, error) {
-	if _, _, err := parseExportKey(key); err != nil {
+	if _, _, err := parseBackupKey(key); err != nil {
 		return nil, err
 	}
 	rc, err := s.objects.GetStream(ctx, objectstore.Ref{Key: key})
@@ -109,43 +109,43 @@ func (s *BackupStore) stream(ctx context.Context, key string) (io.ReadCloser, er
 	case errors.Is(err, objectstore.ErrNotFound):
 		return nil, storeError(key, err)
 	case err != nil:
-		return nil, fmt.Errorf("read the export %s: %w", key, storeError(key, err))
+		return nil, fmt.Errorf("read the backup %s: %w", key, storeError(key, err))
 	}
 	return rc, nil
 }
 
-// List lists the tenant's backup prefix and returns its exports, newest
+// List lists the tenant's backup prefix and returns its backups, newest
 // first by the time their key names.
 func (s *BackupStore) List(ctx context.Context, tenantID string) ([]ports.BackupObject, error) {
-	prefix, err := exportPrefix(tenantID)
+	prefix, err := backupPrefix(tenantID)
 	if err != nil {
 		return nil, err
 	}
 	objects, err := s.objects.List(ctx, prefix)
 	if err != nil {
-		return nil, fmt.Errorf("list the exports of tenant %q: %w", tenantID, err)
+		return nil, fmt.Errorf("list the backups of tenant %q: %w", tenantID, err)
 	}
-	var exports []ports.BackupObject
+	var backups []ports.BackupObject
 	for _, o := range objects {
-		owner, at, err := parseExportKey(o.Key)
+		owner, at, err := parseBackupKey(o.Key)
 		if err != nil || owner != tenantID {
 			continue
 		}
-		exports = append(exports, ports.BackupObject{
+		backups = append(backups, ports.BackupObject{
 			Key: o.Key, TenantID: owner, TakenAt: at, Size: o.Size, LastModified: o.LastModified,
 		})
 	}
-	slices.SortFunc(exports, func(a, b ports.BackupObject) int { return cmp.Compare(b.TakenAt.UnixNano(), a.TakenAt.UnixNano()) })
-	return exports, nil
+	slices.SortFunc(backups, func(a, b ports.BackupObject) int { return cmp.Compare(b.TakenAt.UnixNano(), a.TakenAt.UnixNano()) })
+	return backups, nil
 }
 
-// Delete deletes the export at key.
+// Delete deletes the backup at key.
 func (s *BackupStore) Delete(ctx context.Context, key string) error {
-	if _, _, err := parseExportKey(key); err != nil {
+	if _, _, err := parseBackupKey(key); err != nil {
 		return err
 	}
 	if err := s.objects.Delete(ctx, objectstore.Ref{Key: key}); err != nil {
-		return fmt.Errorf("delete the export %s: %w", key, storeError(key, err))
+		return fmt.Errorf("delete the backup %s: %w", key, storeError(key, err))
 	}
 	return nil
 }
@@ -158,18 +158,18 @@ func storeError(key string, err error) error {
 	case errors.Is(err, objectstore.ErrNotFound):
 		return fmt.Errorf("%w: %s", ports.ErrBackupNotFound, key)
 	case errors.Is(err, objectstore.ErrWriterClosed):
-		return fmt.Errorf("%w: %s", ports.ErrExportClosed, key)
+		return fmt.Errorf("%w: %s", ports.ErrBackupClosed, key)
 	case errors.Is(err, objectstore.ErrInvalidRef):
-		return fmt.Errorf("%w: %q", ports.ErrNotAnExportKey, key)
+		return fmt.Errorf("%w: %q", ports.ErrNotABackupKey, key)
 	}
 	return err
 }
 
-// exportSink encodes an export's records as JSON lines, gzips them and
+// backupSink encodes a backup's records as JSON lines, gzips them and
 // streams them into one object writer.
-type exportSink struct {
+type backupSink struct {
 	key     string
-	records *exportfile.Writer
+	records *backupfile.Writer
 	zw      *gzip.Writer
 	object  *countingObject
 	state   sinkState
@@ -183,27 +183,27 @@ const (
 	sinkAborted
 )
 
-func newExportSink(w objectstore.ObjectWriter, key string, progress func()) *exportSink {
+func newBackupSink(w objectstore.ObjectWriter, key string, progress func()) *backupSink {
 	object := &countingObject{w: w, key: key, progress: progress}
 	zw := gzip.NewWriter(object)
-	return &exportSink{key: key, records: exportfile.NewWriter(zw), zw: zw, object: object}
+	return &backupSink{key: key, records: backupfile.NewWriter(zw), zw: zw, object: object}
 }
 
-func (s *exportSink) WriteHeader(h export.Header) error {
+func (s *backupSink) WriteHeader(h graphbackup.Header) error {
 	if err := s.usable(); err != nil {
 		return err
 	}
 	return s.records.WriteHeader(h)
 }
 
-func (s *exportSink) WriteNode(n export.NodeRecord) error {
+func (s *backupSink) WriteNode(n graphbackup.NodeRecord) error {
 	if err := s.usable(); err != nil {
 		return err
 	}
 	return s.records.WriteNode(n)
 }
 
-func (s *exportSink) WriteRel(r export.RelRecord) error {
+func (s *backupSink) WriteRel(r graphbackup.RelRecord) error {
 	if err := s.usable(); err != nil {
 		return err
 	}
@@ -212,37 +212,37 @@ func (s *exportSink) WriteRel(r export.RelRecord) error {
 
 // Close flushes the compressor and completes the object. It returns the
 // object's size: the compressed bytes the store was given.
-func (s *exportSink) Close() (int64, error) {
+func (s *backupSink) Close() (int64, error) {
 	if err := s.usable(); err != nil {
 		return 0, err
 	}
 	if err := s.zw.Close(); err != nil {
-		return 0, fmt.Errorf("compress the export %s: %w", s.key, err)
+		return 0, fmt.Errorf("compress the backup %s: %w", s.key, err)
 	}
 	if err := s.object.w.Close(); err != nil {
-		return 0, fmt.Errorf("complete the export %s: %w", s.key, storeError(s.key, err))
+		return 0, fmt.Errorf("complete the backup %s: %w", s.key, storeError(s.key, err))
 	}
 	s.state = sinkClosed
 	return s.object.n, nil
 }
 
 // Abort discards the upload, unless Close completed it.
-func (s *exportSink) Abort() error {
+func (s *backupSink) Abort() error {
 	if s.state == sinkClosed {
 		return nil
 	}
 	s.state = sinkAborted
 	if err := s.object.w.Abort(); err != nil {
-		return fmt.Errorf("abort the export %s: %w", s.key, storeError(s.key, err))
+		return fmt.Errorf("abort the backup %s: %w", s.key, storeError(s.key, err))
 	}
 	return nil
 }
 
-// usable returns ports.ErrExportClosed once the sink was completed or
+// usable returns ports.ErrBackupClosed once the sink was completed or
 // aborted.
-func (s *exportSink) usable() error {
+func (s *backupSink) usable() error {
 	if s.state != sinkOpen {
-		return fmt.Errorf("%w: %s", ports.ErrExportClosed, s.key)
+		return fmt.Errorf("%w: %s", ports.ErrBackupClosed, s.key)
 	}
 	return nil
 }
@@ -270,11 +270,11 @@ func (c *countingObject) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// exportSource reads an export's records from the decompressed stream of its
+// backupSource reads a backup's records from the decompressed stream of its
 // object; Close closes the stream.
-type exportSource struct {
-	*exportfile.Reader
+type backupSource struct {
+	*backupfile.Reader
 	body io.ReadCloser
 }
 
-func (s *exportSource) Close() error { return s.body.Close() }
+func (s *backupSource) Close() error { return s.body.Close() }

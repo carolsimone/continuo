@@ -471,7 +471,7 @@ catalog logs an error that names the key. Delete
 `tenants/<tenant>/contracts/live/_index.json`: the next rewrite puts every file
 again and writes a new index.
 
-catalog does not start a rewrite while an export or a restore of the tenant's
+catalog does not start a rewrite while a backup or a restore of the tenant's
 graph runs; it tries the promotion again once that ends.
 
 ### The `servers` entry
@@ -706,16 +706,16 @@ continuo looks at every entry of the manifest's `nodes`:
 | test | a `dbt-test` node, but only when it tests a model, seed or snapshot that continuo keeps |
 | anything else, such as an analysis or a hook | no node |
 
-continuo leaves out a model, seed or snapshot when one of these is true. It
-checks them in this order:
+continuo leaves out a model, seed or snapshot when one of these is true; it is
+then an excluded model. It checks them in this order:
 
 1. It has no `meta.owner`, or the owner is empty.
 2. One of its tags is `local_stub`.
 3. It comes from an installed dbt package (one your `packages.yml` names) and
    has no tag.
 
-A node left out does not fail the release, and it has no contract. continuo logs
-it and counts it in `continuo_topology_release_skipped_nodes`, with the reason
+An excluded model does not fail the release, and it has no contract. continuo
+logs it and counts it in `continuo_topology_release_excluded_models`, with the reason
 `no_owner`, `local_stub` or `installed_package`.
 
 Which project a node belongs to is the first part of its dbt `fqn`, with `_`

@@ -47,7 +47,7 @@ def _release_whose_parse_finds(tmp_path, monkeypatch, *failed: FailedNode):
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}")
 
-    def parse(mf, *, skipped=None, progress, timings, validator):
+    def parse(mf, *, excluded=None, progress, timings, validator):
         return ParsedArtifact(nodes=[], shared_code={}, failed=tuple(failed))
 
     monkeypatch.setattr(

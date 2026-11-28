@@ -208,7 +208,7 @@ func TestPrClosedProvenanceHandler_FailedRecordLeavesNoMarker(t *testing.T) {
 	assert.False(t, u.isRecorded(provenanceMarker("1-0", nil)))
 }
 
-// A write paused by an export or a restore reaches the consumer as
+// A write paused by a backup or a restore reaches the consumer as
 // uow.ErrWritesPaused, which it backs off on as for an outage.
 func TestPrClosedProvenanceHandler_PausedWriteIsReturnedAsPaused(t *testing.T) {
 	u := newCaseBaseUnitOfWork(&fakeCaseBaseRepository{})

@@ -642,7 +642,7 @@ const (
 	TaskStatusPending TaskStatus = "pending"
 	// TaskStatusDispatched — run-controller dispatched an attempt of the task and has no report of it yet.
 	TaskStatusDispatched TaskStatus = "dispatched"
-	// TaskStatusQueued — execution-controller accepted the attempt; it waits for a slot or its Job.
+	// TaskStatusQueued — execution-controller accepted the attempt; it waits for Job capacity or its Job.
 	TaskStatusQueued TaskStatus = "queued"
 	// TaskStatusRunning — the main container of the attempt's pod started.
 	TaskStatusRunning TaskStatus = "running"
@@ -774,7 +774,7 @@ type AttemptStatus string
 const (
 	// AttemptStatusDispatched — run-controller dispatched the attempt and has no report of it yet.
 	AttemptStatusDispatched AttemptStatus = "dispatched"
-	// AttemptStatusQueued — execution-controller accepted the attempt; it waits for a slot or its Job.
+	// AttemptStatusQueued — execution-controller accepted the attempt; it waits for Job capacity or its Job.
 	AttemptStatusQueued AttemptStatus = "queued"
 	// AttemptStatusRunning — the main container of the attempt's pod started.
 	AttemptStatusRunning AttemptStatus = "running"

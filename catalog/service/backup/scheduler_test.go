@@ -40,8 +40,8 @@ func (fakeScheduleParser) Parse(spec string) (ports.BackupSchedule, error) {
 }
 
 // schedulerFixture runs a Scheduler over a fake clock: its sleep moves the
-// clock instead of waiting, and each export records the tenant and the time
-// it ran at. The test stops the scheduler by cancelling ctx from onExport.
+// clock instead of waiting, and each backup records the tenant and the time
+// it ran at. The test stops the scheduler by cancelling ctx from onTake.
 type schedulerFixture struct {
 	clock   *fakeClock
 	tenants *fakeTenants
@@ -49,13 +49,13 @@ type schedulerFixture struct {
 	s       *Scheduler
 
 	mu      sync.Mutex
-	exports []string // "<tenant>@<RFC 3339 time>"
-	// onExport runs after each export with the number of exports so far.
-	onExport func(n int)
-	// fail, when set, fails the export of that tenant.
+	backups []string // "<tenant>@<RFC 3339 time>"
+	// onTake runs after each backup with the number of backups so far.
+	onTake func(n int)
+	// fail, when set, fails the backup of that tenant.
 	fail map[string]bool
-	// exportTakes is how far each export moves the clock.
-	exportTakes time.Duration
+	// backupTakes is how far each backup moves the clock.
+	backupTakes time.Duration
 	// sleepExtra, when set, is added to the clock after the sleep that ends
 	// at that wall time: the process slept through it.
 	sleepExtra map[time.Time]time.Duration
@@ -64,22 +64,22 @@ type schedulerFixture struct {
 func newSchedulerFixture(t *testing.T, spec string, start time.Time, tenants ...string) *schedulerFixture {
 	t.Helper()
 	f := &schedulerFixture{clock: newFakeClock(start), tenants: &fakeTenants{tenants: tenants}, metrics: &fakeMetrics{}, fail: map[string]bool{}}
-	graph := fakeGraph{export: func(ctx context.Context, tenantID string, out ports.RecordWriter) error {
+	graph := fakeGraph{backup: func(ctx context.Context, tenantID string, out ports.RecordWriter) error {
 		f.mu.Lock()
-		f.exports = append(f.exports, tenantID+"@"+f.clock.Now().Format(time.RFC3339))
-		n := len(f.exports)
+		f.backups = append(f.backups, tenantID+"@"+f.clock.Now().Format(time.RFC3339))
+		n := len(f.backups)
 		fail := f.fail[tenantID]
 		f.mu.Unlock()
-		f.clock.Advance(f.exportTakes)
-		if f.onExport != nil {
-			defer f.onExport(n)
+		f.clock.Advance(f.backupTakes)
+		if f.onTake != nil {
+			defer f.onTake(n)
 		}
 		if fail {
 			return errors.New("neo4j: connection reset")
 		}
-		return smallGraph(1).export(ctx, tenantID, out)
+		return smallGraph(1).backup(ctx, tenantID, out)
 	}}
-	ex := NewExporter(newFakeLease(), graph, newFakeStore(), f.metrics, 7, f.clock.Now, quietLogger())
+	ex := NewTaker(newFakeLease(), graph, newFakeStore(), f.metrics, 7, f.clock.Now, quietLogger())
 	s, err := NewScheduler(spec, fakeScheduleParser{}, f.tenants, ex, f.clock.Now, quietLogger())
 	require.NoError(t, err)
 	s.sleep = func(ctx context.Context, d time.Duration) error {
@@ -112,11 +112,11 @@ func (f *schedulerFixture) run(t *testing.T, ctx context.Context) {
 func (f *schedulerFixture) ran() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.exports...)
+	return append([]string(nil), f.backups...)
 }
 
-// Down across 02:00: a scheduler that starts at 02:30 runs no export for the
-// slot it missed; its first export is at the next day's slot, and every next
+// Down across 02:00: a scheduler that starts at 02:30 runs no backup for the
+// slot it missed; its first backup is at the next day's slot, and every next
 // slot is computed after the run.
 func TestScheduler_NextSlotAndMissedSlotNotCaughtUp(t *testing.T) {
 	// 02:30 is long after the slot; 02:00:30 and 02:03 are soon after it, but
@@ -129,7 +129,7 @@ func TestScheduler_NextSlotAndMissedSlotNotCaughtUp(t *testing.T) {
 		t.Run(start.Format("15:04:05"), func(t *testing.T) {
 			f := newSchedulerFixture(t, "0 2 * * *", start, "a")
 			ctx, cancel := context.WithCancel(context.Background())
-			f.onExport = func(n int) {
+			f.onTake = func(n int) {
 				if n == 2 {
 					cancel()
 				}
@@ -146,45 +146,45 @@ func TestScheduler_TheScheduleIsUTC(t *testing.T) {
 	require.NoError(t, err)
 	f := newSchedulerFixture(t, "0 2 * * *", time.Date(2026, 10, 30, 1, 0, 0, 0, paris), "a")
 	ctx, cancel := context.WithCancel(context.Background())
-	f.onExport = func(int) { cancel() }
+	f.onTake = func(int) { cancel() }
 	f.run(t, ctx)
 	require.Len(t, f.ran(), 1)
 	assert.Equal(t, "a@2026-10-30T03:00:00+01:00", f.ran()[0], "02:00 UTC")
 }
 
-// A slot every tenant is exported in, one after the other; one tenant's
+// A slot every tenant is backed up in, one after the other; one tenant's
 // failure does not stop the others.
 func TestScheduler_RunsEveryTenant(t *testing.T) {
 	f := newSchedulerFixture(t, "0 2 * * *", time.Date(2026, 10, 30, 1, 0, 0, 0, time.UTC), "a", "b", "c")
 	f.fail["b"] = true
 	ctx, cancel := context.WithCancel(context.Background())
-	f.onExport = func(n int) {
+	f.onTake = func(n int) {
 		if n == 3 {
 			cancel()
 		}
 	}
 	f.run(t, ctx)
 	assert.Equal(t, []string{"a@2026-10-30T02:00:00Z", "b@2026-10-30T02:00:00Z", "c@2026-10-30T02:00:00Z"}, f.ran())
-	assert.Equal(t, []string{ports.ExportSuccess, ports.ExportFailure, ports.ExportSuccess}, f.metrics.outcomes())
+	assert.Equal(t, []string{ports.BackupSuccess, ports.BackupFailure, ports.BackupSuccess}, f.metrics.outcomes())
 }
 
-// Exports that run past the next slot skip it: the slot after the run is
+// Backups that run past the next slot skip it: the slot after the run is
 // computed from the time the run ended.
 func TestScheduler_ARunThatOutlastsTheNextSlotSkipsIt(t *testing.T) {
 	// 62 minutes ends the run just after 02:00; 90 minutes long after it.
 	for _, takes := range []time.Duration{62 * time.Minute, 90 * time.Minute} {
 		t.Run(takes.String(), func(t *testing.T) {
 			f := newSchedulerFixture(t, "0 * * * *", time.Date(2026, 10, 30, 0, 30, 0, 0, time.UTC), "a")
-			f.exportTakes = takes
+			f.backupTakes = takes
 			ctx, cancel := context.WithCancel(context.Background())
-			f.onExport = func(n int) {
+			f.onTake = func(n int) {
 				if n == 2 {
 					cancel()
 				}
 			}
 			f.run(t, ctx)
 			assert.Equal(t, []string{"a@2026-10-30T01:00:00Z", "a@2026-10-30T03:00:00Z"}, f.ran(),
-				"02:00 passed while the 01:00 export ran, and is not run late")
+				"02:00 passed while the 01:00 backup ran, and is not run late")
 		})
 	}
 }
@@ -196,12 +196,12 @@ func TestScheduler_ASlotSleptThroughIsNotRunLate(t *testing.T) {
 	f := newSchedulerFixture(t, "0 2 * * *", start, "a")
 	f.sleepExtra = map[time.Time]time.Duration{start.Add(maxSleep): 3 * time.Hour}
 	ctx, cancel := context.WithCancel(context.Background())
-	f.onExport = func(int) { cancel() }
+	f.onTake = func(int) { cancel() }
 	f.run(t, ctx)
 	assert.Equal(t, []string{"a@2026-10-31T02:00:00Z"}, f.ran())
 }
 
-// A tenant list that fails exports nothing for the slot; the next slot runs.
+// A tenant list that fails backups nothing for the slot; the next slot runs.
 func TestScheduler_ATenantListFailureWaitsForTheNextSlot(t *testing.T) {
 	f := newSchedulerFixture(t, "0 2 * * *", time.Date(2026, 10, 30, 1, 0, 0, 0, time.UTC), "a")
 	f.tenants.err = errors.New("neo4j: connection refused")
@@ -213,7 +213,7 @@ func TestScheduler_ATenantListFailureWaitsForTheNextSlot(t *testing.T) {
 		}
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	f.onExport = func(int) { cancel() }
+	f.onTake = func(int) { cancel() }
 	f.run(t, ctx)
 	assert.Equal(t, []string{"a@2026-10-31T02:00:00Z"}, f.ran())
 }
@@ -249,7 +249,7 @@ func TestScheduler_SleepEndsWithTheContext(t *testing.T) {
 // A spec the parser refuses stops the scheduler from being built, and the
 // error names the spec and the parser's reason.
 func TestScheduler_RefusesASpecTheParserRefuses(t *testing.T) {
-	ex := NewExporter(newFakeLease(), smallGraph(1), newFakeStore(), &fakeMetrics{}, 7, time.Now, quietLogger())
+	ex := NewTaker(newFakeLease(), smallGraph(1), newFakeStore(), &fakeMetrics{}, 7, time.Now, quietLogger())
 
 	s, err := NewScheduler("nightly", fakeScheduleParser{}, &fakeTenants{}, ex, time.Now, quietLogger())
 

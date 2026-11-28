@@ -5,7 +5,7 @@ from prometheus_client import generate_latest
 from adapters.metrics.prometheus import TopologyMetrics
 from adapters.redis.consumer import ConsumerObserver
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import SkipReason
+from domain.model import ExclusionReason
 from service.ports import ReleaseObserverPort
 from service.release_timings import (
     CONTRACT_FAILURE_REASONS,
@@ -24,43 +24,43 @@ def _value(metrics, name, **labels):
     return metrics.registry.get_sample_value(name, {**COMPONENT, **labels})
 
 
-def _finished(nodes, skipped=None, outcome=ReleaseOutcome.OK, kind=None, peak=0, dormant=None):
+def _finished(nodes, excluded=None, outcome=ReleaseOutcome.OK, kind=None, peak=0, dormant=None):
     timings = ReleaseTimings("rel-1", FakeClock(step=1.0), ScriptedMemoryProbe(peak))
     with timings.stage(Stage.RESOLVE, nodes=3):
         pass
     timings.nodes.update(nodes)
     timings.columns.update({family: count * 10 for family, count in nodes.items()})
-    for reason, count in (skipped or {}).items():
-        timings.skipped[reason] = count
+    for reason, count in (excluded or {}).items():
+        timings.excluded[reason] = count
     timings.dormant.update(dormant or {})
     timings.outcome, timings.failure_kind = outcome, kind
     return timings
 
 
-def test_every_outcome_and_failure_kind_pair_and_every_skip_reason_is_exported_at_zero():
+def test_every_outcome_and_failure_kind_pair_and_every_exclusion_reason_is_exported_at_zero():
     metrics = TopologyMetrics("topology-controller")
     assert _value(metrics, "continuo_topology_releases_total", outcome="ok", failure_kind="none") == 0.0
     for kind in ParseFailureKind:
         assert _value(metrics, "continuo_topology_releases_total", outcome="failed", failure_kind=kind.value) == 0.0
-    for reason in SkipReason:
-        assert _value(metrics, "continuo_topology_release_skipped_nodes", reason=reason.value) == 0.0
+    for reason in ExclusionReason:
+        assert _value(metrics, "continuo_topology_release_excluded_models", reason=reason.value) == 0.0
 
 
-def test_no_node_is_skipped_for_want_of_a_tag():
+def test_no_model_is_excluded_for_want_of_a_tag():
     """A model of the project with an owner and no tag is kept as a dormant node,
-    so the skip reasons are the owner gate, the local stub and an untagged node
+    so the exclusion reasons are the owner gate, the local stub and an untagged node
     of an installed package."""
-    assert sorted(reason.value for reason in SkipReason) == ["installed_package", "local_stub", "no_owner"]
+    assert sorted(reason.value for reason in ExclusionReason) == ["installed_package", "local_stub", "no_owner"]
     metrics = TopologyMetrics("topology-controller")
-    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="no_tag") is None
+    assert _value(metrics, "continuo_topology_release_excluded_models", reason="no_tag") is None
 
 
 def test_the_installed_package_reason_is_exported_at_zero_from_boot_and_set_by_a_release():
     metrics = TopologyMetrics("topology-controller")
-    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="installed_package") == 0.0
-    metrics.release_finished(_finished({"dbt": 2}, {SkipReason.INSTALLED_PACKAGE: 4}))
-    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="installed_package") == 4.0
-    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="no_owner") == 0.0
+    assert _value(metrics, "continuo_topology_release_excluded_models", reason="installed_package") == 0.0
+    metrics.release_finished(_finished({"dbt": 2}, {ExclusionReason.INSTALLED_PACKAGE: 4}))
+    assert _value(metrics, "continuo_topology_release_excluded_models", reason="installed_package") == 4.0
+    assert _value(metrics, "continuo_topology_release_excluded_models", reason="no_owner") == 0.0
 
 
 def test_the_dormant_gauge_is_exported_at_zero_from_boot():
@@ -175,7 +175,7 @@ def test_every_stage_is_exported_at_zero_from_boot():
 
 def test_a_finished_release_moves_every_release_series():
     metrics = TopologyMetrics("topology-controller")
-    metrics.release_finished(_finished({"dbt": 3, "python": 1}, {SkipReason.NO_OWNER: 2},
+    metrics.release_finished(_finished({"dbt": 3, "python": 1}, {ExclusionReason.NO_OWNER: 2},
                                        ReleaseOutcome.FAILED, ParseFailureKind.INVALID_SQL, peak=1000))
     assert _value(metrics, "continuo_topology_releases_total", outcome="failed", failure_kind="invalid_sql") == 1.0
     assert _value(metrics, "continuo_topology_stage_duration_seconds_count", stage="resolve") == 1.0
@@ -184,7 +184,7 @@ def test_a_finished_release_moves_every_release_series():
     assert _value(metrics, "continuo_topology_stage_duration_seconds_count", stage="download") == 0.0
     assert _value(metrics, "continuo_topology_release_nodes", family="dbt") == 3.0
     assert _value(metrics, "continuo_topology_release_columns", family="python") == 10.0
-    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="no_owner") == 2.0
+    assert _value(metrics, "continuo_topology_release_excluded_models", reason="no_owner") == 2.0
     assert _value(metrics, "continuo_topology_release_peak_rss_bytes") == 1000.0
 
 
@@ -207,13 +207,13 @@ def test_an_ok_release_counts_under_the_none_failure_kind():
 
 def test_the_last_release_gauges_drop_to_zero_for_what_the_next_release_lacks():
     metrics = TopologyMetrics("topology-controller")
-    metrics.release_finished(_finished({"dbt": 3, "python": 1, "external": 2}, {SkipReason.NO_OWNER: 2},
+    metrics.release_finished(_finished({"dbt": 3, "python": 1, "external": 2}, {ExclusionReason.NO_OWNER: 2},
                                        dormant={"shop": 1}))
     metrics.release_finished(_finished({}))
     families = ("dbt", "python", "external")
     assert [_value(metrics, "continuo_topology_release_nodes", family=f) for f in families] == [0.0, 0.0, 0.0]
     assert [_value(metrics, "continuo_topology_release_columns", family=f) for f in families] == [0.0, 0.0, 0.0]
-    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="no_owner") == 0.0
+    assert _value(metrics, "continuo_topology_release_excluded_models", reason="no_owner") == 0.0
     assert _value(metrics, "continuo_topology_release_dormant_nodes") == 0.0
 
 

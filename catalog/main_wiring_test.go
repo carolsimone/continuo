@@ -56,7 +56,7 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	want := []string{
 		"CatalogFixPrClosedProvenance",
 		"CatalogFixPrOpenedFixes",
-		"CatalogHealTriggeredRejections",
+		"CatalogHealTriggeredFailurePrecedents",
 		"CatalogReleaseContracts",
 		"CatalogReleaseTopology",
 		"CatalogReleaseVersions",
@@ -75,7 +75,7 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 // group catalog-release-contracts, with the contracts binding and the
 // timeout of the handlers that write a whole release; and the contract series
 // registered whatever the install enables, outside the backup block, so every
-// label pair is exported from boot.
+// label pair is backed up from boot.
 func TestMainWiring_UsesTheContractsGroup(t *testing.T) {
 	file := parseMain(t)
 
@@ -459,10 +459,10 @@ func TestMain_NoContractHistorySweeperAtZero(t *testing.T) {
 }
 
 // TestMain_RunsTheBackupOnlyWhenEnabled pins how main.go runs the nightly
-// export: only inside `if cfg.Backup.Enabled`, where it registers the backup
-// series, builds the exporter with the install's keep and the scheduler with
+// backup: only inside `if cfg.Backup.Enabled`, where it registers the backup
+// series, builds the taker with the install's keep and the scheduler with
 // the install's schedule, and starts the scheduler's Run inside
-// lifecycleManager.Go, so shutdown cancels an export in flight and waits for
+// lifecycleManager.Go, so shutdown cancels a backup in flight and waits for
 // it to abort its upload and release its lease.
 func TestMain_RunsTheBackupOnlyWhenEnabled(t *testing.T) {
 	file := parseMain(t)
@@ -490,7 +490,7 @@ func TestMain_RunsTheBackupOnlyWhenEnabled(t *testing.T) {
 				}
 			}
 		case *ast.CallExpr:
-			for _, name := range []string{"backup.NewExporter", "backup.NewScheduler", "metricsinfra.NewBackupMetrics", "s3infra.NewBackupStore"} {
+			for _, name := range []string{"backup.NewTaker", "backup.NewScheduler", "metricsinfra.NewBackupMetrics", "s3infra.NewBackupStore"} {
 				pkg, fn, _ := strings.Cut(name, ".")
 				if isSelector(x.Fun, pkg, fn) {
 					calls[name] = x
@@ -499,7 +499,7 @@ func TestMain_RunsTheBackupOnlyWhenEnabled(t *testing.T) {
 		}
 		return true
 	})
-	for _, name := range []string{"backup.NewExporter", "backup.NewScheduler", "metricsinfra.NewBackupMetrics", "s3infra.NewBackupStore"} {
+	for _, name := range []string{"backup.NewTaker", "backup.NewScheduler", "metricsinfra.NewBackupMetrics", "s3infra.NewBackupStore"} {
 		if calls[name] == nil {
 			t.Errorf("main.go does not call %s inside `if cfg.Backup.Enabled`", name)
 		}
@@ -507,8 +507,8 @@ func TestMain_RunsTheBackupOnlyWhenEnabled(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	if args := calls["backup.NewExporter"].Args; len(args) != 7 || exprText(args[4]) != "cfg.Backup.Keep" {
-		t.Errorf("backup.NewExporter must take cfg.Backup.Keep as its keep, got %v", exprText(calls["backup.NewExporter"]))
+	if args := calls["backup.NewTaker"].Args; len(args) != 7 || exprText(args[4]) != "cfg.Backup.Keep" {
+		t.Errorf("backup.NewTaker must take cfg.Backup.Keep as its keep, got %v", exprText(calls["backup.NewTaker"]))
 	}
 	if args := calls["backup.NewScheduler"].Args; len(args) != 6 || exprText(args[0]) != "cfg.Backup.Schedule" {
 		t.Errorf("backup.NewScheduler must take cfg.Backup.Schedule as its spec, got %v", exprText(calls["backup.NewScheduler"]))

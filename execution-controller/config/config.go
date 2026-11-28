@@ -65,7 +65,7 @@ type Config struct {
 
 	// K8sNamespace is where every Job is created and observed.
 	K8sNamespace string
-	// MaxConcurrentJobs caps the deployments holding an execution slot
+	// MaxConcurrentJobs is the Job capacity: it caps the deployments holding it
 	// (reserved, starting, running or terminating) across every replica.
 	MaxConcurrentJobs int
 	// JobStartTimeout is how long a Job's pod may take, after the Job is
@@ -147,8 +147,8 @@ func requireJobS3SecretWithStaticKeys(v *pkgconfig.Validator) {
 	}
 }
 
-// maxConcurrentJobs reads the admission cap: the most deployments holding an
-// execution slot at once, across every replica. A value that is not a whole
+// maxConcurrentJobs reads the Job capacity: the most deployments holding it
+// at once, across every replica. A value that is not a whole
 // number of at least 1 is a validation failure.
 func maxConcurrentJobs(v *pkgconfig.Validator) int {
 	if n := v.PositiveIntOrZero("MAX_CONCURRENT_JOBS"); n > 0 {

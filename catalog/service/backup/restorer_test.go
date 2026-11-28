@@ -14,22 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeImporter is a GraphImporter that records its calls. Import reads every
+// fakeLoader is a GraphLoader that records its calls. Restore reads every
 // record; wipeErr and importErr, when set, are what those calls return.
-type fakeImporter struct {
+type fakeLoader struct {
 	mu        sync.Mutex
 	ops       []string
 	wipeErr   error
 	importErr error
-	// onImport, when set, runs before Import reads the records.
+	// onImport, when set, runs before Restore reads the records.
 	onImport func(ctx context.Context) error
-	// wipeTakes is how long Wipe runs; perRecord how long Import spends on
+	// wipeTakes is how long Wipe runs; perRecord how long Restore spends on
 	// each record it reads.
 	wipeTakes, perRecord time.Duration
 	read                 []any
 }
 
-func (g *fakeImporter) Wipe(_ context.Context, tenantID string) error {
+func (g *fakeLoader) Wipe(_ context.Context, tenantID string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.ops = append(g.ops, "Wipe "+tenantID)
@@ -37,9 +37,9 @@ func (g *fakeImporter) Wipe(_ context.Context, tenantID string) error {
 	return g.wipeErr
 }
 
-func (g *fakeImporter) Import(ctx context.Context, tenantID string, in ports.RecordReader) error {
+func (g *fakeLoader) Load(ctx context.Context, tenantID string, in ports.RecordReader) error {
 	g.mu.Lock()
-	g.ops = append(g.ops, "Import "+tenantID)
+	g.ops = append(g.ops, "Restore "+tenantID)
 	g.mu.Unlock()
 	if g.onImport != nil {
 		if err := g.onImport(ctx); err != nil {
@@ -47,7 +47,7 @@ func (g *fakeImporter) Import(ctx context.Context, tenantID string, in ports.Rec
 		}
 	}
 	if in.Header().TenantID != tenantID {
-		return errors.New("fakeImporter: another tenant's header")
+		return errors.New("fakeLoader: another tenant's header")
 	}
 	for {
 		rec, err := in.Next()
@@ -65,7 +65,7 @@ func (g *fakeImporter) Import(ctx context.Context, tenantID string, in ports.Rec
 	return g.importErr
 }
 
-func (g *fakeImporter) calls() []string {
+func (g *fakeLoader) calls() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return append([]string(nil), g.ops...)
@@ -73,34 +73,34 @@ func (g *fakeImporter) calls() []string {
 
 type restorerFixture struct {
 	lease *fakeLease
-	graph *fakeImporter
+	graph *fakeLoader
 	store *fakeStore
 	r     *Restorer
 	key   string
 }
 
-// newRestorerFixture is a Restorer over fakes; key names the tenant's export
-// taken at exportAt, which the test stores (or not).
+// newRestorerFixture is a Restorer over fakes; key names the tenant's backup
+// taken at backupAt, which the test stores (or not).
 func newRestorerFixture() *restorerFixture {
-	f := &restorerFixture{lease: newFakeLease(), graph: &fakeImporter{}, store: newFakeStore()}
+	f := &restorerFixture{lease: newFakeLease(), graph: &fakeLoader{}, store: newFakeStore()}
 	f.r = NewRestorer(f.lease, f.graph, f.store, quietLogger())
-	f.key = fakeKey(tenant, exportAt)
+	f.key = fakeKey(tenant, backupAt)
 	return f
 }
 
-// putExport stores at f.key an export holding n :Node nodes and a chain of
+// putBackup stores at f.key a backup holding n :Node nodes and a chain of
 // n-1 relationships.
-func (f *restorerFixture) putExport(n int) {
-	f.store.put(tenant, exportAt, n)
+func (f *restorerFixture) putBackup(n int) {
+	f.store.put(tenant, backupAt, n)
 }
 
-// A restore reads the export twice: once to validate it whole, with no lease
+// A restore reads the backup twice: once to validate it whole, with no lease
 // and no write, then, under the restore lease, to load it into the wiped
 // graph. It returns the records it loaded, closes what it opened and
 // releases the lease.
-func TestRestorer_ReadsTheExportTwiceAndLoadsIt(t *testing.T) {
+func TestRestorer_ReadsTheBackupTwiceAndLoadsIt(t *testing.T) {
 	f := newRestorerFixture()
-	f.putExport(3)
+	f.putBackup(3)
 	f.store.readErr = func(n int) error {
 		if n == 1 {
 			assert.Empty(t, f.lease.ops(), "the first read takes no lease")
@@ -113,9 +113,9 @@ func TestRestorer_ReadsTheExportTwiceAndLoadsIt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, RestoreResult{Nodes: 3, Relationships: 2}, res)
 	assert.Equal(t, []string{f.key, f.key}, f.store.reads)
-	require.Len(t, f.store.sources, 1, "the second read opens the export")
+	require.Len(t, f.store.sources, 1, "the second read opens the backup")
 	assert.True(t, f.store.sources[0].closed, "and closes it")
-	assert.Equal(t, []string{"Wipe t1", "Import t1"}, f.graph.calls())
+	assert.Equal(t, []string{"Wipe t1", "Restore t1"}, f.graph.calls())
 	assert.Len(t, f.graph.read, 5)
 	acquire := f.lease.callsOf("Acquire")
 	require.Len(t, acquire, 1)
@@ -127,27 +127,27 @@ func TestRestorer_ReadsTheExportTwiceAndLoadsIt(t *testing.T) {
 
 // The tenant is the one the store locates the key in, and a key the store
 // does not locate reads nothing and takes no lease.
-func TestRestorer_RefusesAKeyThatIsNotAnExport(t *testing.T) {
+func TestRestorer_RefusesAKeyThatIsNotAnBackup(t *testing.T) {
 	for _, key := range []string{"", "t1", "t1@latest"} {
 		f := newRestorerFixture()
 		_, err := f.r.Restore(context.Background(), key)
-		require.ErrorIs(t, err, ports.ErrNotAnExportKey, key)
+		require.ErrorIs(t, err, ports.ErrNotABackupKey, key)
 		assert.Empty(t, f.store.reads, key)
 		assert.Empty(t, f.lease.ops(), key)
 	}
 }
 
-// An export the store's validation refuses, or one of another tenant than the
+// A backup the store's validation refuses, or one of another tenant than the
 // key's, is refused before the lease and before any wipe.
-func TestRestorer_RefusesAnExportItCannotLoad(t *testing.T) {
+func TestRestorer_RefusesAnBackupItCannotLoad(t *testing.T) {
 	cases := map[string]func(f *restorerFixture){
 		"refused by validation": func(f *restorerFixture) {
-			f.putExport(2)
-			f.store.validateErr = errors.New("exportfile: malformed export line")
+			f.putBackup(2)
+			f.store.validateErr = errors.New("backupfile: malformed backup line")
 		},
-		"another tenant's export": func(f *restorerFixture) {
+		"another tenant's backup": func(f *restorerFixture) {
 			h := header("t2", 0, 0)
-			f.store.putExport(f.key, storedExport{header: h})
+			f.store.putBackup(f.key, storedBackup{header: h})
 		},
 	}
 	for name, setup := range cases {
@@ -169,7 +169,7 @@ func TestRestorer_RefusesAnExportItCannotLoad(t *testing.T) {
 // own holder, in case the Acquire committed while its answer was lost.
 func TestRestorer_AcquireFailureWipesNothingAndReleases(t *testing.T) {
 	f := newRestorerFixture()
-	f.putExport(2)
+	f.putBackup(2)
 	f.lease.acquireCommitsThenFails = errors.New("neo4j: connection reset after commit")
 
 	_, err := f.r.Restore(context.Background(), f.key)
@@ -182,19 +182,19 @@ func TestRestorer_AcquireFailureWipesNothingAndReleases(t *testing.T) {
 	assert.False(t, f.lease.isHeld(tenant), "the lease the failed Acquire took is released")
 }
 
-func TestRestorer_AMissingExportIsNotFound(t *testing.T) {
+func TestRestorer_AMissingBackupIsNotFound(t *testing.T) {
 	f := newRestorerFixture()
 	_, err := f.r.Restore(context.Background(), f.key)
 	require.ErrorIs(t, err, ports.ErrBackupNotFound)
 	assert.Empty(t, f.graph.calls())
 }
 
-// A restore while another export or restore holds the lease is skipped and
+// A restore while another backup or restore holds the lease is skipped and
 // wipes nothing.
 func TestRestorer_SkipsWhileAnotherHoldsTheLease(t *testing.T) {
 	f := newRestorerFixture()
-	f.putExport(2)
-	require.NoError(t, f.lease.Acquire(context.Background(), tenant, ports.LeaseExport, "export/elsewhere", time.Minute))
+	f.putBackup(2)
+	require.NoError(t, f.lease.Acquire(context.Background(), tenant, ports.LeaseBackup, "backup/elsewhere", time.Minute))
 
 	_, err := f.r.Restore(context.Background(), f.key)
 	require.ErrorIs(t, err, ErrSkipped)
@@ -202,12 +202,12 @@ func TestRestorer_SkipsWhileAnotherHoldsTheLease(t *testing.T) {
 	assert.True(t, f.lease.isHeld(tenant))
 }
 
-// An export that vanishes, or changes, between the validating read and the
+// A backup that vanishes, or changes, between the validating read and the
 // loading read is caught before the wipe: the graph stays as it was.
 func TestRestorer_AnObjectThatChangesBeforeTheWipeIsNotLoaded(t *testing.T) {
 	t.Run("deleted", func(t *testing.T) {
 		f := newRestorerFixture()
-		f.putExport(2)
+		f.putBackup(2)
 		f.store.readErr = func(n int) error {
 			if n == 2 {
 				return fmt.Errorf("%w: %s", ports.ErrBackupNotFound, f.key)
@@ -222,10 +222,10 @@ func TestRestorer_AnObjectThatChangesBeforeTheWipeIsNotLoaded(t *testing.T) {
 	})
 	t.Run("replaced", func(t *testing.T) {
 		f := newRestorerFixture()
-		f.putExport(2)
+		f.putBackup(2)
 		f.store.readErr = func(n int) error {
 			if n == 2 {
-				f.store.exports[f.key] = storedExport{header: header(tenant, 4, 3)}
+				f.store.backups[f.key] = storedBackup{header: header(tenant, 4, 3)}
 			}
 			return nil
 		}
@@ -237,17 +237,17 @@ func TestRestorer_AnObjectThatChangesBeforeTheWipeIsNotLoaded(t *testing.T) {
 	})
 }
 
-// An import that fails after the wipe leaves a partial graph that has not
+// An restore that fails after the wipe leaves a partial graph that has not
 // been migrated: the error says so and tells the operator to run the restore
 // again, and the lease is released.
 func TestRestorer_AFailedLoadReportsAPartialGraph(t *testing.T) {
-	for name, fail := range map[string]func(g *fakeImporter){
-		"import": func(g *fakeImporter) { g.importErr = errors.New("neo4j: connection reset") },
-		"wipe":   func(g *fakeImporter) { g.wipeErr = errors.New("neo4j: connection reset") },
+	for name, fail := range map[string]func(g *fakeLoader){
+		"restore": func(g *fakeLoader) { g.importErr = errors.New("neo4j: connection reset") },
+		"wipe":    func(g *fakeLoader) { g.wipeErr = errors.New("neo4j: connection reset") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newRestorerFixture()
-			f.putExport(2)
+			f.putBackup(2)
 			fail(f.graph)
 
 			_, err := f.r.Restore(context.Background(), f.key)
@@ -261,11 +261,11 @@ func TestRestorer_AFailedLoadReportsAPartialGraph(t *testing.T) {
 	}
 }
 
-// A lease lost while the export loads stops the restore and reports the
+// A lease lost while the backup loads stops the restore and reports the
 // graph partial.
 func TestRestorer_LostLeaseStopsTheRestore(t *testing.T) {
 	f := newRestorerFixture()
-	f.putExport(2)
+	f.putBackup(2)
 	f.r.keeper.renewEvery = 10 * time.Millisecond
 	f.lease.renewErr = func(int) error { return fmt.Errorf("tenant %q: %w", tenant, ports.ErrLeaseLost) }
 	f.graph.onImport = func(ctx context.Context) error {
@@ -284,11 +284,11 @@ func TestRestorer_LostLeaseStopsTheRestore(t *testing.T) {
 }
 
 // A load that finished after its lease lapsed may hold writes that landed
-// while it ran: the restore confirms the lease after the import and fails
+// while it ran: the restore confirms the lease after the restore and fails
 // when it is gone.
 func TestRestorer_ConfirmsTheLeaseAfterTheLoad(t *testing.T) {
 	f := newRestorerFixture()
-	f.putExport(2)
+	f.putBackup(2)
 	f.lease.renewErr = func(int) error { return fmt.Errorf("tenant %q: %w", tenant, ports.ErrLeaseLost) }
 
 	_, err := f.r.Restore(context.Background(), f.key)
@@ -296,12 +296,12 @@ func TestRestorer_ConfirmsTheLeaseAfterTheLoad(t *testing.T) {
 	assert.ErrorContains(t, err, "run the restore again")
 }
 
-// A restore that moves no record for the stall limit (an import
+// A restore that moves no record for the stall limit (an restore
 // against a database that never answers) is stopped: it fails with
 // ErrStalled, reports the graph partial and releases the lease.
 func TestRestorer_AStalledRestoreFailsWithinTheBound(t *testing.T) {
 	f := newRestorerFixture()
-	f.putExport(2)
+	f.putBackup(2)
 	f.r.keeper.renewEvery = 5 * time.Millisecond
 	f.r.keeper.stallAfter = 50 * time.Millisecond
 	f.graph.onImport = func(ctx context.Context) error {
@@ -322,11 +322,11 @@ func TestRestorer_AStalledRestoreFailsWithinTheBound(t *testing.T) {
 }
 
 // Each step of a restore starts the stall limit afresh: the wipe and the
-// start of the import move no record, and neither stalls the restore while
-// it stays within the limit; records read keep the import going.
+// start of the restore move no record, and neither stalls the restore while
+// it stays within the limit; records read keep the restore going.
 func TestRestorer_EachStepStartsTheStallLimitAfresh(t *testing.T) {
 	f := newRestorerFixture()
-	f.putExport(5)
+	f.putBackup(5)
 	f.r.keeper.renewEvery = 5 * time.Millisecond
 	f.r.keeper.stallAfter = 100 * time.Millisecond
 	f.graph.wipeTakes = 60 * time.Millisecond

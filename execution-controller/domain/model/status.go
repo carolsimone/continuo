@@ -4,26 +4,26 @@ import "slices"
 
 // Status is the lifecycle state of a Deployment. A deployment waits in
 // pending (or blocked, for a candidate node whose in-set upstreams have not all
-// succeeded) for as long as it takes. It holds an execution slot while
+// succeeded) for as long as it takes. It holds Job capacity while
 // reserved, starting, running or terminating, and ends done (its attempt
 // ended, or was stopped before it could start), failed (it could not be deployed) or skipped (an in-set upstream
 // failed). reserved is not a waiting state: it lasts from the claim that took
-// the slot to the launch that creates the Job.
+// Job capacity to the launch that creates the Job.
 type Status string
 
 const (
 	StatusPending Status = "pending"
 	StatusBlocked Status = "blocked"
-	// StatusReserved holds a slot; the Job is not created yet.
+	// StatusReserved holds Job capacity; the Job is not created yet.
 	StatusReserved Status = "reserved"
-	// StatusStarting holds a slot; the Job is created.
+	// StatusStarting holds Job capacity; the Job is created.
 	StatusStarting Status = "starting"
-	// StatusRunning holds a slot; the Job's main container started.
+	// StatusRunning holds Job capacity; the Job's main container started.
 	StatusRunning Status = "running"
-	// StatusTerminating holds a slot; execution-controller deleted the Job to
+	// StatusTerminating holds Job capacity; execution-controller deleted the Job to
 	// end the attempt itself and waits for its pods to be gone.
 	StatusTerminating Status = "terminating"
-	// StatusDone holds no slot: the attempt ended and its outcome is recorded.
+	// StatusDone holds no Job capacity: the attempt ended and its outcome is recorded.
 	StatusDone    Status = "done"
 	StatusFailed  Status = "failed"
 	StatusSkipped Status = "skipped"
@@ -37,27 +37,27 @@ func AllStatuses() []Status {
 		StatusRunning, StatusTerminating, StatusDone, StatusFailed, StatusSkipped}
 }
 
-// InFlightStatuses lists the statuses that hold an execution slot. Queries
+// InFlightStatuses lists the statuses that hold Job capacity. Queries
 // bind this set; the deployments trigger and in-flight index repeat it and are
 // pinned to it by TestExecutionSchemaMatchesContract.
 func InFlightStatuses() []Status {
 	return []Status{StatusReserved, StatusStarting, StatusRunning, StatusTerminating}
 }
 
-// InFlight reports whether a deployment in this status holds an execution slot.
+// InFlight reports whether a deployment in this status holds Job capacity.
 func (s Status) InFlight() bool { return slices.Contains(InFlightStatuses(), s) }
 
 // transitions is the deployment state machine: for each status, the statuses
 // a deployment may move to. A status with no entry is terminal.
 //
-//	pending     → reserved                   the claim takes a slot
+//	pending     → reserved                   the claim takes Job capacity
 //	pending     → done                       the attempt was stopped before its claim
 //	pending     → terminating                the attempt was stopped, and a Job of it
 //	                                         that no launch recorded exists
 //	blocked     → pending | skipped          in-set upstreams succeeded | one failed
 //	reserved    → starting                   the Job was created
 //	reserved    → pending                    a transient deploy failure, or a stale
-//	                                         reservation, gives the slot back
+//	                                         reservation, gives the capacity back
 //	reserved    → failed                     the deployment cannot be deployed
 //	reserved    → done                       the attempt was stopped before its Job was created
 //	reserved    → terminating                the attempt was stopped, and a Job of it

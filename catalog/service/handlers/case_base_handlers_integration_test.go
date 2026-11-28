@@ -61,11 +61,11 @@ func (g *versionsGroupFixture) markerGroups(messageID string) []string {
 	return out
 }
 
-// A crash after the rejections' statements ran rolls back every rejection
+// A crash after the failure precedents' statements ran rolls back every failure precedent
 // with the marker: nothing of the message is left, and the message is not
-// processed. The redelivery records every rejection and the marker in one
+// processed. The redelivery records every failure precedent and the marker in one
 // write; a third delivery finds the marker and reads no bundle.
-func TestRejectionsHandler_MarkerAtomicWithRecord(t *testing.T) {
+func TestFailurePrecedentsHandler_MarkerAtomicWithRecord(t *testing.T) {
 	ctx := context.Background()
 	g := newVersionsGroupFixture(t)
 	g.promoteNodes("svc.public.a", "svc.public.b")
@@ -81,44 +81,44 @@ func TestRejectionsHandler_MarkerAtomicWithRecord(t *testing.T) {
 			{NodeID: "svc.public.b", Category: "logic", ErrorSignature: "sig", Reason: "logic:missing_object"},
 		},
 	}
-	rejections := func(u uow.UnitOfWork) *handlers.HealTriggeredRejectionsHandler {
-		return handlers.NewHealTriggeredRejectionsHandler(u, g.bundles, newTestLogger())
+	failurePrecedents := func(u uow.UnitOfWork) *handlers.HealTriggeredFailurePrecedentsHandler {
+		return handlers.NewHealTriggeredFailurePrecedentsHandler(u, g.bundles, newTestLogger())
 	}
 	const (
-		rejectionCount = `MATCH (r:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS v`
-		failedCount    = `MATCH (:Node {tenant_id: $tenant_id})-[f:FAILED]->(:Rejection {tenant_id: $tenant_id}) RETURN count(f) AS v`
-		hubCount       = `MATCH (s:ErrorSignature {tenant_id: $tenant_id}) RETURN count(s) AS v`
+		failurePrecedentCount = `MATCH (r:FailurePrecedent {tenant_id: $tenant_id}) RETURN count(r) AS v`
+		failedCount           = `MATCH (:Node {tenant_id: $tenant_id})-[f:FAILED]->(:FailurePrecedent {tenant_id: $tenant_id}) RETURN count(f) AS v`
+		hubCount              = `MATCH (s:ErrorSignature {tenant_id: $tenant_id}) RETURN count(s) AS v`
 	)
 
 	crash := &crashingUnitOfWork{UnitOfWork: g.uow, crashAt: 1}
-	require.ErrorIs(t, rejections(crash).Handle(ctx, g.tenant, "rej-1", nil, in), errCrash)
-	assert.Equal(t, 1, crash.writes, "every rejection and the marker share one write")
-	assert.Zero(t, g.count(rejectionCount), "the crash rolls every rejection back")
+	require.ErrorIs(t, failurePrecedents(crash).Handle(ctx, g.tenant, "rej-1", nil, in), errCrash)
+	assert.Equal(t, 1, crash.writes, "every failure precedent and the marker share one write")
+	assert.Zero(t, g.count(failurePrecedentCount), "the crash rolls every failure precedent back")
 	assert.Zero(t, g.count(hubCount))
 	assert.Zero(t, g.count(failedCount))
-	assert.False(t, g.processedBy(streams.CatalogHealTriggeredRejections, "rej-1"), "no marker without its rejections")
+	assert.False(t, g.processedBy(streams.CatalogHealTriggeredFailurePrecedents, "rej-1"), "no marker without its failure precedents")
 
 	counted := &crashingUnitOfWork{UnitOfWork: g.uow}
-	require.NoError(t, rejections(counted).Handle(ctx, g.tenant, "rej-1", nil, in))
+	require.NoError(t, failurePrecedents(counted).Handle(ctx, g.tenant, "rej-1", nil, in))
 	assert.Equal(t, 1, counted.writes)
-	assert.Equal(t, int64(2), g.count(rejectionCount))
+	assert.Equal(t, int64(2), g.count(failurePrecedentCount))
 	assert.Equal(t, int64(1), g.count(hubCount), "one signature hub for the tenant")
 	assert.Equal(t, int64(2), g.count(failedCount))
-	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-1"),
-		"the marker commits with the rejections")
+	assert.Equal(t, []string{streams.CatalogHealTriggeredFailurePrecedents}, g.markerGroups("rej-1"),
+		"the marker commits with the failure precedents")
 
 	g.bundles.calls = nil
-	require.NoError(t, rejections(g.uow).Handle(ctx, g.tenant, "rej-1", nil, in))
+	require.NoError(t, failurePrecedents(g.uow).Handle(ctx, g.tenant, "rej-1", nil, in))
 	assert.Empty(t, g.bundles.calls, "a processed message reads no bundle")
-	assert.Equal(t, int64(2), g.count(rejectionCount))
-	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-1"))
+	assert.Equal(t, int64(2), g.count(failurePrecedentCount))
+	assert.Equal(t, []string{streams.CatalogHealTriggeredFailurePrecedents}, g.markerGroups("rej-1"))
 }
 
 // A trigger carries every failing node, the unfixable ones included. On Neo4j
-// only the fixable nodes leave a :Rejection (and its signature hub and FAILED
+// only the fixable nodes leave a :FailurePrecedent (and its signature hub and FAILED
 // edge); a trigger with no fixable node commits its marker alone, reads no
 // bundle, and a redelivery of it finds the marker.
-func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T) {
+func TestFailurePrecedentsHandler_UnfixableNodesLeaveNoFailurePrecedentInTheGraph(t *testing.T) {
 	ctx := context.Background()
 	g := newVersionsGroupFixture(t)
 	g.promoteNodes("svc.public.a", "svc.public.b")
@@ -127,10 +127,10 @@ func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T
 		"svc.public.a": {RawCode: "select a", ContentHash: "ha"},
 		"svc.public.b": {RawCode: "select b", ContentHash: "hb"},
 	}}
-	handler := handlers.NewHealTriggeredRejectionsHandler(g.uow, g.bundles, newTestLogger())
+	handler := handlers.NewHealTriggeredFailurePrecedentsHandler(g.uow, g.bundles, newTestLogger())
 	const (
-		rejectionNodes = `MATCH (:Node {tenant_id: $tenant_id})-[:FAILED]->(r:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS v`
-		rejectionCount = `MATCH (r:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS v`
+		failurePrecedentNodes = `MATCH (:Node {tenant_id: $tenant_id})-[:FAILED]->(r:FailurePrecedent {tenant_id: $tenant_id}) RETURN count(r) AS v`
+		failurePrecedentCount = `MATCH (r:FailurePrecedent {tenant_id: $tenant_id}) RETURN count(r) AS v`
 	)
 
 	mixed := domainEvent.HealTriggered{
@@ -141,9 +141,9 @@ func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T
 		},
 	}
 	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-mixed", nil, mixed))
-	assert.Equal(t, int64(1), g.count(rejectionCount), "only the fixable node is a precedent")
-	assert.Equal(t, int64(1), g.count(rejectionNodes))
-	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-mixed"))
+	assert.Equal(t, int64(1), g.count(failurePrecedentCount), "only the fixable node is a precedent")
+	assert.Equal(t, int64(1), g.count(failurePrecedentNodes))
+	assert.Equal(t, []string{streams.CatalogHealTriggeredFailurePrecedents}, g.markerGroups("rej-mixed"))
 
 	g.bundles.calls = nil
 	onlyUnfixable := domainEvent.HealTriggered{
@@ -154,18 +154,18 @@ func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T
 		},
 	}
 	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-unfixable", nil, onlyUnfixable))
-	assert.Equal(t, int64(1), g.count(rejectionCount), "an all-unfixable trigger adds no :Rejection")
+	assert.Equal(t, int64(1), g.count(failurePrecedentCount), "an all-unfixable trigger adds no :FailurePrecedent")
 	assert.Empty(t, g.bundles.calls, "and reads no bundle")
-	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-unfixable"),
+	assert.Equal(t, []string{streams.CatalogHealTriggeredFailurePrecedents}, g.markerGroups("rej-unfixable"),
 		"the marker commits alone")
 
 	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-unfixable", nil, onlyUnfixable))
-	assert.Equal(t, int64(1), g.count(rejectionCount))
-	assert.Equal(t, []string{streams.CatalogHealTriggeredRejections}, g.markerGroups("rej-unfixable"))
+	assert.Equal(t, int64(1), g.count(failurePrecedentCount))
+	assert.Equal(t, []string{streams.CatalogHealTriggeredFailurePrecedents}, g.markerGroups("rej-unfixable"))
 }
 
 // A crash after the fixes' statements ran rolls back every fix, PR
-// and stub rejection with the marker; the redelivery records them and the
+// and stub failure precedent with the marker; the redelivery records them and the
 // marker in one write.
 func TestFixesHandler_MarkerAtomicWithRecord(t *testing.T) {
 	ctx := context.Background()
@@ -180,9 +180,9 @@ func TestFixesHandler_MarkerAtomicWithRecord(t *testing.T) {
 		return handlers.NewPrOpenedFixesHandler(u, newTestLogger())
 	}
 	const (
-		proposedCount = `MATCH (:Rejection {tenant_id: $tenant_id})-[p:PROPOSED]->(:Fix {tenant_id: $tenant_id}) RETURN count(p) AS v`
+		proposedCount = `MATCH (:FailurePrecedent {tenant_id: $tenant_id})-[p:PROPOSED]->(:Fix {tenant_id: $tenant_id}) RETURN count(p) AS v`
 		prCount       = `MATCH (:Fix {tenant_id: $tenant_id})-[:HAS_PR]->(p:PullRequest {tenant_id: $tenant_id}) RETURN count(p) AS v`
-		anyCount      = `MATCH (n {tenant_id: $tenant_id}) WHERE n:Rejection OR n:Fix OR n:PullRequest RETURN count(n) AS v`
+		anyCount      = `MATCH (n {tenant_id: $tenant_id}) WHERE n:FailurePrecedent OR n:Fix OR n:PullRequest RETURN count(n) AS v`
 	)
 
 	crash := &crashingUnitOfWork{UnitOfWork: g.uow, crashAt: 1}
@@ -222,7 +222,7 @@ func TestPrClosedProvenanceHandler_MarkerAtomicWithRecord(t *testing.T) {
 	}
 	const (
 		mergedCount   = `MATCH (p:PullRequest {tenant_id: $tenant_id}) WHERE p.pr_state = 'merged' RETURN count(p) AS v`
-		resolvedCount = `MATCH (:Rejection {tenant_id: $tenant_id})-[r:RESOLVED_BY]->(:Fix {tenant_id: $tenant_id}) RETURN count(r) AS v`
+		resolvedCount = `MATCH (:FailurePrecedent {tenant_id: $tenant_id})-[r:RESOLVED_BY]->(:Fix {tenant_id: $tenant_id}) RETURN count(r) AS v`
 		editedCount   = `MATCH (:Fix {tenant_id: $tenant_id})-[e:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: 'svc.public.e'}) RETURN count(e) AS v`
 	)
 

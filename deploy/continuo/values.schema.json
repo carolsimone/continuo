@@ -424,7 +424,7 @@
         "maxConcurrentJobs": {
           "type": "integer",
           "minimum": 1,
-          "description": "Most Jobs holding an execution slot at once across execution-controller replicas."
+          "description": "Job capacity: the most Jobs that run at once across execution-controller replicas."
         },
         "startTimeoutMinutes": {
           "type": "integer",
@@ -492,16 +492,16 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Whether catalog exports each tenant's graph on the schedule; false runs no exports."
+              "description": "Whether catalog backs up each tenant's graph on the schedule; false runs no backups."
             },
             "schedule": {
               "type": "string",
-              "description": "When catalog exports: a five-field cron in UTC or an @ descriptor such as @daily or @every 6h."
+              "description": "When catalog takes its backups: a five-field cron in UTC or an @ descriptor such as @daily or @every 6h."
             },
             "keep": {
               "type": "integer",
               "minimum": 1,
-              "description": "How many of the newest exports of each tenant catalog keeps; it deletes the rest after an export."
+              "description": "How many of the newest backups of each tenant catalog keeps; it deletes the rest after a backup."
             }
           }
         },

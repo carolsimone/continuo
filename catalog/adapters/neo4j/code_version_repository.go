@@ -148,7 +148,7 @@ OPTIONAL MATCH (n)-[old:CURRENT]->(:NodeVersion {tenant_id: $tenant_id})
 DELETE old
 CREATE (n)-[:CURRENT {promoted_at: $promoted_at, release_id: $release_id}]->(v)`
 
-// linkResolvedRejectionsCypher links every still-open rejection of a node,
+// linkResolvedPrecedentsCypher links every still-open failure precedent of a node,
 // recorded before this promotion, to the version that just became current:
 // the fix for a recorded failure is the first version promoted after it.
 // "Still open" looks only at [:RESOLVED_BY] edges to a :NodeVersion, because a
@@ -158,12 +158,12 @@ CREATE (n)-[:CURRENT {promoted_at: $promoted_at, release_id: $release_id}]->(v)`
 // this promotion's time and release, which the precedent detail diffs from,
 // since a reverted-to version keeps its own earlier promoted_at; the MERGE
 // pattern itself carries no property, so it matches on the edge type alone.
-const linkResolvedRejectionsCypher = `
+const linkResolvedPrecedentsCypher = `
 UNWIND $currents AS c
 MATCH (n:Node {tenant_id: $tenant_id, unique_id: c.unique_id})
 WHERE n.code_version_promotion_seq = $promotion_seq
 MATCH (v:NodeVersion {tenant_id: $tenant_id, unique_id: c.unique_id, content_hash: c.content_hash})
-MATCH (rej:Rejection {tenant_id: $tenant_id, node_id: c.unique_id})
+MATCH (rej:FailurePrecedent {tenant_id: $tenant_id, node_id: c.unique_id})
 WHERE rej.at < $promoted_at AND NOT (rej)-[:RESOLVED_BY]->(:NodeVersion {tenant_id: $tenant_id})
 MERGE (rej)-[rb:RESOLVED_BY]->(v)
 ON CREATE SET rb.promoted_at = $promoted_at, rb.release_id = $release_id`
@@ -220,7 +220,7 @@ type nodeState struct {
 //     seq.
 //  5. For every node whose code differs from its current version: record its
 //     version and its :USES_CODE edges, then move its :CURRENT and resolve its
-//     open rejections where the watermark is this promotion's seq.
+//     open failure precedents where the watermark is this promotion's seq.
 //
 // It refuses a tenantID other than the transaction's.
 func (r *codeVersionRepository) WriteBatch(
@@ -333,11 +333,11 @@ func (r *codeVersionRepository) WriteBatch(
 	}
 	out.CurrentPointersMoved = moved.RelationshipsCreated()
 
-	linked, err := runCounting(ctx, r.run, linkResolvedRejectionsCypher, with(common, "currents", currents), "link resolved rejections")
+	linked, err := runCounting(ctx, r.run, linkResolvedPrecedentsCypher, with(common, "currents", currents), "link resolved failure precedents")
 	if err != nil {
 		return out, err
 	}
-	out.RejectionsResolved = linked.RelationshipsCreated()
+	out.PrecedentsResolved = linked.RelationshipsCreated()
 	return out, nil
 }
 

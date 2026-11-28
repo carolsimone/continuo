@@ -1,4 +1,4 @@
-package exportfile_test
+package backupfile_test
 
 import (
 	"bytes"
@@ -9,46 +9,48 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/serialization/backupfile"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 )
 
 const tenant = "t1"
 
-var exportedAt = time.Date(2026, 10, 30, 2, 0, 0, 123456789, time.UTC)
+var takenAt = time.Date(2026, 10, 30, 2, 0, 0, 123456789, time.UTC)
 
-func header(nodes, rels map[string]int64) export.Header {
-	return export.Header{
-		FormatVersion: export.FormatVersion, TenantID: tenant, ExportedAt: exportedAt,
+func header(nodes, rels map[string]int64) graphbackup.Header {
+	return graphbackup.Header{
+		FormatVersion: graphbackup.FormatVersion, TenantID: tenant, TakenAt: takenAt,
 		CatalogVersion: "test", Nodes: nodes, Relationships: rels,
 	}
 }
 
-func node(label string, props map[string]any) export.NodeRecord {
+func node(label string, props map[string]any) graphbackup.NodeRecord {
 	all := map[string]any{"tenant_id": tenant}
 	for k, v := range props {
 		all[k] = v
 	}
-	return export.NodeRecord{Labels: []string{label}, Props: all}
+	return graphbackup.NodeRecord{Labels: []string{label}, Props: all}
 }
 
-func ref(label string, key ...any) export.NodeRef { return export.NodeRef{Label: label, Key: key} }
+func ref(label string, key ...any) graphbackup.NodeRef {
+	return graphbackup.NodeRef{Label: label, Key: key}
+}
 
 // write renders h and records through the Writer and fails the test on any
 // error.
-func write(t *testing.T, h export.Header, records ...any) []byte {
+func write(t *testing.T, h graphbackup.Header, records ...any) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	w := exportfile.NewWriter(&buf)
+	w := backupfile.NewWriter(&buf)
 	if err := w.WriteHeader(h); err != nil {
 		t.Fatalf("WriteHeader: %v", err)
 	}
 	for _, rec := range records {
 		var err error
 		switch r := rec.(type) {
-		case export.NodeRecord:
+		case graphbackup.NodeRecord:
 			err = w.WriteNode(r)
-		case export.RelRecord:
+		case graphbackup.RelRecord:
 			err = w.WriteRel(r)
 		default:
 			t.Fatalf("unknown record %T", rec)
@@ -62,24 +64,24 @@ func write(t *testing.T, h export.Header, records ...any) []byte {
 
 // smallGraph is two nodes of composite and simple identity joined by one
 // relationship.
-func smallGraph() (export.Header, []any) {
+func smallGraph() (graphbackup.Header, []any) {
 	return header(map[string]int64{"Node": 1, "NodeVersion": 1}, map[string]int64{"CURRENT": 1}),
 		[]any{
 			node("Node", map[string]any{"unique_id": "analytics.table_a", "active": true, "seq": int64(7)}),
 			node("NodeVersion", map[string]any{"unique_id": "analytics.table_a", "content_hash": "9f2c"}),
-			export.RelRecord{
+			graphbackup.RelRecord{
 				Type: "CURRENT", From: ref("Node", "analytics.table_a"), To: ref("NodeVersion", "analytics.table_a", "9f2c"),
 				Props: map[string]any{"promoted_at": time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)},
 			},
 		}
 }
 
-// TestExportfile_LineLayout pins the bytes of the header, a node and a
+// TestBackupfile_LineLayout pins the bytes of the header, a node and a
 // relationship line.
-func TestExportfile_LineLayout(t *testing.T) {
+func TestBackupfile_LineLayout(t *testing.T) {
 	h, records := smallGraph()
 	got := string(write(t, h, records...))
-	want := `{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00.123456789Z","catalog_version":"test","nodes":{"Node":1,"NodeVersion":1},"relationships":{"CURRENT":1}}` + "\n" +
+	want := `{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00.123456789Z","catalog_version":"test","nodes":{"Node":1,"NodeVersion":1},"relationships":{"CURRENT":1}}` + "\n" +
 		`{"node":["Node"],"props":{"active":true,"seq":{"$int":"7"},"tenant_id":"t1","unique_id":"analytics.table_a"}}` + "\n" +
 		`{"node":["NodeVersion"],"props":{"content_hash":"9f2c","tenant_id":"t1","unique_id":"analytics.table_a"}}` + "\n" +
 		`{"rel":"CURRENT","from":["Node","analytics.table_a"],"to":["NodeVersion","analytics.table_a","9f2c"],"props":{"promoted_at":{"$datetime":"2026-10-20T09:00:00Z[UTC]"}}}` + "\n"
@@ -88,15 +90,15 @@ func TestExportfile_LineLayout(t *testing.T) {
 	}
 }
 
-func TestExportfile_ReaderReturnsTheRecordsInOrder(t *testing.T) {
+func TestBackupfile_ReaderReturnsTheRecordsInOrder(t *testing.T) {
 	h, records := smallGraph()
-	r, err := exportfile.NewReader(bytes.NewReader(write(t, h, records...)))
+	r, err := backupfile.NewReader(bytes.NewReader(write(t, h, records...)))
 	if err != nil {
 		t.Fatalf("NewReader: %v", err)
 	}
 	got := r.Header()
-	if got.TenantID != tenant || !got.ExportedAt.Equal(exportedAt) || got.CatalogVersion != "test" ||
-		got.FormatVersion != export.FormatVersion || got.Nodes["NodeVersion"] != 1 || got.Relationships["CURRENT"] != 1 {
+	if got.TenantID != tenant || !got.TakenAt.Equal(takenAt) || got.CatalogVersion != "test" ||
+		got.FormatVersion != graphbackup.FormatVersion || got.Nodes["NodeVersion"] != 1 || got.Relationships["CURRENT"] != 1 {
 		t.Errorf("Header = %+v", got)
 	}
 	for i := range records {
@@ -105,13 +107,13 @@ func TestExportfile_ReaderReturnsTheRecordsInOrder(t *testing.T) {
 			t.Fatalf("Next %d: %v", i, err)
 		}
 		switch want := records[i].(type) {
-		case export.NodeRecord:
-			n, ok := rec.(export.NodeRecord)
+		case graphbackup.NodeRecord:
+			n, ok := rec.(graphbackup.NodeRecord)
 			if !ok || n.Labels[0] != want.Labels[0] || n.Props["unique_id"] != want.Props["unique_id"] {
 				t.Errorf("record %d = %#v, want %#v", i, rec, want)
 			}
-		case export.RelRecord:
-			rel, ok := rec.(export.RelRecord)
+		case graphbackup.RelRecord:
+			rel, ok := rec.(graphbackup.RelRecord)
 			if !ok || rel.Type != "CURRENT" || rel.To.Key[1] != "9f2c" ||
 				!rel.Props["promoted_at"].(time.Time).Equal(want.Props["promoted_at"].(time.Time)) {
 				t.Errorf("record %d = %#v, want %#v", i, rec, want)
@@ -125,7 +127,7 @@ func TestExportfile_ReaderReturnsTheRecordsInOrder(t *testing.T) {
 	}
 }
 
-func TestExportfile_ReaderKeepsEveryValueType(t *testing.T) {
+func TestBackupfile_ReaderKeepsEveryValueType(t *testing.T) {
 	props := map[string]any{
 		"s":       "héllo 世界 🚀\nsecond line\t\"quoted\" <tag> & \\",
 		"min":     int64(math.MinInt64),
@@ -145,7 +147,7 @@ func TestExportfile_ReaderKeepsEveryValueType(t *testing.T) {
 	}
 	n := node("Node", props)
 	data := write(t, header(map[string]int64{"Node": 1}, nil), n)
-	r, err := exportfile.NewReader(bytes.NewReader(data))
+	r, err := backupfile.NewReader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +155,7 @@ func TestExportfile_ReaderKeepsEveryValueType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := rec.(export.NodeRecord).Props
+	got := rec.(graphbackup.NodeRecord).Props
 	for k, want := range n.Props {
 		if !sameValue(got[k], want) {
 			t.Errorf("property %s = %#v, want %#v", k, got[k], want)
@@ -202,9 +204,9 @@ func sameValue(a, b any) bool {
 	}
 }
 
-func TestExportfile_ValidateAcceptsAWellFormedFile(t *testing.T) {
+func TestBackupfile_ValidateAcceptsAWellFormedFile(t *testing.T) {
 	h, records := smallGraph()
-	got, err := exportfile.Validate(bytes.NewReader(write(t, h, records...)), tenant)
+	got, err := backupfile.Validate(bytes.NewReader(write(t, h, records...)), tenant)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -213,10 +215,10 @@ func TestExportfile_ValidateAcceptsAWellFormedFile(t *testing.T) {
 	}
 }
 
-func TestExportfile_ValidateAcceptsAnEmptyGraph(t *testing.T) {
+func TestBackupfile_ValidateAcceptsAnEmptyGraph(t *testing.T) {
 	data := write(t, header(nil, nil))
-	if _, err := exportfile.Validate(bytes.NewReader(data), tenant); err != nil {
-		t.Fatalf("Validate of a header-only export: %v", err)
+	if _, err := backupfile.Validate(bytes.NewReader(data), tenant); err != nil {
+		t.Fatalf("Validate of a header-only backup: %v", err)
 	}
 }
 
@@ -224,63 +226,63 @@ func TestExportfile_ValidateAcceptsAnEmptyGraph(t *testing.T) {
 func lines(ls ...string) []byte { return []byte(strings.Join(ls, "\n") + "\n") }
 
 const (
-	headerLine1Node = `{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`
+	headerLine1Node = `{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`
 	nodeA           = `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"}}`
 )
 
-func TestExportfile_ValidateRefusesLabelOutsideSchema(t *testing.T) {
+func TestBackupfile_ValidateRefusesLabelOutsideSchema(t *testing.T) {
 	cases := map[string][]byte{
 		"a node's label": lines(headerLine1Node, `{"node":["Table"],"props":{"tenant_id":"t1","unique_id":"a"}}`),
 		"a second label": lines(headerLine1Node, `{"node":["Node","Run"],"props":{"tenant_id":"t1","unique_id":"a"}}`),
 		"a label that injects Cypher": lines(headerLine1Node,
 			`{"node":["Node {tenant_id: 'other'}) DETACH DELETE (n"],"props":{"tenant_id":"t1","unique_id":"a"}}`),
-		"the header's counts": lines(`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Table":1},"relationships":{}}`,
+		"the header's counts": lines(`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Table":1},"relationships":{}}`,
 			`{"node":["Table"],"props":{"tenant_id":"t1","unique_id":"a"}}`),
 		"a relationship end": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Table","a"],"props":{}}`),
 	}
 	for name, data := range cases {
-		if _, err := exportfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, export.ErrOutsideSchema) {
+		if _, err := backupfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, graphbackup.ErrOutsideSchema) {
 			t.Errorf("%s: Validate = %v, want ErrOutsideSchema", name, err)
 		}
 	}
 }
 
-func TestExportfile_ValidateRefusesRelationshipTypeOutsideSchema(t *testing.T) {
-	h := `{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`
+func TestBackupfile_ValidateRefusesRelationshipTypeOutsideSchema(t *testing.T) {
+	h := `{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`
 	cases := map[string][]byte{
 		"a retired type":    lines(h, nodeA, `{"rel":"PREVIOUS","from":["Node","a"],"to":["Node","a"],"props":{}}`),
 		"a lower-case type": lines(h, nodeA, `{"rel":"depends_on","from":["Node","a"],"to":["Node","a"],"props":{}}`),
 		"a type that injects Cypher": lines(h, nodeA,
 			`{"rel":"DEPENDS_ON]->(b) DETACH DELETE b //","from":["Node","a"],"to":["Node","a"],"props":{}}`),
 		"the header's counts": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"EXECUTES":1}}`,
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"EXECUTES":1}}`,
 			nodeA, `{"rel":"EXECUTES","from":["Node","a"],"to":["Node","a"],"props":{}}`),
 	}
 	for name, data := range cases {
-		if _, err := exportfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, export.ErrOutsideSchema) {
+		if _, err := backupfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, graphbackup.ErrOutsideSchema) {
 			t.Errorf("%s: Validate = %v, want ErrOutsideSchema", name, err)
 		}
 	}
 }
 
-func TestExportfile_ValidateRefusesTenantMismatch(t *testing.T) {
+func TestBackupfile_ValidateRefusesTenantMismatch(t *testing.T) {
 	h, records := smallGraph()
-	if _, err := exportfile.Validate(bytes.NewReader(write(t, h, records...)), "t2"); !errors.Is(err, export.ErrTenantMismatch) {
+	if _, err := backupfile.Validate(bytes.NewReader(write(t, h, records...)), "t2"); !errors.Is(err, graphbackup.ErrTenantMismatch) {
 		t.Errorf("Validate for another tenant = %v, want ErrTenantMismatch", err)
 	}
 	foreignNode := lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t2","unique_id":"a"}}`)
-	if _, err := exportfile.Validate(bytes.NewReader(foreignNode), tenant); !errors.Is(err, export.ErrTenantMismatch) {
+	if _, err := backupfile.Validate(bytes.NewReader(foreignNode), tenant); !errors.Is(err, graphbackup.ErrTenantMismatch) {
 		t.Errorf("Validate of a node of another tenant = %v, want ErrTenantMismatch", err)
 	}
 	noTenant := lines(headerLine1Node, `{"node":["Node"],"props":{"unique_id":"a"}}`)
-	if _, err := exportfile.Validate(bytes.NewReader(noTenant), tenant); !errors.Is(err, export.ErrTenantMismatch) {
+	if _, err := backupfile.Validate(bytes.NewReader(noTenant), tenant); !errors.Is(err, graphbackup.ErrTenantMismatch) {
 		t.Errorf("Validate of a node without a tenant = %v, want ErrTenantMismatch", err)
 	}
 }
 
-func TestExportfile_ValidateRefusesCountMismatch(t *testing.T) {
+func TestBackupfile_ValidateRefusesCountMismatch(t *testing.T) {
 	two := []any{
 		node("Node", map[string]any{"unique_id": "a"}),
 		node("Node", map[string]any{"unique_id": "b"}),
@@ -288,25 +290,25 @@ func TestExportfile_ValidateRefusesCountMismatch(t *testing.T) {
 	// The Writer writes whatever counts it is given; the file is cut to two
 	// nodes while the header says three.
 	data := write(t, header(map[string]int64{"Node": 3}, nil), two...)
-	if _, err := exportfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, exportfile.ErrCountMismatch) {
+	if _, err := backupfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, backupfile.ErrCountMismatch) {
 		t.Errorf("header says 3 nodes, file holds 2: Validate = %v, want ErrCountMismatch", err)
 	}
 	more := write(t, header(map[string]int64{"Node": 1}, nil), two...)
-	if _, err := exportfile.Validate(bytes.NewReader(more), tenant); !errors.Is(err, exportfile.ErrCountMismatch) {
+	if _, err := backupfile.Validate(bytes.NewReader(more), tenant); !errors.Is(err, backupfile.ErrCountMismatch) {
 		t.Errorf("header says 1 node, file holds 2: Validate = %v, want ErrCountMismatch", err)
 	}
 	h, records := smallGraph()
 	h.Relationships = map[string]int64{"CURRENT": 2}
-	if _, err := exportfile.Validate(bytes.NewReader(write(t, h, records...)), tenant); !errors.Is(err, exportfile.ErrCountMismatch) {
+	if _, err := backupfile.Validate(bytes.NewReader(write(t, h, records...)), tenant); !errors.Is(err, backupfile.ErrCountMismatch) {
 		t.Errorf("header says 2 relationships, file holds 1: Validate = %v, want ErrCountMismatch", err)
 	}
 	h.Relationships = map[string]int64{"CURRENT": 1, "DEPENDS_ON": 1}
-	if _, err := exportfile.Validate(bytes.NewReader(write(t, h, records...)), tenant); !errors.Is(err, exportfile.ErrCountMismatch) {
+	if _, err := backupfile.Validate(bytes.NewReader(write(t, h, records...)), tenant); !errors.Is(err, backupfile.ErrCountMismatch) {
 		t.Errorf("header counts a type the file lacks: Validate = %v, want ErrCountMismatch", err)
 	}
 
 	// The reader ends in the same error instead of io.EOF.
-	r, err := exportfile.NewReader(bytes.NewReader(data))
+	r, err := backupfile.NewReader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,34 +317,34 @@ func TestExportfile_ValidateRefusesCountMismatch(t *testing.T) {
 			break
 		}
 	}
-	if !errors.Is(err, exportfile.ErrCountMismatch) {
+	if !errors.Is(err, backupfile.ErrCountMismatch) {
 		t.Errorf("reader at the end of a short file = %v, want ErrCountMismatch", err)
 	}
 }
 
-func TestExportfile_RefusesAPlainJSONNumber(t *testing.T) {
+func TestBackupfile_RefusesAPlainJSONNumber(t *testing.T) {
 	// Read side: a plain number anywhere a property value or a key value goes.
 	read := map[string][]byte{
 		"a property": lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":42}}`),
 		"a float":    lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":1.5}}`),
 		"a list":     lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":[1,2]}}`),
 		"a key value": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":["Node",1],"to":["Node","a"],"props":{}}`),
 		"a typed value's text": lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":{"$int":42}}}`),
 	}
 	for name, data := range read {
-		if _, err := exportfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, export.ErrUnsupportedValue) {
+		if _, err := backupfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, graphbackup.ErrUnsupportedValue) {
 			t.Errorf("read, %s: Validate = %v, want ErrUnsupportedValue", name, err)
 		}
-		r, err := exportfile.NewReader(bytes.NewReader(data))
+		r, err := backupfile.NewReader(bytes.NewReader(data))
 		if err != nil {
 			t.Fatalf("read, %s: NewReader: %v", name, err)
 		}
 		for err == nil {
 			_, err = r.Next()
 		}
-		if !errors.Is(err, export.ErrUnsupportedValue) {
+		if !errors.Is(err, graphbackup.ErrUnsupportedValue) {
 			t.Errorf("read, %s: Next = %v, want ErrUnsupportedValue", name, err)
 		}
 	}
@@ -351,21 +353,21 @@ func TestExportfile_RefusesAPlainJSONNumber(t *testing.T) {
 	for name, v := range map[string]any{
 		"int": 42, "int32": int32(42), "uint64": uint64(42), "float32": float32(1.5), "list of int": []any{1},
 	} {
-		w := exportfile.NewWriter(io.Discard)
+		w := backupfile.NewWriter(io.Discard)
 		if err := w.WriteHeader(header(map[string]int64{"Node": 1}, nil)); err != nil {
 			t.Fatal(err)
 		}
 		err := w.WriteNode(node("Node", map[string]any{"unique_id": "a", "n": v}))
-		if !errors.Is(err, export.ErrUnsupportedValue) {
+		if !errors.Is(err, graphbackup.ErrUnsupportedValue) {
 			t.Errorf("write, %s: WriteNode = %v, want ErrUnsupportedValue", name, err)
 		}
 	}
 }
 
-// TestExportfile_ValidateRefusesAMalformedFile feeds Validate files that are
+// TestBackupfile_ValidateRefusesAMalformedFile feeds Validate files that are
 // cut short, garbled or shaped otherwise than the Writer writes them: each is
 // an error, and none panics.
-func TestExportfile_ValidateRefusesAMalformedFile(t *testing.T) {
+func TestBackupfile_ValidateRefusesAMalformedFile(t *testing.T) {
 	h, records := smallGraph()
 	good := write(t, h, records...)
 	cases := map[string][]byte{
@@ -383,17 +385,17 @@ func TestExportfile_ValidateRefusesAMalformedFile(t *testing.T) {
 		"a record first":              lines(nodeA),
 		"a JSON array header":         lines(`[1,2,3]`, nodeA),
 		"a header with an unknown member": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{},"extra":1}`, nodeA),
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{},"extra":1}`, nodeA),
 		"a header member twice": lines(
-			`{"format_version":1,"tenant_id":"t1","tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
+			`{"format_version":1,"tenant_id":"t1","tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
 		"a header without its tenant": lines(
-			`{"format_version":1,"exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
+			`{"format_version":1,"taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
 		"another format version": lines(
-			`{"format_version":2,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
 		"a fractional count": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1.5},"relationships":{}}`, nodeA),
-		"a bad export time": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"yesterday","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1.5},"relationships":{}}`, nodeA),
+		"a bad backup time": lines(
+			`{"format_version":1,"tenant_id":"t1","taken_at":"yesterday","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
 		"a record with an unknown member": lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"},"x":1}`),
 		"a record that is node and rel":   lines(headerLine1Node, `{"node":["Node"],"rel":"CURRENT","props":{"tenant_id":"t1","unique_id":"a"}}`),
 		"a record without props":          lines(headerLine1Node, `{"node":["Node"]}`),
@@ -405,80 +407,80 @@ func TestExportfile_ValidateRefusesAMalformedFile(t *testing.T) {
 		"an unknown typed value": lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":{"$date":"2026-10-30"}}}`),
 		"a null property":        lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":null}}`),
 		"a node after a relationship": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Node","a"],"props":{}}`,
 			`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"b"}}`),
 		"an end without a key": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":["Node"],"to":["Node","a"],"props":{}}`),
 		"an end whose label is not text": lines(
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":[{"$int":"1"},"a"],"to":["Node","a"],"props":{}}`),
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := exportfile.Validate(bytes.NewReader(data), tenant); err == nil {
+			if _, err := backupfile.Validate(bytes.NewReader(data), tenant); err == nil {
 				t.Errorf("Validate accepted it")
 			}
 		})
 	}
 }
 
-func TestExportfile_ValidateRefusesADuplicateNode(t *testing.T) {
+func TestBackupfile_ValidateRefusesADuplicateNode(t *testing.T) {
 	data := write(t, header(map[string]int64{"NodeVersion": 2}, nil),
 		node("NodeVersion", map[string]any{"unique_id": "a", "content_hash": "h", "version_seq": int64(1)}),
 		node("NodeVersion", map[string]any{"unique_id": "a", "content_hash": "h", "version_seq": int64(2)}),
 	)
-	if _, err := exportfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, exportfile.ErrDuplicateNode) {
+	if _, err := backupfile.Validate(bytes.NewReader(data), tenant); !errors.Is(err, backupfile.ErrDuplicateNode) {
 		t.Errorf("two node versions with one identity: Validate = %v, want ErrDuplicateNode", err)
 	}
 	distinct := write(t, header(map[string]int64{"NodeVersion": 2}, nil),
 		node("NodeVersion", map[string]any{"unique_id": "a", "content_hash": "h"}),
 		node("NodeVersion", map[string]any{"unique_id": "b", "content_hash": "h"}),
 	)
-	if _, err := exportfile.Validate(bytes.NewReader(distinct), tenant); err != nil {
+	if _, err := backupfile.Validate(bytes.NewReader(distinct), tenant); err != nil {
 		t.Errorf("two node versions that share one identity property: Validate = %v", err)
 	}
 }
 
-func TestExportfile_ValidateRefusesAnUnresolvedEnd(t *testing.T) {
+func TestBackupfile_ValidateRefusesAnUnresolvedEnd(t *testing.T) {
 	h, records := smallGraph()
-	rel := records[2].(export.RelRecord)
+	rel := records[2].(graphbackup.RelRecord)
 	rel.To = ref("NodeVersion", "analytics.table_a", "0000")
 	records[2] = rel
-	if _, err := exportfile.Validate(bytes.NewReader(write(t, h, records...)), tenant); !errors.Is(err, exportfile.ErrUnresolvedEnd) {
+	if _, err := backupfile.Validate(bytes.NewReader(write(t, h, records...)), tenant); !errors.Is(err, backupfile.ErrUnresolvedEnd) {
 		t.Errorf("a relationship to a node the file lacks: Validate = %v, want ErrUnresolvedEnd", err)
 	}
 }
 
-// TestExportfile_LeaseNode: a file may carry a tenant's export lease node,
-// which the importer does not load, but no relationship of it.
-func TestExportfile_LeaseNode(t *testing.T) {
-	lease := node("Meta", map[string]any{"key": "export", "holder": "h", "kind": "export"})
+// TestBackupfile_LeaseNode: a file may carry a tenant's backup lease node,
+// which the loader does not load, but no relationship of it.
+func TestBackupfile_LeaseNode(t *testing.T) {
+	lease := node("Meta", map[string]any{"key": "backup", "holder": "h", "kind": "backup"})
 	data := write(t, header(map[string]int64{"Meta": 1}, nil), lease)
-	if _, err := exportfile.Validate(bytes.NewReader(data), tenant); err != nil {
+	if _, err := backupfile.Validate(bytes.NewReader(data), tenant); err != nil {
 		t.Errorf("Validate of a file with a lease node: %v", err)
 	}
 	withRel := lines(
-		`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Meta":1,"Node":1},"relationships":{"DEPENDS_ON":1}}`,
-		`{"node":["Meta"],"props":{"tenant_id":"t1","key":"export"}}`, nodeA,
-		`{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Meta","export"],"props":{}}`)
-	if _, err := exportfile.Validate(bytes.NewReader(withRel), tenant); !errors.Is(err, export.ErrInvalidRecord) {
+		`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Meta":1,"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+		`{"node":["Meta"],"props":{"tenant_id":"t1","key":"backup"}}`, nodeA,
+		`{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Meta","backup"],"props":{}}`)
+	if _, err := backupfile.Validate(bytes.NewReader(withRel), tenant); !errors.Is(err, graphbackup.ErrInvalidRecord) {
 		t.Errorf("Validate of a relationship of the lease node = %v, want ErrInvalidRecord", err)
 	}
 }
 
-func TestExportfile_WriterRefusesWhatTheReaderWouldRefuse(t *testing.T) {
+func TestBackupfile_WriterRefusesWhatTheReaderWouldRefuse(t *testing.T) {
 	h, _ := smallGraph()
-	newWriter := func(t *testing.T) *exportfile.Writer {
-		w := exportfile.NewWriter(io.Discard)
+	newWriter := func(t *testing.T) *backupfile.Writer {
+		w := backupfile.NewWriter(io.Discard)
 		if err := w.WriteHeader(h); err != nil {
 			t.Fatal(err)
 		}
 		return w
 	}
 
-	if err := exportfile.NewWriter(io.Discard).WriteNode(node("Node", map[string]any{"unique_id": "a"})); err == nil {
+	if err := backupfile.NewWriter(io.Discard).WriteNode(node("Node", map[string]any{"unique_id": "a"})); err == nil {
 		t.Error("WriteNode before WriteHeader succeeded")
 	}
 	if err := newWriter(t).WriteHeader(h); err == nil {
@@ -486,25 +488,25 @@ func TestExportfile_WriterRefusesWhatTheReaderWouldRefuse(t *testing.T) {
 	}
 	bad := h
 	bad.Nodes = map[string]int64{"Table": 1}
-	if err := exportfile.NewWriter(io.Discard).WriteHeader(bad); !errors.Is(err, export.ErrOutsideSchema) {
+	if err := backupfile.NewWriter(io.Discard).WriteHeader(bad); !errors.Is(err, graphbackup.ErrOutsideSchema) {
 		t.Errorf("WriteHeader of a label outside the schema = %v, want ErrOutsideSchema", err)
 	}
-	if err := newWriter(t).WriteNode(node("Table", nil)); !errors.Is(err, export.ErrOutsideSchema) {
+	if err := newWriter(t).WriteNode(node("Table", nil)); !errors.Is(err, graphbackup.ErrOutsideSchema) {
 		t.Errorf("WriteNode of a label outside the schema = %v, want ErrOutsideSchema", err)
 	}
-	foreign := export.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{"tenant_id": "t2"}}
-	if err := newWriter(t).WriteNode(foreign); !errors.Is(err, export.ErrTenantMismatch) {
+	foreign := graphbackup.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{"tenant_id": "t2"}}
+	if err := newWriter(t).WriteNode(foreign); !errors.Is(err, graphbackup.ErrTenantMismatch) {
 		t.Errorf("WriteNode of another tenant's node = %v, want ErrTenantMismatch", err)
 	}
-	if err := newWriter(t).WriteRel(export.RelRecord{Type: "EXECUTES", From: ref("Node", "a"), To: ref("Node", "b")}); !errors.Is(err, export.ErrOutsideSchema) {
+	if err := newWriter(t).WriteRel(graphbackup.RelRecord{Type: "EXECUTES", From: ref("Node", "a"), To: ref("Node", "b")}); !errors.Is(err, graphbackup.ErrOutsideSchema) {
 		t.Errorf("WriteRel of a type outside the schema = %v, want ErrOutsideSchema", err)
 	}
-	if err := newWriter(t).WriteNode(node("Node", map[string]any{"at": time.Now()})); !errors.Is(err, export.ErrUnsupportedValue) {
+	if err := newWriter(t).WriteNode(node("Node", map[string]any{"at": time.Now()})); !errors.Is(err, graphbackup.ErrUnsupportedValue) {
 		t.Errorf("WriteNode of a time in the Local zone = %v, want ErrUnsupportedValue", err)
 	}
 
 	w := newWriter(t)
-	if err := w.WriteRel(export.RelRecord{Type: "DEPENDS_ON", From: ref("Node", "a"), To: ref("Node", "b")}); err != nil {
+	if err := w.WriteRel(graphbackup.RelRecord{Type: "DEPENDS_ON", From: ref("Node", "a"), To: ref("Node", "b")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.WriteNode(node("Node", map[string]any{"unique_id": "c"})); err == nil {
@@ -516,15 +518,15 @@ func TestExportfile_WriterRefusesWhatTheReaderWouldRefuse(t *testing.T) {
 func FuzzValidate(f *testing.F) {
 	h, records := smallGraph()
 	var buf bytes.Buffer
-	w := exportfile.NewWriter(&buf)
+	w := backupfile.NewWriter(&buf)
 	if err := w.WriteHeader(h); err != nil {
 		f.Fatal(err)
 	}
 	for _, rec := range records {
 		switch r := rec.(type) {
-		case export.NodeRecord:
+		case graphbackup.NodeRecord:
 			_ = w.WriteNode(r)
-		case export.RelRecord:
+		case graphbackup.RelRecord:
 			_ = w.WriteRel(r)
 		}
 	}
@@ -535,8 +537,8 @@ func FuzzValidate(f *testing.F) {
 	f.Add([]byte("{}\n{}\n"))
 	f.Add([]byte(headerLine1Node + "\n" + `{"node":["Node"],"props":{"tenant_id":"t1","n":{"$float":"NaN"},"l":[[{"$datetime":"x"}]]}}` + "\n"))
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, _ = exportfile.Validate(bytes.NewReader(data), tenant)
-		r, err := exportfile.NewReader(bytes.NewReader(data))
+		_, _ = backupfile.Validate(bytes.NewReader(data), tenant)
+		r, err := backupfile.NewReader(bytes.NewReader(data))
 		if err != nil {
 			return
 		}
@@ -554,43 +556,43 @@ func FuzzValidate(f *testing.F) {
 // markers of one group and outbox entry id, which the graph's uniqueness
 // constraint refuses. Validate refuses each before a restore touches the
 // graph.
-func TestExportfile_ValidateRefusesWhatTheGraphCouldNotLoad(t *testing.T) {
+func TestBackupfile_ValidateRefusesWhatTheGraphCouldNotLoad(t *testing.T) {
 	cases := map[string]struct {
 		body string
 		want error
 	}{
 		"a NaN key": {
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"NodeVersion":1},"relationships":{}}` + "\n" +
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"NodeVersion":1},"relationships":{}}` + "\n" +
 				`{"node":["NodeVersion"],"props":{"tenant_id":"t1","unique_id":"a","content_hash":{"$float":"NaN"}}}` + "\n",
-			export.ErrInvalidRecord,
+			graphbackup.ErrInvalidRecord,
 		},
 		"1 and 1.0 as unique_id": {
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{}}` + "\n" +
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{}}` + "\n" +
 				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":{"$int":"1"}}}` + "\n" +
 				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":{"$float":"1"}}}` + "\n",
-			export.ErrInvalidRecord,
+			graphbackup.ErrInvalidRecord,
 		},
 		"a relationship end named by a number": {
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}` + "\n" +
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}` + "\n" +
 				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"}}` + "\n" +
 				`{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Node",{"$float":"1"}],"props":{}}` + "\n",
-			export.ErrInvalidRecord,
+			graphbackup.ErrInvalidRecord,
 		},
 		"two markers of one outbox entry": {
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":2},"relationships":{}}` + "\n" +
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":2},"relationships":{}}` + "\n" +
 				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"1-0","outbox_entry_id":"e1"}}` + "\n" +
 				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"2-0","outbox_entry_id":"e1"}}` + "\n",
-			exportfile.ErrDuplicateNode,
+			backupfile.ErrDuplicateNode,
 		},
 		"a marker whose outbox entry id is a number": {
-			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":1},"relationships":{}}` + "\n" +
+			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":1},"relationships":{}}` + "\n" +
 				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"1-0","outbox_entry_id":{"$int":"1"}}}` + "\n",
-			export.ErrInvalidRecord,
+			graphbackup.ErrInvalidRecord,
 		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := exportfile.Validate(strings.NewReader(c.body), tenant); !errors.Is(err, c.want) {
+			if _, err := backupfile.Validate(strings.NewReader(c.body), tenant); !errors.Is(err, c.want) {
 				t.Errorf("Validate = %v, want %v", err, c.want)
 			}
 		})
@@ -601,7 +603,7 @@ func TestExportfile_ValidateRefusesWhatTheGraphCouldNotLoad(t *testing.T) {
 		node("ProcessedMessage", map[string]any{"group": "h", "message_id": "1-0", "outbox_entry_id": "e1"}),
 		node("ProcessedMessage", map[string]any{"group": "g", "message_id": "2-0"}),
 	)
-	if _, err := exportfile.Validate(bytes.NewReader(distinct), tenant); err != nil {
+	if _, err := backupfile.Validate(bytes.NewReader(distinct), tenant); err != nil {
 		t.Errorf("markers of one outbox entry in two groups, and one with none: Validate = %v", err)
 	}
 }

@@ -385,7 +385,7 @@ func (o *Observer) record(ctx context.Context, dep *model.Deployment, obs model.
 }
 
 // terminate ends an attempt that cannot run: one transaction records why and
-// moves the deployment to terminating, which keeps its slot; the Job is then
+// moves the deployment to terminating, which keeps its Job capacity; the Job is then
 // deleted with its pods. The attempt is reported once they are gone.
 func (o *Observer) terminate(ctx context.Context, dep *model.Deployment, obs model.JobObservation,
 	reason pkgmodel.FailureReason, message string, now time.Time) error {

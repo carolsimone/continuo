@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -32,8 +32,8 @@ import (
 // step is idempotent, so the retry finishes what the other pod left. Any other
 // error fails at once.
 //
-// No step takes the tenant's export gate. Step 4 only fills a missing version
-// watermark, so an export that captured a node before step 4 ran is repaired
+// No step takes the tenant's backup gate. Step 4 only fills a missing version
+// watermark, so a backup that captured a node before step 4 ran is repaired
 // at the next start.
 func InitSchema(ctx context.Context, client Neo4jClient, logger *slog.Logger) error {
 	return retryMigration(ctx, initSchemaAttempts, initSchemaRetryDelay, logger, func(ctx context.Context) error {

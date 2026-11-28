@@ -8,7 +8,7 @@ from continuo_contracts.hashing import shared_fold
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.dormant import is_dormant
 from domain.exceptions import InvalidNodeSettingError
-from domain.model import FailedNode, SkippedNode, SkipReason
+from domain.model import FailedNode, ExcludedModel, ExclusionReason
 from tests.fakes import parse_manifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -61,36 +61,36 @@ def test_parse_sets_project_from_fqn():
     assert all(n.project_name == "service-1" for n in nodes)
 
 
-def test_parse_skips_node_missing_owner():
+def test_parse_excludes_a_model_missing_owner():
     nodes = parse_manifest(str(FIXTURES / "manifest_missing_owner.json")).nodes
     assert nodes == []
 
 
 def test_a_model_with_an_owner_and_no_tag_is_kept_dormant():
-    skipped: list[SkippedNode] = []
-    nodes = parse_manifest(str(FIXTURES / "manifest_missing_tags.json"), skipped=skipped).nodes
+    excluded: list[ExcludedModel] = []
+    nodes = parse_manifest(str(FIXTURES / "manifest_missing_tags.json"), excluded=excluded).nodes
     (orders,) = nodes
     assert (orders.table_name, orders.schedule_name, orders.node_type) == ("orders", "", NodeType.DBT_MODEL)
     assert is_dormant(orders.node_type, orders.schedule_name)
-    assert skipped == []
+    assert excluded == []
 
 
 def test_a_snapshot_with_an_owner_and_no_tag_is_kept_dormant(tmp_path):
     path = _write_nodes(tmp_path, **{
         "snapshot.svc_a.history": _svc_a_model("history", tags=[], resource_type="snapshot"),
     })
-    skipped: list[SkippedNode] = []
-    (history,) = parse_manifest(path, skipped=skipped).nodes
+    excluded: list[ExcludedModel] = []
+    (history,) = parse_manifest(path, excluded=excluded).nodes
     assert (history.table_name, history.schedule_name, history.node_type) == ("history", "", NodeType.DBT_SNAPSHOT)
     assert is_dormant(history.node_type, history.schedule_name)
-    assert skipped == []
+    assert excluded == []
 
 
-def test_a_model_with_no_owner_and_no_tag_is_skipped_as_no_owner(tmp_path):
+def test_a_model_with_no_owner_and_no_tag_is_excluded_as_no_owner(tmp_path):
     path = _write_nodes(tmp_path, **{"model.svc_a.bare": _svc_a_model("bare", owner=None, tags=[])})
-    skipped: list[SkippedNode] = []
-    assert parse_manifest(path, skipped=skipped).nodes == []
-    assert skipped == [SkippedNode("model.svc_a.bare", "svc-a", SkipReason.NO_OWNER)]
+    excluded: list[ExcludedModel] = []
+    assert parse_manifest(path, excluded=excluded).nodes == []
+    assert excluded == [ExcludedModel("model.svc_a.bare", "svc-a", ExclusionReason.NO_OWNER)]
 
 
 def test_an_untagged_seed_still_gets_the_seed_schedule_beside_a_dormant_model(tmp_path):
@@ -621,9 +621,9 @@ def test_a_timeout_change_keeps_the_content_hash(tmp_path):
 
 
 @pytest.mark.parametrize("meta", [None, {}])
-def test_parse_skips_node_without_meta_owner_whether_meta_is_null_or_empty(tmp_path, meta):
+def test_parse_excludes_a_model_without_meta_owner_whether_meta_is_null_or_empty(tmp_path, meta):
     # dbt serialises an unset meta as an explicit null in some versions; it must
-    # read as "no owner" (the node is skipped), not raise a non-retryable error.
+    # read as "no owner" (the model is excluded), not raise a non-retryable error.
     node = _node()
     node["config"]["meta"] = meta
     path = _manifest_path(tmp_path, {"model.svc.revenue": node})
@@ -687,7 +687,7 @@ def test_an_unsupported_resource_type_is_logged_at_debug_with_its_node_id(tmp_pa
     assert (record.levelno, record.node_id) == (logging.DEBUG, "analysis.svc_a.report")
 
 
-def test_the_gates_report_each_skipped_node_and_its_reason_without_a_warning(tmp_path, caplog):
+def test_the_gates_report_each_excluded_model_and_its_reason_without_a_warning(tmp_path, caplog):
     path = _write_nodes(
         tmp_path,
         **{
@@ -697,23 +697,23 @@ def test_the_gates_report_each_skipped_node_and_its_reason_without_a_warning(tmp
             "model.svc_a.untagged": _svc_a_model("untagged", tags=[]),
         },
     )
-    skipped: list[SkippedNode] = []
+    excluded: list[ExcludedModel] = []
     with caplog.at_level(logging.DEBUG, logger="service.parser"):
-        nodes = parse_manifest(path, skipped=skipped).nodes
+        nodes = parse_manifest(path, excluded=excluded).nodes
     assert [n.table_name for n in nodes] == ["kept", "untagged"]
-    assert skipped == [
-        SkippedNode("model.svc_a.no_owner", "svc-a", SkipReason.NO_OWNER),
-        SkippedNode("model.svc_a.stub", "svc-a", SkipReason.LOCAL_STUB),
+    assert excluded == [
+        ExcludedModel("model.svc_a.no_owner", "svc-a", ExclusionReason.NO_OWNER),
+        ExcludedModel("model.svc_a.stub", "svc-a", ExclusionReason.LOCAL_STUB),
     ]
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-def test_a_skipped_node_with_no_fqn_is_reported_with_an_empty_project(tmp_path):
+def test_an_excluded_model_with_no_fqn_is_reported_with_an_empty_project(tmp_path):
     bare = _svc_a_model("bare", owner=None)
     del bare["fqn"]
-    skipped: list[SkippedNode] = []
-    parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": bare}), skipped=skipped)
-    assert skipped == [SkippedNode("model.svc_a.bare", "", SkipReason.NO_OWNER)]
+    excluded: list[ExcludedModel] = []
+    parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": bare}), excluded=excluded)
+    assert excluded == [ExcludedModel("model.svc_a.bare", "", ExclusionReason.NO_OWNER)]
 
 
 PACKAGE_FIXTURE = FIXTURES / "manifest_installed_package.json"
@@ -737,21 +737,21 @@ def _package_node(name, *, package="evalpkg", owner="finance", tags=(), resource
 
 
 def _parse_package_fixture(**options):
-    skipped: list[SkippedNode] = []
-    nodes = parse_manifest(str(PACKAGE_FIXTURE), skipped=skipped, **options).nodes
-    return {n.table_name: n for n in nodes}, skipped
+    excluded: list[ExcludedModel] = []
+    nodes = parse_manifest(str(PACKAGE_FIXTURE), excluded=excluded, **options).nodes
+    return {n.table_name: n for n in nodes}, excluded
 
 
-def test_an_untagged_node_of_an_installed_package_is_skipped():
+def test_an_untagged_node_of_an_installed_package_is_excluded():
     """dbt applies a project's top-level `models: +meta` to the models of its
     installed packages too, so such a model has an owner. With no tag it is left
     out: it belongs to the package, not to the project the manifest is of."""
-    nodes, skipped = _parse_package_fixture()
+    nodes, excluded = _parse_package_fixture()
     assert sorted(nodes) == ["countries", "monthly_report", "orders"]
-    assert skipped == [
-        SkippedNode("model.evalpkg.pkg_model", "evalpkg", SkipReason.INSTALLED_PACKAGE),
-        SkippedNode("seed.evalpkg.pkg_seed", "evalpkg", SkipReason.INSTALLED_PACKAGE),
-        SkippedNode("model.evalpkg.pkg_no_owner", "evalpkg", SkipReason.NO_OWNER),
+    assert excluded == [
+        ExcludedModel("model.evalpkg.pkg_model", "evalpkg", ExclusionReason.INSTALLED_PACKAGE),
+        ExcludedModel("seed.evalpkg.pkg_seed", "evalpkg", ExclusionReason.INSTALLED_PACKAGE),
+        ExcludedModel("model.evalpkg.pkg_no_owner", "evalpkg", ExclusionReason.NO_OWNER),
     ]
 
 
@@ -768,10 +768,10 @@ def test_a_tagged_node_of_an_installed_package_is_kept_for_the_project_check(tmp
     it under the package's project and the handler's project check refuses it."""
     path = _write_manifest(tmp_path, {"model.evalpkg.pkg_daily": _package_node("pkg_daily", tags=["daily"])},
                            metadata={"project_name": "shop_core"})
-    skipped: list[SkippedNode] = []
-    (node,) = parse_manifest(path, skipped=skipped).nodes
+    excluded: list[ExcludedModel] = []
+    (node,) = parse_manifest(path, excluded=excluded).nodes
     assert (node.project_name, node.schedule_name) == ("evalpkg", "daily")
-    assert skipped == []
+    assert excluded == []
 
 
 def test_the_owner_and_local_stub_gates_run_before_the_package_gate(tmp_path):
@@ -779,18 +779,18 @@ def test_the_owner_and_local_stub_gates_run_before_the_package_gate(tmp_path):
         "model.evalpkg.bare": _package_node("bare", owner=None),
         "model.evalpkg.stub": _package_node("stub", tags=["local_stub"]),
     }, metadata={"project_name": "shop_core"})
-    skipped: list[SkippedNode] = []
-    assert parse_manifest(path, skipped=skipped).nodes == []
-    assert skipped == [
-        SkippedNode("model.evalpkg.bare", "evalpkg", SkipReason.NO_OWNER),
-        SkippedNode("model.evalpkg.stub", "evalpkg", SkipReason.LOCAL_STUB),
+    excluded: list[ExcludedModel] = []
+    assert parse_manifest(path, excluded=excluded).nodes == []
+    assert excluded == [
+        ExcludedModel("model.evalpkg.bare", "evalpkg", ExclusionReason.NO_OWNER),
+        ExcludedModel("model.evalpkg.stub", "evalpkg", ExclusionReason.LOCAL_STUB),
     ]
 
 
 @pytest.mark.parametrize("top_level", [
     {}, {"metadata": None}, {"metadata": {}}, {"metadata": {"project_name": ""}}, {"metadata": {"project_name": None}},
 ])
-def test_with_no_project_known_no_node_is_skipped_as_a_package_node(tmp_path, top_level):
+def test_with_no_project_known_no_model_is_excluded_as_a_package_model(tmp_path, top_level):
     """Without the manifest's project name or a declared project the parse cannot
     tell the project from a package, so it keeps the node and no project check
     follows. A release never parses this way: its manifest_keys entry requires a
@@ -798,10 +798,10 @@ def test_with_no_project_known_no_node_is_skipped_as_a_package_node(tmp_path, to
     manifest = {"macros": {}, "nodes": {"model.evalpkg.pkg_model": _package_node("pkg_model")}, **top_level}
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
-    skipped: list[SkippedNode] = []
-    (node,) = parse_manifest(str(path), skipped=skipped).nodes
+    excluded: list[ExcludedModel] = []
+    (node,) = parse_manifest(str(path), excluded=excluded).nodes
     assert (node.project_name, node.schedule_name) == ("evalpkg", "")
-    assert skipped == []
+    assert excluded == []
 
 
 def test_the_declared_project_names_the_project_when_the_manifest_does_not(tmp_path):
@@ -809,20 +809,20 @@ def test_the_declared_project_names_the_project_when_the_manifest_does_not(tmp_p
         "model.shop_core.report": _package_node("report", package="shop_core"),
         "model.evalpkg.pkg_model": _package_node("pkg_model"),
     })
-    skipped: list[SkippedNode] = []
-    nodes = parse_manifest(path, skipped=skipped, declared_project="shop-core").nodes
+    excluded: list[ExcludedModel] = []
+    nodes = parse_manifest(path, excluded=excluded, declared_project="shop-core").nodes
     assert [(n.table_name, n.schedule_name) for n in nodes] == [("report", "")]
-    assert skipped == [SkippedNode("model.evalpkg.pkg_model", "evalpkg", SkipReason.INSTALLED_PACKAGE)]
+    assert excluded == [ExcludedModel("model.evalpkg.pkg_model", "evalpkg", ExclusionReason.INSTALLED_PACKAGE)]
 
 
 def test_the_manifests_own_project_name_wins_over_the_declared_project():
     """A declared project that differs from the manifest's project (a misnamed
     project, which the handler's project check refuses) does not turn the
     project's own untagged nodes into package nodes."""
-    nodes, skipped = _parse_package_fixture(declared_project="billing")
+    nodes, excluded = _parse_package_fixture(declared_project="billing")
     assert sorted(nodes) == ["countries", "monthly_report", "orders"]
-    assert [s.reason for s in skipped] == [
-        SkipReason.INSTALLED_PACKAGE, SkipReason.INSTALLED_PACKAGE, SkipReason.NO_OWNER]
+    assert [s.reason for s in excluded] == [
+        ExclusionReason.INSTALLED_PACKAGE, ExclusionReason.INSTALLED_PACKAGE, ExclusionReason.NO_OWNER]
 
 
 def test_a_model_counts_its_declared_columns(tmp_path):
@@ -898,23 +898,23 @@ def test_the_variants_reach_every_gate_and_the_kept_case():
 
 
 @pytest.mark.parametrize("node", VARIANTS.values(), ids=VARIANTS.keys())
-def test_the_parser_skips_exactly_what_the_library_skips(tmp_path, node):
+def test_the_parser_excludes_exactly_what_the_library_skips(tmp_path, node):
     node_id = f"{node['resource_type']}.shop_core.variant"
     path = _write_manifest(tmp_path, {node_id: node}, metadata={"project_name": "shop_core"})
     reason = _library_gate(node)
-    skipped: list[SkippedNode] = []
+    excluded: list[ExcludedModel] = []
 
-    kept = parse_manifest(path, skipped=skipped).nodes
+    kept = parse_manifest(path, excluded=excluded).nodes
 
     if reason is None:
-        assert skipped == []
+        assert excluded == []
         (parsed,) = kept
         library_node = json.loads(json.dumps(node))
         assert (parsed.project_name, parsed.schedule_name, parsed.table_name) == (
             dbt.node_project(library_node), dbt.schedule(library_node), dbt.table_name(library_node))
     else:
         assert kept == []
-        assert [(s.node_id, s.reason.value) for s in skipped] == [(node_id, reason)]
+        assert [(s.node_id, s.reason.value) for s in excluded] == [(node_id, reason)]
 
 
 @pytest.mark.parametrize("version, table", [
@@ -982,8 +982,8 @@ def test_a_project_name_that_is_not_a_string_is_an_invalid_artifact(tmp_path):
 
 
 @pytest.mark.parametrize("fqn", ["svc_a", [], [5], None])
-def test_the_report_of_a_skipped_node_never_raises_on_its_fqn(tmp_path, fqn):
+def test_the_report_of_an_excluded_model_never_raises_on_its_fqn(tmp_path, fqn):
     bare = _svc_a_model("bare", owner=None, fqn=fqn)
-    skipped: list[SkippedNode] = []
-    parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": bare}), skipped=skipped)
-    assert skipped == [SkippedNode("model.svc_a.bare", "", SkipReason.NO_OWNER)]
+    excluded: list[ExcludedModel] = []
+    parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": bare}), excluded=excluded)
+    assert excluded == [ExcludedModel("model.svc_a.bare", "", ExclusionReason.NO_OWNER)]

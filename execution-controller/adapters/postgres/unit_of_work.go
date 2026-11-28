@@ -36,7 +36,7 @@ func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) *PostgresUnitOfWork
 const OutboxTable = "execution_outbox"
 
 // DeploymentsChannel is the Postgres channel the deployments table's triggers
-// notify when a deployment is accepted or a slot is released; the dispatcher's
+// notify when a deployment is accepted or Job capacity is released; the dispatcher's
 // waker listens on it.
 const DeploymentsChannel = "deployments"
 

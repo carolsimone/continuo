@@ -114,7 +114,7 @@ CREATE (n)-[:CURRENT_CONTRACT {
 //
 // Change detection and ordering come from ReadStates and contractversion.Plan,
 // run inside the same write transaction as Write. The unit of work takes the
-// tenant's export-gate lock before either, so a tenant's writes are
+// tenant's backup-gate lock before either, so a tenant's writes are
 // serialized and the states a plan is made from cannot change before it is
 // written. A node a newer promotion already reached is left out of the plan,
 // so it is left untouched and stores nothing. The Cypher guards are a second

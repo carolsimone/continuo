@@ -57,9 +57,9 @@ type fakeFreshness struct {
 	deadline time.Duration
 }
 
-var _ ports.ExportFreshness = (*fakeFreshness)(nil)
+var _ ports.BackupFreshness = (*fakeFreshness)(nil)
 
-func (f *fakeFreshness) OldestNewestExport(ctx context.Context) (time.Time, bool, error) {
+func (f *fakeFreshness) OldestNewestBackup(ctx context.Context) (time.Time, bool, error) {
 	f.mu.Lock()
 	f.reads++
 	f.mu.Unlock()
@@ -113,7 +113,7 @@ func (c constCollector) Collect(ch chan<- prometheus.Metric) { ch <- c.m }
 func unix(t time.Time) float64 { return float64(t.UnixNano()) / 1e9 }
 
 // The last-success gauge reports the freshness in Unix seconds, fractional,
-// and 0 when a tenant has no export. It reads the freshness at most once a
+// and 0 when a tenant has no backup. It reads the freshness at most once a
 // minute, and a failed read keeps the last value and is logged.
 func TestBackupMetrics_LastSuccessReportsTheFreshness(t *testing.T) {
 	freshness := &fakeFreshness{}
@@ -137,7 +137,7 @@ func TestBackupMetrics_LastSuccessReportsTheFreshness(t *testing.T) {
 
 	clock.Advance(time.Minute)
 	freshness.set(time.Time{}, true, nil)
-	assert.Equal(t, []float64{0}, lastSuccessSamples(t, m), "a tenant with no export reads 0")
+	assert.Equal(t, []float64{0}, lastSuccessSamples(t, m), "a tenant with no backup reads 0")
 
 	clock.Advance(time.Minute)
 	freshness.set(newest, true, nil)
@@ -175,13 +175,13 @@ func TestBackupMetrics_AScrapeDoesNotWaitOnAnotherOnesRead(t *testing.T) {
 	}
 
 	close(freshness.block)
-	assert.Equal(t, []float64{0}, <-first, "the first scrape reports what it read: a tenant with no export")
+	assert.Equal(t, []float64{0}, <-first, "the first scrape reports what it read: a tenant with no backup")
 	assert.Positive(t, freshness.deadline)
 	assert.LessOrEqual(t, freshness.deadline, 5*time.Second, "the read is bounded at 5 s")
 	assert.Equal(t, 5*time.Second, lastSuccessReadTimeout)
 }
 
-// With no tenant at all there is no export to be late, and no sample; the
+// With no tenant at all there is no backup to be late, and no sample; the
 // first read failing reports nothing either.
 func TestBackupMetrics_LastSuccessHasNoSampleWithoutTenants(t *testing.T) {
 	clock := &fakeClock{now: time.Now()}
@@ -192,25 +192,25 @@ func TestBackupMetrics_LastSuccessHasNoSampleWithoutTenants(t *testing.T) {
 	assert.Empty(t, lastSuccessSamples(t, failing))
 }
 
-// Each export counts under its outcome; a success also sets the duration,
-// size and record series, which describe the last stored export.
-func TestBackupMetrics_CountsEachExportByOutcome(t *testing.T) {
+// Each backup counts under its outcome; a success also sets the duration,
+// size and record series, which describe the last stored backup.
+func TestBackupMetrics_CountsEachBackupByOutcome(t *testing.T) {
 	reg := pkgmetrics.New("catalog")
 	m := NewBackupMetrics(reg, &fakeFreshness{}, time.Now, quietLogger())
-	for _, outcome := range []string{ports.ExportSuccess, ports.ExportFailure, ports.ExportSkipped} {
-		assert.Zero(t, testutil.ToFloat64(m.exports.WithLabelValues(outcome)), "%s starts at 0", outcome)
+	for _, outcome := range []string{ports.BackupSuccess, ports.BackupFailure, ports.BackupSkipped} {
+		assert.Zero(t, testutil.ToFloat64(m.backups.WithLabelValues(outcome)), "%s starts at 0", outcome)
 	}
 
-	m.ExportObserved(ports.ExportSuccess, 90*time.Second, 2048, 10, 9)
-	m.ExportObserved(ports.ExportFailure, 0, 0, 0, 0)
-	m.ExportObserved(ports.ExportSkipped, 0, 0, 0, 0)
-	m.ExportObserved(ports.ExportSuccess, 30*time.Second, 4096, 12, 11)
-	m.ExportObserved(ports.ExportFailure, 0, 0, 0, 0)
+	m.BackupObserved(ports.BackupSuccess, 90*time.Second, 2048, 10, 9)
+	m.BackupObserved(ports.BackupFailure, 0, 0, 0, 0)
+	m.BackupObserved(ports.BackupSkipped, 0, 0, 0, 0)
+	m.BackupObserved(ports.BackupSuccess, 30*time.Second, 4096, 12, 11)
+	m.BackupObserved(ports.BackupFailure, 0, 0, 0, 0)
 
-	assert.Equal(t, 2.0, testutil.ToFloat64(m.exports.WithLabelValues(ports.ExportSuccess)))
-	assert.Equal(t, 2.0, testutil.ToFloat64(m.exports.WithLabelValues(ports.ExportFailure)))
-	assert.Equal(t, 1.0, testutil.ToFloat64(m.exports.WithLabelValues(ports.ExportSkipped)))
-	assert.Equal(t, 4096.0, testutil.ToFloat64(m.bytes), "the last stored export's size")
+	assert.Equal(t, 2.0, testutil.ToFloat64(m.backups.WithLabelValues(ports.BackupSuccess)))
+	assert.Equal(t, 2.0, testutil.ToFloat64(m.backups.WithLabelValues(ports.BackupFailure)))
+	assert.Equal(t, 1.0, testutil.ToFloat64(m.backups.WithLabelValues(ports.BackupSkipped)))
+	assert.Equal(t, 4096.0, testutil.ToFloat64(m.bytes), "the last stored backup's size")
 	assert.Equal(t, 12.0, testutil.ToFloat64(m.records.WithLabelValues("node")))
 	assert.Equal(t, 11.0, testutil.ToFloat64(m.records.WithLabelValues("relationship")))
 
@@ -218,14 +218,14 @@ func TestBackupMetrics_CountsEachExportByOutcome(t *testing.T) {
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{
-		`continuo_catalog_exports_total{component="catalog",outcome="success"} 2`,
-		`continuo_catalog_exports_total{component="catalog",outcome="failure"} 2`,
-		`continuo_catalog_exports_total{component="catalog",outcome="skipped"} 1`,
-		`continuo_catalog_export_duration_seconds_count{component="catalog"} 2`,
-		`continuo_catalog_export_duration_seconds_sum{component="catalog"} 120`,
-		`continuo_catalog_export_bytes{component="catalog"} 4096`,
-		`continuo_catalog_export_records{component="catalog",kind="node"} 12`,
-		`continuo_catalog_export_records{component="catalog",kind="relationship"} 11`,
+		`continuo_catalog_backups_total{component="catalog",outcome="success"} 2`,
+		`continuo_catalog_backups_total{component="catalog",outcome="failure"} 2`,
+		`continuo_catalog_backups_total{component="catalog",outcome="skipped"} 1`,
+		`continuo_catalog_backup_duration_seconds_count{component="catalog"} 2`,
+		`continuo_catalog_backup_duration_seconds_sum{component="catalog"} 120`,
+		`continuo_catalog_backup_bytes{component="catalog"} 4096`,
+		`continuo_catalog_backup_records{component="catalog",kind="node"} 12`,
+		`continuo_catalog_backup_records{component="catalog",kind="relationship"} 11`,
 	} {
 		assert.True(t, strings.Contains(body, want), "the scrape lacks %q", want)
 	}
@@ -239,6 +239,6 @@ func TestBackupMetrics_LastSuccessIsScraped(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	assert.Contains(t, rec.Body.String(), `continuo_catalog_export_last_success_timestamp_seconds{component="catalog"} 1.7933256e+09`)
-	assert.Contains(t, rec.Body.String(), "# TYPE continuo_catalog_export_last_success_timestamp_seconds gauge")
+	assert.Contains(t, rec.Body.String(), `continuo_catalog_backup_last_success_timestamp_seconds{component="catalog"} 1.7933256e+09`)
+	assert.Contains(t, rec.Body.String(), "# TYPE continuo_catalog_backup_last_success_timestamp_seconds gauge")
 }

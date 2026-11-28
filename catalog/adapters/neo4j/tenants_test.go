@@ -14,8 +14,8 @@ import (
 func TestGraphTenants_ListsEveryTenantWithAMetaNode(t *testing.T) {
 	f := newGraphFixture(t)
 	writing, live, nodeOnly := f.tenant("tenants-writing"), f.tenant("tenants-live"), f.tenant("tenants-node-only")
-	// The export gate's lease node, which every write MERGEs.
-	f.takeLease(writing, ports.LeaseExport, "exporter")
+	// The backup gate's lease node, which every write MERGEs.
+	f.takeLease(writing, ports.LeaseBackup, "taker")
 	f.exec(live, `CREATE (:Meta {tenant_id: $tenant_id, key: 'current_release', promotion_seq: 1})`, nil)
 	f.exec(nodeOnly, `CREATE (:Node {tenant_id: $tenant_id, unique_id: 'a'})`, nil)
 

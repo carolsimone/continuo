@@ -49,10 +49,10 @@ func TestHealTriggeredV1_FeedsAgentRemediationAndCatalog(t *testing.T) {
 	if AgentRemediationHealTriggered != "agent-remediation-heal-triggered" {
 		t.Fatalf("AgentRemediationHealTriggered = %q", AgentRemediationHealTriggered)
 	}
-	if CatalogHealTriggeredRejections != "catalog-heal-triggered-rejections" {
-		t.Fatalf("CatalogHealTriggeredRejections = %q", CatalogHealTriggeredRejections)
+	if CatalogHealTriggeredFailurePrecedents != "catalog-heal-triggered-failure-precedents" {
+		t.Fatalf("CatalogHealTriggeredFailurePrecedents = %q", CatalogHealTriggeredFailurePrecedents)
 	}
-	groupsOf(t, HealTriggeredV1, AgentRemediationHealTriggered, CatalogHealTriggeredRejections)
+	groupsOf(t, HealTriggeredV1, AgentRemediationHealTriggered, CatalogHealTriggeredFailurePrecedents)
 }
 
 // release.parsed:v1 is how topology-controller's parse of a candidate release

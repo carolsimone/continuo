@@ -13,7 +13,7 @@ const databaseUnavailableCode = "Neo.TransientError.General.DatabaseUnavailable"
 
 // IsUnavailable reports whether err means Neo4j could not be reached or could
 // not serve: a connectivity failure, an unavailable database, a transaction
-// whose driver retries ran out on either, or a write the tenant's export lease
+// whose driver retries ran out on either, or a write the tenant's backup lease
 // paused (uow.ErrWritesPaused). The stream consumers treat these as an outage
 // and wait, instead of counting a failed delivery.
 func IsUnavailable(err error) bool {

@@ -7,45 +7,45 @@ import (
 	"log/slog"
 	"maps"
 
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 )
 
 // ErrPartialRestore means a restore wiped the tenant's graph and did not
-// finish loading the export.
+// finish loading the backup.
 var ErrPartialRestore = errors.New("the tenant's graph is partial and its schema migration has not run; " +
 	"run the restore again: it wipes the tenant's graph first, so a second run repairs it")
 
 // RestoreResult is what a restore loaded: the node and relationship records of
-// the export.
+// the backup.
 type RestoreResult struct {
 	Nodes         int64
 	Relationships int64
 }
 
-// Restorer returns a tenant's graph to one of its exports.
+// Restorer returns a tenant's graph to one of its backups.
 type Restorer struct {
 	keeper leaseKeeper
-	graph  ports.GraphImporter
+	graph  ports.GraphLoader
 	store  ports.BackupStore
 	logger *slog.Logger
 }
 
-// NewRestorer returns a Restorer that loads exports from store into graph.
-func NewRestorer(lease ports.ExportLease, graph ports.GraphImporter, store ports.BackupStore, logger *slog.Logger) *Restorer {
+// NewRestorer returns a Restorer that loads backups from store into graph.
+func NewRestorer(lease ports.BackupLease, graph ports.GraphLoader, store ports.BackupStore, logger *slog.Logger) *Restorer {
 	return &Restorer{keeper: newLeaseKeeper(lease, logger), graph: graph, store: store, logger: logger}
 }
 
 // Restore returns the graph of the tenant key belongs to (the store locates
-// it) to the export stored at key.
+// it) to the backup stored at key.
 //
-// It reads the export twice and never holds it whole. The first read checks
-// the whole export (BackupStore.Validate) with no lease and no write, so an
-// export that cannot be loaded exactly, or that names another tenant, leaves
-// the graph untouched. Then it takes the tenant's export lease (ErrSkipped
-// while another export or restore holds it), opens the export again and
+// It reads the backup twice and never holds it whole. The first read checks
+// the whole backup (BackupStore.Validate) with no lease and no write, so an
+// backup that cannot be loaded exactly, or that names another tenant, leaves
+// the graph untouched. Then it takes the tenant's backup lease (ErrSkipped
+// while another backup or restore holds it), opens the backup again and
 // checks its header against the first read's before it wipes the tenant's
-// graph, loads the export, confirms the lease is still held and releases it.
+// graph, loads the backup, confirms the lease is still held and releases it.
 // While it holds the lease, a step that moves no record for stallLimit (a
 // database or store that never answers) stops it with ErrStalled and
 // releases the lease. A failure after the wipe returns ErrPartialRestore.
@@ -56,7 +56,7 @@ func (r *Restorer) Restore(ctx context.Context, key string) (RestoreResult, erro
 	}
 	header, err := r.store.Validate(ctx, key, tenantID)
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("the export %s cannot be restored, and the graph of tenant %q is untouched: %w", key, tenantID, err)
+		return RestoreResult{}, fmt.Errorf("the backup %s cannot be restored, and the graph of tenant %q is untouched: %w", key, tenantID, err)
 	}
 	holder := newHolder(ports.LeaseRestore)
 	if err := r.keeper.acquire(ctx, tenantID, ports.LeaseRestore, holder); err != nil {
@@ -76,12 +76,12 @@ func (r *Restorer) Restore(ctx context.Context, key string) (RestoreResult, erro
 	return res, nil
 }
 
-// load opens the export again, checks it is the one Validate read, wipes the
-// tenant's graph and imports the export, while holder's lease is held,
-// renewed and watched. Opening the export and every record read is progress,
-// and so is the start of the wipe and of the import, which move no record
+// load opens the backup again, checks it is the one Validate read, wipes the
+// tenant's graph and restores the backup, while holder's lease is held,
+// renewed and watched. Opening the backup and every record read is progress,
+// and so is the start of the wipe and of the restore, which move no record
 // while the database works.
-func (r *Restorer) load(ctx context.Context, tenantID, holder, key string, validated export.Header) (RestoreResult, error) {
+func (r *Restorer) load(ctx context.Context, tenantID, holder, key string, validated graphbackup.Header) (RestoreResult, error) {
 	workCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	work := &progress{}
@@ -89,12 +89,12 @@ func (r *Restorer) load(ctx context.Context, tenantID, holder, key string, valid
 	defer stop()
 	in, err := r.store.OpenRead(workCtx, key)
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("the export %s cannot be read again, and the graph of tenant %q is untouched: %w", key, tenantID, err)
+		return RestoreResult{}, fmt.Errorf("the backup %s cannot be read again, and the graph of tenant %q is untouched: %w", key, tenantID, err)
 	}
 	defer func() { _ = in.Close() }()
 	work.advance()
 	if !sameHeader(in.Header(), validated) {
-		return RestoreResult{}, fmt.Errorf("the export %s changed since it was validated, and the graph of tenant %q is untouched: "+
+		return RestoreResult{}, fmt.Errorf("the backup %s changed since it was validated, and the graph of tenant %q is untouched: "+
 			"its header differs from the one validated", key, tenantID)
 	}
 
@@ -110,27 +110,27 @@ func (r *Restorer) load(ctx context.Context, tenantID, holder, key string, valid
 	}
 	work.advance()
 	counted := &countingReader{RecordReader: in, work: work}
-	if err := r.graph.Import(workCtx, tenantID, counted); err != nil {
-		return RestoreResult{}, partial("load the export", err)
+	if err := r.graph.Load(workCtx, tenantID, counted); err != nil {
+		return RestoreResult{}, partial("load the backup", err)
 	}
 	if cause := stopCause(workCtx); cause != nil {
-		return RestoreResult{}, partial("load the export", cause)
+		return RestoreResult{}, partial("load the backup", cause)
 	}
 	if err := r.keeper.confirm(workCtx, tenantID, holder); err != nil {
-		return RestoreResult{}, fmt.Errorf("restore of tenant %q from %s: the lease may have lapsed while the export loaded, "+
+		return RestoreResult{}, fmt.Errorf("restore of tenant %q from %s: the lease may have lapsed while the backup loaded, "+
 			"so writes may have landed in the graph during the restore; run the restore again: %w", tenantID, key, err)
 	}
 	return RestoreResult{Nodes: counted.nodes, Relationships: counted.rels}, nil
 }
 
-// sameHeader reports whether two export headers are equal.
-func sameHeader(a, b export.Header) bool {
-	return a.FormatVersion == b.FormatVersion && a.TenantID == b.TenantID && a.ExportedAt.Equal(b.ExportedAt) &&
+// sameHeader reports whether two backup headers are equal.
+func sameHeader(a, b graphbackup.Header) bool {
+	return a.FormatVersion == b.FormatVersion && a.TenantID == b.TenantID && a.TakenAt.Equal(b.TakenAt) &&
 		a.CatalogVersion == b.CatalogVersion && maps.Equal(a.Nodes, b.Nodes) && maps.Equal(a.Relationships, b.Relationships)
 }
 
 // countingReader counts the node and relationship records read through it,
-// each record being progress; an export lease node in the export, which a
+// each record being progress; a backup lease node in the backup, which a
 // restore does not load, is not counted.
 type countingReader struct {
 	ports.RecordReader
@@ -145,11 +145,11 @@ func (c *countingReader) Next() (any, error) {
 	}
 	c.work.advance()
 	switch x := rec.(type) {
-	case export.NodeRecord:
+	case graphbackup.NodeRecord:
 		if !x.IsLease() {
 			c.nodes++
 		}
-	case export.RelRecord:
+	case graphbackup.RelRecord:
 		c.rels++
 	}
 	return rec, nil

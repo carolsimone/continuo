@@ -145,17 +145,17 @@ func TestParseHealTriggered_UnknownSchemaVersionIsPermanent(t *testing.T) {
 	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
-// The entry's tenant reaches the rejections group's marker, with the entry's
+// The entry's tenant reaches the failure precedents group's marker, with the entry's
 // outbox entry id; an entry without a tenant never reaches the handler.
 func TestHealTriggeredBinding_PassesTheTenant(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	u := &processedUnitOfWork{}
-	binding := NewHealTriggeredBinding(handlers.NewHealTriggeredRejectionsHandler(u, nil, logger), logger)
+	binding := NewHealTriggeredBinding(handlers.NewHealTriggeredFailurePrecedentsHandler(u, nil, logger), logger)
 
 	require.NoError(t, binding(context.Background(), healTriggeredMessage(t, "tenant-7", healTriggeredPayload())))
 	require.Len(t, u.lookups, 1)
 	assert.Equal(t, "tenant-7", u.lookups[0].TenantID)
-	assert.Equal(t, streams.CatalogHealTriggeredRejections, u.lookups[0].Group)
+	assert.Equal(t, streams.CatalogHealTriggeredFailurePrecedents, u.lookups[0].Group)
 	require.NotNil(t, u.lookups[0].OutboxEntryID)
 	assert.Equal(t, "6e1d0a4c-6b0e-4d55-8c55-3f7d1f2e9a10", u.lookups[0].OutboxEntryID.String())
 

@@ -57,18 +57,18 @@ func healTriggeredEvent(p events.HealTriggered) event.HealTriggered {
 }
 
 // NewHealTriggeredBinding wires ParseHealTriggered into the
-// rejections handler, which records the entry under its tenant. outbox_entry_id
+// failure precedents handler, which records the entry under its tenant. outbox_entry_id
 // is extracted from the entry's fields and threaded to the handler, whose
 // processed-message marker then also recognises a re-XADD of the same upstream
 // outbox row under a fresh Redis message ID.
 func NewHealTriggeredBinding(
-	handler *handlers.HealTriggeredRejectionsHandler,
+	handler *handlers.HealTriggeredFailurePrecedentsHandler,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		tenantID, evt, err := ParseHealTriggered(msg)
 		if err != nil {
-			logger.Error("heal.triggered (rejections): parse failure — dead-lettering",
+			logger.Error("heal.triggered (failure precedents): parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

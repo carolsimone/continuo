@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
-	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/serialization/backupfile"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/pkg/objectstore"
 	"github.com/carolsimone/continuo/pkg/objectstore/objectstoretest"
@@ -24,11 +24,11 @@ import (
 
 var backupAt = time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
 
-// exportOf is an export of tenantID holding n :Node nodes and a chain of n-1
+// backupOf is a backup of tenantID holding n :Node nodes and a chain of n-1
 // relationships, as its header and its records.
-func exportOf(tenantID string, n int) (export.Header, []any) {
-	h := export.Header{
-		FormatVersion: export.FormatVersion, TenantID: tenantID, ExportedAt: backupAt, CatalogVersion: "test",
+func backupOf(tenantID string, n int) (graphbackup.Header, []any) {
+	h := graphbackup.Header{
+		FormatVersion: graphbackup.FormatVersion, TenantID: tenantID, TakenAt: backupAt, CatalogVersion: "test",
 		Nodes: map[string]int64{}, Relationships: map[string]int64{},
 	}
 	if n > 0 {
@@ -39,15 +39,15 @@ func exportOf(tenantID string, n int) (export.Header, []any) {
 	}
 	var recs []any
 	for i := range n {
-		recs = append(recs, export.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{
+		recs = append(recs, graphbackup.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{
 			"tenant_id": tenantID, "unique_id": fmt.Sprintf("svc.t%d", i),
 		}})
 	}
 	for i := 1; i < n; i++ {
-		recs = append(recs, export.RelRecord{
+		recs = append(recs, graphbackup.RelRecord{
 			Type:  "DEPENDS_ON",
-			From:  export.NodeRef{Label: "Node", Key: []any{fmt.Sprintf("svc.t%d", i)}},
-			To:    export.NodeRef{Label: "Node", Key: []any{fmt.Sprintf("svc.t%d", i-1)}},
+			From:  graphbackup.NodeRef{Label: "Node", Key: []any{fmt.Sprintf("svc.t%d", i)}},
+			To:    graphbackup.NodeRef{Label: "Node", Key: []any{fmt.Sprintf("svc.t%d", i-1)}},
 			Props: map[string]any{},
 		})
 	}
@@ -55,26 +55,26 @@ func exportOf(tenantID string, n int) (export.Header, []any) {
 }
 
 // writeRecords writes h and recs to w.
-func writeRecords(t *testing.T, w ports.RecordWriter, h export.Header, recs []any) {
+func writeRecords(t *testing.T, w ports.RecordWriter, h graphbackup.Header, recs []any) {
 	t.Helper()
 	require.NoError(t, w.WriteHeader(h))
 	for _, rec := range recs {
 		switch x := rec.(type) {
-		case export.NodeRecord:
+		case graphbackup.NodeRecord:
 			require.NoError(t, w.WriteNode(x))
-		case export.RelRecord:
+		case graphbackup.RelRecord:
 			require.NoError(t, w.WriteRel(x))
 		}
 	}
 }
 
-// storeExport stores an export of tenantID taken at at holding n nodes,
+// storeBackup stores a backup of tenantID taken at at holding n nodes,
 // through the store, and returns its key.
-func storeExport(t *testing.T, store *BackupStore, tenantID string, at time.Time, n int) string {
+func storeBackup(t *testing.T, store *BackupStore, tenantID string, at time.Time, n int) string {
 	t.Helper()
 	w, key, err := store.Open(context.Background(), tenantID, at, nil)
 	require.NoError(t, err)
-	h, recs := exportOf(tenantID, n)
+	h, recs := backupOf(tenantID, n)
 	writeRecords(t, w, h, recs)
 	_, err = w.Close()
 	require.NoError(t, err)
@@ -82,7 +82,7 @@ func storeExport(t *testing.T, store *BackupStore, tenantID string, at time.Time
 }
 
 // readAll reads every record of src.
-func readAll(t *testing.T, src ports.ExportSource) []any {
+func readAll(t *testing.T, src ports.BackupSource) []any {
 	t.Helper()
 	var out []any
 	for {
@@ -106,21 +106,21 @@ func gzipped(t *testing.T, body []byte) []byte {
 	return buf.Bytes()
 }
 
-// exportFile is the export file of tenantID holding n nodes, gzipped, as the
+// backupFile is the backup file of tenantID holding n nodes, gzipped, as the
 // store keeps it.
-func exportFile(t *testing.T, tenantID string, n int) []byte {
+func backupFile(t *testing.T, tenantID string, n int) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	h, recs := exportOf(tenantID, n)
-	writeRecords(t, exportfile.NewWriter(&buf), h, recs)
+	h, recs := backupOf(tenantID, n)
+	writeRecords(t, backupfile.NewWriter(&buf), h, recs)
 	return gzipped(t, buf.Bytes())
 }
 
-// Open streams the export's records, as the gzipped export file, to the
+// Open streams the backup's records, as the gzipped backup file, to the
 // tenant's backup key in the default bucket, visible only once the sink
-// closes; Close returns the size of the stored object, and the export reads
+// closes; Close returns the size of the stored object, and the backup reads
 // back record for record.
-func TestBackupStore_OpenStoresTheRecordsAsAGzippedExportFile(t *testing.T) {
+func TestBackupStore_OpenStoresTheRecordsAsAGzippedBackupFile(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
 	ctx := context.Background()
@@ -128,7 +128,7 @@ func TestBackupStore_OpenStoresTheRecordsAsAGzippedExportFile(t *testing.T) {
 	w, key, err := store.Open(ctx, "default", backupAt.Add(1500*time.Millisecond), nil)
 	require.NoError(t, err)
 	assert.Equal(t, "tenants/default/backups/catalog/20261030T020001Z.jsonl.gz", key)
-	h, recs := exportOf("default", 3)
+	h, recs := backupOf("default", 3)
 	writeRecords(t, w, h, recs)
 	_, err = mem.GetStream(ctx, objectstore.Ref{Key: key})
 	require.ErrorIs(t, err, objectstore.ErrNotFound, "nothing is visible before Close")
@@ -142,8 +142,8 @@ func TestBackupStore_OpenStoresTheRecordsAsAGzippedExportFile(t *testing.T) {
 	assert.Equal(t, int64(len(puts[0].Body)), size, "Close returns the stored object's size")
 	zr, err := gzip.NewReader(bytes.NewReader(puts[0].Body))
 	require.NoError(t, err)
-	got, err := exportfile.Validate(zr, "default")
-	require.NoError(t, err, "the object is the export file of the records")
+	got, err := backupfile.Validate(zr, "default")
+	require.NoError(t, err, "the object is the backup file of the records")
 	assert.Equal(t, h, got)
 
 	src, err := store.OpenRead(ctx, key)
@@ -156,7 +156,7 @@ func TestBackupStore_OpenStoresTheRecordsAsAGzippedExportFile(t *testing.T) {
 // A store that refuses the upload fails Open, before anything is written.
 func TestBackupStore_OpenFailsWhenTheStoreRefusesTheUpload(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
-	key, _ := exportKey("default", backupAt)
+	key, _ := backupKey("default", backupAt)
 	boom := errors.New("AccessDenied")
 	mem.FailPut(objectstore.Ref{Key: key}, boom)
 
@@ -178,21 +178,21 @@ func TestBackupStore_RefusesATenantThatNamesNoPrefix(t *testing.T) {
 	assert.Empty(t, mem.Puts())
 }
 
-// An aborted export leaves nothing, and a sink that was completed or aborted
+// An aborted backup leaves nothing, and a sink that was completed or aborted
 // takes no record and no Close, with the port's error.
-func TestBackupStore_AbortLeavesNoExportAndAClosedSinkRefusesUse(t *testing.T) {
+func TestBackupStore_AbortLeavesNoBackupAndAClosedSinkRefusesUse(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
-	h, recs := exportOf("default", 1)
+	h, recs := backupOf("default", 1)
 
 	aborted, _, err := store.Open(context.Background(), "default", backupAt, nil)
 	require.NoError(t, err)
 	writeRecords(t, aborted, h, recs)
 	require.NoError(t, aborted.Abort())
 	require.NoError(t, aborted.Abort(), "Abort is idempotent")
-	require.ErrorIs(t, aborted.WriteNode(recs[0].(export.NodeRecord)), ports.ErrExportClosed)
+	require.ErrorIs(t, aborted.WriteNode(recs[0].(graphbackup.NodeRecord)), ports.ErrBackupClosed)
 	_, err = aborted.Close()
-	require.ErrorIs(t, err, ports.ErrExportClosed)
+	require.ErrorIs(t, err, ports.ErrBackupClosed)
 	listed, err := store.List(context.Background(), "default")
 	require.NoError(t, err)
 	assert.Empty(t, listed)
@@ -203,12 +203,12 @@ func TestBackupStore_AbortLeavesNoExportAndAClosedSinkRefusesUse(t *testing.T) {
 	_, err = closed.Close()
 	require.NoError(t, err)
 	require.NoError(t, closed.Abort(), "Abort after a successful Close does nothing")
-	require.ErrorIs(t, closed.WriteHeader(h), ports.ErrExportClosed)
+	require.ErrorIs(t, closed.WriteHeader(h), ports.ErrBackupClosed)
 	_, err = closed.Close()
-	require.ErrorIs(t, err, ports.ErrExportClosed)
+	require.ErrorIs(t, err, ports.ErrBackupClosed)
 	listed, err = store.List(context.Background(), "default")
 	require.NoError(t, err)
-	assert.Len(t, listed, 1, "the completed export stays")
+	assert.Len(t, listed, 1, "the completed backup stays")
 }
 
 // closedWriters is an object store whose writers are already closed, so every
@@ -227,29 +227,29 @@ func (c closedWriters) OpenWriter(ctx context.Context, ref objectstore.Ref, cont
 }
 
 // The object store's own writer error does not cross the port: it is the
-// port's ErrExportClosed.
+// port's ErrBackupClosed.
 func TestBackupStore_TranslatesAClosedObjectWriter(t *testing.T) {
 	store := NewBackupStore(closedWriters{objectstoretest.NewMemory(defaultBucket)})
 	w, _, err := store.Open(context.Background(), "default", backupAt, nil)
 	require.NoError(t, err)
-	h, _ := exportOf("default", 1)
+	h, _ := backupOf("default", 1)
 	err = w.WriteHeader(h) // the compressor writes its own header with the first line
-	require.ErrorIs(t, err, ports.ErrExportClosed)
+	require.ErrorIs(t, err, ports.ErrBackupClosed)
 	assert.NotErrorIs(t, err, objectstore.ErrWriterClosed)
 	_, err = w.Close()
-	require.ErrorIs(t, err, ports.ErrExportClosed)
+	require.ErrorIs(t, err, ports.ErrBackupClosed)
 	assert.NotErrorIs(t, err, objectstore.ErrWriterClosed)
 }
 
 // A sink obeys the context it was opened with: once it is cancelled, the
-// export fails with context.Canceled and stores nothing.
+// backup fails with context.Canceled and stores nothing.
 func TestBackupStore_ASinkFailsOnceItsContextIsCancelled(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
 	ctx, cancel := context.WithCancel(context.Background())
 	w, _, err := store.Open(ctx, "default", backupAt, nil)
 	require.NoError(t, err)
-	h, recs := exportOf("default", 2)
+	h, recs := backupOf("default", 2)
 	writeRecords(t, w, h, recs)
 	cancel()
 
@@ -259,18 +259,18 @@ func TestBackupStore_ASinkFailsOnceItsContextIsCancelled(t *testing.T) {
 	assert.Empty(t, mem.Puts())
 }
 
-// List returns the tenant's exports newest first, with their tenant, the time
+// List returns the tenant's backups newest first, with their tenant, the time
 // their key names, their size and their modification time, and leaves out
-// every other object: another tenant's exports (also one whose id begins with
-// this one's) and objects under the backup prefix that are not exports.
-func TestBackupStore_ListIsTheTenantsExportsNewestFirst(t *testing.T) {
+// every other object: another tenant's backups (also one whose id begins with
+// this one's) and objects under the backup prefix that are not backups.
+func TestBackupStore_ListIsTheTenantsBackupsNewestFirst(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
 	ctx := context.Background()
-	oldest := storeExport(t, store, "t", backupAt.Add(-48*time.Hour), 1)
-	newest := storeExport(t, store, "t", backupAt, 3)
-	middle := storeExport(t, store, "t", backupAt.Add(-24*time.Hour), 2)
-	storeExport(t, store, "t2", backupAt.Add(time.Hour), 1)
+	oldest := storeBackup(t, store, "t", backupAt.Add(-48*time.Hour), 1)
+	newest := storeBackup(t, store, "t", backupAt, 3)
+	middle := storeBackup(t, store, "t", backupAt.Add(-24*time.Hour), 2)
+	storeBackup(t, store, "t2", backupAt.Add(time.Hour), 1)
 	for _, key := range []string{
 		"tenants/t/backups/catalog/notes.txt",
 		"tenants/t/backups/catalog/20261030T020000Z.jsonl.gz.part",
@@ -303,7 +303,7 @@ func TestBackupStore_ListIsTheTenantsExportsNewestFirst(t *testing.T) {
 
 func TestBackupStore_ListFailureKeepsItsCause(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
-	prefix, _ := exportPrefix("t")
+	prefix, _ := backupPrefix("t")
 	boom := errors.New("SlowDown")
 	mem.FailList(prefix, boom)
 
@@ -311,21 +311,21 @@ func TestBackupStore_ListFailureKeepsItsCause(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-// OpenRead and Validate read an export back; a missing one is
-// ErrBackupNotFound; a key that is not an export's is refused before the
+// OpenRead and Validate read a backup back; a missing one is
+// ErrBackupNotFound; a key that is not a backup's is refused before the
 // store is reached.
-func TestBackupStore_ReadsAnExportBack(t *testing.T) {
+func TestBackupStore_ReadsAnBackupBack(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
 	ctx := context.Background()
-	key := storeExport(t, store, "t", backupAt, 2)
-	want, _ := exportOf("t", 2)
+	key := storeBackup(t, store, "t", backupAt, 2)
+	want, _ := backupOf("t", 2)
 
 	h, err := store.Validate(ctx, key, "t")
 	require.NoError(t, err)
 	assert.Equal(t, want, h)
 
-	missing, _ := exportKey("t", backupAt.Add(time.Hour))
+	missing, _ := backupKey("t", backupAt.Add(time.Hour))
 	_, err = store.OpenRead(ctx, missing)
 	require.ErrorIs(t, err, ports.ErrBackupNotFound)
 	_, err = store.Validate(ctx, missing, "t")
@@ -334,15 +334,15 @@ func TestBackupStore_ReadsAnExportBack(t *testing.T) {
 	require.NoError(t, mem.Put(ctx, objectstore.Ref{Key: "tenants/t/topologies/r1/topology.json.gz"}, []byte("x"), "application/gzip"))
 	for _, other := range []string{"tenants/t/topologies/r1/topology.json.gz", "", "s3://continuo/" + key} {
 		_, err := store.OpenRead(ctx, other)
-		require.ErrorIs(t, err, ports.ErrNotAnExportKey, other)
+		require.ErrorIs(t, err, ports.ErrNotABackupKey, other)
 		_, err = store.Validate(ctx, other, "t")
-		require.ErrorIs(t, err, ports.ErrNotAnExportKey, other)
+		require.ErrorIs(t, err, ports.ErrNotABackupKey, other)
 	}
 }
 
 func TestBackupStore_ReadFailureKeepsItsCause(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
-	key, _ := exportKey("t", backupAt)
+	key, _ := backupKey("t", backupAt)
 	boom := errors.New("InternalError")
 	mem.FailGet(objectstore.Ref{Key: key}, boom)
 
@@ -352,25 +352,25 @@ func TestBackupStore_ReadFailureKeepsItsCause(t *testing.T) {
 }
 
 // An object that does not decompress, is cut short, has a damaged gzip
-// trailer or is another tenant's export fails Validate; OpenRead refuses one
+// trailer or is another tenant's backup fails Validate; OpenRead refuses one
 // whose header it cannot read.
 func TestBackupStore_ValidateRefusesAnObjectARestoreCannotLoad(t *testing.T) {
-	good := exportFile(t, "t", 2)
+	good := backupFile(t, "t", 2)
 	cases := map[string][]byte{
 		"not gzip":                []byte("{\"format_version\":1}\n"),
 		"cut short":               good[:len(good)-6],
-		"another tenant's export": exportFile(t, "t2", 2),
+		"another tenant's backup": backupFile(t, "t2", 2),
 		"a corrupt trailer": func() []byte {
 			b := bytes.Clone(good)
 			b[len(b)-8] ^= 0xff // the CRC-32 of the gzip trailer
 			return b
 		}(),
-		"not an export file": gzipped(t, []byte("hello\n")),
+		"not a backup file": gzipped(t, []byte("hello\n")),
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			mem := objectstoretest.NewMemory(defaultBucket)
-			key, _ := exportKey("t", backupAt)
+			key, _ := backupKey("t", backupAt)
 			require.NoError(t, mem.Put(context.Background(), objectstore.Ref{Key: key}, body, backupContentType))
 
 			_, err := NewBackupStore(mem).Validate(context.Background(), key, "t")
@@ -378,42 +378,42 @@ func TestBackupStore_ValidateRefusesAnObjectARestoreCannotLoad(t *testing.T) {
 			assert.NotErrorIs(t, err, ports.ErrBackupNotFound)
 		})
 	}
-	for _, name := range []string{"not gzip", "not an export file"} {
+	for _, name := range []string{"not gzip", "not a backup file"} {
 		mem := objectstoretest.NewMemory(defaultBucket)
-		key, _ := exportKey("t", backupAt)
+		key, _ := backupKey("t", backupAt)
 		require.NoError(t, mem.Put(context.Background(), objectstore.Ref{Key: key}, cases[name], backupContentType))
 		_, err := NewBackupStore(mem).OpenRead(context.Background(), key)
 		require.Error(t, err, name)
 	}
 }
 
-// Delete removes one export, and only an export: a key that is not an
-// export's is refused and its object stays.
-func TestBackupStore_DeleteRemovesOnlyAnExport(t *testing.T) {
+// Delete removes one backup, and only a backup: a key that is not an
+// backup's is refused and its object stays.
+func TestBackupStore_DeleteRemovesOnlyAnBackup(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
 	ctx := context.Background()
-	gone := storeExport(t, store, "t", backupAt.Add(-time.Hour), 1)
-	kept := storeExport(t, store, "t", backupAt, 1)
+	gone := storeBackup(t, store, "t", backupAt.Add(-time.Hour), 1)
+	kept := storeBackup(t, store, "t", backupAt, 1)
 	artifact := objectstore.Ref{Key: "tenants/t/topologies/r1/topology.json.gz"}
 	require.NoError(t, mem.Put(ctx, artifact, []byte("x"), "application/gzip"))
 
 	require.NoError(t, store.Delete(ctx, gone))
-	require.NoError(t, store.Delete(ctx, gone), "a missing export is not an error")
-	require.ErrorIs(t, store.Delete(ctx, artifact.Key), ports.ErrNotAnExportKey)
+	require.NoError(t, store.Delete(ctx, gone), "a missing backup is not an error")
+	require.ErrorIs(t, store.Delete(ctx, artifact.Key), ports.ErrNotABackupKey)
 
 	listed, err := store.List(ctx, "t")
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	assert.Equal(t, kept, listed[0].Key)
 	_, err = mem.Get(ctx, artifact, 64)
-	assert.NoError(t, err, "an object that is not an export is never deleted")
+	assert.NoError(t, err, "an object that is not a backup is never deleted")
 }
 
 func TestBackupStore_DeleteFailureKeepsItsCause(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
-	key := storeExport(t, store, "t", backupAt, 1)
+	key := storeBackup(t, store, "t", backupAt, 1)
 	boom := errors.New("AccessDenied")
 	mem.FailDelete(objectstore.Ref{Key: key}, boom)
 
@@ -427,14 +427,14 @@ func TestBackupStore_ProgressFiresForEachWriteToTheStore(t *testing.T) {
 	progressed := 0
 	w, _, err := NewBackupStore(mem).Open(context.Background(), "default", backupAt, func() { progressed++ })
 	require.NoError(t, err)
-	h, _ := exportOf("default", 1)
+	h, _ := backupOf("default", 1)
 	require.NoError(t, w.WriteHeader(h))
 
 	// Random hex does not compress, so the one record becomes many writes.
 	raw := make([]byte, 10<<20)
 	_, err = rand.Read(raw)
 	require.NoError(t, err)
-	require.NoError(t, w.WriteNode(export.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{
+	require.NoError(t, w.WriteNode(graphbackup.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{
 		"tenant_id": "default", "unique_id": "svc.big", "blob": hex.EncodeToString(raw),
 	}}))
 	before := progressed
@@ -442,5 +442,5 @@ func TestBackupStore_ProgressFiresForEachWriteToTheStore(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.GreaterOrEqual(t, progressed, 3, "each write to the object store is progress")
-	assert.Positive(t, progressed-before, "completing the export writes the compressor's tail")
+	assert.Positive(t, progressed-before, "completing the backup writes the compressor's tail")
 }

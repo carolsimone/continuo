@@ -18,9 +18,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// HealTriggeredRejectionsHandler consumes heal.triggered:v1 on
-// the rejections group and records each fixable node of the batch as a
-// :Rejection of the message's tenant. A node the classifier marked unfixable
+// HealTriggeredFailurePrecedentsHandler consumes heal.triggered:v1 on
+// the failure precedents group and records each fixable node of the batch as a
+// :FailurePrecedent of the message's tenant. A node the classifier marked unfixable
 // is no precedent a fix can learn from and is left out of the case base; a
 // message whose every node is unfixable records only its processed marker.
 //
@@ -30,25 +30,25 @@ import (
 // either way, and only a bundle that may still land (absent from object
 // storage) is worth a retry. One message carries every failing node of a
 // rejected release; the bundle is fetched once, and every fixable node's
-// :Rejection is recorded in one write transaction with the message's
+// :FailurePrecedent is recorded in one write transaction with the message's
 // processed-message marker.
-type HealTriggeredRejectionsHandler struct {
+type HealTriggeredFailurePrecedentsHandler struct {
 	uow     uow.UnitOfWork
 	bundles ports.CodeBundleReader
 	logger  *slog.Logger
 }
 
-// NewHealTriggeredRejectionsHandler creates the handler.
-func NewHealTriggeredRejectionsHandler(
+// NewHealTriggeredFailurePrecedentsHandler creates the handler.
+func NewHealTriggeredFailurePrecedentsHandler(
 	u uow.UnitOfWork,
 	bundles ports.CodeBundleReader,
 	logger *slog.Logger,
-) *HealTriggeredRejectionsHandler {
-	return &HealTriggeredRejectionsHandler{uow: u, bundles: bundles, logger: logger}
+) *HealTriggeredFailurePrecedentsHandler {
+	return &HealTriggeredFailurePrecedentsHandler{uow: u, bundles: bundles, logger: logger}
 }
 
 // Handle processes one heal.triggered:v1 message of tenantID on the
-// rejections group, recording one :Rejection per node the classifier did not
+// failure precedents group, recording one :FailurePrecedent per node the classifier did not
 // mark unfixable. Steps:
 //  1. Refuse as permanent a message lacking its release, its nodes, a node's
 //     id or error signature (an unfixable node's included), or a parseable
@@ -59,9 +59,9 @@ func NewHealTriggeredRejectionsHandler(
 //     storage.
 //  3. Read the release's code bundle, outside any transaction, unless every
 //     node is unfixable.
-//  4. In one write transaction, record every fixable node's rejection and the
+//  4. In one write transaction, record every fixable node's failure precedent and the
 //     marker. A message with no fixable node writes the marker alone.
-func (h *HealTriggeredRejectionsHandler) Handle(
+func (h *HealTriggeredFailurePrecedentsHandler) Handle(
 	ctx context.Context,
 	tenantID string,
 	messageID string,
@@ -86,7 +86,7 @@ func (h *HealTriggeredRejectionsHandler) Handle(
 
 	marker := uow.Marker{
 		TenantID:      tenantID,
-		Group:         streams.CatalogHealTriggeredRejections,
+		Group:         streams.CatalogHealTriggeredFailurePrecedents,
 		MessageID:     messageID,
 		OutboxEntryID: outboxEntryID,
 	}
@@ -95,7 +95,7 @@ func (h *HealTriggeredRejectionsHandler) Handle(
 		return fmt.Errorf("look up the processed-message marker: %w", err)
 	}
 	if processed {
-		h.logger.Info("heal.triggered already processed by the rejections group; acknowledged",
+		h.logger.Info("heal.triggered already processed by the failure precedents group; acknowledged",
 			"message_id", messageID, "tenant_id", tenantID, "release_id", in.ReleaseID)
 		return nil
 	}
@@ -118,10 +118,10 @@ func (h *HealTriggeredRejectionsHandler) Handle(
 		}
 	}
 
-	rejections := make([]casebase.Rejection, 0, len(fixable))
+	failurePrecedents := make([]casebase.FailurePrecedent, 0, len(fixable))
 	for _, n := range fixable {
 		rawCode, contentHash := codeFor(bundle, tenantID, in, n.NodeID, h.logger)
-		rejections = append(rejections, casebase.Rejection{
+		failurePrecedents = append(failurePrecedents, casebase.FailurePrecedent{
 			ReleaseID:    in.ReleaseID,
 			NodeID:       n.NodeID,
 			Stage:        in.Source,
@@ -140,30 +140,30 @@ func (h *HealTriggeredRejectionsHandler) Handle(
 	err = h.uow.Write(ctx, marker, true, func(ctx context.Context, tx uow.Tx) error {
 		wrote = true
 		caseBase := tx.CaseBase()
-		for _, rej := range rejections {
-			if err := caseBase.RecordRejection(ctx, tenantID, rej); err != nil {
+		for _, rej := range failurePrecedents {
+			if err := caseBase.RecordFailurePrecedent(ctx, tenantID, rej); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		// The rejections and the marker roll back together, so the message
+		// The failure precedents and the marker roll back together, so the message
 		// replays.
 		return fmt.Errorf("heal.triggered of release %s: %w", in.ReleaseID, err)
 	}
 	if !wrote {
-		h.logger.Info("heal.triggered processed by another delivery of the rejections group meanwhile; acknowledged",
+		h.logger.Info("heal.triggered processed by another delivery of the failure precedents group meanwhile; acknowledged",
 			"message_id", messageID, "tenant_id", tenantID, "release_id", in.ReleaseID)
 		return nil
 	}
-	if len(rejections) == 0 {
+	if len(failurePrecedents) == 0 {
 		h.logger.Info("heal.triggered carries no fixable node; recorded as processed",
 			"message_id", messageID, "tenant_id", tenantID, "release_id", in.ReleaseID)
 		return nil
 	}
-	for _, rej := range rejections {
-		h.logger.Info("rejection recorded in case base",
+	for _, rej := range failurePrecedents {
+		h.logger.Info("failure precedent recorded in case base",
 			"tenant_id", tenantID, "release_id", rej.ReleaseID, "node_id", rej.NodeID,
 			"signature", rej.Signature, "has_code", rej.RawCode != "")
 	}
@@ -175,7 +175,7 @@ func (h *HealTriggeredRejectionsHandler) Handle(
 // unreadable bundle, bundle for another release); returns a non-nil error
 // ONLY for a bundle that is absent from object storage and may still land
 // (transient, retry).
-func (h *HealTriggeredRejectionsHandler) releaseBundle(
+func (h *HealTriggeredFailurePrecedentsHandler) releaseBundle(
 	ctx context.Context, tenantID string, in event.HealTriggered,
 ) (*codebundle.Bundle, error) {
 	if in.CodeBundleURI == "" {
@@ -188,7 +188,7 @@ func (h *HealTriggeredRejectionsHandler) releaseBundle(
 		if errors.Is(err, ports.ErrBundleMalformed) || errors.Is(err, ports.ErrBundleTooLarge) {
 			// Unreadable forever. Losing the code must not lose the precedent:
 			// record every node in the batch without it, loudly.
-			h.logger.Error("code bundle unreadable — recording rejections without code",
+			h.logger.Error("code bundle unreadable — recording failure precedents without code",
 				"tenant_id", tenantID, "release_id", in.ReleaseID, "uri", in.CodeBundleURI, "error", err)
 			return nil, nil
 		}
@@ -197,11 +197,11 @@ func (h *HealTriggeredRejectionsHandler) releaseBundle(
 	if bundle.ReleaseID != in.ReleaseID {
 		// The URI resolved to a bundle for a different release. Recording its
 		// RawCode/ContentHash would stamp another release's code onto these
-		// rejections' failing precedent. Unlike the versions handler (which
+		// failure precedents. Unlike the versions handler (which
 		// fails the message permanently — writing the wrong code would corrupt
 		// the version graph), losing the code here must not lose the precedent:
 		// record every node in the batch without it.
-		h.logger.Error("code bundle belongs to a different release — recording rejections without code",
+		h.logger.Error("code bundle belongs to a different release — recording failure precedents without code",
 			"tenant_id", tenantID, "release_id", in.ReleaseID, "bundle_release_id", bundle.ReleaseID, "uri", in.CodeBundleURI)
 		return nil, nil
 	}

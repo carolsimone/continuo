@@ -169,7 +169,7 @@ func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus)
 }
 
 // NewAdoptedDeployment rebuilds the record of an attempt whose Job exists:
-// it holds a slot and is starting, as if just created, so the observer
+// it holds Job capacity and is starting, as if just created, so the observer
 // follows the Job to its end.
 func NewAdoptedDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
 	d := NewDeployment(cmd, msgProcID, now)

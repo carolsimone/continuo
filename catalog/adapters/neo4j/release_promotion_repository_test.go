@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/topology"
-	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/graphbackup/graphschema"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -300,7 +300,7 @@ func TestPromoteRelease_KeepsDroppedNode(t *testing.T) {
 		MATCH (d:Node {tenant_id: $tenant_id, unique_id: $d})
 		CREATE (v:NodeVersion {tenant_id: $tenant_id, unique_id: $d, content_hash: 'd4e1', version_seq: 1})
 		CREATE (d)-[:CURRENT {release_id: 'r7'}]->(v)
-		CREATE (rej:Rejection {tenant_id: $tenant_id, release_id: 'r6', node_id: $d, category: 'compile', reason: 'syntax'})
+		CREATE (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: 'r6', node_id: $d, category: 'compile', reason: 'syntax'})
 		CREATE (d)-[:FAILED {release_id: 'r6'}]->(rej)
 		CREATE (p:Fix {tenant_id: $tenant_id, fix_id: 'fix-d'})
 		CREATE (rej)-[:PROPOSED {project: 'svc'}]->(p)
@@ -322,7 +322,7 @@ func TestPromoteRelease_KeepsDroppedNode(t *testing.T) {
 	}
 	edgeOf := func(cypher string) int64 { return f.count(cypher, map[string]any{"d": d}) }
 	assert.Equal(t, int64(1), edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:CURRENT]->(:NodeVersion {tenant_id: $tenant_id}) RETURN count(r) AS n`), ":CURRENT kept")
-	assert.Equal(t, int64(1), edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:FAILED]->(:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS n`), ":FAILED kept")
+	assert.Equal(t, int64(1), edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:FAILED]->(:FailurePrecedent {tenant_id: $tenant_id}) RETURN count(r) AS n`), ":FAILED kept")
 	assert.Equal(t, int64(1), edgeOf(`MATCH (:Fix {tenant_id: $tenant_id})-[r:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: $d}) RETURN count(r) AS n`), ":EDITED kept")
 	assert.Zero(t, edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:DEPENDS_ON]->() RETURN count(r) AS n`), "a retired node loses its outgoing :DEPENDS_ON")
 	assert.Equal(t, []string{"analytics.table_b->analytics.table_a"}, f.edges())

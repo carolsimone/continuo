@@ -5,7 +5,7 @@ the stage's elapsed seconds, its run count and its counts to one `StageRecord`
 per stage. A stage that runs several times (once per manifest, once per node)
 adds up in the same record. The record also keeps the largest resident set seen
 at a stage boundary, how many nodes and declared columns each runtime
-contributed, how many nodes the parse skipped and why, how many dormant nodes
+contributed, how many models the parse excluded and why, how many dormant nodes
 each project holds, and how the release ended. `log_fields` renders all of it as
 the fields of the release's log line. `parse_ms` and `contracts_ms` split the
 time from the record's start to the publish into the contract stages and the
@@ -23,7 +23,7 @@ from continuo_contracts.validate import REASONS
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.dormant import is_dormant
-from domain.model import ManifestNode, Runtime, SkippedNode, SkipReason
+from domain.model import ManifestNode, Runtime, ExcludedModel, ExclusionReason
 from service.ports import ClockPort, MemoryProbePort
 
 
@@ -176,8 +176,8 @@ class ReleaseTimings:
     `nodes` and `columns` hold, per runtime, the nodes the release holds (the
     nodes the parses returned and the unknown-external nodes, which no parse returns
     and which count under the `external` runtime) and the columns they
-    declare; `skipped` holds the nodes the parses left out, per reason.
-    `nodes`, `columns` and `skipped` name every runtime or reason from
+    declare; `excluded` holds the models the parses excluded, per reason.
+    `nodes`, `columns` and `excluded` name every runtime or reason from
     construction. `dormant` holds, per project, the dormant nodes the release
     holds (the nodes a release builds that belong to no schedule); a project
     with none has no entry. `contract_failures` counts the contract failures
@@ -203,7 +203,7 @@ class ReleaseTimings:
         self.failure_kind: ParseFailureKind | None = None
         self.nodes: dict[str, int] = {runtime.value: 0 for runtime in Runtime}
         self.columns: dict[str, int] = {runtime.value: 0 for runtime in Runtime}
-        self.skipped: dict[SkipReason, int] = {reason: 0 for reason in SkipReason}
+        self.excluded: dict[ExclusionReason, int] = {reason: 0 for reason in ExclusionReason}
         self.dormant: dict[str, int] = {}
         self.contract_failures: dict[tuple[str, str], int] = {}
         self.validation_cache: dict[str, int] = {result: 0 for result in VALIDATION_CACHE_RESULTS}
@@ -254,10 +254,10 @@ class ReleaseTimings:
             if is_dormant(node.node_type, node.schedule_name):
                 self.dormant[node.project_name] = self.dormant.get(node.project_name, 0) + 1
 
-    def add_skips(self, skips: Iterable[SkippedNode]) -> None:
-        """Count the nodes a parse left out, under each skip's reason."""
-        for skip in skips:
-            self.skipped[skip.reason] += 1
+    def add_exclusions(self, exclusions: Iterable[ExcludedModel]) -> None:
+        """Count the models a parse excluded, each under its reason."""
+        for excluded in exclusions:
+            self.excluded[excluded.reason] += 1
 
     def add_contract_failure(self, stage: FailureStage | str, reason: str) -> None:
         """Count one contract failure under its stage (one of CONTRACT_FAILURE_STAGES)
@@ -314,7 +314,7 @@ class ReleaseTimings:
             "outcome": self.outcome.value if self.outcome is not None else None,
             "nodes": dict(self.nodes),
             "columns": dict(self.columns),
-            "skipped": {reason.value: count for reason, count in self.skipped.items()},
+            "excluded": {reason.value: count for reason, count in self.excluded.items()},
             "dormant": dict(sorted(self.dormant.items())),
             "stages_ms": self.stages_ms(),
             "peak_rss_bytes": self.peak_rss_bytes,

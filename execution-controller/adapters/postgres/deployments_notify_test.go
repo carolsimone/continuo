@@ -31,7 +31,7 @@ func requireNoWake(t *testing.T, w *outbox.PostgresWaker, why string) {
 	}
 }
 
-func TestDeploymentsNotify_WakesOnAcceptAndSlotReleaseOnly(t *testing.T) {
+func TestDeploymentsNotify_WakesOnAcceptAndCapacityReleaseOnly(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -53,13 +53,13 @@ func TestDeploymentsNotify_WakesOnAcceptAndSlotReleaseOnly(t *testing.T) {
 		require.NoError(t, err)
 	}
 	exec("reserved")
-	requireNoWake(t, waker, "taking a slot frees nothing")
+	requireNoWake(t, waker, "taking Job capacity frees nothing")
 	exec("starting")
 	requireNoWake(t, waker, "moving between in-flight states frees nothing")
 	exec("pending")
 	requireWake(t, waker, "a deployment back in the queue")
 	exec("reserved")
-	requireNoWake(t, waker, "taking a slot frees nothing")
+	requireNoWake(t, waker, "taking Job capacity frees nothing")
 	exec("done")
-	requireWake(t, waker, "a released slot")
+	requireWake(t, waker, "released Job capacity")
 }

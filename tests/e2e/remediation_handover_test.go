@@ -61,7 +61,7 @@ const (
 //	  (infra_transient, rule infra:connection_refused)
 //	→ ONE heal.triggered:v1 forwarding the node, marked unfixable
 //	  {reason: classifier_infra, detail: the failure's key error line}
-//	→ catalog records the message and no :Rejection for the node
+//	→ catalog records the message and no :FailurePrecedent for the node
 //	→ agent-remediation's runner settles the remediation with no step but the
 //	  hand-over: ONE skipped try whose node carries code classifier_infra,
 //	  and ONE remediation.handed_over:v1 naming the node with that reason and
@@ -166,17 +166,17 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 		rows := queryNeo4jRows(t, ctx, clients, `
 			MATCH (p:ProcessedMessage {tenant_id: 'default', group: $group, outbox_entry_id: $outbox_entry_id})
 			RETURN count(p) AS n`,
-			map[string]any{"group": streams.CatalogHealTriggeredRejections, "outbox_entry_id": trigger.OutboxEntryID})
+			map[string]any{"group": streams.CatalogHealTriggeredFailurePrecedents, "outbox_entry_id": trigger.OutboxEntryID})
 		n, _ := rows[0]["n"].(int64)
 		return n == 1, nil
 	}, fmt.Sprintf("timeout waiting for catalog's %s marker of the trigger of release %s",
-		streams.CatalogHealTriggeredRejections, releaseID))
-	rejections := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})
+		streams.CatalogHealTriggeredFailurePrecedents, releaseID))
+	failurePrecedents := queryNeo4jRows(t, ctx, clients, `
+		MATCH (r:FailurePrecedent {tenant_id: 'default', release_id: $release_id, node_id: $node_id})
 		RETURN r.node_id AS node_id`,
 		map[string]any{"release_id": releaseID, "node_id": unfixableInfraUniqueID})
-	require.Empty(t, rejections, "an unfixable node is no precedent, so catalog records no :Rejection for it")
-	t.Log("✅ catalog processed the trigger and recorded no :Rejection for the unfixable node")
+	require.Empty(t, failurePrecedents, "an unfixable node is no precedent, so catalog records no :FailurePrecedent for it")
+	t.Log("✅ catalog processed the trigger and recorded no :FailurePrecedent for the unfixable node")
 
 	// 8. "Try again" is accepted: the skipped try ended round 1.
 	st, body := postRetry(t, clients, releaseID)

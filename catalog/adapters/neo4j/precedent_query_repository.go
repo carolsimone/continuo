@@ -33,10 +33,10 @@ func NewPrecedentQueryRepository(client Neo4jClient, logger *slog.Logger) *Prece
 	return &PrecedentQueryRepository{client: client, logger: logger}
 }
 
-// precedentIdentitiesCypher ranks the tenant's matching rejections,
+// precedentIdentitiesCypher ranks the tenant's matching failure precedents,
 // resolved first then newest, on scalar properties only, and LIMITs them.
 const precedentIdentitiesCypher = `
-MATCH (rej:Rejection {tenant_id: $tenant_id})-[:HAS_SIGNATURE]->(sig:ErrorSignature {tenant_id: $tenant_id})
+MATCH (rej:FailurePrecedent {tenant_id: $tenant_id})-[:HAS_SIGNATURE]->(sig:ErrorSignature {tenant_id: $tenant_id})
 WHERE ($signature <> '' AND sig.signature = $signature)
    OR ($signature = '' AND rej.category = $category AND rej.reason = $reason)
 OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res)
@@ -46,19 +46,19 @@ ORDER BY resolved DESC, rej.at DESC
 LIMIT $limit
 RETURN rej.release_id AS release_id, rej.node_id AS node_id, signature`
 
-// precedentDetailsCypher reads each listed rejection with its resolving
+// precedentDetailsCypher reads each listed failure precedent with its resolving
 // version, the version that resolving version superseded, whether the
 // resolving version is the current version of its live :Node, and its fix
 // PRs. It ends with the failing code's column, which the caller appends.
 //
-// A fix spanning several projects is shared by their rejections, and
+// A fix spanning several projects is shared by their failure precedents, and
 // each project carries its own :PullRequest. The [:PROPOSED] edge stamps the
-// proposing project, so the PR join is scoped to it: a rejection surfaces
+// proposing project, so the PR join is scoped to it: a failure precedent surfaces
 // only its own project's PR facts, never a sibling project's. The PR facts
 // are read from the :PullRequest alone.
 const precedentDetailsCypher = `
 UNWIND $keys AS k
-MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: k.release_id, node_id: k.node_id})
+MATCH (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: k.release_id, node_id: k.node_id})
 OPTIONAL MATCH (rej)-[rb:RESOLVED_BY]->(res:NodeVersion {tenant_id: $tenant_id})
 WITH rej, k.signature AS signature, rb, res
   ORDER BY res.promoted_at ASC, res.content_hash ASC
@@ -96,20 +96,20 @@ RETURN rej.release_id AS release_id, rej.node_id AS node_id,
        `
 
 // precedentEditsCypher reads the edited-node provenance of each listed
-// rejection a merged PR resolved: for each rejection RESOLVED_BY a
+// failure precedent a merged PR resolved: for each failure precedent RESOLVED_BY a
 // :Fix, its [:EDITED] edges to the touched :Node, a retired node
 // included. For an amended edit, it selects the promoted :NodeVersion
 // straddling the PR's close — the first version promoted after closed_at
 // (merged) and the newest before it (prior) — so the service can render the
 // merged-truth diff.
 //
-// A fix spanning several projects is shared by their rejections, but
+// A fix spanning several projects is shared by their failure precedents, but
 // each RESOLVED_BY edge carries the resolving project, so the walk is scoped
-// to it: a rejection resolved by one project's PR surfaces only that
+// to it: a failure precedent resolved by one project's PR surfaces only that
 // project's edits and reads only that project's :PullRequest closed_at.
 const precedentEditsCypher = `
 UNWIND $keys AS k
-MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: k.release_id, node_id: k.node_id})
+MATCH (rej:FailurePrecedent {tenant_id: $tenant_id, release_id: k.release_id, node_id: k.node_id})
       -[rb:RESOLVED_BY]->(rf:Fix {tenant_id: $tenant_id})
 MATCH (rf)-[ed:EDITED]->(t:Node {tenant_id: $tenant_id})
   WHERE ed.project = rb.project
@@ -126,7 +126,7 @@ RETURN rej.release_id AS release_id, rej.node_id AS node_id,
        t.unique_id AS edited_node, ed.path AS path, ed.amended AS amended,
        ed.diff AS diff, merged, head(collect(pv)) AS prior`
 
-// Precedents returns the tenant's rejections matching the signature — or,
+// Precedents returns the tenant's failure precedents matching the signature — or,
 // when signature is empty, the (category, reason) pair — resolved-first then
 // newest, capped at limit. The identity query ranks and LIMITs on scalar
 // properties only; code bodies are fetched in a second batched query for the
@@ -135,14 +135,14 @@ RETURN rej.release_id AS release_id, rej.node_id AS node_id,
 // version bodies are always fetched because the caller renders the
 // resolution diff from them. The three queries run in one read transaction.
 //
-// The (category, reason) fallback filters on the :Rejection's own category and
+// The (category, reason) fallback filters on the :FailurePrecedent's own category and
 // reason, not the :ErrorSignature hub's — the hub's are first-seen metadata
-// (see RecordRejection), so two rejections sharing one signature can carry
-// different reasons, and only the rejection's own property is guaranteed
+// (see RecordFailurePrecedent), so two failure precedents sharing one signature can carry
+// different reasons, and only the failure precedent's own property is guaranteed
 // current.
 //
-// A rejection can carry two [:RESOLVED_BY] edges when the two writers race
-// (the versions consumer's forward-link and the rejections consumer's
+// A failure precedent can carry two [:RESOLVED_BY] edges when the two writers race
+// (the versions consumer's forward-link and the failure precedents consumer's
 // back-link), so the detail query picks one deterministically — oldest
 // resolving version by promoted_at, tie-broken by content_hash — before
 // projecting anything from it, the same "oldest version that could have
@@ -201,7 +201,7 @@ func (r *PrecedentQueryRepository) Precedents(
 		}
 		for detailResult.Next(ctx) {
 			v := precedentViewFromRecord(detailResult.Record())
-			out.byKey[key{v.Rejection.ReleaseID, v.Rejection.NodeID}] = v
+			out.byKey[key{v.Failure.ReleaseID, v.Failure.NodeID}] = v
 		}
 		if err := detailResult.Err(); err != nil {
 			return out, fmt.Errorf("iterate precedent details: %w", err)
@@ -249,18 +249,18 @@ func (r *PrecedentQueryRepository) Precedents(
 func precedentViewFromRecord(rec *neo4j.Record) casebase.PrecedentView {
 	rel, _ := recordString(rec, "release_id")
 	nod, _ := recordString(rec, "node_id")
-	v := casebase.PrecedentView{Rejection: casebase.Rejection{ReleaseID: rel, NodeID: nod}}
-	v.Rejection.Stage, _ = recordString(rec, "stage")
-	v.Rejection.Category, _ = recordString(rec, "category")
-	v.Rejection.Reason, _ = recordString(rec, "reason")
-	v.Rejection.Signature, _ = recordString(rec, "signature") // the row's own signature, not the caller's selector
-	v.Rejection.ErrorExcerpt, _ = recordString(rec, "error_excerpt")
-	v.Rejection.DBTLogURI, _ = recordString(rec, "dbt_log_uri")
-	v.Rejection.RawCode, _ = recordString(rec, "raw_code")
-	v.Rejection.ContentHash, _ = recordString(rec, "content_hash")
+	v := casebase.PrecedentView{Failure: casebase.FailurePrecedent{ReleaseID: rel, NodeID: nod}}
+	v.Failure.Stage, _ = recordString(rec, "stage")
+	v.Failure.Category, _ = recordString(rec, "category")
+	v.Failure.Reason, _ = recordString(rec, "reason")
+	v.Failure.Signature, _ = recordString(rec, "signature") // the row's own signature, not the caller's selector
+	v.Failure.ErrorExcerpt, _ = recordString(rec, "error_excerpt")
+	v.Failure.DBTLogURI, _ = recordString(rec, "dbt_log_uri")
+	v.Failure.RawCode, _ = recordString(rec, "raw_code")
+	v.Failure.ContentHash, _ = recordString(rec, "content_hash")
 	if at, ok := rec.Get("at"); ok && at != nil {
 		if ts, ok := at.(time.Time); ok {
-			v.Rejection.At = ts
+			v.Failure.At = ts
 		}
 	}
 	v.ResolvingVersion = versionViewFromProps(rec, "res")

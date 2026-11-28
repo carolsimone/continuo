@@ -148,7 +148,7 @@ Notes that matter before you commit to this path:
   dead-letter-controller) wakes on a Postgres `LISTEN`/`NOTIFY` notification
   sent when a row is committed, over one dedicated connection per pod. Two components
   hold more such connections per pod: execution-controller one more, for its
-  dispatcher, which wakes when a deployment is accepted or a slot is released,
+  dispatcher, which wakes when a deployment is accepted or Job capacity is freed,
   and run-controller two more, for its lease waker, which wakes when a task releases
   the write lease on its node, and for its cron loop, which wakes when a
   change to a schedule's cron commits. `LISTEN` needs a session-mode
@@ -283,9 +283,9 @@ Every container in this chart, bundled or not, gets:
 | `llm.model` / `llm.apiKey` (or `llm.existingSecret`) | Optional. Empty `apiKey`: agent-chat and agent-remediation still boot and serve, but LLM (Large Language Model) calls fail until it is set. |
 | `github.token` / `github.appId` / `github.installationId` / `github.appPrivateKey` (or `github.existingSecret`) | Optional. `token` is a read-only PAT (Personal Access Token) agent-remediation uses to fetch source; the `app*` fields are a GitHub App ui uses to open fix PRs (Pull Requests) — Create-PR returns `503` until they're set. |
 | `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | Stream trimming, run every 5 minutes by dead-letter-controller (`STREAM_TRIM_ENABLED`, `STREAM_RETENTION`). `retention` (default `72h`, between 0 and `720h`) is how long an entry a lagging consumer group still needs is kept before it is stored as a dead letter and trimmed. `enabled: false` stops trimming. `schedule` is ignored. See the note below the table. |
-| `catalog.backup.enabled` | Whether catalog exports each tenant's graph on `catalog.backup.schedule` (default `true`; `CATALOG_BACKUP_ENABLED`). `false` runs no scheduled exports; `catalog-backup export` still works. See [Catalog backup and restore](#5-catalog-backup-and-restore). |
-| `catalog.backup.schedule` | When catalog exports, in UTC: a five-field cron or an `@` descriptor such as `@daily` or `@every 6h` (default `0 2 * * *`; `CATALOG_BACKUP_SCHEDULE`). A slot catalog misses while it is down is not caught up; the next slot runs. Rendering fails on a value that is neither five fields nor an `@` descriptor, and catalog refuses to start on a schedule its cron parser rejects, one that starts with `CRON_TZ=` or `TZ=`, or an `@every` under a minute. |
-| `catalog.backup.keep` | How many of each tenant's newest exports catalog keeps (default `7`; `CATALOG_BACKUP_KEEP`); after each stored export it deletes the rest. A whole number of at least 1. A hand-run `catalog-backup export` prunes with the same value. |
+| `catalog.backup.enabled` | Whether catalog backs up each tenant's graph on `catalog.backup.schedule` (default `true`; `CATALOG_BACKUP_ENABLED`). `false` runs no scheduled backups; `catalog-backup take` still works. See [Catalog backup and restore](#5-catalog-backup-and-restore). |
+| `catalog.backup.schedule` | When catalog takes its backups, in UTC: a five-field cron or an `@` descriptor such as `@daily` or `@every 6h` (default `0 2 * * *`; `CATALOG_BACKUP_SCHEDULE`). A slot catalog misses while it is down is not caught up; the next slot runs. Rendering fails on a value that is neither five fields nor an `@` descriptor, and catalog refuses to start on a schedule its cron parser rejects, one that starts with `CRON_TZ=` or `TZ=`, or an `@every` under a minute. |
+| `catalog.backup.keep` | How many of each tenant's newest backups catalog keeps (default `7`; `CATALOG_BACKUP_KEEP`); after each stored backup it deletes the rest. A whole number of at least 1. A hand-run `catalog-backup take` prunes with the same value. |
 | `catalog.contractHistory.retentionDays` | How many days of contract versions catalog keeps (default `0`, which keeps every version; `CONTRACT_HISTORY_RETENTION_DAYS`). Above 0, catalog's retention sweeper deletes a version once its promotion is older than that, never a node's current contract or the version before it. A whole number from 0 to 36500 (100 years): rendering fails on any other value, and catalog refuses to start on it. |
 | `contracts.publish.server.host` / `.port` / `.database` | The warehouse entry (`servers`) of the contract files catalog writes to `tenants/<tenant>/contracts/live/` in the bucket (default empty, 0, empty; `CONTRACTS_SERVER_HOST`, `CONTRACTS_SERVER_PORT`, `CONTRACTS_SERVER_DATABASE`). With a `host`, each file names the warehouse (`type`, `host`, `port`, `database`, and the contract's `schema`), so a catalog tool that reads the folder can bind a contract to its table. The `type` is `postgres` or `trino`, from `validation.engine`. `database` is the catalog name on `trino`, and an empty one uses `validation.warehouseDatabase`. A `host` that is empty or only blanks is no host: no file carries a `servers` entry, and `port` and `database` are ignored. Blanks around a host or a database are trimmed. With a host, rendering fails unless `port` is a whole number from 1 to 65535 and a database that is not blank resolves. catalog refuses to start on the same values. A change rewrites every file when catalog restarts. |
 | `contracts.ontology.enabled` / `.baseUrl` | The install's ontology (default `false` and empty; `ONTOLOGY_ENABLED`, `ONTOLOGY_BASE_URL`). `enabled` is read by topology-controller and release-controller, which each refuse to start on any value other than `true` or `false`. While it is `false`, release-controller refuses a release of kind `ontology` with HTTP 400, and topology-controller stores each contract without its ontology part and ignores an ontology a release carries. While it is `true`, a release that carries the install's ontology resolves the contracts of the projects the ontology declares and checks them against it. `baseUrl` is read by catalog: empty publishes the ontology links of a contract as stored, each starting with `continuo-ontology:`, and an absolute `http://` or `https://` URL with a host name, no credentials, no query, no fragment and no whitespace is put, with a slash, in front of each link in the live contracts folder and in `continuo node data-contract`. catalog trims one trailing slash and refuses to start on a value that is not empty and not such a URL. The schema refuses more than catalog does: an IPv6 literal, an empty port, an upper-case scheme, a host with a character other than letters, digits, `.`, `_`, `~` and `-`, and a path with a character other than letters, digits, `._~-!$&'()*+,;=:@/` and `%XX` escapes. [docs/ontology.md](../../docs/ontology.md) says what the ontology is and how to bind a contract to it. A change to either restarts every continuo component, and a change to `baseUrl` rewrites every file of the live folder when catalog restarts. |
@@ -314,11 +314,11 @@ catalog keeps the live topology, the code-version history behind it and the
 remediation case base (rejections, error signatures, fixes, PR outcomes) in
 Neo4j. Re-announcing the live release rebuilds the topology; nothing else holds
 the history or the case base. So, on `catalog.backup.schedule` (UTC, default
-02:00 daily), catalog exports each tenant's whole graph to the S3 bucket and
-keeps the newest `catalog.backup.keep` exports of each tenant (default 7).
-`catalog.backup.enabled: false` runs no scheduled exports.
+02:00 daily), catalog backs up each tenant's whole graph to the S3 bucket and
+keeps the newest `catalog.backup.keep` backups of each tenant (default 7).
+`catalog.backup.enabled: false` runs no scheduled backups.
 
-**The export.** One object per export, at
+**The backup.** One object per backup, at
 `tenants/<tenant>/backups/catalog/<UTC time>.jsonl.gz`, written as a stream:
 catalog holds one page of records and one 8 MiB upload part in memory at a
 time, whatever the size of the graph. It is gzipped JSON lines: a header line
@@ -328,18 +328,18 @@ Every value keeps its Neo4j type: an integer is `{"$int":"…"}`, a float
 `{"$float":"…"}` and a datetime `{"$datetime":"…"}` (an RFC 3339 timestamp with
 an optional `[zone]` suffix), so no reader rounds or reinterprets one.
 
-**Writes pause during an export.** An export takes the tenant's export lease
+**Writes pause during a backup.** A backup takes the tenant's backup lease
 first. While it is held, on every catalog pod, catalog's consumers back off and
-retry that tenant's writes (reads go on), and the writes land once the export
-ends: `continuo_catalog_export_duration_seconds` is how long they waited. The
-lease is renewed while the export makes progress, expires within two minutes
-when its process dies, and an export that moves no record for two minutes stops
-and releases it. An export or a restore that finds the lease held by another is
+retry that tenant's writes (reads go on), and the writes land once the backup
+ends: `continuo_catalog_backup_duration_seconds` is how long they waited. The
+lease is renewed while the backup makes progress, expires within two minutes
+when its process dies, and a backup that moves no record for two minutes stops
+and releases it. A backup or a restore that finds the lease held by another is
 skipped.
 
-**A shutdown during an export.** catalog stops an export in flight within its
-drain window, half of `SHUTDOWN_GRACE` (7.5 s by default): the export aborts
-its upload and releases the lease, and the next slot exports the tenant again.
+**A shutdown during a backup.** catalog stops a backup in flight within its
+drain window, half of `SHUTDOWN_GRACE` (7.5 s by default): the backup aborts
+its upload and releases the lease, and the next slot backs the tenant up again.
 When the process ends before that, the lease lapses within two minutes and the
 parts already uploaded stay in the bucket until the lifecycle rule
 `AbortIncompleteMultipartUpload` (under the S3 access below) removes them.
@@ -351,70 +351,70 @@ parts already uploaded stay in the bucket until the lifecycle rule
 environment and needs nothing else of catalog's configuration.
 
 ```bash
-# take an export now: every tenant, or one (--tenant default is how an install
-# that has not written anything yet takes its first export)
-kubectl -n continuo exec deploy/catalog -- catalog-backup export
-kubectl -n continuo exec deploy/catalog -- catalog-backup export --tenant default
+# take a backup now: every tenant, or one (--tenant default is how an install
+# that has not written anything yet takes its first backup)
+kubectl -n continuo exec deploy/catalog -- catalog-backup take
+kubectl -n continuo exec deploy/catalog -- catalog-backup take --tenant default
 
-# list the stored exports, newest first; after a Neo4j loss name the tenant,
+# list the stored backups, newest first; after a Neo4j loss name the tenant,
 # because a bare list covers only the tenants the graph still holds
 kubectl -n continuo exec deploy/catalog -- catalog-backup list --tenant default
 
-# return a tenant's graph to an export; the tenant is the one the key names
+# return a tenant's graph to a backup; the tenant is the one the key names
 kubectl -n continuo exec deploy/catalog -- catalog-backup restore \
   tenants/default/backups/catalog/20261030T020000Z.jsonl.gz --yes
 ```
 
 `--tenant` takes a tenant id and does not check it against the graph. A bare
-`export` or `list` covers the tenants the graph holds, and prints a warning on
+`take` or `list` covers the tenants the graph holds, and prints a warning on
 stderr when it holds none (the case after a Neo4j loss, while the bucket still
-holds the exports): name the tenant then. `export --tenant <id>` of a tenant the
-graph does not list stores an empty export, with a warning on stderr. So do not
-run `export` on a lost graph before `restore`: the empty export counts toward
+holds the backups): name the tenant then. `take --tenant <id>` of a tenant the
+graph does not list stores an empty backup, with a warning on stderr. So do not
+run `take` on a lost graph before `restore`: the empty backup counts toward
 `catalog.backup.keep` and can displace a good one.
 
 On the compose stack the source is bind-mounted over the image's
 `/app/catalog`, which hides the prebuilt binary, so run
-`docker exec catalog go run ./cmd/catalog-backup export` from the container's
+`docker exec catalog go run ./cmd/catalog-backup take` from the container's
 working directory instead.
 
 stdout carries only JSON; diagnostics go to stderr.
 
 | Command | stdout |
 |---|---|
-| `export [--tenant T]` | One line per stored export: `{"object_key","bytes","nodes","relationships","duration_seconds"}` (the last is how long the tenant's writes paused) |
+| `take [--tenant T]` | One line per stored backup: `{"object_key","bytes","nodes","relationships","duration_seconds"}` (the last is how long the tenant's writes paused) |
 | `list [--tenant T]` | A JSON array of `{"key","size","last_modified"}`, newest first |
 | `restore <object key> --yes` | `{"object_key","tenant_id","nodes","relationships"}` |
 
 | Exit code | Meaning |
 |---|---|
 | 0 | Done |
-| 1 | An error. `export` of several tenants goes on past a tenant that fails and prints the exports it stored |
+| 1 | An error. `take` of several tenants goes on past a tenant that fails and prints the backups it stored |
 | 2 | Usage: an unknown command or flag, `restore` without `--yes`, or a key outside `tenants/<tenant>/backups/catalog/` |
-| 3 | Skipped: another export or a restore holds a tenant's lease; run it again once that ends |
+| 3 | Skipped: another backup or a restore holds a tenant's lease; run it again once that ends |
 
-`SIGINT` and `SIGTERM` cancel the work in flight: an export aborts its upload
-and releases the tenant's lease, so a cancelled export leaves no object behind.
-A hand-run export prunes with `catalog.backup.keep` like a scheduled one.
+`SIGINT` and `SIGTERM` cancel the work in flight: a backup aborts its upload
+and releases the tenant's lease, so a cancelled backup leaves no object behind.
+A hand-run backup prunes with `catalog.backup.keep` like a scheduled one.
 
 ### Restore after Neo4j is lost
 
 Restore as soon as Neo4j is back, before anything else relies on the catalog:
-anything catalog wrote into the empty graph meanwhile is replaced by the export.
+anything catalog wrote into the empty graph meanwhile is replaced by the backup.
 
-1. Find the export: `catalog-backup list --tenant default`. Take the newest.
+1. Find the backup: `catalog-backup list --tenant default`. Take the newest.
 2. `catalog-backup restore <object key> --yes`. It reads and checks the whole
    file first, with no lease and no write, so a file that cannot be loaded
    exactly, or that names another tenant, leaves the graph untouched. Then it
    takes the tenant's lease, deletes the tenant's graph, loads the nodes and
    then the relationships, runs catalog's schema migration (which brings an
-   export written by an older schema up to date) and releases the lease.
+   backup written by an older schema up to date) and releases the lease.
 3. Re-announce the live release, so the live topology is current again:
    `kubectl -n continuo exec deploy/release-controller -- announce-topology --reannounce-live`.
 
 `--yes` is the safeguard: `restore` deletes the tenant's graph, so without it
 the command exits 2 having changed nothing, and it exits 2 for a key that is
-not an export's. The tenant is read from the key, never from a flag.
+not a backup key. The tenant is read from the key, never from a flag.
 
 **A failed restore.** A restore that fails before it deletes the graph (a
 missing key, a file that does not check out) leaves the graph as it was. One
@@ -424,46 +424,46 @@ same `restore` again: it deletes the tenant's graph first, so a second run
 repairs it.
 
 **What stays lost.** A restore returns the tenant's graph to the time of the
-export. catalog's consumer groups are not rewound: their positions are in Redis,
+backup. catalog's consumer groups are not rewound: their positions are in Redis,
 and the stream trimmer deletes an entry once every group has read it. So what
-was written after the export is gone:
+was written after the backup is gone:
 
-- versions of releases promoted after the export, so a node changed since then
+- versions of releases promoted after the backup, so a node changed since then
   keeps a stale current version until its next release;
-- rejections, fixes and PR outcomes recorded after the export.
+- failure precedents, fixes and PR outcomes recorded after the backup.
 
-An export waits while a release's code versions are between two of their batches, so it never holds part of one release's versions. A batch that dies mid-release holds the export back for at most two minutes.
+A backup waits while a release's code versions are between two of their batches, so it never holds part of one release's versions. A batch that dies mid-release holds the backup back for at most two minutes.
 
-Topology written after the export comes back with the re-announce in step 3.
+Topology written after the backup comes back with the re-announce in step 3.
 
 ### Alerts
 
-catalog exports these on its `/metrics` (`metrics.port`), and only while
+catalog publishes these on its `/metrics` (`metrics.port`), and only while
 `catalog.backup.enabled` is true: with the backup disabled none of the five
-exists, whatever `catalog-backup export` has stored.
+exists, whatever `catalog-backup take` has stored.
 
 | Series | Answers |
 |---|---|
-| `continuo_catalog_export_last_success_timestamp_seconds` | When was the newest good export? The oldest tenant's newest export, read from the bucket when Prometheus scrapes (at most once a minute), so an export taken with `catalog-backup` counts (while the backup is enabled) and the value survives a restart. 0 for a tenant with no export. It has no sample until a read from the bucket succeeds |
-| `continuo_catalog_exports_total{outcome}` | Scheduled exports this pod ran: `success`, `failure` or `skipped` |
-| `continuo_catalog_export_duration_seconds` | How long a scheduled export paused the tenant's writes |
-| `continuo_catalog_export_bytes`, `continuo_catalog_export_records{kind}` | Size and record counts of the last scheduled export |
+| `continuo_catalog_backup_last_success_timestamp_seconds` | When was the newest good backup? The oldest tenant's newest backup, read from the bucket when Prometheus scrapes (at most once a minute), so a backup taken with `catalog-backup` counts (while the backup is enabled) and the value survives a restart. 0 for a tenant with no backup. It has no sample until a read from the bucket succeeds |
+| `continuo_catalog_backups_total{outcome}` | Scheduled backups this pod ran: `success`, `failure` or `skipped` |
+| `continuo_catalog_backup_duration_seconds` | How long a scheduled backup paused the tenant's writes |
+| `continuo_catalog_backup_bytes`, `continuo_catalog_backup_records{kind}` | Size and record counts of the last scheduled backup |
 
 Two alerts for installs that scrape. The first pairs the age with `absent`,
 because the gauge has no sample until the first successful read, and a catalog
 that cannot read the bucket would otherwise raise nothing:
 
 ```yaml
-- alert: CatalogExportStale
-  # 93600 s = 26 hours: the nightly export plus two hours of slack.
+- alert: CatalogBackupStale
+  # 93600 s = 26 hours: the nightly backup plus two hours of slack.
   expr: |
-    time() - continuo_catalog_export_last_success_timestamp_seconds{component="catalog"} > 93600
+    time() - continuo_catalog_backup_last_success_timestamp_seconds{component="catalog"} > 93600
       or
-    absent(continuo_catalog_export_last_success_timestamp_seconds{component="catalog"})
+    absent(continuo_catalog_backup_last_success_timestamp_seconds{component="catalog"})
   for: 15m
 - alert: CatalogMemoryNearLimit
-  # An export streams, so its memory does not grow with the graph; this fires
-  # when the pod has no room for the export beside catalog's own use.
+  # A backup streams, so its memory does not grow with the graph; this fires
+  # when the pod has no room for the backup beside catalog's own use.
   expr: |
     max by (namespace, pod) (container_memory_working_set_bytes{container="catalog"})
       / on (namespace, pod)
@@ -484,7 +484,7 @@ An install on the bundled MinIO needs nothing here. With an external bucket
 (`s3.*`), the access key, or each pod's IAM role, must allow these actions. The
 shared key already covers `tenants/` for release-controller; the action the
 backup adds is `s3:AbortMultipartUpload`, which catalog needs on its own prefix
-to discard an export it cancels or that fails. topology-controller's reads on
+to discard a backup it cancels or that fails. topology-controller's reads on
 `tenants/` are explained below the table.
 
 | Prefix | Component | Actions |
@@ -499,7 +499,7 @@ to discard an export it cancels or that fails. topology-controller's reads on
 | `candidate-sql/` (`candidate-sql/<release>/candidate_<node>.*`) | topology-controller | `s3:PutObject` |
 | | validation Jobs, agent-remediation | `s3:GetObject` |
 | | release-controller | `s3:DeleteObject`, `s3:ListBucket` |
-| `tenants/<tenant>/backups/catalog/` (the exports) | catalog | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`, `s3:AbortMultipartUpload` |
+| `tenants/<tenant>/backups/catalog/` (the backups) | catalog | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`, `s3:AbortMultipartUpload` |
 | `tenants/<tenant>/contracts/live/` (the live contracts folder, `<unique id>.odcs.yaml` and `_index.json`) | catalog | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` |
 
 Set no lifecycle expiry rule on `code-bundles/` or `tenants/`. They hold the code
@@ -574,7 +574,7 @@ the folder needs only `s3:GetObject` and `s3:ListBucket` on that prefix.
       ]
     },
     {
-      "Sid": "AbortCatalogExportUploads",
+      "Sid": "AbortCatalogBackupUploads",
       "Effect": "Allow",
       "Action": "s3:AbortMultipartUpload",
       "Resource": "arn:aws:s3:::continuo/tenants/*/backups/catalog/*"
@@ -620,8 +620,8 @@ topology-controller's role for `tenants/` is:
 }
 ```
 
-An export that is killed mid-upload (a node loss, a `SIGKILL`) leaves its parts
-in the bucket, where they are billed but never listed as an export. A bucket
+A backup that is killed mid-upload (a node loss, a `SIGKILL`) leaves its parts
+in the bucket, where they are billed but never listed as a backup. A bucket
 lifecycle rule `AbortIncompleteMultipartUpload` (after one day, say) removes
 them.
 
@@ -639,7 +639,7 @@ Every PR that touches this chart (or the install-test harness under
 `values-byo.yaml.example`, BYO-inline, BYO-existingSecret), then three real
 kind installs — bundled, BYO with inline credentials, and BYO with a
 pre-created Secret. Each install is checked for completed migrations, healthy
-pods, answering ui/Dex endpoints, and a catalog export that reaches the bucket
+pods, answering ui/Dex endpoints, and a catalog backup that reaches the bucket
 and shows on catalog's `/metrics`. Install jobs also add a CI-only
 low-CPU-request values override so the chart fits the runner's 2 vCPUs. PR
 installs use the latest published main-branch images, so they prove the

@@ -5,7 +5,7 @@ package casebase
 import "github.com/carolsimone/continuo/catalog/domain/codeversion"
 
 // FixView is one fix PR attached to a precedent, read from the fix's
-// :PullRequest of the rejection's project. PrState is that node's live state:
+// :PullRequest of the failure precedent's project. PrState is that node's live state:
 // open until the close loop mirrors a terminal outcome, merged or rejected
 // afterwards.
 type FixView struct {
@@ -17,7 +17,7 @@ type FixView struct {
 
 // EditedView is one provenance edit a merged fix PR made to a node, read from
 // the (:Fix)-[:EDITED]->(:Node) edge. NodeID is the edited node — which
-// may be an upstream ancestor of the rejection rather than the rejected node
+// may be an upstream ancestor of the failure precedent rather than the rejected node
 // itself. Diff is the edge's stored proposed diff. When the edit was
 // Amended and a :NodeVersion was promoted after the PR closed, MergedPrior and
 // MergedVersion carry the versions straddling the merge so the service can
@@ -38,19 +38,19 @@ type EditedView struct {
 	MergedVersion *codeversion.VersionView
 }
 
-// PrecedentView is one reader-level precedent row: the rejection plus the
+// PrecedentView is one reader-level precedent row: the failure precedent plus the
 // resolving version and the version it superseded (next-older by promoted_at)
 // so the service can render the resolution diff, plus any edited-node
 // provenance carried by a merged fix PR that resolved it.
 //
-// ResolvedByFix reports whether the rejection carries a
+// ResolvedByFix reports whether the failure precedent carries a
 // [:RESOLVED_BY]->(:Fix) edge — the same fix-resolved signal the
 // identity query uses for resolved-first ordering. It is surfaced here so the
 // service's Resolved boolean agrees with that ordering even when the merged PR
 // drew no [:EDITED] edges (all edit targets were absent from the graph), so a
-// genuinely-fixed rejection is never rendered as unresolved.
+// genuinely-fixed failure precedent is never rendered as unresolved.
 type PrecedentView struct {
-	Rejection        Rejection
+	Failure          FailurePrecedent
 	ResolvingVersion *codeversion.VersionView
 	PriorVersion     *codeversion.VersionView
 	Fixes            []FixView
@@ -65,7 +65,7 @@ type PrecedentView struct {
 // merged-truth diff when the edit was amended and a promoted version straddles
 // the merge, otherwise the fix's own edit diff.
 type Precedent struct {
-	Rejection               Rejection
+	Failure                 FailurePrecedent
 	Resolved                bool
 	ResolvingVersion        *codeversion.VersionView
 	ResolutionDiff          string

@@ -230,7 +230,7 @@ func TestReleasePromotedHandler_MarkerLookupFailureIsReturned(t *testing.T) {
 	assert.Empty(t, u.writes)
 }
 
-// A write paused by an export or a restore reaches the consumer as
+// A write paused by a backup or a restore reaches the consumer as
 // uow.ErrWritesPaused, which it backs off on as for an outage.
 func TestReleasePromotedHandler_PausedWriteIsReturnedAsPaused(t *testing.T) {
 	u := newFakeGraphUnitOfWork(&fakeReleasePromotionRepository{})

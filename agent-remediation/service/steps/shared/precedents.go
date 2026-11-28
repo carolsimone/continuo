@@ -14,7 +14,7 @@ import (
 // renderer separately bounds how many carry full diffs.
 const maxPrecedentsFetch = 10
 
-// Precedents is the context source `failure_precedents`: past rejections that
+// Precedents is the context source `failure_precedents`: earlier failure precedents that
 // look like this failure, and the change that fixed them when one did.
 type Precedents struct {
 	precedents ports.PrecedentReader
@@ -34,16 +34,16 @@ func (*Precedents) Meta() step.Meta {
 	return step.Meta{
 		Name:        "failure_precedents",
 		Kind:        step.KindContext,
-		Description: "Looks up past rejections with the same error signature, or else the same category and reason, with the changes that fixed them.",
+		Description: "Looks up failure precedents with the same error signature, or else the same category and reason, with the changes that fixed them.",
 		Needs:       []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides:    []remediation.EvidenceKey{remediation.KeyFailurePrecedents},
 	}
 }
 
 // Gather fetches precedent for the failure's precedent subject: by exact
-// signature first, then, when removing this failure's own recorded rejection
+// signature first, then, when removing this failure's own failure precedent
 // leaves the exact-signature result empty, by the broader (category, reason)
-// class. The case base holds this same trigger's rejection, so on a first
+// class. The case base holds this same trigger's failure precedent, so on a first
 // occurrence of a signature the exact match can be nothing but that row: the
 // self-filter therefore runs on each fetch before the fallback decision, or the
 // fallback would be skipped precisely when it is the only thing that could
@@ -73,7 +73,7 @@ func (s *Precedents) Gather(ctx context.Context, in step.ContextInput) (step.Con
 	}}, nil
 }
 
-// withoutSelf drops this failure's own recorded rejection from a precedent
+// withoutSelf drops this failure's own failure precedent from a precedent
 // result set (it is this failure, not precedent for it). It builds a fresh
 // slice, since ps is backed by whatever the reader returned and reusing its
 // array would corrupt that value across calls.

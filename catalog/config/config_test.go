@@ -41,8 +41,8 @@ func TestLoad_NeedsNoPostgres(t *testing.T) {
 	}
 }
 
-// With nothing set, catalog exports every tenant at 02:00 UTC and keeps the
-// newest seven exports, the chart's defaults.
+// With nothing set, catalog backs up every tenant at 02:00 UTC and keeps the
+// newest seven backups, the chart's defaults.
 func TestConfig_BackupDefaults(t *testing.T) {
 	for _, key := range []string{"CATALOG_BACKUP_ENABLED", "CATALOG_BACKUP_SCHEDULE", "CATALOG_BACKUP_KEEP"} {
 		t.Setenv(key, "")
@@ -85,7 +85,7 @@ func TestConfig_AcceptsTheSchedulesTheChartRenders(t *testing.T) {
 }
 
 // catalog refuses to start on a schedule it cannot honour: one the cron
-// parser refuses, one that names a timezone (the export runs in UTC), one no
+// parser refuses, one that names a timezone (the backup runs in UTC), one no
 // date satisfies, an @every under a minute, and a keep below one or not a
 // whole number, and an enabled flag that is not a boolean.
 func TestConfig_RefusesBadCronAndKeepBelowOne(t *testing.T) {

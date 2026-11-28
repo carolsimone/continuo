@@ -98,7 +98,7 @@ func (f *swapFixture) storedHashes(uniqueID string) []string {
 
 func (f *swapFixture) requireGateUnlocked() {
 	f.t.Helper()
-	recs := f.rows(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) RETURN properties(m) AS p`, nil)
+	recs := f.rows(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'backup'}) RETURN properties(m) AS p`, nil)
 	require.Len(f.t, recs, 1, "a sweep that took the gate leaves the tenant's lease node behind")
 	p, _ := recs[0].Get("p")
 	assert.NotContains(f.t, p.(map[string]any), "_lock", "the gate's lock never outlives the sweep's transaction")
@@ -262,26 +262,26 @@ func TestContractHistorySweeper_TheCounterKeepsRising(t *testing.T) {
 	assert.Contains(t, f.storedHashes(kpisNode), historyHash(1), "a deleted contract that comes back is stored again")
 }
 
-// TestContractHistorySweeper_LeavesATenantWhoseExportLeaseIsHeld holds a
-// tenant's export lease: the sweep deletes nothing of that tenant while the
+// TestContractHistorySweeper_LeavesATenantWhoseBackupLeaseIsHeld holds a
+// tenant's backup lease: the sweep deletes nothing of that tenant while the
 // lease is live, and everything past the retention once it is released.
-func TestContractHistorySweeper_LeavesATenantWhoseExportLeaseIsHeld(t *testing.T) {
+func TestContractHistorySweeper_LeavesATenantWhoseBackupLeaseIsHeld(t *testing.T) {
 	ctx := context.Background()
 	f := newSwapFixture(t)
 	f.seedLiveNode(kpisNode)
 	f.writeHistory(kpisNode, historyHash(1), historyHash(2), historyHash(3), historyHash(4))
 	f.ageAllEdges(kpisNode, 4, ancient)
 	sweeper := NewContractHistorySweeper(f.client, quietLogger())
-	lease := NewExportLease(f.client, quietLogger())
+	lease := NewBackupLease(f.client, quietLogger())
 
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseBackup, "taker-1", time.Minute))
 	deleted, err := sweeper.Prune(ctx, historyRetention, 1000)
 	require.NoError(t, err)
 	assert.Zero(t, deleted, "a tenant whose lease is held is skipped")
 	assert.Equal(t, []int64{1, 2, 3, 4}, f.edgeVersions(kpisNode))
 	assert.Len(t, f.storedHashes(kpisNode), 4)
 
-	require.NoError(t, lease.Release(ctx, f.tenant, "exporter-1"))
+	require.NoError(t, lease.Release(ctx, f.tenant, "taker-1"))
 	deleted, err = sweeper.Prune(ctx, historyRetention, 1000)
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), deleted, "a released lease no longer protects the tenant's history")

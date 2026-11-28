@@ -45,7 +45,7 @@ service CatalogQuery {
   // versions list.
   rpc GetCodeUnitVersions(GetCodeUnitVersionsRequest) returns (GetCodeUnitVersionsResponse);
 
-  // GetPrecedents returns past rejections matching an error signature — or,
+  // GetPrecedents returns past failure precedents matching an error signature — or,
   // when signature is empty, a (category, reason) pair — resolved-first, then
   // newest. Each entry carries the classified failure, the version that
   // resolved it (when one exists) with a server-rendered diff against the
@@ -250,19 +250,19 @@ message GetPrecedentsRequest {
   bool include_code = 5;
 }
 
-// PrecedentFix is one fix PR opened for a precedent's rejection.
+// PrecedentFix is one fix PR opened for a failure precedent.
 message PrecedentFix {
   string fix_id = 1;
   string pr_url = 2;
   int32 pr_number = 3;
   // pr_state is the PR's live state: open until the close-loop mirrors a
   // terminal outcome, merged/rejected afterwards. It is read from the fix's
-  // :PullRequest of the rejection's project.
+  // :PullRequest of the failure precedent's project.
   string pr_state = 4;
 }
 
 // PrecedentEdit is one provenance edit a merged fix PR made while resolving a
-// precedent's rejection. node_id is the edited node — which may be an upstream
+// failure precedent. node_id is the edited node — which may be an upstream
 // ancestor of the rejected node rather than the rejected node itself. diff is
 // the merged-truth diff (the version the merge superseded to the promoted
 // merged version) when the edit was amended and a promoted version straddles
@@ -280,7 +280,7 @@ message PrecedentEdit {
   bool diff_is_shipped = 5;
 }
 
-// Precedent is one past rejection with its resolution.
+// Precedent is one past failure precedent with its resolution.
 message Precedent {
   string release_id = 1;
   string node_id = 2;
@@ -290,7 +290,7 @@ message Precedent {
   string error_excerpt = 6;
   string rejected_at = 7;  // RFC3339
   // failing_code is the rejected candidate's raw code; "" unless
-  // include_code was set (and a bundle existed for the rejection).
+  // include_code was set (and a bundle existed for the failure precedent).
   string failing_code = 8;
   bool resolved = 9;
   // resolving_version is present when resolved; its code fields are ""
@@ -302,7 +302,7 @@ message Precedent {
   bool resolution_diff_truncated = 12;
   repeated PrecedentFix fixes = 13;
   // edited carries the provenance of a merged fix PR that resolved this
-  // rejection: one entry per node the PR edited.
+  // failure precedent: one entry per node the PR edited.
   repeated PrecedentEdit edited = 14;
 }
 

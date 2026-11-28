@@ -20,12 +20,12 @@ const (
 	slotTolerance = 5 * time.Minute
 )
 
-// Scheduler exports every tenant at each slot of a cron schedule, in UTC.
+// Scheduler backs up every tenant at each slot of a cron schedule, in UTC.
 type Scheduler struct {
 	spec     string
 	schedule ports.BackupSchedule
 	tenants  ports.GraphTenants
-	ex       *Exporter
+	ex       *Taker
 	clock    func() time.Time
 	logger   *slog.Logger
 	sleep    func(ctx context.Context, d time.Duration) error
@@ -33,10 +33,10 @@ type Scheduler struct {
 
 // NewScheduler returns a Scheduler for spec, which parser reads. It returns
 // the parser's reason when spec cannot be a backup schedule.
-func NewScheduler(spec string, parser ports.BackupScheduleParser, tenants ports.GraphTenants, ex *Exporter, clock func() time.Time, logger *slog.Logger) (*Scheduler, error) {
+func NewScheduler(spec string, parser ports.BackupScheduleParser, tenants ports.GraphTenants, ex *Taker, clock func() time.Time, logger *slog.Logger) (*Scheduler, error) {
 	schedule, err := parser.Parse(spec)
 	if err != nil {
-		return nil, fmt.Errorf("catalog export schedule %q: %w", spec, err)
+		return nil, fmt.Errorf("catalog backup schedule %q: %w", spec, err)
 	}
 	return &Scheduler{
 		spec: spec, schedule: schedule, tenants: tenants, ex: ex,
@@ -44,10 +44,10 @@ func NewScheduler(spec string, parser ports.BackupScheduleParser, tenants ports.
 	}, nil
 }
 
-// Run exports every tenant at each slot until ctx ends. The next slot is
+// Run backs up every tenant at each slot until ctx ends. The next slot is
 // always the schedule's first after the time the previous run ended, so a
 // slot that passed while catalog was down, or while the previous run still
-// ran, is never run late; the next slot runs instead. An export in flight
+// ran, is never run late; the next slot runs instead. A backup in flight
 // when ctx ends is cancelled, which aborts its upload and releases its
 // lease.
 func (s *Scheduler) Run(ctx context.Context) {
@@ -55,17 +55,17 @@ func (s *Scheduler) Run(ctx context.Context) {
 	for {
 		slot := s.schedule.Next(after)
 		if slot.IsZero() {
-			s.logger.Error("the catalog export schedule names no later time: no export runs", "schedule", s.spec)
+			s.logger.Error("the catalog backup schedule names no later time: no backup runs", "schedule", s.spec)
 			return
 		}
-		s.logger.Info("next catalog export", "slot", slot, "schedule", s.spec)
+		s.logger.Info("next catalog backup", "slot", slot, "schedule", s.spec)
 		if err := s.waitUntil(ctx, slot); err != nil {
 			return
 		}
 		if late := s.clock().UTC().Sub(slot); late > slotTolerance {
-			s.logger.Warn("catalog export slot missed: catalog was not running at its time", "slot", slot, "late_by", late.String())
+			s.logger.Warn("catalog backup slot missed: catalog was not running at its time", "slot", slot, "late_by", late.String())
 		} else {
-			s.exportAll(ctx)
+			s.takeAll(ctx)
 		}
 		after = s.clock().UTC()
 		// A clock that stepped back never repeats a slot.
@@ -73,7 +73,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 			after = slot
 		}
 		if next := s.schedule.Next(slot); next.Before(after) {
-			s.logger.Warn("catalog exports ran past their next slot, which is skipped", "slot", next, "ended_at", after)
+			s.logger.Warn("catalog backups ran past their next slot, which is skipped", "slot", next, "ended_at", after)
 		}
 	}
 }
@@ -92,15 +92,15 @@ func (s *Scheduler) waitUntil(ctx context.Context, slot time.Time) error {
 	}
 }
 
-// exportAll exports every tenant in turn; one tenant's failure does not stop
-// the others. Each export logs and observes its own outcome.
-func (s *Scheduler) exportAll(ctx context.Context) {
+// takeAll backs up every tenant in turn; one tenant's failure does not stop
+// the others. Each backup logs and observes its own outcome.
+func (s *Scheduler) takeAll(ctx context.Context) {
 	tenants, err := s.tenants.Tenants(ctx)
 	if err != nil {
-		s.logger.Error("catalog export: the tenants could not be listed; no tenant is exported until the next slot", "error", err)
+		s.logger.Error("catalog backup: the tenants could not be listed; no tenant is backed up until the next slot", "error", err)
 		return
 	}
-	s.ex.ExportEach(ctx, tenants, func(string, Result, error) {})
+	s.ex.TakeEach(ctx, tenants, func(string, Result, error) {})
 }
 
 // sleepCtx sleeps d, or until ctx ends.

@@ -156,40 +156,40 @@ wait_for_http_host http://127.0.0.1:15556/dex/.well-known/openid-configuration 1
 grep -q "\"issuer\": *\"http://${RELEASE}-dex:5556/dex\"" \
   <<<"$(curl -sf http://127.0.0.1:15556/dex/.well-known/openid-configuration)"
 
-# catalog's backup: an export taken in the catalog pod must reach the bucket
+# catalog's backup: a backup taken in the catalog pod must reach the bucket
 # and show on catalog's own /metrics, which is where an alert reads it. The
-# export names the default tenant: a fresh install has written nothing yet, so
-# catalog lists no tenant and a bare `catalog-backup export` would store
-# nothing. The gauge is the newest export's modification time, which the store
+# backup names the default tenant: a fresh install has written nothing yet, so
+# catalog lists no tenant and a bare `catalog-backup take` would store
+# nothing. The gauge is the newest backup's modification time, which the store
 # reports to the second, so it is compared with >= against a whole-second start
 # time read from the pod's own clock. catalog reads the store at most once a
 # minute while it is scraped, so the poll runs for longer than that.
 # METRICS_PORT is in the catalog container's environment (the shared
 # ConfigMap), so the pod's shell expands it, not this one.
-export_gauge=continuo_catalog_export_last_success_timestamp_seconds
-export_start="$(kubectl -n "$NS" exec deploy/catalog -- date +%s)" \
+backup_gauge=continuo_catalog_backup_last_success_timestamp_seconds
+backup_start="$(kubectl -n "$NS" exec deploy/catalog -- date +%s)" \
   || { log_error "could not read the clock of the catalog pod"; exit 1; }
-log_info "taking a catalog export (catalog-backup export --tenant default)..."
-kubectl -n "$NS" exec deploy/catalog -- catalog-backup export --tenant default \
-  || { log_error "catalog-backup export failed (exit $?)"; exit 1; }
-log_info "waiting for ${export_gauge} to reach ${export_start}..."
-export_deadline=$((SECONDS + 120))
-export_seen="" export_last=""
-while [ "$SECONDS" -lt "$export_deadline" ]; do
+log_info "taking a catalog backup (catalog-backup take --tenant default)..."
+kubectl -n "$NS" exec deploy/catalog -- catalog-backup take --tenant default \
+  || { log_error "catalog-backup take failed (exit $?)"; exit 1; }
+log_info "waiting for ${backup_gauge} to reach ${backup_start}..."
+backup_deadline=$((SECONDS + 120))
+backup_seen="" backup_last=""
+while [ "$SECONDS" -lt "$backup_deadline" ]; do
   # shellcheck disable=SC2016  # ${METRICS_PORT} is expanded by the pod's shell
   if metrics="$(kubectl -n "$NS" exec deploy/catalog -- sh -c 'wget -qO- "http://127.0.0.1:${METRICS_PORT}/metrics"')"; then
-    export_last="$(awk -v name="$export_gauge" 'index($0, name "{") == 1 || index($0, name " ") == 1 { print $NF }' <<<"$metrics")"
-    if [ -n "$export_last" ] \
-      && awk -v got="$export_last" -v want="$export_start" 'BEGIN { exit (got + 0 >= want + 0) ? 0 : 1 }'; then
-      export_seen="$export_last"
+    backup_last="$(awk -v name="$backup_gauge" 'index($0, name "{") == 1 || index($0, name " ") == 1 { print $NF }' <<<"$metrics")"
+    if [ -n "$backup_last" ] \
+      && awk -v got="$backup_last" -v want="$backup_start" 'BEGIN { exit (got + 0 >= want + 0) ? 0 : 1 }'; then
+      backup_seen="$backup_last"
       break
     fi
   fi
   sleep 5
 done
-[ -n "$export_seen" ] \
-  || { log_error "${export_gauge} did not reach ${export_start} within 120s (last value: ${export_last:-none})"; exit 1; }
-log_info "catalog's last successful export: ${export_seen}"
+[ -n "$backup_seen" ] \
+  || { log_error "${backup_gauge} did not reach ${backup_start} within 120s (last value: ${backup_last:-none})"; exit 1; }
+log_info "catalog's last successful backup: ${backup_seen}"
 
 # The agents reach the outside world only through egress-proxy, and the kind
 # cluster enforces NetworkPolicy, so check it from the agent pods: the proxy

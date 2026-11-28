@@ -196,15 +196,15 @@ streams:
 
   - name: heal.triggered:v1
     const: HealTriggeredV1
-    description: One batched trigger per rejected release and round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
+    description: One batched trigger per rejected release and round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base failure precedents group.
     producers: [remediation]
     consumers:
       - component: agent-remediation
         group: agent-remediation-heal-triggered
         const: AgentRemediationHealTriggered
       - component: catalog
-        group: catalog-heal-triggered-rejections
-        const: CatalogHealTriggeredRejections
+        group: catalog-heal-triggered-failure-precedents
+        const: CatalogHealTriggeredFailurePrecedents
 
   # ---------------- agent-remediation streams ----------------
 
@@ -584,7 +584,7 @@ vocabularies:
         description: run-controller dispatched an attempt of the task and has no report of it yet.
       - value: queued
         const: Queued
-        description: execution-controller accepted the attempt; it waits for a slot or its Job.
+        description: execution-controller accepted the attempt; it waits for Job capacity or its Job.
       - value: running
         const: Running
         description: the main container of the attempt's pod started.
@@ -643,7 +643,7 @@ vocabularies:
         description: run-controller dispatched the attempt and has no report of it yet.
       - value: queued
         const: Queued
-        description: execution-controller accepted the attempt; it waits for a slot or its Job.
+        description: execution-controller accepted the attempt; it waits for Job capacity or its Job.
       - value: running
         const: Running
         description: the main container of the attempt's pod started.
