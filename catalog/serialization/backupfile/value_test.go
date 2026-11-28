@@ -199,7 +199,7 @@ func TestValue_EncodeRefusesAnotherGoType(t *testing.T) {
 // TestReader_RefusesALineLongerThanItsLimit reads with a small limit, so the
 // test need not build a line of the production size.
 func TestReader_RefusesALineLongerThanItsLimit(t *testing.T) {
-	head := `{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}` + "\n"
+	head := `{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}` + "\n"
 	long := `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"` + strings.Repeat("a", 4096) + `"}}` + "\n"
 	r, err := newReader(strings.NewReader(head+long), 1024)
 	if err != nil {

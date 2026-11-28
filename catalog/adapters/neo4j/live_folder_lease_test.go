@@ -155,7 +155,7 @@ func TestLiveFolderState_ReadsWhatTransactionBAndRecordSettingsStored(t *testing
 	f.assertGateUnlocked()
 }
 
-// RecordSettings writes the graph, so it backs off like every write while an
+// RecordSettings writes the graph, so it backs off like every write while a
 // backup holds the tenant's lease.
 func TestLiveFolderState_RecordSettingsBacksOffWhileAnBackupHoldsTheLease(t *testing.T) {
 	ctx := context.Background()

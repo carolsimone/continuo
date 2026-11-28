@@ -409,7 +409,7 @@ names:
   # Job capacity group: how many Jobs may run at once across the install is
   # execution-controller's Job capacity. Slot keeps its meaning elsewhere: a
   # cron's slot in run-controller and the slot of catalog's backup schedule.
-  - pattern: '(?i)execution[ _-]?slots?'
+  - pattern: '(?i)execution[ _-]?slots?|wait(s|ing)? for a slot'
     use: Job capacity
   - pattern: '(?i)\w*slots?\w*'
     use: Job capacity (a deployment that holds Job capacity)

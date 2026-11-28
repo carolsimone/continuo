@@ -21,7 +21,7 @@ import (
 // rewrite holding the lease pauses no graph write and stops no backup. Taking
 // the lease creates the node on a tenant's first rewrite, a graph write, so
 // Acquire runs behind the backup gate and refuses while a backup or a
-// restore holds the tenant's lease: a restore between its wipe and its import
+// restore holds the tenant's lease: a restore between its wipe and its load
 // meets no node it did not write. The writes of the watermark and the
 // fingerprint change the graph, so they run behind the backup gate too:
 // transaction B's through the unit of work, RecordSettings by taking the gate
@@ -90,7 +90,7 @@ func NewLiveFolderLease(client Neo4jClient, logger *slog.Logger) *LiveFolderLeas
 }
 
 // Acquire takes the tenant's live-folder lease for holder. A live lease,
-// whoever holds it, is refused (acquired false), and so is any take while an
+// whoever holds it, is refused (acquired false), and so is any take while a
 // backup or a restore holds the tenant's backup lease; an expired lease is
 // taken over.
 func (l *LiveFolderLease) Acquire(ctx context.Context, tenantID, holder string, ttl time.Duration) (bool, error) {

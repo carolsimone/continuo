@@ -263,7 +263,7 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// backupLine is what backup prints for each tenant it stored.
+// backupLine is what take prints for each tenant it stored.
 type backupLine struct {
 	ObjectKey       string  `json:"object_key"`
 	Bytes           int64   `json:"bytes"`

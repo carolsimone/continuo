@@ -18,7 +18,7 @@ import (
 
 // FormatVersion is the version of the backup layout this code writes and
 // reads.
-const FormatVersion = 1
+const FormatVersion = 2
 
 // TenantProperty is the property that names a node's tenant.
 const TenantProperty = "tenant_id"
@@ -39,7 +39,7 @@ var (
 	// catalog graph holds: a string, a bool, an int64, a float64, a datetime,
 	// or a list of values of one of those kinds.
 	ErrUnsupportedValue = errors.New("a value the catalog graph cannot hold")
-	// ErrInvalidRecord means a header or a record is shaped otherwise than an
+	// ErrInvalidRecord means a header or a record is shaped otherwise than a
 	// backup of the catalog graph.
 	ErrInvalidRecord = errors.New("an invalid backup record")
 )
@@ -77,7 +77,7 @@ type NodeRef struct {
 	Key   []any
 }
 
-// Check refuses a header of another format version, without a tenant or an
+// Check refuses a header of another format version, without a tenant or a
 // backup time, or whose counts name a label or type outside the schema or
 // are negative.
 func (h Header) Check() error {

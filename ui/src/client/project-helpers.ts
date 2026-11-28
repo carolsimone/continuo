@@ -50,7 +50,7 @@ export function buildProjectColors(projects: string[]): Map<string, string> {
 }
 
 // Most-severe-first. A project with a running task reads running; one whose
-// tasks wait for a slot (queued) or for execution-controller (dispatched)
+// tasks wait for Job capacity (queued) or for execution-controller (dispatched)
 // reads that before pending. A project with a stopping task (a cancel is
 // deleting its Job) reads stopping, above running. `skipped` (cascade-skipped downstream of a
 // failure) outranks `succeeded` so a partially- or fully-skipped project is

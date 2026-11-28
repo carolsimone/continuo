@@ -317,7 +317,7 @@ MATCH (prev:Node {tenant_id: $tenant_id, unique_id: 'bulk.n' + toString(n.ordina
 CREATE (n)-[:DEPENDS_ON {ordinal: n.ordinal}]->(prev)`, nil)
 }
 
-// takeLease takes the tenant's backup lease through the lease adapter, as an
+// takeLease takes the tenant's backup lease through the lease adapter, as a
 // backup or a restore does.
 func (f *graphFixture) takeLease(tenantID string, kind ports.LeaseKind, holder string) {
 	f.t.Helper()

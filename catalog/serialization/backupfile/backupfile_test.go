@@ -81,7 +81,7 @@ func smallGraph() (graphbackup.Header, []any) {
 func TestBackupfile_LineLayout(t *testing.T) {
 	h, records := smallGraph()
 	got := string(write(t, h, records...))
-	want := `{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00.123456789Z","catalog_version":"test","nodes":{"Node":1,"NodeVersion":1},"relationships":{"CURRENT":1}}` + "\n" +
+	want := `{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00.123456789Z","catalog_version":"test","nodes":{"Node":1,"NodeVersion":1},"relationships":{"CURRENT":1}}` + "\n" +
 		`{"node":["Node"],"props":{"active":true,"seq":{"$int":"7"},"tenant_id":"t1","unique_id":"analytics.table_a"}}` + "\n" +
 		`{"node":["NodeVersion"],"props":{"content_hash":"9f2c","tenant_id":"t1","unique_id":"analytics.table_a"}}` + "\n" +
 		`{"rel":"CURRENT","from":["Node","analytics.table_a"],"to":["NodeVersion","analytics.table_a","9f2c"],"props":{"promoted_at":{"$datetime":"2026-10-20T09:00:00Z[UTC]"}}}` + "\n"
@@ -226,7 +226,7 @@ func TestBackupfile_ValidateAcceptsAnEmptyGraph(t *testing.T) {
 func lines(ls ...string) []byte { return []byte(strings.Join(ls, "\n") + "\n") }
 
 const (
-	headerLine1Node = `{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`
+	headerLine1Node = `{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`
 	nodeA           = `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"}}`
 )
 
@@ -236,10 +236,10 @@ func TestBackupfile_ValidateRefusesLabelOutsideSchema(t *testing.T) {
 		"a second label": lines(headerLine1Node, `{"node":["Node","Run"],"props":{"tenant_id":"t1","unique_id":"a"}}`),
 		"a label that injects Cypher": lines(headerLine1Node,
 			`{"node":["Node {tenant_id: 'other'}) DETACH DELETE (n"],"props":{"tenant_id":"t1","unique_id":"a"}}`),
-		"the header's counts": lines(`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Table":1},"relationships":{}}`,
+		"the header's counts": lines(`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Table":1},"relationships":{}}`,
 			`{"node":["Table"],"props":{"tenant_id":"t1","unique_id":"a"}}`),
 		"a relationship end": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Table","a"],"props":{}}`),
 	}
 	for name, data := range cases {
@@ -250,14 +250,14 @@ func TestBackupfile_ValidateRefusesLabelOutsideSchema(t *testing.T) {
 }
 
 func TestBackupfile_ValidateRefusesRelationshipTypeOutsideSchema(t *testing.T) {
-	h := `{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`
+	h := `{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`
 	cases := map[string][]byte{
 		"a retired type":    lines(h, nodeA, `{"rel":"PREVIOUS","from":["Node","a"],"to":["Node","a"],"props":{}}`),
 		"a lower-case type": lines(h, nodeA, `{"rel":"depends_on","from":["Node","a"],"to":["Node","a"],"props":{}}`),
 		"a type that injects Cypher": lines(h, nodeA,
 			`{"rel":"DEPENDS_ON]->(b) DETACH DELETE b //","from":["Node","a"],"to":["Node","a"],"props":{}}`),
 		"the header's counts": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"EXECUTES":1}}`,
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"EXECUTES":1}}`,
 			nodeA, `{"rel":"EXECUTES","from":["Node","a"],"to":["Node","a"],"props":{}}`),
 	}
 	for name, data := range cases {
@@ -329,7 +329,7 @@ func TestBackupfile_RefusesAPlainJSONNumber(t *testing.T) {
 		"a float":    lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":1.5}}`),
 		"a list":     lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":[1,2]}}`),
 		"a key value": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":["Node",1],"to":["Node","a"],"props":{}}`),
 		"a typed value's text": lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":{"$int":42}}}`),
 	}
@@ -364,6 +364,22 @@ func TestBackupfile_RefusesAPlainJSONNumber(t *testing.T) {
 	}
 }
 
+// TestBackupfile_RefusesAnOlderLayoutForItsVersion: a file of format version
+// 1, whose header names its time exported_at, is refused for its version, not
+// as a header with an unknown member.
+func TestBackupfile_RefusesAnOlderLayoutForItsVersion(t *testing.T) {
+	data := lines(
+		`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`,
+		`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"}}`)
+	_, err := backupfile.Validate(bytes.NewReader(data), tenant)
+	if !errors.Is(err, graphbackup.ErrInvalidRecord) || !strings.Contains(err.Error(), "format version 1, want 2") {
+		t.Fatalf("Validate of a format 1 file: %v, want the format version refused", err)
+	}
+	if _, err := backupfile.NewReader(bytes.NewReader(data)); !errors.Is(err, graphbackup.ErrInvalidRecord) {
+		t.Fatalf("NewReader of a format 1 file: %v, want the format version refused", err)
+	}
+}
+
 // TestBackupfile_ValidateRefusesAMalformedFile feeds Validate files that are
 // cut short, garbled or shaped otherwise than the Writer writes them: each is
 // an error, and none panics.
@@ -385,17 +401,17 @@ func TestBackupfile_ValidateRefusesAMalformedFile(t *testing.T) {
 		"a record first":              lines(nodeA),
 		"a JSON array header":         lines(`[1,2,3]`, nodeA),
 		"a header with an unknown member": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{},"extra":1}`, nodeA),
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{},"extra":1}`, nodeA),
 		"a header member twice": lines(
-			`{"format_version":1,"tenant_id":"t1","tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
+			`{"format_version":2,"tenant_id":"t1","tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
 		"a header without its tenant": lines(
-			`{"format_version":1,"taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
+			`{"format_version":2,"taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
 		"another format version": lines(
-			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
+			`{"format_version":3,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
 		"a fractional count": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1.5},"relationships":{}}`, nodeA),
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1.5},"relationships":{}}`, nodeA),
 		"a bad backup time": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"yesterday","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
+			`{"format_version":2,"tenant_id":"t1","taken_at":"yesterday","catalog_version":"x","nodes":{"Node":1},"relationships":{}}`, nodeA),
 		"a record with an unknown member": lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"},"x":1}`),
 		"a record that is node and rel":   lines(headerLine1Node, `{"node":["Node"],"rel":"CURRENT","props":{"tenant_id":"t1","unique_id":"a"}}`),
 		"a record without props":          lines(headerLine1Node, `{"node":["Node"]}`),
@@ -407,14 +423,14 @@ func TestBackupfile_ValidateRefusesAMalformedFile(t *testing.T) {
 		"an unknown typed value": lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":{"$date":"2026-10-30"}}}`),
 		"a null property":        lines(headerLine1Node, `{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a","n":null}}`),
 		"a node after a relationship": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Node","a"],"props":{}}`,
 			`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"b"}}`),
 		"an end without a key": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":["Node"],"to":["Node","a"],"props":{}}`),
 		"an end whose label is not text": lines(
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 			nodeA, `{"rel":"DEPENDS_ON","from":[{"$int":"1"},"a"],"to":["Node","a"],"props":{}}`),
 	}
 	for name, data := range cases {
@@ -462,7 +478,7 @@ func TestBackupfile_LeaseNode(t *testing.T) {
 		t.Errorf("Validate of a file with a lease node: %v", err)
 	}
 	withRel := lines(
-		`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Meta":1,"Node":1},"relationships":{"DEPENDS_ON":1}}`,
+		`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Meta":1,"Node":1},"relationships":{"DEPENDS_ON":1}}`,
 		`{"node":["Meta"],"props":{"tenant_id":"t1","key":"backup"}}`, nodeA,
 		`{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Meta","backup"],"props":{}}`)
 	if _, err := backupfile.Validate(bytes.NewReader(withRel), tenant); !errors.Is(err, graphbackup.ErrInvalidRecord) {
@@ -562,30 +578,30 @@ func TestBackupfile_ValidateRefusesWhatTheGraphCouldNotLoad(t *testing.T) {
 		want error
 	}{
 		"a NaN key": {
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"NodeVersion":1},"relationships":{}}` + "\n" +
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"NodeVersion":1},"relationships":{}}` + "\n" +
 				`{"node":["NodeVersion"],"props":{"tenant_id":"t1","unique_id":"a","content_hash":{"$float":"NaN"}}}` + "\n",
 			graphbackup.ErrInvalidRecord,
 		},
 		"1 and 1.0 as unique_id": {
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{}}` + "\n" +
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{}}` + "\n" +
 				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":{"$int":"1"}}}` + "\n" +
 				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":{"$float":"1"}}}` + "\n",
 			graphbackup.ErrInvalidRecord,
 		},
 		"a relationship end named by a number": {
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}` + "\n" +
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}` + "\n" +
 				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"}}` + "\n" +
 				`{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Node",{"$float":"1"}],"props":{}}` + "\n",
 			graphbackup.ErrInvalidRecord,
 		},
 		"two markers of one outbox entry": {
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":2},"relationships":{}}` + "\n" +
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":2},"relationships":{}}` + "\n" +
 				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"1-0","outbox_entry_id":"e1"}}` + "\n" +
 				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"2-0","outbox_entry_id":"e1"}}` + "\n",
 			backupfile.ErrDuplicateNode,
 		},
 		"a marker whose outbox entry id is a number": {
-			`{"format_version":1,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":1},"relationships":{}}` + "\n" +
+			`{"format_version":2,"tenant_id":"t1","taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":1},"relationships":{}}` + "\n" +
 				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"1-0","outbox_entry_id":{"$int":"1"}}}` + "\n",
 			graphbackup.ErrInvalidRecord,
 		},

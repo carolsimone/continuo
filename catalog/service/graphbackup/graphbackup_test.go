@@ -246,7 +246,7 @@ func TestHeader_Check(t *testing.T) {
 		edit func(h *graphbackup.Header)
 		want error
 	}{
-		{"another format version", func(h *graphbackup.Header) { h.FormatVersion = 2 }, graphbackup.ErrInvalidRecord},
+		{"another format version", func(h *graphbackup.Header) { h.FormatVersion = graphbackup.FormatVersion + 1 }, graphbackup.ErrInvalidRecord},
 		{"no tenant", func(h *graphbackup.Header) { h.TenantID = "" }, graphbackup.ErrInvalidRecord},
 		{"no backup time", func(h *graphbackup.Header) { h.TakenAt = time.Time{} }, graphbackup.ErrInvalidRecord},
 		{"label outside the schema", func(h *graphbackup.Header) { h.Nodes = map[string]int64{"Table": 1} }, graphbackup.ErrOutsideSchema},

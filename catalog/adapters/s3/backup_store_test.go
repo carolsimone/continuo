@@ -387,7 +387,7 @@ func TestBackupStore_ValidateRefusesAnObjectARestoreCannotLoad(t *testing.T) {
 	}
 }
 
-// Delete removes one backup, and only a backup: a key that is not an
+// Delete removes one backup, and only a backup: a key that is not a
 // backup's is refused and its object stays.
 func TestBackupStore_DeleteRemovesOnlyAnBackup(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)

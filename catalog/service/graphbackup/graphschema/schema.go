@@ -1,7 +1,7 @@
 // Package graphschema is the one table of the catalog graph's node labels,
 // the properties that identify a node of each label within its tenant, and
 // the relationship types that join them. The Neo4j schema, the backup and
-// import of a tenant's graph, and the Cypher tenant guard all read it.
+// restore of a tenant's graph, and the Cypher tenant guard all read it.
 package graphschema
 
 // Label is a node label of the catalog graph.

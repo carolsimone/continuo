@@ -142,8 +142,8 @@ func TestCypherGuard_AcceptsTenantBoundStatements(t *testing.T) {
 }
 
 // TestCypherGuard_ExemptsOnlyTheListedFiles shows that the same statement is
-// a violation in every file but the exempt ones, the backup's backup and
-// import included.
+// a violation in every file but the exempt ones, the backup's saver and
+// loader included.
 func TestCypherGuard_ExemptsOnlyTheListedFiles(t *testing.T) {
 	src := []byte("package neo4jinfra\n\nconst statement = `MATCH (n:Node) DETACH DELETE n`\n")
 	for _, name := range tenantGuardExempt {
@@ -155,7 +155,7 @@ func TestCypherGuard_ExemptsOnlyTheListedFiles(t *testing.T) {
 			t.Errorf("%s is exempt, but the guard reported %v", name, scan.violations)
 		}
 	}
-	for _, name := range []string{"backup.go", "import.go", "node_query_repository.go"} {
+	for _, name := range []string{"graph_saver.go", "graph_loader.go", "node_query_repository.go"} {
 		scan, err := scanCypher(map[string][]byte{name: src})
 		if err != nil {
 			t.Fatal(err)

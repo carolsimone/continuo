@@ -49,8 +49,8 @@ describe('headerDriftLabel', () => {
 });
 
 describe('taskStatusTitle', () => {
-  it('says a queued task waits for a slot and titles no other status', () => {
-    expect(taskStatusTitle('queued')).toBe('waiting for a slot');
+  it('says a queued task waits for Job capacity and titles no other status', () => {
+    expect(taskStatusTitle('queued')).toBe('waiting for Job capacity');
     for (const s of ['dispatched', 'running', 'pending', 'failed']) expect(taskStatusTitle(s)).toBeUndefined();
   });
 });

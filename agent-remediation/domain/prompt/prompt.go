@@ -30,7 +30,7 @@ type ReleaseUpstreamChange struct {
 	Diff    string
 }
 
-// Precedent is one past rejection with the same error shape and, when
+// Precedent is one failure precedent with the same error shape and, when
 // resolved, the change that fixed it.
 type Precedent struct {
 	ReleaseID      string // for self-filtering only; never rendered
@@ -52,7 +52,7 @@ type Precedent struct {
 }
 
 // EditedPrecedent is one node a merged fix PR edited while resolving a
-// precedent's rejection.
+// failure precedent.
 type EditedPrecedent struct {
 	NodeID  string
 	Path    string

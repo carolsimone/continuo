@@ -141,6 +141,6 @@ describe('TaskStatusCounts', () => {
     const summary = summarizeTasks(tasksOf('queued', 'stopping'));
     const { container } = render(<TaskStatusCounts summary={summary} hideZero />);
     const titles = [...container.querySelectorAll<HTMLElement>('.rp-count')].map(el => el.title);
-    expect(titles).toEqual(['waiting for a slot', 'stopping — its Job is being deleted']);
+    expect(titles).toEqual(['waiting for Job capacity', 'stopping — its Job is being deleted']);
   });
 });

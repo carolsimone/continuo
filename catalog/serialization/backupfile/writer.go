@@ -2,7 +2,7 @@
 // lines, the header first, then one line per node, then one line per
 // relationship.
 //
-//	{"format_version":1,"tenant_id":"default","taken_at":"2026-10-30T02:00:00.5Z","catalog_version":"…","nodes":{"Node":1,"NodeVersion":1},"relationships":{"CURRENT":1}}
+//	{"format_version":2,"tenant_id":"default","taken_at":"2026-10-30T02:00:00.5Z","catalog_version":"…","nodes":{"Node":1,"NodeVersion":1},"relationships":{"CURRENT":1}}
 //	{"node":["Node"],"props":{"active":true,"code_version_promotion_seq":{"$int":"7"},"tenant_id":"default","unique_id":"analytics.table_a"}}
 //	{"node":["NodeVersion"],"props":{"content_hash":"9f2c","tenant_id":"default","unique_id":"analytics.table_a"}}
 //	{"rel":"CURRENT","from":["Node","analytics.table_a"],"to":["NodeVersion","analytics.table_a","9f2c"],"props":{"release_id":"r7"}}

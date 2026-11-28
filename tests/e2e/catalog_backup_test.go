@@ -82,7 +82,7 @@ type backupFileHeader struct {
 //
 //   - the command exits 0 and prints one JSON line naming the stored object;
 //   - the bucket holds that object, new, under the tenant's backup prefix; it
-//     gunzips to a header with format_version 1 and tenant_id default, followed
+//     gunzips to a header with format_version 2 and tenant_id default, followed
 //     by one line per node and per relationship, as many as the header and the
 //     printed line count;
 //   - `list` names the object, newest first;
@@ -273,7 +273,7 @@ func requireBackupFile(t *testing.T, gz []byte, printed printedBackup, start tim
 	dec.DisallowUnknownFields()
 	var header backupFileHeader
 	require.NoError(t, dec.Decode(&header), "the header must be one JSON object of the documented shape: %.300s", headerLine)
-	require.Equal(t, 1, header.FormatVersion, "the backup's format_version")
+	require.Equal(t, 2, header.FormatVersion, "the backup's format_version")
 	require.Equal(t, "default", header.TenantID, "the backup's tenant_id")
 	takenAt, err := time.Parse(time.RFC3339Nano, header.TakenAt)
 	require.NoError(t, err, "taken_at must be a timestamp: %q", header.TakenAt)

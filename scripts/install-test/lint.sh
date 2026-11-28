@@ -953,7 +953,7 @@ if grep -qF "$repin_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the validation re-pin note"; exit 1
 fi
 # An upgrading operator with catalog's backup on is told once what S3 access
-# the exports need and how to turn them off; an installing one, and one who
+# the backups need and how to turn them off; an installing one, and one who
 # turned the backup off, are told nothing.
 backup_note='To run no backups, set catalog.backup.enabled=false.'
 [ "$(grep -cF "$backup_note" "${tmp}/notes-upgrade.txt")" = 1 ] \

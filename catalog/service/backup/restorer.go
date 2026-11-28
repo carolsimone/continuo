@@ -40,7 +40,7 @@ func NewRestorer(lease ports.BackupLease, graph ports.GraphLoader, store ports.B
 // it) to the backup stored at key.
 //
 // It reads the backup twice and never holds it whole. The first read checks
-// the whole backup (BackupStore.Validate) with no lease and no write, so an
+// the whole backup (BackupStore.Validate) with no lease and no write, so a
 // backup that cannot be loaded exactly, or that names another tenant, leaves
 // the graph untouched. Then it takes the tenant's backup lease (ErrSkipped
 // while another backup or restore holds it), opens the backup again and

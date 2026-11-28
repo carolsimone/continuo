@@ -224,6 +224,20 @@ func decodeHeader(line []byte) (graphbackup.Header, error) {
 	if err != nil {
 		return graphbackup.Header{}, err
 	}
+	// The version is read before the other members, so a file of another
+	// layout is refused for its version, not for the members that layout
+	// names.
+	for _, mem := range members {
+		if mem.name != "format_version" {
+			continue
+		}
+		var v int
+		if json.Unmarshal(mem.value, &v) == nil && v != graphbackup.FormatVersion {
+			return graphbackup.Header{}, fmt.Errorf("%w: format version %d, want %d",
+				graphbackup.ErrInvalidRecord, v, graphbackup.FormatVersion)
+		}
+		break
+	}
 	m, err := fields(members, headerMembers, headerMembers)
 	if err != nil {
 		return graphbackup.Header{}, err

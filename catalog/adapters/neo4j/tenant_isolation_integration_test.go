@@ -64,7 +64,7 @@ type isolationRow struct {
 // isolationRepositories are the repositories of this package: the readers
 // the gRPC server and the live contracts folder serve from, the four that
 // write through uow.Tx, the backup lease, the live-folder lease and state,
-// the unit of work, and the backup and import of a tenant's graph. Each
+// the unit of work, and the backup and restore of a tenant's graph. Each
 // exported method of each has a row.
 var isolationRepositories = []any{
 	(*NodeQueryRepository)(nil),
@@ -580,8 +580,8 @@ func (f *isolationFixture) rows() []isolationRow {
 			require.NoError(t, err)
 			require.NoError(t, NewGraphLoader(f.a.client, quietLogger()).Load(ctx, tenant(), r))
 			nodes, rels := (&graphFixture{t: t, client: f.a.client}).dump(tenant())
-			assert.Equal(t, f.beforeWipeNodes, nodes, "the import returns tenant A's nodes as they were")
-			assert.Equal(t, f.beforeWipeRels, rels, "the import returns tenant A's relationships as they were")
+			assert.Equal(t, f.beforeWipeNodes, nodes, "the restore returns tenant A's nodes as they were")
+			assert.Equal(t, f.beforeWipeRels, rels, "the restore returns tenant A's relationships as they were")
 		}},
 	}
 }

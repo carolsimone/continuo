@@ -152,7 +152,7 @@ func (i *graphLoader) Wipe(ctx context.Context, tenantID string) error {
 // built from the schema's constants, never from the record's text. A backup
 // lease node in the backup is not loaded. Restore then checks that the records
 // matched the header's counts and that the graph holds exactly what it
-// loaded, and ends with the startup migration (InitSchema), which brings an
+// loaded, and ends with the startup migration (InitSchema), which brings a
 // backup written by an older catalog to the current shape. A failure leaves
 // what earlier batches loaded; a restore wipes again before it retries.
 func (i *graphLoader) Load(ctx context.Context, tenantID string, in ports.RecordReader) error {

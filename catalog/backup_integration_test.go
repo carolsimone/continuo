@@ -510,7 +510,7 @@ func TestRestorer_ValidatesBeforeItWipes(t *testing.T) {
 	f.seed(tenantID)
 	before := f.dump(tenantID)
 	header := func(tenant, nodes string) string {
-		return fmt.Sprintf(`{"format_version":1,"tenant_id":%q,"taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":%s,"relationships":{}}`, tenant, nodes)
+		return fmt.Sprintf(`{"format_version":2,"tenant_id":%q,"taken_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":%s,"relationships":{}}`, tenant, nodes)
 	}
 	nodeLine := func(tenant, label, uid string) string {
 		return fmt.Sprintf(`{"node":[%q],"props":{"tenant_id":%q,"unique_id":%q}}`, label, tenant, uid)

@@ -523,7 +523,7 @@ func (f *uowFixture) versionsMarker(messageID string) uow.Marker {
 }
 
 // Two groups read the same stream message under the same message id. The
-// topology group's final write must not end the versions group's mark, or an
+// topology group's final write must not end the versions group's mark, or a
 // backup would start between the versions group's batches.
 func TestUnitOfWork_AnotherGroupsFinalWriteKeepsTheMessageInFlight(t *testing.T) {
 	ctx := context.Background()

@@ -407,7 +407,7 @@ anything catalog wrote into the empty graph meanwhile is replaced by the backup.
    file first, with no lease and no write, so a file that cannot be loaded
    exactly, or that names another tenant, leaves the graph untouched. Then it
    takes the tenant's lease, deletes the tenant's graph, loads the nodes and
-   then the relationships, runs catalog's schema migration (which brings an
+   then the relationships, runs catalog's schema migration (which brings a
    backup written by an older schema up to date) and releases the lease.
 3. Re-announce the live release, so the live topology is current again:
    `kubectl -n continuo exec deploy/release-controller -- announce-topology --reannounce-live`.

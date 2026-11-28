@@ -208,12 +208,12 @@ export function taskPillClass(status: string): string {
 }
 
 // taskStatusTitle is the hover title of a status pill: a queued task has been
-// accepted and waits for a slot to start in; a cancelling run waits for its
+// accepted and waits for Job capacity to start in; a cancelling run waits for its
 // Jobs to stop and a stopping task for its Job to be deleted. Other statuses
 // need none.
 export function taskStatusTitle(status: string | null | undefined): string | undefined {
   switch (status) {
-    case 'queued':     return 'waiting for a slot';
+    case 'queued':     return 'waiting for Job capacity';
     case 'cancelling': return 'cancelling — waiting for its Jobs to stop';
     case 'stopping':   return 'stopping — its Job is being deleted';
   }
