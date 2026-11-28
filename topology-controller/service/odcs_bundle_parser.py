@@ -38,7 +38,7 @@ from continuo_contracts.vocabulary import continuo_values
 
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.exceptions import InvalidOdcsBundleError, MalformedContractError
-from domain.model import ContractFamily, FailedNode, ManifestFile, ManifestNode, NodeContract, ParsedArtifact, ExcludedModel
+from domain.model import ContractFamily, ExcludedModel, FailedNode, ManifestFile, ManifestNode, NodeContract, ParsedArtifact
 from domain.node_timeout import timeout_seconds
 from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION, version_triple

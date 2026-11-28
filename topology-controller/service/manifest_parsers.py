@@ -16,7 +16,7 @@ from domain.exceptions import (
     InvalidNodeSettingError,
     InvalidOdcsBundleError,
 )
-from domain.model import ManifestFile, ManifestKind, ParsedArtifact, ExcludedModel
+from domain.model import ExcludedModel, ManifestFile, ManifestKind, ParsedArtifact
 from service.compile_extras import load_compile_extras
 from service.contract_validation import ContractValidator
 from service.odcs_bundle_parser import parse_odcs_bundle

@@ -13,6 +13,7 @@ from domain.exceptions import (
 from domain.external import SystemRelations, unknown_external_nodes
 from domain.model import (
     DEFAULT_TENANT_ID,
+    ExcludedModel,
     FailedNode,
     ManifestFile,
     ManifestKind,
@@ -20,7 +21,6 @@ from domain.model import (
     NodeRegistry,
     NodeType,
     ProjectProvenance,
-    ExcludedModel,
     TableRef,
 )
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext

@@ -34,7 +34,7 @@ var (
 const maxLineBytes = 64 << 20
 
 // Reader reads a backup file line by line. Each record passes the checks
-// of package backup against the header's tenant, every node comes before the
+// of package graphbackup against the header's tenant, every node comes before the
 // first relationship, and the end of the file is io.EOF only when the records
 // match the header's counts. Once Next returns an error it returns it again.
 // It is not safe for concurrent use.
@@ -85,7 +85,7 @@ func (r *Reader) Header() graphbackup.Header {
 	return h
 }
 
-// Next returns the next record, an graphbackup.NodeRecord or an graphbackup.RelRecord,
+// Next returns the next record, a graphbackup.NodeRecord or a graphbackup.RelRecord,
 // and io.EOF after the last.
 func (r *Reader) Next() (any, error) {
 	if r.err != nil {

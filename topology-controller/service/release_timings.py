@@ -23,7 +23,7 @@ from continuo_contracts.validate import REASONS
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.dormant import is_dormant
-from domain.model import ManifestNode, Runtime, ExcludedModel, ExclusionReason
+from domain.model import ExcludedModel, ExclusionReason, ManifestNode, Runtime
 from service.ports import ClockPort, MemoryProbePort
 
 

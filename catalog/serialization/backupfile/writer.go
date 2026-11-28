@@ -13,7 +13,7 @@
 // JSON numbers.
 //
 // The Writer and the Reader apply the same checks to every record (those of
-// package backup) and the same bound on the length of a line (maxLineBytes),
+// package graphbackup) and the same bound on the length of a line (maxLineBytes),
 // so a file the Writer completes is one the Reader accepts. Validate reads a
 // whole file before a restore touches the graph.
 package backupfile
