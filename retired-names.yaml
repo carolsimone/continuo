@@ -435,6 +435,11 @@ names:
   - pattern: '\w*Rejections?\w*'
     use: FailurePrecedent (the :FailurePrecedent label)
     paths: [catalog]
+  # The end-to-end suite reads the graph by label; a release's rejection keeps
+  # its name there inside longer words (ProposesFixForRejection).
+  - pattern: 'Rejection'
+    use: FailurePrecedent (the :FailurePrecedent label)
+    paths: [tests/e2e]
   - pattern: '\w*HealTriggeredRejections\w*|\w*heal[_-]triggered[_-]rejections\w*'
     use: CatalogHealTriggeredFailurePrecedents (catalog-heal-triggered-failure-precedents)
   # Excluded model group: a dbt model, seed or snapshot the parse leaves out is

@@ -311,7 +311,7 @@ release-controller serves `release.v1.ReleaseQuery` on gRPC port 50056 (`global.
 ## 5. Catalog backup and restore
 
 catalog keeps the live topology, the code-version history behind it and the
-remediation case base (rejections, error signatures, fixes, PR outcomes) in
+remediation case base (failure precedents, error signatures, fixes, PR outcomes) in
 Neo4j. Re-announcing the live release rebuilds the topology; nothing else holds
 the history or the case base. So, on `catalog.backup.schedule` (UTC, default
 02:00 daily), catalog backs up each tenant's whole graph to the S3 bucket and

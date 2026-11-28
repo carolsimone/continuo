@@ -41,15 +41,15 @@ from domain.exceptions import InvalidNodeSettingError
 from domain.model import (
     CompileExtras,
     ContractFamily,
+    ExcludedModel,
+    ExclusionReason,
     FailedNode,
     ManifestNode,
     NodeContract,
     NodeType,
     ParsedArtifact,
-    SeedExtras,
     ProjectProvenance,
-    ExcludedModel,
-    ExclusionReason,
+    SeedExtras,
     relation_key,
 )
 from domain.node_timeout import timeout_seconds
